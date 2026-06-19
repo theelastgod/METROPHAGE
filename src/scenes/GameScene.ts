@@ -56,6 +56,7 @@ import SkillPanel from "../ui/SkillPanel";
 import InventoryPanel from "../ui/InventoryPanel";
 import ContractPanel from "../ui/ContractPanel";
 import VendorPanel from "../ui/VendorPanel";
+import CityMapPanel from "../ui/CityMapPanel";
 
 /**
  * GameScene — Phase 0.
@@ -89,6 +90,7 @@ export default class GameScene
   private inventoryPanel!: InventoryPanel;
   private contractPanel!: ContractPanel;
   private vendorPanel!: VendorPanel;
+  private cityMapPanel!: CityMapPanel;
   private terminal!: Terminal;
   private vendorTerminal!: Terminal;
   private contractMarker!: Phaser.GameObjects.Graphics;
@@ -121,6 +123,7 @@ export default class GameScene
   private overdriveKey!: Phaser.Input.Keyboard.Key;
   private skillKey!: Phaser.Input.Keyboard.Key;
   private invKey!: Phaser.Input.Keyboard.Key;
+  private mapKey!: Phaser.Input.Keyboard.Key;
 
   constructor() {
     super("Game");
@@ -215,6 +218,7 @@ export default class GameScene
       () => this.autosave(true),
     );
     this.vendorPanel = new VendorPanel(this, this.vendor, this.progression, this.inventory, onLoadoutChange);
+    this.cityMapPanel = new CityMapPanel(this, this.city);
     this.recomputeStats();
     this.autosave(true); // persist the (possibly fresh) run immediately
 
@@ -588,6 +592,7 @@ export default class GameScene
     this.overdriveKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.R);
     this.skillKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.K);
     this.invKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.I);
+    this.mapKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.M);
     this.consumeKeys = [
       kb.addKey(Phaser.Input.Keyboard.KeyCodes.ONE),
       kb.addKey(Phaser.Input.Keyboard.KeyCodes.TWO),
@@ -598,6 +603,7 @@ export default class GameScene
       this.inventoryPanel?.close();
       this.contractPanel?.close();
       this.vendorPanel?.close();
+      this.cityMapPanel?.close();
     });
     this.input.mouse?.disableContextMenu();
   }
@@ -618,7 +624,7 @@ export default class GameScene
       {
         speaker: "// SYSTEM",
         portrait: me,
-        text: "WASD move · MOUSE aim · CLICK fire · SPACE dash · E talk. Heat fuels you — and lights the sky.",
+        text: "WASD move · MOUSE aim · CLICK fire · SPACE dash · E talk · M city map. Heat fuels you — and lights the sky.",
       },
     ];
   }
@@ -703,11 +709,18 @@ export default class GameScene
 
     if (Phaser.Input.Keyboard.JustDown(this.skillKey)) {
       this.inventoryPanel.close();
+      this.cityMapPanel.close();
       this.skillPanel.toggle();
     }
     if (Phaser.Input.Keyboard.JustDown(this.invKey)) {
       this.skillPanel.close();
+      this.cityMapPanel.close();
       this.inventoryPanel.toggle();
+    }
+    if (Phaser.Input.Keyboard.JustDown(this.mapKey)) {
+      this.skillPanel.close();
+      this.inventoryPanel.close();
+      this.cityMapPanel.toggle();
     }
 
     this.updateHud();
@@ -716,7 +729,8 @@ export default class GameScene
       this.skillPanel.isOpen ||
       this.inventoryPanel.isOpen ||
       this.contractPanel.isOpen ||
-      this.vendorPanel.isOpen
+      this.vendorPanel.isOpen ||
+      this.cityMapPanel.isOpen
     )
       return; // menu open: freeze sim
     if (this.dialogue.isOpen) return; // freeze the sim while a dialogue is up
