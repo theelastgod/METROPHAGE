@@ -1,33 +1,30 @@
 import Phaser from "phaser";
-import {
-  TILE,
-  WORLD_W,
-  WORLD_H,
-  PLAYER_SPEED,
-  COLORS,
-} from "../config";
+import { TILE, WORLD_W, WORLD_H, COLORS } from "../config";
 import { buildGrid, spawnPoint, TILE_WALL } from "../world/district";
-import { TILESET_KEY, PLAYER_KEY } from "../assets/manifest";
+import { TILESET_KEY } from "../assets/manifest";
+import Player, { PlayerInput } from "../entities/Player";
+import Bullets from "../entities/Bullets";
 
 /**
- * GameScene — Phase 0 / Step 1: a movable, colliding player in the district.
- *
- * Movement reads input and applies velocity; the actual integration + collision
- * is Arcade Physics. World *data* (the grid) lives in world/district.ts so the
- * sim model stays separable from rendering.
+ * GameScene — Phase 0.
+ * Step 1: movable, colliding player in the district.
+ * Step 2: mouse-aim, dash w/ i-frames, one projectile weapon.
  */
 export default class GameScene extends Phaser.Scene {
-  private player!: Phaser.Physics.Arcade.Sprite;
+  private player!: Player;
+  private bullets!: Bullets;
   private wallLayer!: Phaser.Tilemaps.TilemapLayer;
+  private spawn = { x: 0, y: 0 };
+
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
   private wasd!: Record<"W" | "A" | "S" | "D", Phaser.Input.Keyboard.Key>;
+  private dashKey!: Phaser.Input.Keyboard.Key;
 
   constructor() {
     super("Game");
   }
 
   create() {
-    // Drop the HTML boot flash now that the world is up.
     const boot = document.getElementById("boot");
     if (boot) {
       boot.style.opacity = "0";
@@ -36,6 +33,7 @@ export default class GameScene extends Phaser.Scene {
 
     this.buildDistrict();
     this.spawnPlayer();
+    this.setupCombat();
     this.setupCamera();
     this.setupInput();
     this.addHint();
@@ -54,21 +52,23 @@ export default class GameScene extends Phaser.Scene {
 
     this.physics.world.setBounds(0, 0, WORLD_W, WORLD_H);
     this.cameras.main.setBackgroundColor(COLORS.bgVoid);
-
-    // stash spawn for the player step
-    this.registry.set("spawn", spawnPoint(grid));
+    this.spawn = spawnPoint(grid);
   }
 
   private spawnPlayer() {
-    const spawn = this.registry.get("spawn") as { x: number; y: number };
-    this.player = this.physics.add.sprite(spawn.x, spawn.y, PLAYER_KEY);
-    this.player.setCollideWorldBounds(true);
-    this.player.setDepth(10);
-
-    const body = this.player.body as Phaser.Physics.Arcade.Body;
-    body.setCircle(9, 4, 4); // tighter round hitbox vs. the 26px sprite
-
+    this.player = new Player(this, this.spawn.x, this.spawn.y);
     this.physics.add.collider(this.player, this.wallLayer);
+  }
+
+  private setupCombat() {
+    this.bullets = new Bullets(this);
+    this.physics.add.collider(
+      this.bullets.group,
+      this.wallLayer,
+      (bullet) => this.onBulletHitWall(bullet as Phaser.Physics.Arcade.Image),
+      undefined,
+      this,
+    );
   }
 
   private setupCamera() {
@@ -82,11 +82,14 @@ export default class GameScene extends Phaser.Scene {
     const kb = this.input.keyboard!;
     this.cursors = kb.createCursorKeys();
     this.wasd = kb.addKeys("W,A,S,D") as typeof this.wasd;
+    this.dashKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+    // Don't let the right mouse button pop the context menu over the canvas.
+    this.input.mouse?.disableContextMenu();
   }
 
   private addHint() {
     const txt = this.add
-      .text(16, 16, "WASD / ARROWS — MOVE", {
+      .text(16, 16, "WASD MOVE · MOUSE AIM · CLICK FIRE · SPACE DASH", {
         fontFamily: "Courier New, monospace",
         fontSize: "14px",
         color: "#00e5ff",
@@ -97,27 +100,59 @@ export default class GameScene extends Phaser.Scene {
   }
 
   update() {
-    this.handleMovement();
+    const input = this.readInput();
+    this.player.step(input);
+
+    const angle = this.player.tryFire(input);
+    if (angle !== null) this.fireWeapon(angle);
+
+    this.bullets.update(this.time.now);
   }
 
-  private handleMovement() {
-    const left = this.cursors.left.isDown || this.wasd.A.isDown;
-    const right = this.cursors.right.isDown || this.wasd.D.isDown;
-    const up = this.cursors.up.isDown || this.wasd.W.isDown;
-    const down = this.cursors.down.isDown || this.wasd.S.isDown;
+  private readInput(): PlayerInput {
+    const p = this.input.activePointer;
+    const world = this.cameras.main.getWorldPoint(p.x, p.y);
+    return {
+      left: this.cursors.left.isDown || this.wasd.A.isDown,
+      right: this.cursors.right.isDown || this.wasd.D.isDown,
+      up: this.cursors.up.isDown || this.wasd.W.isDown,
+      down: this.cursors.down.isDown || this.wasd.S.isDown,
+      dash: Phaser.Input.Keyboard.JustDown(this.dashKey),
+      fire: p.isDown,
+      aimX: world.x,
+      aimY: world.y,
+    };
+  }
 
-    const dir = new Phaser.Math.Vector2(
-      (right ? 1 : 0) - (left ? 1 : 0),
-      (down ? 1 : 0) - (up ? 1 : 0),
-    );
+  private fireWeapon(angle: number) {
+    const sx = this.player.x + Math.cos(angle) * 14;
+    const sy = this.player.y + Math.sin(angle) * 14;
+    this.bullets.fire(sx, sy, angle);
+    this.muzzleFlash(sx, sy);
+    this.cameras.main.shake(40, 0.0018); // small kick; real hit-stop lands in Step 9
+  }
 
-    if (dir.lengthSq() > 0) {
-      dir.normalize().scale(PLAYER_SPEED);
-      this.player.setVelocity(dir.x, dir.y);
-      // face travel direction (nub points up at rotation 0)
-      this.player.setRotation(Math.atan2(dir.y, dir.x) + Math.PI / 2);
-    } else {
-      this.player.setVelocity(0, 0);
-    }
+  private muzzleFlash(x: number, y: number) {
+    const f = this.add.circle(x, y, 6, COLORS.bullet, 0.9).setDepth(11);
+    this.tweens.add({
+      targets: f,
+      scale: 0,
+      alpha: 0,
+      duration: 90,
+      onComplete: () => f.destroy(),
+    });
+  }
+
+  private onBulletHitWall(bullet: Phaser.Physics.Arcade.Image) {
+    const { x, y } = bullet;
+    this.bullets.kill(bullet);
+    const s = this.add.circle(x, y, 5, COLORS.spark, 1).setDepth(11);
+    this.tweens.add({
+      targets: s,
+      scale: 2,
+      alpha: 0,
+      duration: 140,
+      onComplete: () => s.destroy(),
+    });
   }
 }

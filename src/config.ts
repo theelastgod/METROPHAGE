@@ -14,8 +14,25 @@ export const WORLD_H = GRID_H * TILE;
 export const VIEW_W = 960;
 export const VIEW_H = 540;
 
-/** Player movement (px/sec). */
-export const PLAYER_SPEED = 200;
+/** Player tuning. */
+export const PLAYER = {
+  speed: 200, // px/sec
+  maxHp: 100,
+  fireRateMs: 170, // min gap between shots (hold to auto-fire)
+  dashSpeed: 640,
+  dashDurationMs: 150,
+  dashIframeMs: 260, // i-frames outlast the dash slightly
+  dashCooldownMs: 600,
+} as const;
+
+/** Projectile weapon tuning. */
+export const BULLET = {
+  speed: 580,
+  lifetimeMs: 900,
+  radius: 4,
+  damage: 25,
+  maxActive: 64,
+} as const;
 
 /**
  * Neon-noir palette: hyper-saturated emissives over near-black.
@@ -35,4 +52,7 @@ export const COLORS = {
   neonGreen: 0x39ff88,
   player: 0x00e5ff,
   playerCore: 0xeafdff,
+  bullet: 0xf7ff3c, // electric-yellow bolt
+  bulletGlow: 0xff2bd6,
+  spark: 0xffffff,
 } as const;

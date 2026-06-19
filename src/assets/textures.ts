@@ -6,7 +6,7 @@
 
 import Phaser from "phaser";
 import { TILE, COLORS } from "../config";
-import { TILESET_KEY, PLAYER_KEY } from "./manifest";
+import { TILESET_KEY, PLAYER_KEY, BULLET_KEY } from "./manifest";
 
 /** Build a 4-tile horizontal tileset strip: [floor, wall, plaza, lane]. */
 function makeTileset(scene: Phaser.Scene) {
@@ -59,6 +59,18 @@ function makePlayer(scene: Phaser.Scene) {
   g.destroy();
 }
 
+/** Build the projectile: a bright bolt with a hot core and soft glow. */
+function makeBullet(scene: Phaser.Scene) {
+  const size = 12;
+  const c = size / 2;
+  const g = scene.add.graphics();
+  g.fillStyle(COLORS.bulletGlow, 0.25).fillCircle(c, c, 6);
+  g.fillStyle(COLORS.bullet, 1).fillCircle(c, c, 3.5);
+  g.fillStyle(COLORS.spark, 1).fillCircle(c, c, 1.6);
+  g.generateTexture(BULLET_KEY, size, size);
+  g.destroy();
+}
+
 /**
  * Generate all procedural placeholders that don't yet have a real file.
  * Safe to call once in BootScene.create().
@@ -66,4 +78,5 @@ function makePlayer(scene: Phaser.Scene) {
 export function generatePlaceholders(scene: Phaser.Scene) {
   if (!scene.textures.exists(TILESET_KEY)) makeTileset(scene);
   if (!scene.textures.exists(PLAYER_KEY)) makePlayer(scene);
+  if (!scene.textures.exists(BULLET_KEY)) makeBullet(scene);
 }
