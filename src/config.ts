@@ -38,6 +38,18 @@ export const COP = {
   patrolRadius: 110, // wander radius around spawn
 } as const;
 
+/** HEAT — risk/reward meter that also drives the post-processing intensity. */
+export const HEAT = {
+  max: 100,
+  perDamage: 0.55, // heat gained per point of damage dealt
+  perKill: 12, // bonus on a cop kill
+  decayPerSec: 14, // passive cooldown rate
+  decayDelayMs: 1400, // grace after last gain before decay starts
+  buffThreshold: 50, // > this = "overclocked" tier
+  buffDamageMult: 1.5,
+  buffSpeedMult: 1.22,
+} as const;
+
 /** Cop projectile tuning (reuses the bullet texture, tinted hostile). */
 export const ENEMY_BULLET = {
   speed: 300,

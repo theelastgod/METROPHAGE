@@ -21,6 +21,8 @@ export interface PlayerInput {
  */
 export default class Player extends Phaser.Physics.Arcade.Sprite {
   hp: number = PLAYER.maxHp;
+  /** Movement multiplier applied by the scene from Heat (overclock buff). */
+  speedMult = 1;
 
   private dashUntil = 0;
   private dashReadyAt = 0;
@@ -83,7 +85,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
         this.lastGhostAt = now;
       }
     } else if (dir.lengthSq() > 0) {
-      dir.normalize().scale(PLAYER.speed);
+      dir.normalize().scale(PLAYER.speed * this.speedMult);
       this.setVelocity(dir.x, dir.y);
     } else {
       this.setVelocity(0, 0);

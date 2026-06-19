@@ -1,10 +1,20 @@
 import Phaser from "phaser";
-import { TILE, WORLD_W, WORLD_H, COLORS, BULLET, ENEMY_BULLET } from "../config";
+import {
+  TILE,
+  WORLD_W,
+  WORLD_H,
+  COLORS,
+  BULLET,
+  ENEMY_BULLET,
+  HEAT,
+} from "../config";
 import { buildGrid, spawnPoint, isWall, TILE_WALL, TileGrid } from "../world/district";
 import { TILESET_KEY } from "../assets/manifest";
 import Player, { PlayerInput } from "../entities/Player";
 import Bullets from "../entities/Bullets";
 import TuringCop from "../entities/TuringCop";
+import Heat from "../systems/Heat";
+import NeonPipeline from "../render/NeonPipeline";
 
 /**
  * GameScene — Phase 0.
@@ -19,6 +29,11 @@ export default class GameScene extends Phaser.Scene {
   private wallLayer!: Phaser.Tilemaps.TilemapLayer;
   private grid!: TileGrid;
   private spawn = { x: 0, y: 0 };
+
+  private heat = new Heat();
+  private neon?: NeonPipeline;
+  private hud!: Phaser.GameObjects.Graphics;
+  private heatLabel!: Phaser.GameObjects.Text;
 
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
   private wasd!: Record<"W" | "A" | "S" | "D", Phaser.Input.Keyboard.Key>;
@@ -40,8 +55,17 @@ export default class GameScene extends Phaser.Scene {
     this.setupProjectiles();
     this.setupEnemies();
     this.setupCamera();
+    this.setupPostFX();
     this.setupInput();
     this.addHint();
+  }
+
+  private setupPostFX() {
+    if (this.renderer.type !== Phaser.WEBGL) return;
+    const cam = this.cameras.main;
+    cam.setPostPipeline("Neon");
+    const p = cam.getPostPipeline("Neon");
+    this.neon = (Array.isArray(p) ? p[0] : p) as NeonPipeline;
   }
 
   private buildDistrict() {
@@ -108,10 +132,12 @@ export default class GameScene extends Phaser.Scene {
       undefined,
       this,
     );
+    // NOTE: pass (player, group) so the callback args are unambiguous — Phaser
+    // swaps a (group, sprite) overlap to sprite-vs-group internally.
     this.physics.add.overlap(
-      this.enemyBullets.group,
       this.player,
-      (b) => this.onEnemyBulletHitsPlayer(b as Phaser.Physics.Arcade.Image),
+      this.enemyBullets.group,
+      (_p, b) => this.onEnemyBulletHitsPlayer(b as Phaser.Physics.Arcade.Image),
       undefined,
       this,
     );
@@ -167,10 +193,49 @@ export default class GameScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(1000);
     txt.setShadow(0, 0, "#00e5ff", 8, true, true);
+
+    // Temporary Heat gauge (replaced by the full HUD in Step 7).
+    this.hud = this.add.graphics().setScrollFactor(0).setDepth(1000);
+    this.heatLabel = this.add
+      .text(18, 38, "HEAT 0", {
+        fontFamily: "Courier New, monospace",
+        fontSize: "12px",
+        color: "#ff2bd6",
+      })
+      .setScrollFactor(0)
+      .setDepth(1001);
   }
 
-  update() {
+  private drawHud() {
+    const x = 18;
+    const y = 54;
+    const w = 180;
+    const n = this.heat.normalized;
+    const buff = this.heat.buffActive;
+
+    this.hud.clear();
+    this.hud.fillStyle(0x1a0a1e, 0.85).fillRect(x, y, w, 8);
+    this.hud
+      .fillStyle(buff ? COLORS.neonYellow : COLORS.neonMagenta, 1)
+      .fillRect(x + 1, y + 1, (w - 2) * n, 6);
+    // threshold tick at 50
+    this.hud
+      .fillStyle(COLORS.neonCyan, 0.8)
+      .fillRect(x + (w - 2) * 0.5, y - 1, 1, 10);
+
+    this.heatLabel
+      .setText(`HEAT ${Math.round(this.heat.value)}${buff ? "  ⚡OVERCLOCK" : ""}`)
+      .setColor(buff ? "#f7ff3c" : "#ff2bd6");
+  }
+
+  update(_time: number, delta: number) {
     const now = this.time.now;
+
+    // HEAT: decay when passive, apply overclock buff, drive the post-FX.
+    this.heat.update(now, delta);
+    this.player.speedMult = this.heat.speedMult;
+    if (this.neon) this.neon.heat = this.heat.normalized;
+
     const input = this.readInput();
     this.player.step(input);
 
@@ -188,6 +253,8 @@ export default class GameScene extends Phaser.Scene {
         );
       }
     });
+
+    this.drawHud();
   }
 
   private readInput(): PlayerInput {
@@ -223,7 +290,11 @@ export default class GameScene extends Phaser.Scene {
     if (!cop.active || cop.isDead) return;
     this.bullets.kill(bullet);
     this.spark(bullet.x, bullet.y, COLORS.enemyEdge, 1.6);
-    cop.hurt(BULLET.damage);
+
+    const dmg = BULLET.damage * this.heat.damageMult; // overclock hits harder
+    const killed = cop.hurt(dmg);
+    this.heat.add(dmg * HEAT.perDamage, this.time.now);
+    if (killed) this.heat.add(HEAT.perKill, this.time.now);
     // (Singularity gain on kills is wired in Step 5.)
   }
 
