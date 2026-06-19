@@ -52,7 +52,7 @@ export const ENEMY_TIERS: Record<string, EnemyTierDef> = {
     slamWindupMs: 0,
     kite: false,
     xp: 10,
-    credits: 3,
+    credits: 4,
   },
   enforcer: {
     id: "enforcer",
@@ -75,7 +75,7 @@ export const ENEMY_TIERS: Record<string, EnemyTierDef> = {
     slamWindupMs: 0,
     kite: true,
     xp: 25,
-    credits: 8,
+    credits: 11,
   },
   purge: {
     id: "purge",
@@ -98,7 +98,7 @@ export const ENEMY_TIERS: Record<string, EnemyTierDef> = {
     slamWindupMs: 900,
     kite: false,
     xp: 60,
-    credits: 20,
+    credits: 26,
   },
 };
 

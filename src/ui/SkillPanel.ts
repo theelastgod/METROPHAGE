@@ -3,6 +3,7 @@ import { VIEW_W, VIEW_H } from "../config";
 import { treeFor, SkillNode } from "../game/skills";
 import Progression, { RESPEC_COST } from "../systems/Progression";
 import { ClassDef } from "../game/classes";
+import { drawPanelFrame } from "./panelChrome";
 
 const BRANCHES = ["ASSAULT", "CHASSIS", "SYSTEMS"];
 
@@ -118,8 +119,7 @@ export default class SkillPanel {
   private refresh() {
     const g = this.g;
     g.clear();
-    g.fillStyle(0x07061a, 0.95).fillRect(this.x, this.y, this.w, this.h);
-    g.lineStyle(2, 0x00e5ff, 0.9).strokeRect(this.x, this.y, this.w, this.h);
+    drawPanelFrame(g, this.x, this.y, this.w, this.h);
 
     this.header.setText(
       `SKILL TREE   LV ${this.prog.level}   POINTS ${this.prog.skillPoints}   ₵ ${this.prog.currency}`,

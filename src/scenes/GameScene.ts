@@ -1062,6 +1062,7 @@ export default class GameScene
       }
     } else if (juice) {
       this.synth.hit();
+      cop.knock(cop.x - this.player.x, cop.y - this.player.y, 150); // punch
     }
   }
 
@@ -1327,10 +1328,16 @@ export default class GameScene
     this.enemyBullets.kill(bullet);
     if (this.player.invulnerable) return; // negated by dash / respawn i-frames
     const died = this.player.applyDamage(dmg);
-    this.cameras.main.shake(60, 0.004);
-    this.synth.hit();
+    this.onPlayerHurt();
     this.hitStop(45);
     if (died) this.respawnPlayer();
+  }
+
+  /** Player-damage feedback: red screen flash + shake. */
+  private onPlayerHurt() {
+    this.cameras.main.flash(120, 90, 0, 10);
+    this.cameras.main.shake(70, 0.005);
+    this.synth.hit();
   }
 
   // ---- EnemyHost (cop attacks) ----
@@ -1370,7 +1377,7 @@ export default class GameScene
       const d = Phaser.Math.Distance.Between(this.player.x, this.player.y, x, y);
       if (d <= radius && !this.player.invulnerable) {
         const died = this.player.applyDamage(damage);
-        this.synth.hit();
+        this.onPlayerHurt();
         if (died) this.respawnPlayer();
       }
     });

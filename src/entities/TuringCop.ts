@@ -28,6 +28,7 @@ export default class TuringCop extends Phaser.Physics.Arcade.Sprite {
   private repathAt = 0;
   private dead = false;
   private disabledUntil = 0;
+  private staggerUntil = 0;
   private shieldArc?: Phaser.GameObjects.Arc;
 
   constructor(
@@ -73,6 +74,15 @@ export default class TuringCop extends Phaser.Physics.Arcade.Sprite {
     else this.setTint(this.tier.tint);
   }
 
+  /** Brief knockback impulse from a hit (heavier tiers resist via scale). */
+  knock(dx: number, dy: number, force: number) {
+    if (this.dead) return;
+    const len = Math.hypot(dx, dy) || 1;
+    const f = force / this.tier.scale;
+    (this.body as Phaser.Physics.Arcade.Body).setVelocity((dx / len) * f, (dy / len) * f);
+    this.staggerUntil = this.scene.time.now + 110;
+  }
+
   /** Hacked: stunned + shield dropped (WINTERMUTE's Hack Cone). */
   disable(ms: number) {
     if (this.dead) return;
@@ -89,6 +99,10 @@ export default class TuringCop extends Phaser.Physics.Arcade.Sprite {
     if (now < this.disabledUntil) {
       this.setVelocity(0, 0);
       return; // hacked: frozen
+    }
+    if (now < this.staggerUntil) {
+      (this.body as Phaser.Physics.Arcade.Body).velocity.scale(0.85); // ride out knockback
+      return;
     }
     if (this.tintTopLeft === 0x29e7ff) this.applyTierTint(); // hack expired
 

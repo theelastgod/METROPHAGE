@@ -5,6 +5,7 @@ import Progression from "../systems/Progression";
 import Inventory from "../systems/Inventory";
 import { itemValue, sellValue, RARITIES } from "../game/items";
 import { CONSUMABLES } from "../game/consumables";
+import { drawPanelFrame } from "./panelChrome";
 
 const BUY_ROWS = 8; // 5 gear + 3 consumables
 const SELL_ROWS = 13;
@@ -126,8 +127,7 @@ export default class VendorPanel {
   private refresh() {
     const g = this.g;
     g.clear();
-    g.fillStyle(0x07061a, 0.96).fillRect(this.x, this.y, this.w, this.h);
-    g.lineStyle(2, 0x00e5ff, 0.9).strokeRect(this.x, this.y, this.w, this.h);
+    drawPanelFrame(g, this.x, this.y, this.w, this.h);
     g.lineStyle(1, 0x29e7ff, 0.3).lineBetween(this.x + this.colW, this.y + 30, this.x + this.colW, this.y + this.h - 32);
 
     this.header.setText(`FIXER          ₵ ${this.prog.currency}`);

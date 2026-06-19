@@ -3,6 +3,7 @@ import { VIEW_W, VIEW_H } from "../config";
 import Inventory from "../systems/Inventory";
 import { Item, Slot, SLOTS, SLOT_NAMES, RARITIES, itemStatLines } from "../game/items";
 import { ModBag } from "../game/stats";
+import { drawPanelFrame } from "./panelChrome";
 
 const COLS = 6;
 const ROWS = 4;
@@ -136,8 +137,7 @@ export default class InventoryPanel {
   private refresh() {
     const g = this.g;
     g.clear();
-    g.fillStyle(0x07061a, 0.96).fillRect(this.x, this.y, this.w, this.h);
-    g.lineStyle(2, 0x00e5ff, 0.9).strokeRect(this.x, this.y, this.w, this.h);
+    drawPanelFrame(g, this.x, this.y, this.w, this.h);
 
     this.header.setText(`INVENTORY   (${this.inv.items.length}/${this.inv.cap})`);
     this.summary.setText(this.modSummary(this.inv.mods()));

@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { VIEW_W, VIEW_H } from "../config";
 import Contracts from "../systems/Contracts";
 import { Contract, objectiveLabel } from "../game/contracts";
+import { drawPanelFrame } from "./panelChrome";
 
 const DIFF_HEX = ["#9aa3b2", "#9aa3b2", "#29e7ff", "#ff2bd6"]; // index by difficulty
 
@@ -113,8 +114,7 @@ export default class ContractPanel {
   refresh() {
     const g = this.g;
     g.clear();
-    g.fillStyle(0x07061a, 0.96).fillRect(this.x, this.y, this.w, this.h);
-    g.lineStyle(2, 0x00e5ff, 0.9).strokeRect(this.x, this.y, this.w, this.h);
+    drawPanelFrame(g, this.x, this.y, this.w, this.h);
 
     const active = this.contracts.active;
     this.activeText.setText(

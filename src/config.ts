@@ -68,16 +68,16 @@ export const OVERDRIVE = {
   damageMult: 2.2,
   speedMult: 1.45,
   abilityRate: 6, // near-instant ability cooldowns ("ability spam")
-  purgeCops: 6, // System purge wave focused on the player afterward
+  purgeCops: 5, // System purge wave focused on the player afterward
 } as const;
 
 /** Heat-scaled spawn pressure for the Human Security System. */
 export const SPAWN = {
-  maxEnemies: 16,
-  baseIntervalMs: 4200, // at heat 0
-  minIntervalMs: 1300, // at heat 100
+  maxEnemies: 12, // cap so high Heat pressures without overwhelming
+  baseIntervalMs: 4600, // at heat 0
+  minIntervalMs: 1500, // at heat 100
   ringMin: 240, // spawn this far from the player...
-  ringMax: 380, // ...up to here (focuses pressure on the player)
+  ringMax: 400, // ...up to here (focuses pressure on the player)
   enforcerHeat: 30, // enforcers start appearing past this heat
   purgeHeat: 60, // purge units past this heat
 } as const;
