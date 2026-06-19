@@ -18,6 +18,7 @@ import { getClass, ClassDef, PrimaryDef } from "../game/classes";
 import { AbilityHost, AbilityDef } from "../game/ability";
 import { ENEMY_TIERS, EnemyHost } from "../game/enemies";
 import { buildGrid, spawnPoint, isWall, TILE_WALL, TileGrid } from "../world/district";
+import { getDistrict, DistrictDef } from "../game/districts";
 import {
   TILESET_KEY,
   PORTRAIT_PLAYER_KEY,
@@ -66,6 +67,8 @@ export default class GameScene
   implements AbilityHost, EnemyHost
 {
   private classDef!: ClassDef;
+  private district!: DistrictDef;
+  private districtIndex = 0;
   private nextSpawnAt = 0;
   private player!: Player;
   private bullets!: Bullets; // player weapon
@@ -157,6 +160,10 @@ export default class GameScene
     }
     this.contracts.refresh(this.progression.level);
     this.vendor = new Vendor(this.progression.level);
+
+    // Resolve which district to run (Step 2 sets this on extraction; default = first).
+    this.districtIndex = (this.registry.get("districtIndex") as number) ?? 0;
+    this.district = getDistrict(this.districtIndex);
 
     // Audio needs a user gesture; the intro requires a click/key to advance.
     this.input.once("pointerdown", () => this.synth.ensureStarted());
@@ -388,9 +395,9 @@ export default class GameScene
   }
 
   private createNode() {
-    // A capture target placed on open street, away from the player spawn.
-    let tx = 13;
-    let ty = 24;
+    // Capture target — placed from the district def (carved walkable by the builder).
+    let tx = this.district.nodeTile[0];
+    let ty = this.district.nodeTile[1];
     if (this.grid[ty]?.[tx] === undefined || isWall(this.grid[ty][tx])) {
       // fallback: first walkable tile reasonably far from spawn
       outer: for (let y = 1; y < this.grid.length - 1; y++) {
@@ -420,7 +427,7 @@ export default class GameScene
   }
 
   private buildDistrict() {
-    this.grid = buildGrid();
+    this.grid = buildGrid(this.district);
     const map = this.make.tilemap({
       data: this.grid,
       tileWidth: TILE,
@@ -432,7 +439,7 @@ export default class GameScene
 
     this.physics.world.setBounds(0, 0, WORLD_W, WORLD_H);
     this.cameras.main.setBackgroundColor(COLORS.bgVoid);
-    this.spawn = spawnPoint(this.grid);
+    this.spawn = spawnPoint(this.grid, this.district);
   }
 
   private spawnPlayer() {
@@ -508,15 +515,8 @@ export default class GameScene
   }
 
   private spawnCops() {
-    // Hand-picked posts; the 4th hosts an Enforcer so the player meets a shield early.
-    const posts: Array<[number, number, "patrol" | "enforcer"]> = [
-      [13, 5, "patrol"],
-      [27, 6, "patrol"],
-      [34, 11, "enforcer"],
-      [27, 16, "patrol"],
-      [8, 16, "patrol"],
-    ];
-    for (const [tx, ty, tier] of posts) {
+    // Garrison posts come from the district def.
+    for (const [tx, ty, tier] of this.district.copPosts) {
       if (this.grid[ty]?.[tx] === undefined || isWall(this.grid[ty][tx])) continue;
       this.spawnEnemy(tier, tx * TILE + TILE / 2, ty * TILE + TILE / 2);
     }
