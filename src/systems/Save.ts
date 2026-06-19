@@ -1,7 +1,7 @@
 import type { ProgressData } from "./Progression";
+import type { InventoryData } from "./Inventory";
 
-// METROPHAGE — local save (localStorage). Single slot. Inventory/equipped are
-// placeholders here; Phase 1 Step 5 fills them.
+// METROPHAGE — local save (localStorage). Single slot.
 
 const KEY = "metrophage_save_v1";
 
@@ -9,8 +9,7 @@ export interface SaveState {
   v: number;
   progress: ProgressData;
   singularity: number;
-  inventory: unknown[];
-  equipped: Record<string, unknown>;
+  inventory: InventoryData;
 }
 
 export function loadSave(): SaveState | null {

@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { PLAYER, COLORS } from "../config";
+import { PLAYER, COLORS, SHIELD } from "../config";
 import { PLAYER_KEY, faceFrame } from "../assets/manifest";
 import { ClassDef } from "../game/classes";
 
@@ -24,6 +24,9 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
   readonly classDef: ClassDef;
   maxHp: number;
   hp: number;
+  maxShield = 0;
+  shield = 0;
+  private shieldRegenAt = 0;
   /** Movement multiplier applied by the scene from Heat (overclock buff). */
   speedMult = 1;
   /** Persistent move-speed bonus from skills/gear (1 = none). */
@@ -132,10 +135,33 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     return Phaser.Math.Angle.Between(this.x, this.y, input.aimX, input.aimY);
   }
 
-  /** Take damage unless invulnerable (dash i-frames negate it). Returns true if it killed. */
+  /** Update max shield from gear; grant newly-added shield immediately. */
+  setMaxShield(value: number) {
+    const added = value - this.maxShield;
+    this.maxShield = value;
+    if (added > 0) this.shield = Math.min(value, this.shield + added);
+    if (this.shield > value) this.shield = value;
+  }
+
+  /** Regenerate shields after a safe window. */
+  tickShield(now: number, dtMs: number) {
+    if (this.maxShield <= 0 || this.shield >= this.maxShield) return;
+    if (now >= this.shieldRegenAt) {
+      this.shield = Math.min(this.maxShield, this.shield + SHIELD.regenPerSec * (dtMs / 1000));
+    }
+  }
+
+  /** Take damage (shield absorbs first) unless invulnerable. Returns true if it killed. */
   applyDamage(dmg: number): boolean {
     if (this.invulnerable) return false;
-    this.hp = Math.max(0, this.hp - dmg);
+    this.shieldRegenAt = this.scene.time.now + SHIELD.regenDelayMs;
+    let rem = dmg;
+    if (this.shield > 0) {
+      const used = Math.min(this.shield, rem);
+      this.shield -= used;
+      rem -= used;
+    }
+    if (rem > 0) this.hp = Math.max(0, this.hp - rem);
     this.invulnUntil = this.scene.time.now + PLAYER.hitIframeMs;
     this.setTint(COLORS.hurt);
     this.scene.time.delayedCall(90, () => this.setTint(this.classDef.color));
@@ -144,6 +170,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
 
   respawn(x: number, y: number) {
     this.hp = this.maxHp;
+    this.shield = this.maxShield;
     this.setPosition(x, y);
     this.setVelocity(0, 0);
     this.setTint(this.classDef.color);

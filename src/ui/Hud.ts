@@ -21,6 +21,8 @@ export interface HudState {
   xpNorm: number; // 0..1
   credits: number;
   skillPoints: number;
+  shield: number;
+  shieldMax: number;
 }
 
 const hex = (c: number) => "#" + c.toString(16).padStart(6, "0");
@@ -104,6 +106,16 @@ export default class Hud {
 
     const hpNorm = s.hpMax > 0 ? Math.max(0, s.hp / s.hpMax) : 0;
     this.bar(this.py + 14, hpNorm, hpNorm > 0.3 ? COLORS.hp : COLORS.hpLow);
+    // shield overlay on the HP bar (cyan), only when the player has shields
+    if (s.shieldMax > 0) {
+      const w = this.barW - 2;
+      this.g.fillStyle(COLORS.neonCyan, 0.9).fillRect(
+        this.barX + 1,
+        this.py + 14 + 1,
+        w * Phaser.Math.Clamp(s.shield / s.shieldMax, 0, 1),
+        3,
+      );
+    }
     this.bar(
       this.py + 36,
       s.heatNorm,

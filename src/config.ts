@@ -85,6 +85,12 @@ export const SPAWN = {
 /** WINTERMUTE beam shield-break multiplier. */
 export const BEAM_SHIELD_MULT = 3;
 
+/** Player shield pool (from gear): absorbs before HP, regenerates when safe. */
+export const SHIELD = {
+  regenDelayMs: 2500, // no-damage time before regen begins
+  regenPerSec: 9,
+} as const;
+
 /** Ally minions (WINTERMUTE drones / SWARM minions). */
 export const MINION = {
   speed: 150,

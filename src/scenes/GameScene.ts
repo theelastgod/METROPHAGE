@@ -37,13 +37,17 @@ import Minion from "../entities/Minion";
 import Heat from "../systems/Heat";
 import Singularity from "../systems/Singularity";
 import Progression from "../systems/Progression";
+import Inventory from "../systems/Inventory";
 import { loadSave, writeSave } from "../systems/Save";
-import { ModBag, ZERO_MODS } from "../game/stats";
+import { ModBag, ZERO_MODS, addMods } from "../game/stats";
+import { rollItem } from "../game/items";
+import Pickup from "../entities/Pickup";
 import NeonPipeline from "../render/NeonPipeline";
 import Synth from "../audio/Synth";
 import Hud from "../ui/Hud";
 import DialogueBox, { DialoguePage } from "../ui/DialogueBox";
 import SkillPanel from "../ui/SkillPanel";
+import InventoryPanel from "../ui/InventoryPanel";
 
 /**
  * GameScene — Phase 0.
@@ -67,8 +71,11 @@ export default class GameScene
   private heat = new Heat();
   private singularity = new Singularity();
   private progression!: Progression;
+  private inventory = new Inventory();
   private mods: ModBag = ZERO_MODS;
   private skillPanel!: SkillPanel;
+  private inventoryPanel!: InventoryPanel;
+  private pickups!: Phaser.Physics.Arcade.Group;
   private nextAutosaveAt = 0;
   private synth = new Synth(); // persists across scene.restart()
   private won = false;
@@ -93,6 +100,7 @@ export default class GameScene
   private ultKey!: Phaser.Input.Keyboard.Key;
   private overdriveKey!: Phaser.Input.Keyboard.Key;
   private skillKey!: Phaser.Input.Keyboard.Key;
+  private invKey!: Phaser.Input.Keyboard.Key;
 
   constructor() {
     super("Game");
@@ -120,10 +128,12 @@ export default class GameScene
 
     // Resume from save (Continue) or start a fresh run for the chosen class.
     const save = this.registry.get("resume") ? loadSave() : null;
+    this.inventory = new Inventory();
     if (save) {
       this.classDef = getClass(save.progress.classId);
       this.progression = new Progression(save.progress.classId, save.progress);
       this.singularity.value = save.singularity;
+      this.inventory.load(save.inventory);
     } else {
       this.classDef = getClass(this.registry.get("classId") as string | undefined);
       this.progression = new Progression(this.classDef.id);
@@ -142,16 +152,22 @@ export default class GameScene
     this.createAgents();
     this.minions = this.physics.add.group();
     this.physics.add.collider(this.minions, this.wallLayer);
+    this.pickups = this.physics.add.group();
+    this.physics.add.overlap(this.player, this.pickups, (_p, pk) =>
+      this.collectPickup(pk as Pickup),
+    );
     this.createDecor();
     this.setupCamera();
     this.setupPostFX();
     this.setupInput();
     this.setupUi();
 
-    this.skillPanel = new SkillPanel(this, this.classDef, this.progression, () => {
+    const onLoadoutChange = () => {
       this.recomputeStats();
       this.autosave(true);
-    });
+    };
+    this.skillPanel = new SkillPanel(this, this.classDef, this.progression, onLoadoutChange);
+    this.inventoryPanel = new InventoryPanel(this, this.inventory, onLoadoutChange);
     this.recomputeStats();
     this.autosave(true); // persist the (possibly fresh) run immediately
 
@@ -161,10 +177,11 @@ export default class GameScene
     this.events.once("shutdown", () => window.removeEventListener("beforeunload", flush));
   }
 
-  /** Resolve skill/level mods into effective player stats. */
+  /** Resolve skill + gear mods into effective player stats. */
   private recomputeStats() {
-    this.mods = this.progression.mods();
+    this.mods = addMods(this.progression.mods(), this.inventory.mods());
     this.player.setMaxHp(this.classDef.maxHp + this.mods.hpAdd);
+    this.player.setMaxShield(this.mods.shieldAdd);
     this.player.bonusSpeedMult = 1 + this.mods.movePct;
   }
 
@@ -176,9 +193,31 @@ export default class GameScene
       v: 1,
       progress: this.progression.toData(),
       singularity: this.singularity.value,
-      inventory: [],
-      equipped: {},
+      inventory: this.inventory.toData(),
     });
+  }
+
+  private collectPickup(pk: Pickup) {
+    if (!pk.active) return;
+    if (this.inventory.add(pk.item)) {
+      this.floatText(pk.item.name, "#39ff88");
+      this.synth.infect();
+      this.autosave(true);
+    } else {
+      this.floatText("INVENTORY FULL", "#ff3b6b");
+      return; // leave it on the ground
+    }
+    pk.destroy();
+  }
+
+  /** Rarity-weighted loot drop from a killed cop (Purge Units drop better). */
+  private maybeDropLoot(cop: TuringCop) {
+    const tier = cop.tier;
+    const chance = tier.id === "purge" ? 0.7 : tier.id === "enforcer" ? 0.28 : 0.12;
+    if (Math.random() > chance) return;
+    const boost = tier.id === "purge" ? 2 : tier.id === "enforcer" ? 0.6 : 0;
+    const item = rollItem(this.progression.level, boost);
+    this.pickups.add(new Pickup(this, cop.x, cop.y, item));
   }
 
   private grantKillRewards(tierXp: number, tierCredits: number) {
@@ -445,7 +484,11 @@ export default class GameScene
     this.ultKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.F);
     this.overdriveKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.R);
     this.skillKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.K);
-    kb.on("keydown-ESC", () => this.skillPanel?.close());
+    this.invKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.I);
+    kb.on("keydown-ESC", () => {
+      this.skillPanel?.close();
+      this.inventoryPanel?.close();
+    });
     this.input.mouse?.disableContextMenu();
   }
 
@@ -527,6 +570,8 @@ export default class GameScene
       xpNorm: this.progression.atCap ? 1 : this.progression.xp / this.progression.nextLevelXp,
       credits: this.progression.currency,
       skillPoints: this.progression.skillPoints,
+      shield: this.player.shield,
+      shieldMax: this.player.maxShield,
     });
   }
 
@@ -539,11 +584,18 @@ export default class GameScene
     // OVERDRIVE lifecycle.
     if (this.overdriveActive && now >= this.overdriveUntil) this.endOverdrive();
 
-    if (Phaser.Input.Keyboard.JustDown(this.skillKey)) this.skillPanel.toggle();
+    if (Phaser.Input.Keyboard.JustDown(this.skillKey)) {
+      this.inventoryPanel.close();
+      this.skillPanel.toggle();
+    }
+    if (Phaser.Input.Keyboard.JustDown(this.invKey)) {
+      this.skillPanel.close();
+      this.inventoryPanel.toggle();
+    }
 
     this.updateHud();
     this.autosave();
-    if (this.skillPanel.isOpen) return; // freeze the sim while the skill tree is open
+    if (this.skillPanel.isOpen || this.inventoryPanel.isOpen) return; // menu open: freeze sim
     if (this.dialogue.isOpen) return; // freeze the sim while a dialogue is up
 
     // HEAT: pinned during Overdrive, else decay. Drives post-FX + music.
@@ -552,11 +604,12 @@ export default class GameScene
       if (this.neon) this.neon.heat = 1;
       this.synth.setIntensity(1);
     } else {
-      this.heat.update(now, delta);
+      this.heat.update(now, delta, 1 - this.mods.heatDecayPct);
       if (this.neon) this.neon.heat = this.heat.normalized;
       this.synth.setIntensity(this.heat.normalized);
     }
     this.player.speedMult = this.spdMult;
+    this.player.tickShield(now, delta);
 
     const input = this.readInput();
     this.player.step(input);
@@ -841,6 +894,7 @@ export default class GameScene
       this.heat.add(HEAT.perKill * heatGain, this.time.now);
       this.singularity.add(SINGULARITY.perKill);
       this.grantKillRewards(cop.tier.xp, cop.tier.credits);
+      this.maybeDropLoot(cop);
       this.synth.kill();
       if (juice) {
         this.hitStop(60);

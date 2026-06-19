@@ -25,10 +25,10 @@ export default class Heat {
     this.lastGainAt = now;
   }
 
-  /** Advance decay. now/dtMs come from the game clock. */
-  update(now: number, dtMs: number) {
+  /** Advance decay. now/dtMs come from the game clock; decayMult from gear (<1 = slower). */
+  update(now: number, dtMs: number, decayMult = 1) {
     if (this.value > 0 && now - this.lastGainAt >= HEAT.decayDelayMs) {
-      this.value = Math.max(0, this.value - HEAT.decayPerSec * (dtMs / 1000));
+      this.value = Math.max(0, this.value - HEAT.decayPerSec * decayMult * (dtMs / 1000));
     }
   }
 
