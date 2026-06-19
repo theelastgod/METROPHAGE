@@ -22,10 +22,12 @@ export interface PlayerInput {
  */
 export default class Player extends Phaser.Physics.Arcade.Sprite {
   readonly classDef: ClassDef;
-  readonly maxHp: number;
+  maxHp: number;
   hp: number;
   /** Movement multiplier applied by the scene from Heat (overclock buff). */
   speedMult = 1;
+  /** Persistent move-speed bonus from skills/gear (1 = none). */
+  bonusSpeedMult = 1;
   /** Ability / ultimate cooldown timestamps (scene-managed). */
   nextAbilityAt = 0;
   nextUltAt = 0;
@@ -95,7 +97,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
         this.lastGhostAt = now;
       }
     } else if (dir.lengthSq() > 0) {
-      dir.normalize().scale(this.classDef.speed * this.speedMult);
+      dir.normalize().scale(this.classDef.speed * this.speedMult * this.bonusSpeedMult);
       this.setVelocity(dir.x, dir.y);
     } else {
       this.setVelocity(0, 0);
@@ -103,6 +105,12 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
 
     // i-frame flicker.
     this.setAlpha(this.invulnerable ? 0.55 : 1);
+  }
+
+  /** Update max HP from skills/gear; keep current HP within the new cap. */
+  setMaxHp(value: number) {
+    this.maxHp = value;
+    if (this.hp > value) this.hp = value;
   }
 
   /** Ability-driven dash (e.g. K-GUERILLA Dash-Strike). */

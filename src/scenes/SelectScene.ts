@@ -1,7 +1,8 @@
 import Phaser from "phaser";
 import { VIEW_W, VIEW_H, COLORS } from "../config";
 import { PLAYER_KEY } from "../assets/manifest";
-import { CLASSES } from "../game/classes";
+import { CLASSES, getClass } from "../game/classes";
+import { loadSave } from "../systems/Save";
 
 /**
  * Class-select screen. Boot -> Select -> Game. Picks a ClassDef, stashes its id in
@@ -39,6 +40,29 @@ export default class SelectScene extends Phaser.Scene {
         color: "#00e5ff",
       })
       .setOrigin(0.5);
+
+    // CONTINUE (resume save) if one exists.
+    const save = loadSave();
+    if (save) {
+      const c = getClass(save.progress.classId);
+      const cont = this.add
+        .text(
+          VIEW_W / 2,
+          82,
+          `▶ CONTINUE — ${c.name}  Lv ${save.progress.level}   (or pick a class for a NEW run)`,
+          { fontFamily: "Courier New, monospace", fontSize: "12px", color: "#39ff88" },
+        )
+        .setOrigin(0.5)
+        .setInteractive({ useHandCursor: true });
+      cont.on("pointerdown", () => {
+        this.registry.set("resume", true);
+        this.scene.start("Game");
+      });
+      this.input.keyboard?.on("keydown-ENTER", () => {
+        this.registry.set("resume", true);
+        this.scene.start("Game");
+      });
+    }
 
     this.frames = this.add.graphics();
 
@@ -140,6 +164,7 @@ export default class SelectScene extends Phaser.Scene {
 
   private select(i: number) {
     this.registry.set("classId", CLASSES[i].id);
+    this.registry.set("resume", false); // a class card = a fresh run (overwrites save)
     this.scene.start("Game");
   }
 }

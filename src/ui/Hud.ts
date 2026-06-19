@@ -17,6 +17,10 @@ export interface HudState {
   ultReady: boolean;
   overdriveReady: boolean;
   overdriveActive: boolean;
+  level: number;
+  xpNorm: number; // 0..1
+  credits: number;
+  skillPoints: number;
 }
 
 const hex = (c: number) => "#" + c.toString(16).padStart(6, "0");
@@ -33,6 +37,8 @@ export default class Hud {
   private abilityText: Phaser.GameObjects.Text;
   private ultText: Phaser.GameObjects.Text;
   private overdriveText: Phaser.GameObjects.Text;
+  private metaText: Phaser.GameObjects.Text;
+  private skillText: Phaser.GameObjects.Text;
 
   private readonly px = 14;
   private readonly py = 14;
@@ -60,6 +66,17 @@ export default class Hud {
     this.abilityText = label(this.py + this.ph + 6, "#9aa3b2", "11px");
     this.ultText = label(this.py + this.ph + 22, "#9aa3b2", "11px");
     this.overdriveText = label(this.py + this.ph + 38, "#f7ff3c", "12px");
+    this.skillText = label(this.py + this.ph + 54, "#9aa3b2", "11px");
+    this.metaText = scene.add
+      .text(this.px + this.pw - 10, this.py + 8, "", {
+        fontFamily: "Courier New, monospace",
+        fontSize: "11px",
+        color: "#00e5ff",
+        align: "right",
+      })
+      .setOrigin(1, 0)
+      .setScrollFactor(0)
+      .setDepth(1001);
 
     // Weapon slot (real UI art), just right of the panel.
     const sx = this.px + this.pw + 26;
@@ -115,6 +132,20 @@ export default class Hud {
         : s.overdriveReady
           ? "R → OVERDRIVE READY"
           : "",
+    );
+
+    this.metaText.setText(`LV ${s.level}   ₵ ${s.credits}`);
+    this.skillText
+      .setText(s.skillPoints > 0 ? `K SKILLS (${s.skillPoints} pts!)` : "K SKILLS")
+      .setColor(s.skillPoints > 0 ? "#39ff88" : "#5a6172");
+
+    // thin XP bar along the panel's bottom edge
+    g.fillStyle(0x0a1420, 0.9).fillRect(this.px + 2, this.py + this.ph - 3, this.pw - 4, 2);
+    g.fillStyle(0x00e5ff, 1).fillRect(
+      this.px + 2,
+      this.py + this.ph - 3,
+      (this.pw - 4) * Phaser.Math.Clamp(s.xpNorm, 0, 1),
+      2,
     );
   }
 

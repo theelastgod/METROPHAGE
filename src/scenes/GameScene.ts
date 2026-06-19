@@ -36,10 +36,14 @@ import Agent from "../entities/Agent";
 import Minion from "../entities/Minion";
 import Heat from "../systems/Heat";
 import Singularity from "../systems/Singularity";
+import Progression from "../systems/Progression";
+import { loadSave, writeSave } from "../systems/Save";
+import { ModBag, ZERO_MODS } from "../game/stats";
 import NeonPipeline from "../render/NeonPipeline";
 import Synth from "../audio/Synth";
 import Hud from "../ui/Hud";
 import DialogueBox, { DialoguePage } from "../ui/DialogueBox";
+import SkillPanel from "../ui/SkillPanel";
 
 /**
  * GameScene — Phase 0.
@@ -62,6 +66,10 @@ export default class GameScene
 
   private heat = new Heat();
   private singularity = new Singularity();
+  private progression!: Progression;
+  private mods: ModBag = ZERO_MODS;
+  private skillPanel!: SkillPanel;
+  private nextAutosaveAt = 0;
   private synth = new Synth(); // persists across scene.restart()
   private won = false;
   private hitStopActive = false;
@@ -84,6 +92,7 @@ export default class GameScene
   private abilityKey!: Phaser.Input.Keyboard.Key;
   private ultKey!: Phaser.Input.Keyboard.Key;
   private overdriveKey!: Phaser.Input.Keyboard.Key;
+  private skillKey!: Phaser.Input.Keyboard.Key;
 
   constructor() {
     super("Game");
@@ -107,7 +116,18 @@ export default class GameScene
     this.physics.world.resume();
     this.heat = new Heat();
     this.singularity = new Singularity();
-    this.classDef = getClass(this.registry.get("classId") as string | undefined);
+    this.nextAutosaveAt = 0;
+
+    // Resume from save (Continue) or start a fresh run for the chosen class.
+    const save = this.registry.get("resume") ? loadSave() : null;
+    if (save) {
+      this.classDef = getClass(save.progress.classId);
+      this.progression = new Progression(save.progress.classId, save.progress);
+      this.singularity.value = save.singularity;
+    } else {
+      this.classDef = getClass(this.registry.get("classId") as string | undefined);
+      this.progression = new Progression(this.classDef.id);
+    }
 
     // Audio needs a user gesture; the intro requires a click/key to advance.
     this.input.once("pointerdown", () => this.synth.ensureStarted());
@@ -127,6 +147,47 @@ export default class GameScene
     this.setupPostFX();
     this.setupInput();
     this.setupUi();
+
+    this.skillPanel = new SkillPanel(this, this.classDef, this.progression, () => {
+      this.recomputeStats();
+      this.autosave(true);
+    });
+    this.recomputeStats();
+    this.autosave(true); // persist the (possibly fresh) run immediately
+
+    // Persist on tab close / hide.
+    const flush = () => this.autosave(true);
+    window.addEventListener("beforeunload", flush);
+    this.events.once("shutdown", () => window.removeEventListener("beforeunload", flush));
+  }
+
+  /** Resolve skill/level mods into effective player stats. */
+  private recomputeStats() {
+    this.mods = this.progression.mods();
+    this.player.setMaxHp(this.classDef.maxHp + this.mods.hpAdd);
+    this.player.bonusSpeedMult = 1 + this.mods.movePct;
+  }
+
+  private autosave(force = false) {
+    const now = this.time.now;
+    if (!force && now < this.nextAutosaveAt) return;
+    this.nextAutosaveAt = now + 4000;
+    writeSave({
+      v: 1,
+      progress: this.progression.toData(),
+      singularity: this.singularity.value,
+      inventory: [],
+      equipped: {},
+    });
+  }
+
+  private grantKillRewards(tierXp: number, tierCredits: number) {
+    this.progression.addCurrency(tierCredits);
+    const gained = this.progression.addXp(tierXp);
+    if (gained > 0) {
+      this.recomputeStats();
+      this.floatText(`LEVEL ${this.progression.level}`, "#f7ff3c");
+    }
   }
 
   private createNpc() {
@@ -383,6 +444,8 @@ export default class GameScene
     this.abilityKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.Q);
     this.ultKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.F);
     this.overdriveKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.R);
+    this.skillKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.K);
+    kb.on("keydown-ESC", () => this.skillPanel?.close());
     this.input.mouse?.disableContextMenu();
   }
 
@@ -433,7 +496,8 @@ export default class GameScene
     return this.overdriveActive;
   }
   private get dmgMult(): number {
-    return this.inOverdrive ? OVERDRIVE.damageMult : this.heat.damageMult;
+    const base = this.inOverdrive ? OVERDRIVE.damageMult : this.heat.damageMult;
+    return base * (1 + this.mods.dmgPct);
   }
   private get spdMult(): number {
     return this.inOverdrive ? OVERDRIVE.speedMult : this.heat.speedMult;
@@ -459,6 +523,10 @@ export default class GameScene
       ultReady: this.heat.canUlt && now >= this.player.nextUltAt,
       overdriveReady: this.heat.canOverdrive,
       overdriveActive: this.inOverdrive,
+      level: this.progression.level,
+      xpNorm: this.progression.atCap ? 1 : this.progression.xp / this.progression.nextLevelXp,
+      credits: this.progression.currency,
+      skillPoints: this.progression.skillPoints,
     });
   }
 
@@ -471,7 +539,11 @@ export default class GameScene
     // OVERDRIVE lifecycle.
     if (this.overdriveActive && now >= this.overdriveUntil) this.endOverdrive();
 
+    if (Phaser.Input.Keyboard.JustDown(this.skillKey)) this.skillPanel.toggle();
+
     this.updateHud();
+    this.autosave();
+    if (this.skillPanel.isOpen) return; // freeze the sim while the skill tree is open
     if (this.dialogue.isOpen) return; // freeze the sim while a dialogue is up
 
     // HEAT: pinned during Overdrive, else decay. Drives post-FX + music.
@@ -518,12 +590,14 @@ export default class GameScene
       this.node.x,
       this.node.y,
     );
-    this.node.update(nodeDist, delta);
+    this.node.update(nodeDist, delta * (1 + this.mods.infectPct)); // skills speed channel
     if (this.node.infected) {
       if (!this.nodeWasInfected) {
         this.nodeWasInfected = true;
         this.synth.infect();
         this.cameras.main.shake(220, 0.005);
+        this.grantKillRewards(40, 0); // XP for capturing a node
+        this.autosave(true);
       }
       this.singularity.add(SINGULARITY.perInfectedSec * (delta / 1000));
     }
@@ -760,11 +834,13 @@ export default class GameScene
    */
   damageCop(cop: TuringCop, dmg: number, juice = true, shieldMult = 1) {
     if (!cop.active || cop.isDead) return;
+    const heatGain = 1 + this.mods.heatGainPct;
     const killed = cop.hurt(dmg, shieldMult);
-    this.heat.add(dmg * HEAT.perDamage, this.time.now);
+    this.heat.add(dmg * HEAT.perDamage * heatGain, this.time.now);
     if (killed) {
-      this.heat.add(HEAT.perKill, this.time.now);
+      this.heat.add(HEAT.perKill * heatGain, this.time.now);
       this.singularity.add(SINGULARITY.perKill);
+      this.grantKillRewards(cop.tier.xp, cop.tier.credits);
       this.synth.kill();
       if (juice) {
         this.hitStop(60);
@@ -782,8 +858,10 @@ export default class GameScene
       Phaser.Input.Keyboard.JustDown(this.abilityKey) &&
       now >= this.player.nextAbilityAt
     ) {
-      this.player.nextAbilityAt =
-        now + this.classDef.ability.cooldownMs / this.abilityRate;
+      const cd =
+        (this.classDef.ability.cooldownMs * (1 - this.mods.cdReducePct)) /
+        this.abilityRate;
+      this.player.nextAbilityAt = now + cd;
       this.runAbility(this.classDef.ability);
     }
 

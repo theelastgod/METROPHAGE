@@ -26,7 +26,8 @@ export interface EnemyTierDef {
   slamRadius: number; // for "slam"
   slamWindupMs: number; // for "slam"
   kite: boolean; // Enforcer backs off if the player closes in
-  xp: number; // (used by Phase 1 Step 4 progression)
+  xp: number; // progression reward
+  credits: number; // currency reward
 }
 
 export const ENEMY_TIERS: Record<string, EnemyTierDef> = {
@@ -51,6 +52,7 @@ export const ENEMY_TIERS: Record<string, EnemyTierDef> = {
     slamWindupMs: 0,
     kite: false,
     xp: 10,
+    credits: 3,
   },
   enforcer: {
     id: "enforcer",
@@ -73,6 +75,7 @@ export const ENEMY_TIERS: Record<string, EnemyTierDef> = {
     slamWindupMs: 0,
     kite: true,
     xp: 25,
+    credits: 8,
   },
   purge: {
     id: "purge",
@@ -95,6 +98,7 @@ export const ENEMY_TIERS: Record<string, EnemyTierDef> = {
     slamWindupMs: 900,
     kite: false,
     xp: 60,
+    credits: 20,
   },
 };
 
