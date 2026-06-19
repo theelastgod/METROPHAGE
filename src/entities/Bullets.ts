@@ -2,19 +2,39 @@ import Phaser from "phaser";
 import { BULLET } from "../config";
 import { BULLET_KEY } from "../assets/manifest";
 
+export interface BulletOpts {
+  textureKey: string;
+  speed: number;
+  lifetimeMs: number;
+  radius: number;
+  maxActive: number;
+  tint?: number; // optional recolor (e.g. hostile fire)
+}
+
+const DEFAULTS: BulletOpts = {
+  textureKey: BULLET_KEY,
+  speed: BULLET.speed,
+  lifetimeMs: BULLET.lifetimeMs,
+  radius: BULLET.radius,
+  maxActive: BULLET.maxActive,
+};
+
 /**
- * Pooled projectile manager. Keeps physics/render concerns local; the scene just
- * calls fire() and update(). Bullets die on lifetime expiry or wall impact.
+ * Pooled projectile manager. One instance per "faction" (player / cops). Keeps
+ * physics/render concerns local; the scene calls fire() and update(). Bullets die
+ * on lifetime expiry or wall impact (the scene wires the wall collider).
  */
 export default class Bullets {
   readonly group: Phaser.Physics.Arcade.Group;
   private scene: Phaser.Scene;
+  private opts: BulletOpts;
 
-  constructor(scene: Phaser.Scene) {
+  constructor(scene: Phaser.Scene, opts: Partial<BulletOpts> = {}) {
     this.scene = scene;
+    this.opts = { ...DEFAULTS, ...opts };
     this.group = scene.physics.add.group({
-      defaultKey: BULLET_KEY,
-      maxSize: BULLET.maxActive,
+      defaultKey: this.opts.textureKey,
+      maxSize: this.opts.maxActive,
     });
   }
 
@@ -23,13 +43,16 @@ export default class Bullets {
     if (!b) return; // pool exhausted
 
     b.setActive(true).setVisible(true).setDepth(9).setRotation(angle);
+    if (this.opts.tint !== undefined) b.setTint(this.opts.tint);
+
     const body = b.body as Phaser.Physics.Arcade.Body;
     body.enable = true;
     body.reset(x, y);
-    body.setCircle(BULLET.radius, b.width / 2 - BULLET.radius, b.height / 2 - BULLET.radius);
+    const r = this.opts.radius;
+    body.setCircle(r, b.width / 2 - r, b.height / 2 - r);
     body.setAllowGravity(false);
-    this.scene.physics.velocityFromRotation(angle, BULLET.speed, body.velocity);
-    b.setData("dieAt", this.scene.time.now + BULLET.lifetimeMs);
+    this.scene.physics.velocityFromRotation(angle, this.opts.speed, body.velocity);
+    b.setData("dieAt", this.scene.time.now + this.opts.lifetimeMs);
   }
 
   kill(obj: Phaser.GameObjects.GameObject) {

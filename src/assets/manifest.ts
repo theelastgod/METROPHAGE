@@ -20,12 +20,14 @@ export interface AssetEntry {
 export const TILESET_KEY = "tileset";
 export const PLAYER_KEY = "player";
 export const BULLET_KEY = "bullet";
+export const COP_KEY = "cop";
 
 export const ASSETS: Record<string, AssetEntry[]> = {
   tilesets: [{ key: TILESET_KEY, file: null }],
   sprites: [
     { key: PLAYER_KEY, file: null },
     { key: BULLET_KEY, file: null },
+    { key: COP_KEY, file: null },
   ],
   portraits: [],
   ui: [],

@@ -20,7 +20,7 @@ export interface PlayerInput {
  * lives here so the scene stays thin.
  */
 export default class Player extends Phaser.Physics.Arcade.Sprite {
-  hp = PLAYER.maxHp;
+  hp: number = PLAYER.maxHp;
 
   private dashUntil = 0;
   private dashReadyAt = 0;
@@ -100,6 +100,24 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     if (now < this.nextFireAt) return null;
     this.nextFireAt = now + PLAYER.fireRateMs;
     return Phaser.Math.Angle.Between(this.x, this.y, input.aimX, input.aimY);
+  }
+
+  /** Take damage unless invulnerable (dash i-frames negate it). Returns true if it killed. */
+  applyDamage(dmg: number): boolean {
+    if (this.invulnerable) return false;
+    this.hp = Math.max(0, this.hp - dmg);
+    this.invulnUntil = this.scene.time.now + PLAYER.hitIframeMs;
+    this.setTint(COLORS.hurt);
+    this.scene.time.delayedCall(90, () => this.clearTint());
+    return this.hp <= 0;
+  }
+
+  respawn(x: number, y: number) {
+    this.hp = PLAYER.maxHp;
+    this.setPosition(x, y);
+    this.setVelocity(0, 0);
+    this.clearTint();
+    this.invulnUntil = this.scene.time.now + 1200; // brief grace on respawn
   }
 
   private spawnAfterimage() {

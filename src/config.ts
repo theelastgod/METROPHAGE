@@ -23,6 +23,29 @@ export const PLAYER = {
   dashDurationMs: 150,
   dashIframeMs: 260, // i-frames outlast the dash slightly
   dashCooldownMs: 600,
+  hitIframeMs: 650, // mercy invulnerability after taking a hit
+} as const;
+
+/** Turing Cop (Human Security System) tuning. */
+export const COP = {
+  hp: 75,
+  patrolSpeed: 55,
+  chaseSpeed: 116,
+  aggroRange: 250, // start chasing within this
+  deAggroRange: 380, // give up beyond this
+  attackRange: 210, // open fire within this
+  attackCooldownMs: 1050,
+  patrolRadius: 110, // wander radius around spawn
+} as const;
+
+/** Cop projectile tuning (reuses the bullet texture, tinted hostile). */
+export const ENEMY_BULLET = {
+  speed: 300,
+  lifetimeMs: 1700,
+  radius: 4,
+  damage: 10,
+  maxActive: 48,
+  tint: 0xff3b6b,
 } as const;
 
 /** Projectile weapon tuning. */
@@ -55,4 +78,8 @@ export const COLORS = {
   bullet: 0xf7ff3c, // electric-yellow bolt
   bulletGlow: 0xff2bd6,
   spark: 0xffffff,
+  enemy: 0xff3b6b, // Turing Cop hot-red
+  enemyEdge: 0xff8a3c, // orange trim
+  enemyCore: 0xffe08a,
+  hurt: 0xff2d2d,
 } as const;

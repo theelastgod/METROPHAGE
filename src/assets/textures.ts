@@ -6,7 +6,7 @@
 
 import Phaser from "phaser";
 import { TILE, COLORS } from "../config";
-import { TILESET_KEY, PLAYER_KEY, BULLET_KEY } from "./manifest";
+import { TILESET_KEY, PLAYER_KEY, BULLET_KEY, COP_KEY } from "./manifest";
 
 /** Build a 4-tile horizontal tileset strip: [floor, wall, plaza, lane]. */
 function makeTileset(scene: Phaser.Scene) {
@@ -71,6 +71,29 @@ function makeBullet(scene: Phaser.Scene) {
   g.destroy();
 }
 
+/** Build the Turing Cop: a red angular diamond — clearly hostile vs. the player disc. */
+function makeCop(scene: Phaser.Scene) {
+  const size = 28;
+  const c = size / 2;
+  const g = scene.add.graphics();
+  const diamond = (r: number) => [c, c - r, c + r, c, c, c + r, c - r, c];
+
+  g.fillStyle(COLORS.enemy, 0.16).fillCircle(c, c, 13); // glow
+  g.fillStyle(COLORS.enemy, 1).fillPoints(toPts(diamond(11)), true);
+  g.lineStyle(2, COLORS.enemyEdge, 1).strokePoints(toPts(diamond(11)), true, true);
+  g.fillStyle(0x2a0712, 1).fillPoints(toPts(diamond(6)), true); // dark inner
+  g.fillStyle(COLORS.enemyCore, 1).fillRect(c - 1.5, c - 4, 3, 8); // visor slit (faces up)
+  g.generateTexture(COP_KEY, size, size);
+  g.destroy();
+}
+
+/** Helper: flat [x,y,x,y,...] -> Vector2-ish points for fill/strokePoints. */
+function toPts(flat: number[]) {
+  const pts: Phaser.Types.Math.Vector2Like[] = [];
+  for (let i = 0; i < flat.length; i += 2) pts.push({ x: flat[i], y: flat[i + 1] });
+  return pts;
+}
+
 /**
  * Generate all procedural placeholders that don't yet have a real file.
  * Safe to call once in BootScene.create().
@@ -79,4 +102,5 @@ export function generatePlaceholders(scene: Phaser.Scene) {
   if (!scene.textures.exists(TILESET_KEY)) makeTileset(scene);
   if (!scene.textures.exists(PLAYER_KEY)) makePlayer(scene);
   if (!scene.textures.exists(BULLET_KEY)) makeBullet(scene);
+  if (!scene.textures.exists(COP_KEY)) makeCop(scene);
 }

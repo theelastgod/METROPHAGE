@@ -1,19 +1,23 @@
 import Phaser from "phaser";
-import { TILE, WORLD_W, WORLD_H, COLORS } from "../config";
-import { buildGrid, spawnPoint, TILE_WALL } from "../world/district";
+import { TILE, WORLD_W, WORLD_H, COLORS, BULLET, ENEMY_BULLET } from "../config";
+import { buildGrid, spawnPoint, isWall, TILE_WALL, TileGrid } from "../world/district";
 import { TILESET_KEY } from "../assets/manifest";
 import Player, { PlayerInput } from "../entities/Player";
 import Bullets from "../entities/Bullets";
+import TuringCop from "../entities/TuringCop";
 
 /**
  * GameScene — Phase 0.
- * Step 1: movable, colliding player in the district.
- * Step 2: mouse-aim, dash w/ i-frames, one projectile weapon.
+ * Step 1: movable, colliding player. Step 2: mouse-aim, dash, projectile weapon.
+ * Step 3: Turing Cops with a patrol->chase->attack FSM that take damage and die.
  */
 export default class GameScene extends Phaser.Scene {
   private player!: Player;
-  private bullets!: Bullets;
+  private bullets!: Bullets; // player weapon
+  private enemyBullets!: Bullets; // hostile fire
+  private enemies!: Phaser.Physics.Arcade.Group;
   private wallLayer!: Phaser.Tilemaps.TilemapLayer;
+  private grid!: TileGrid;
   private spawn = { x: 0, y: 0 };
 
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
@@ -33,16 +37,17 @@ export default class GameScene extends Phaser.Scene {
 
     this.buildDistrict();
     this.spawnPlayer();
-    this.setupCombat();
+    this.setupProjectiles();
+    this.setupEnemies();
     this.setupCamera();
     this.setupInput();
     this.addHint();
   }
 
   private buildDistrict() {
-    const grid = buildGrid();
+    this.grid = buildGrid();
     const map = this.make.tilemap({
-      data: grid,
+      data: this.grid,
       tileWidth: TILE,
       tileHeight: TILE,
     });
@@ -52,7 +57,7 @@ export default class GameScene extends Phaser.Scene {
 
     this.physics.world.setBounds(0, 0, WORLD_W, WORLD_H);
     this.cameras.main.setBackgroundColor(COLORS.bgVoid);
-    this.spawn = spawnPoint(grid);
+    this.spawn = spawnPoint(this.grid);
   }
 
   private spawnPlayer() {
@@ -60,15 +65,81 @@ export default class GameScene extends Phaser.Scene {
     this.physics.add.collider(this.player, this.wallLayer);
   }
 
-  private setupCombat() {
+  private setupProjectiles() {
     this.bullets = new Bullets(this);
+    this.enemyBullets = new Bullets(this, {
+      speed: ENEMY_BULLET.speed,
+      lifetimeMs: ENEMY_BULLET.lifetimeMs,
+      radius: ENEMY_BULLET.radius,
+      maxActive: ENEMY_BULLET.maxActive,
+      tint: ENEMY_BULLET.tint,
+    });
+
     this.physics.add.collider(
       this.bullets.group,
       this.wallLayer,
-      (bullet) => this.onBulletHitWall(bullet as Phaser.Physics.Arcade.Image),
+      (b) => this.onBulletHitWall(this.bullets, b as Phaser.Physics.Arcade.Image),
       undefined,
       this,
     );
+    this.physics.add.collider(
+      this.enemyBullets.group,
+      this.wallLayer,
+      (b) =>
+        this.onBulletHitWall(this.enemyBullets, b as Phaser.Physics.Arcade.Image),
+      undefined,
+      this,
+    );
+  }
+
+  private setupEnemies() {
+    this.enemies = this.physics.add.group();
+    this.spawnCops();
+
+    this.physics.add.collider(this.enemies, this.wallLayer);
+    this.physics.add.overlap(
+      this.bullets.group,
+      this.enemies,
+      (b, c) =>
+        this.onBulletHitsCop(
+          b as Phaser.Physics.Arcade.Image,
+          c as TuringCop,
+        ),
+      undefined,
+      this,
+    );
+    this.physics.add.overlap(
+      this.enemyBullets.group,
+      this.player,
+      (b) => this.onEnemyBulletHitsPlayer(b as Phaser.Physics.Arcade.Image),
+      undefined,
+      this,
+    );
+  }
+
+  private spawnCops() {
+    // Hand-picked patrol posts; validated against the grid so none spawn in a wall.
+    const posts: Array<[number, number]> = [
+      [13, 5],
+      [27, 6],
+      [34, 11],
+      [27, 16],
+      [8, 16],
+      [20, 27],
+      [13, 23],
+    ];
+    let placed = 0;
+    for (const [tx, ty] of posts) {
+      if (placed >= 5) break;
+      if (this.grid[ty]?.[tx] === undefined || isWall(this.grid[ty][tx])) continue;
+      const cop = new TuringCop(
+        this,
+        tx * TILE + TILE / 2,
+        ty * TILE + TILE / 2,
+      );
+      this.enemies.add(cop);
+      placed++;
+    }
   }
 
   private setupCamera() {
@@ -83,7 +154,6 @@ export default class GameScene extends Phaser.Scene {
     this.cursors = kb.createCursorKeys();
     this.wasd = kb.addKeys("W,A,S,D") as typeof this.wasd;
     this.dashKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
-    // Don't let the right mouse button pop the context menu over the canvas.
     this.input.mouse?.disableContextMenu();
   }
 
@@ -100,13 +170,24 @@ export default class GameScene extends Phaser.Scene {
   }
 
   update() {
+    const now = this.time.now;
     const input = this.readInput();
     this.player.step(input);
 
     const angle = this.player.tryFire(input);
     if (angle !== null) this.fireWeapon(angle);
 
-    this.bullets.update(this.time.now);
+    this.bullets.update(now);
+    this.enemyBullets.update(now);
+
+    this.enemies.getChildren().forEach((go) => {
+      const cop = go as TuringCop;
+      if (cop.active && !cop.isDead) {
+        cop.step(this.player, (x, y, a) =>
+          this.enemyBullets.fire(x + Math.cos(a) * 16, y + Math.sin(a) * 16, a),
+        );
+      }
+    });
   }
 
   private readInput(): PlayerInput {
@@ -129,7 +210,34 @@ export default class GameScene extends Phaser.Scene {
     const sy = this.player.y + Math.sin(angle) * 14;
     this.bullets.fire(sx, sy, angle);
     this.muzzleFlash(sx, sy);
-    this.cameras.main.shake(40, 0.0018); // small kick; real hit-stop lands in Step 9
+    this.cameras.main.shake(40, 0.0018);
+  }
+
+  private onBulletHitWall(manager: Bullets, bullet: Phaser.Physics.Arcade.Image) {
+    const { x, y } = bullet;
+    manager.kill(bullet);
+    this.spark(x, y, COLORS.spark, 2);
+  }
+
+  private onBulletHitsCop(bullet: Phaser.Physics.Arcade.Image, cop: TuringCop) {
+    if (!cop.active || cop.isDead) return;
+    this.bullets.kill(bullet);
+    this.spark(bullet.x, bullet.y, COLORS.enemyEdge, 1.6);
+    cop.hurt(BULLET.damage);
+    // (Singularity gain on kills is wired in Step 5.)
+  }
+
+  private onEnemyBulletHitsPlayer(bullet: Phaser.Physics.Arcade.Image) {
+    this.enemyBullets.kill(bullet);
+    if (this.player.invulnerable) return; // negated by dash / respawn i-frames
+    const died = this.player.applyDamage(ENEMY_BULLET.damage);
+    this.cameras.main.shake(60, 0.004);
+    if (died) this.respawnPlayer();
+  }
+
+  private respawnPlayer() {
+    this.player.respawn(this.spawn.x, this.spawn.y);
+    this.cameras.main.flash(220, 60, 0, 24);
   }
 
   private muzzleFlash(x: number, y: number) {
@@ -143,13 +251,11 @@ export default class GameScene extends Phaser.Scene {
     });
   }
 
-  private onBulletHitWall(bullet: Phaser.Physics.Arcade.Image) {
-    const { x, y } = bullet;
-    this.bullets.kill(bullet);
-    const s = this.add.circle(x, y, 5, COLORS.spark, 1).setDepth(11);
+  private spark(x: number, y: number, color: number, scale: number) {
+    const s = this.add.circle(x, y, 5, color, 1).setDepth(11);
     this.tweens.add({
       targets: s,
-      scale: 2,
+      scale,
       alpha: 0,
       duration: 140,
       onComplete: () => s.destroy(),
