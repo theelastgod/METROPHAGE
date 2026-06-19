@@ -40,7 +40,7 @@ export default class Bullets {
     });
   }
 
-  fire(x: number, y: number, angle: number) {
+  fire(x: number, y: number, angle: number, damageOverride?: number) {
     const b = this.group.get(x, y) as Phaser.Physics.Arcade.Image | null;
     if (!b) return; // pool exhausted
 
@@ -55,7 +55,7 @@ export default class Bullets {
     body.setAllowGravity(false);
     this.scene.physics.velocityFromRotation(angle, this.opts.speed, body.velocity);
     b.setData("dieAt", this.scene.time.now + this.opts.lifetimeMs);
-    b.setData("dmg", this.opts.damage);
+    b.setData("dmg", damageOverride ?? this.opts.damage);
   }
 
   kill(obj: Phaser.GameObjects.GameObject) {

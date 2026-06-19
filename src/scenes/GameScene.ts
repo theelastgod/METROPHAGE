@@ -11,9 +11,12 @@ import {
   SINGULARITY,
   AGENT,
   AGENT_TINTS,
+  SPAWN,
+  BEAM_SHIELD_MULT,
 } from "../config";
 import { getClass, ClassDef, PrimaryDef } from "../game/classes";
 import { AbilityHost, AbilityDef } from "../game/ability";
+import { ENEMY_TIERS, EnemyHost } from "../game/enemies";
 import { buildGrid, spawnPoint, isWall, TILE_WALL, TileGrid } from "../world/district";
 import {
   TILESET_KEY,
@@ -43,8 +46,12 @@ import DialogueBox, { DialoguePage } from "../ui/DialogueBox";
  * Step 1: movable, colliding player. Step 2: mouse-aim, dash, projectile weapon.
  * Step 3: Turing Cops with a patrol->chase->attack FSM that take damage and die.
  */
-export default class GameScene extends Phaser.Scene implements AbilityHost {
+export default class GameScene
+  extends Phaser.Scene
+  implements AbilityHost, EnemyHost
+{
   private classDef!: ClassDef;
+  private nextSpawnAt = 0;
   private player!: Player;
   private bullets!: Bullets; // player weapon
   private enemyBullets!: Bullets; // hostile fire
@@ -96,6 +103,7 @@ export default class GameScene extends Phaser.Scene implements AbilityHost {
     this.nodeWasInfected = false;
     this.overdriveActive = false;
     this.overdriveUntil = 0;
+    this.nextSpawnAt = 0;
     this.physics.world.resume();
     this.heat = new Heat();
     this.singularity = new Singularity();
@@ -307,28 +315,55 @@ export default class GameScene extends Phaser.Scene implements AbilityHost {
   }
 
   private spawnCops() {
-    // Hand-picked patrol posts; validated against the grid so none spawn in a wall.
-    const posts: Array<[number, number]> = [
-      [13, 5],
-      [27, 6],
-      [34, 11],
-      [27, 16],
-      [8, 16],
-      [20, 27],
-      [13, 23],
+    // Hand-picked posts; the 4th hosts an Enforcer so the player meets a shield early.
+    const posts: Array<[number, number, "patrol" | "enforcer"]> = [
+      [13, 5, "patrol"],
+      [27, 6, "patrol"],
+      [34, 11, "enforcer"],
+      [27, 16, "patrol"],
+      [8, 16, "patrol"],
     ];
-    let placed = 0;
-    for (const [tx, ty] of posts) {
-      if (placed >= 5) break;
+    for (const [tx, ty, tier] of posts) {
       if (this.grid[ty]?.[tx] === undefined || isWall(this.grid[ty][tx])) continue;
-      const cop = new TuringCop(
-        this,
-        tx * TILE + TILE / 2,
-        ty * TILE + TILE / 2,
-      );
-      this.enemies.add(cop);
-      placed++;
+      this.spawnEnemy(tier, tx * TILE + TILE / 2, ty * TILE + TILE / 2);
     }
+  }
+
+  private spawnEnemy(tierId: string, x: number, y: number) {
+    this.enemies.add(new TuringCop(this, x, y, ENEMY_TIERS[tierId]));
+  }
+
+  /** Heat-scaled spawn pressure: faster + tougher tiers as the map heats up. */
+  private spawnPressure(now: number) {
+    if (now < this.nextSpawnAt) return;
+    const heat = this.heat.value;
+    const interval = Phaser.Math.Linear(
+      SPAWN.baseIntervalMs,
+      SPAWN.minIntervalMs,
+      this.heat.normalized,
+    );
+    this.nextSpawnAt = now + interval;
+    if (this.enemies.countActive(true) >= SPAWN.maxEnemies) return;
+
+    let tier = "patrol";
+    const r = Math.random();
+    if (heat >= SPAWN.purgeHeat && r < 0.18) tier = "purge";
+    else if (heat >= SPAWN.enforcerHeat && r < 0.45) tier = "enforcer";
+
+    // Spawn in a ring around the player (focuses pressure), clamped to the world.
+    const a = Math.random() * Math.PI * 2;
+    const rad = Phaser.Math.Between(SPAWN.ringMin, SPAWN.ringMax);
+    const x = Phaser.Math.Clamp(
+      this.player.x + Math.cos(a) * rad,
+      TILE * 1.5,
+      WORLD_W - TILE * 1.5,
+    );
+    const y = Phaser.Math.Clamp(
+      this.player.y + Math.sin(a) * rad,
+      TILE * 1.5,
+      WORLD_H - TILE * 1.5,
+    );
+    this.spawnEnemy(tier, x, y);
   }
 
   private setupCamera() {
@@ -464,12 +499,9 @@ export default class GameScene extends Phaser.Scene implements AbilityHost {
 
     this.enemies.getChildren().forEach((go) => {
       const cop = go as TuringCop;
-      if (cop.active && !cop.isDead) {
-        cop.step(this.player, (x, y, a) =>
-          this.enemyBullets.fire(x + Math.cos(a) * 16, y + Math.sin(a) * 16, a),
-        );
-      }
+      if (cop.active && !cop.isDead) cop.step(this.player, this);
     });
+    this.spawnPressure(now);
 
     this.agents.getChildren().forEach((go) => (go as Agent).step(now));
 
@@ -690,7 +722,7 @@ export default class GameScene extends Phaser.Scene implements AbilityHost {
       if (!cop.active || cop.isDead) return;
       if (this.pointSegDist(cop.x, cop.y, px, py, ex, ey) <= prim.halfWidth + 10) {
         this.spark(cop.x, cop.y, this.classDef.color, 1.4);
-        this.damageCop(cop, dmg);
+        this.damageCop(cop, dmg, true, BEAM_SHIELD_MULT); // WINTERMUTE shreds shields
       }
     });
 
@@ -726,9 +758,9 @@ export default class GameScene extends Phaser.Scene implements AbilityHost {
    * Apply damage to a cop + shared kill/heat/singularity/feedback. `juice` adds
    * hit-stop + shake (player hits); minion/DoT hits pass false to avoid spam.
    */
-  damageCop(cop: TuringCop, dmg: number, juice = true) {
+  damageCop(cop: TuringCop, dmg: number, juice = true, shieldMult = 1) {
     if (!cop.active || cop.isDead) return;
-    const killed = cop.hurt(dmg);
+    const killed = cop.hurt(dmg, shieldMult);
     this.heat.add(dmg * HEAT.perDamage, this.time.now);
     if (killed) {
       this.heat.add(HEAT.perKill, this.time.now);
@@ -806,6 +838,8 @@ export default class GameScene extends Phaser.Scene implements AbilityHost {
   }
 
   private spawnPurgeWave() {
+    // A focused mix — heavier than ambient pressure, led by a Purge Unit.
+    const mix = ["purge", "enforcer", "patrol", "patrol", "enforcer", "patrol"];
     for (let i = 0; i < OVERDRIVE.purgeCops; i++) {
       const a = (i / OVERDRIVE.purgeCops) * Math.PI * 2 + Math.random() * 0.4;
       const r = 180 + Math.random() * 120;
@@ -819,13 +853,8 @@ export default class GameScene extends Phaser.Scene implements AbilityHost {
         TILE * 1.5,
         WORLD_H - TILE * 1.5,
       );
-      this.spawnCopAt(x, y);
+      this.spawnEnemy(mix[i % mix.length], x, y);
     }
-  }
-
-  private spawnCopAt(x: number, y: number) {
-    const cop = new TuringCop(this, x, y);
-    this.enemies.add(cop);
   }
 
   // ---- AbilityHost (effects invoked by class ability/ultimate hooks) ----
@@ -1002,13 +1031,57 @@ export default class GameScene extends Phaser.Scene implements AbilityHost {
   }
 
   private onEnemyBulletHitsPlayer(bullet: Phaser.Physics.Arcade.Image) {
+    const dmg = (bullet.getData("dmg") as number) ?? ENEMY_BULLET.damage;
     this.enemyBullets.kill(bullet);
     if (this.player.invulnerable) return; // negated by dash / respawn i-frames
-    const died = this.player.applyDamage(ENEMY_BULLET.damage);
+    const died = this.player.applyDamage(dmg);
     this.cameras.main.shake(60, 0.004);
     this.synth.hit();
     this.hitStop(45);
     if (died) this.respawnPlayer();
+  }
+
+  // ---- EnemyHost (cop attacks) ----
+
+  enemyShot(x: number, y: number, angle: number, damage: number) {
+    this.enemyBullets.fire(
+      x + Math.cos(angle) * 16,
+      y + Math.sin(angle) * 16,
+      angle,
+      damage,
+    );
+  }
+
+  enemySlam(x: number, y: number, radius: number, damage: number, windupMs: number) {
+    const ring = this.add
+      .circle(x, y, radius, 0xff7a3c, 0.12)
+      .setStrokeStyle(2, 0xff7a3c, 0.85)
+      .setDepth(5);
+    this.tweens.add({
+      targets: ring,
+      alpha: { from: 0.15, to: 0.5 },
+      yoyo: true,
+      repeat: -1,
+      duration: 150,
+    });
+    this.time.delayedCall(windupMs, () => {
+      ring.destroy();
+      const b = this.add.circle(x, y, radius, 0xff7a3c, 0.45).setDepth(6);
+      this.tweens.add({
+        targets: b,
+        alpha: 0,
+        scale: 1.25,
+        duration: 280,
+        onComplete: () => b.destroy(),
+      });
+      this.cameras.main.shake(180, 0.01);
+      const d = Phaser.Math.Distance.Between(this.player.x, this.player.y, x, y);
+      if (d <= radius && !this.player.invulnerable) {
+        const died = this.player.applyDamage(damage);
+        this.synth.hit();
+        if (died) this.respawnPlayer();
+      }
+    });
   }
 
   private respawnPlayer() {

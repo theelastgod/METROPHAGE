@@ -71,6 +71,20 @@ export const OVERDRIVE = {
   purgeCops: 6, // System purge wave focused on the player afterward
 } as const;
 
+/** Heat-scaled spawn pressure for the Human Security System. */
+export const SPAWN = {
+  maxEnemies: 16,
+  baseIntervalMs: 4200, // at heat 0
+  minIntervalMs: 1300, // at heat 100
+  ringMin: 240, // spawn this far from the player...
+  ringMax: 380, // ...up to here (focuses pressure on the player)
+  enforcerHeat: 30, // enforcers start appearing past this heat
+  purgeHeat: 60, // purge units past this heat
+} as const;
+
+/** WINTERMUTE beam shield-break multiplier. */
+export const BEAM_SHIELD_MULT = 3;
+
 /** Ally minions (WINTERMUTE drones / SWARM minions). */
 export const MINION = {
   speed: 150,
