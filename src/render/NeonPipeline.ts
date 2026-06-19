@@ -11,24 +11,35 @@ precision mediump float;
 uniform sampler2D uMainSampler;
 uniform float uHeat;
 uniform float uTime;
+uniform float uGlitch;
 uniform vec2 uResolution;
 varying vec2 outTexCoord;
 
+float rand(vec2 c) { return fract(sin(dot(c, vec2(12.9898, 78.233))) * 43758.5453); }
+
 void main() {
   vec2 uv = outTexCoord;
+
+  // meltdown glitch: blocky horizontal slice displacement
+  if (uGlitch > 0.001) {
+    float line = floor(uv.y * 36.0);
+    float n = rand(vec2(line, floor(uTime * 12.0)));
+    uv.x += (n - 0.5) * 0.08 * uGlitch * step(0.72, n);
+  }
+
   vec2 toC = uv - 0.5;
   float dist = length(toC);
   vec2 dir = toC / (dist + 1e-5);
 
-  // radial chromatic aberration, grows with heat + distance from center
-  float ca = (0.0012 + uHeat * 0.0065) * (0.4 + dist);
+  // radial chromatic aberration, grows with heat + glitch
+  float ca = (0.0012 + uHeat * 0.0065 + uGlitch * 0.012) * (0.4 + dist);
   float r = texture2D(uMainSampler, uv - dir * ca).r;
   float g = texture2D(uMainSampler, uv).g;
   float b = texture2D(uMainSampler, uv + dir * ca).b;
   vec3 col = vec3(r, g, b);
 
   // cheap bloom: bright-pass 3x3 with heat-scaled spread
-  vec2 px = (1.0 / uResolution) * (1.5 + uHeat * 4.0);
+  vec2 px = (1.0 / uResolution) * (1.5 + uHeat * 4.0 + uGlitch * 3.0);
   vec3 bloom = vec3(0.0);
   for (int i = -1; i <= 1; i++) {
     for (int j = -1; j <= 1; j++) {
@@ -38,15 +49,21 @@ void main() {
     }
   }
   bloom /= 9.0;
-  col += bloom * (0.7 + uHeat * 1.6);
+  col += bloom * (0.7 + uHeat * 1.6 + uGlitch * 1.5);
 
   // saturation lift with heat
   float l = dot(col, vec3(0.299, 0.587, 0.114));
-  col = mix(vec3(l), col, 1.0 + uHeat * 0.7);
+  col = mix(vec3(l), col, 1.0 + uHeat * 0.7 + uGlitch * 0.6);
 
   // scanlines (subtle, stronger with heat)
   float scan = 0.93 + 0.07 * sin(uv.y * uResolution.y * 1.4 + uTime * 3.0);
   col *= mix(1.0, scan, 0.3 + uHeat * 0.3);
+
+  // glitch static
+  if (uGlitch > 0.001) {
+    float nz = rand(uv * vec2(uTime * 0.7 + 1.0, uTime * 0.9 + 1.0));
+    col += (nz - 0.5) * 0.18 * uGlitch;
+  }
 
   // vignette
   col *= 1.0 - dist * dist * (0.22 + uHeat * 0.28);
@@ -59,6 +76,8 @@ export default class NeonPipeline extends Phaser.Renderer.WebGL.Pipelines
   .PostFXPipeline {
   /** 0..1, set by the scene from the Heat meter each frame. */
   heat = 0;
+  /** 0..1, ramped during the meltdown victory sequence. */
+  glitch = 0;
 
   constructor(game: Phaser.Game) {
     super({ game, name: "Neon", fragShader: FRAG });
@@ -66,6 +85,7 @@ export default class NeonPipeline extends Phaser.Renderer.WebGL.Pipelines
 
   onPreRender() {
     this.set1f("uHeat", this.heat);
+    this.set1f("uGlitch", this.glitch);
     this.set1f("uTime", this.game.loop.time / 1000);
     this.set2f("uResolution", this.renderer.width, this.renderer.height);
   }

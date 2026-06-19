@@ -35,6 +35,7 @@ export default class GameScene extends Phaser.Scene {
 
   private heat = new Heat();
   private singularity = new Singularity();
+  private won = false;
   private node!: InfectionNode;
   private neon?: NeonPipeline;
   private hud!: Phaser.GameObjects.Graphics;
@@ -55,6 +56,12 @@ export default class GameScene extends Phaser.Scene {
       boot.style.opacity = "0";
       window.setTimeout(() => boot.remove(), 600);
     }
+
+    // Reset run state (scene.restart() reuses the instance; field initializers
+    // only run once at construction, so reset explicitly here).
+    this.won = false;
+    this.heat = new Heat();
+    this.singularity = new Singularity();
 
     this.buildDistrict();
     this.spawnPlayer();
@@ -277,6 +284,8 @@ export default class GameScene extends Phaser.Scene {
   }
 
   update(_time: number, delta: number) {
+    if (this.won) return; // meltdown sequence runs on tweens/timers; freeze the sim
+
     const now = this.time.now;
 
     // HEAT: decay when passive, apply overclock buff, drive the post-FX.
@@ -315,7 +324,92 @@ export default class GameScene extends Phaser.Scene {
       this.singularity.add(SINGULARITY.perInfectedSec * (delta / 1000));
     }
 
+    if (this.singularity.isComplete) this.triggerMeltdown();
+
     this.drawHud();
+  }
+
+  private triggerMeltdown() {
+    this.won = true;
+    this.player.setVelocity(0, 0);
+
+    const cam = this.cameras.main;
+    cam.shake(800, 0.014);
+    cam.flash(450, 180, 0, 220);
+
+    // Ramp the post-FX past its normal ceiling into full glitch overload.
+    if (this.neon) {
+      this.tweens.add({
+        targets: this.neon,
+        heat: 1,
+        glitch: 1,
+        duration: 1500,
+        ease: "Quad.in",
+      });
+    }
+
+    const cx = this.scale.width / 2;
+    const cy = this.scale.height / 2;
+
+    const title = this.add
+      .text(cx, cy - 8, "MELTDOWN", {
+        fontFamily: "Courier New, monospace",
+        fontSize: "76px",
+        color: "#ff2bd6",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(2000)
+      .setAlpha(0);
+    title.setShadow(0, 0, "#00e5ff", 26, true, true);
+    this.tweens.add({
+      targets: title,
+      alpha: 1,
+      scale: { from: 1.6, to: 1 },
+      duration: 700,
+      delay: 300,
+      ease: "Back.out",
+    });
+
+    this.time.delayedCall(1900, () => {
+      const sub = this.add
+        .text(cx, cy + 52, "THE CITY HAS ACCELERATED PAST ESCAPE", {
+          fontFamily: "Courier New, monospace",
+          fontSize: "16px",
+          color: "#00e5ff",
+        })
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setDepth(2000)
+        .setAlpha(0);
+      const prompt = this.add
+        .text(cx, cy + 92, "▶ CLICK or press R to RESTART", {
+          fontFamily: "Courier New, monospace",
+          fontSize: "18px",
+          color: "#f7ff3c",
+        })
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setDepth(2000)
+        .setAlpha(0);
+
+      this.tweens.add({ targets: [sub, prompt], alpha: 1, duration: 500 });
+      this.tweens.add({
+        targets: prompt,
+        alpha: { from: 1, to: 0.4 },
+        duration: 700,
+        yoyo: true,
+        repeat: -1,
+      });
+      this.enableRestart();
+    });
+  }
+
+  private enableRestart() {
+    const restart = () => this.scene.restart();
+    this.input.once("pointerdown", restart);
+    this.input.keyboard?.once("keydown-R", restart);
   }
 
   private readInput(): PlayerInput {
