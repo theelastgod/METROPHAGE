@@ -8,10 +8,10 @@ import {
   ENEMY_BULLET,
   HEAT,
   SINGULARITY,
-  PLAYER,
   AGENT,
   AGENT_TINTS,
 } from "../config";
+import { getClass, ClassDef, PrimaryDef } from "../game/classes";
 import { buildGrid, spawnPoint, isWall, TILE_WALL, TileGrid } from "../world/district";
 import {
   TILESET_KEY,
@@ -41,6 +41,7 @@ import DialogueBox, { DialoguePage } from "../ui/DialogueBox";
  * Step 3: Turing Cops with a patrol->chase->attack FSM that take damage and die.
  */
 export default class GameScene extends Phaser.Scene {
+  private classDef!: ClassDef;
   private player!: Player;
   private bullets!: Bullets; // player weapon
   private enemyBullets!: Bullets; // hostile fire
@@ -86,6 +87,7 @@ export default class GameScene extends Phaser.Scene {
     this.physics.world.resume();
     this.heat = new Heat();
     this.singularity = new Singularity();
+    this.classDef = getClass(this.registry.get("classId") as string | undefined);
 
     // Audio needs a user gesture; the intro requires a click/key to advance.
     this.input.once("pointerdown", () => this.synth.ensureStarted());
@@ -219,12 +221,25 @@ export default class GameScene extends Phaser.Scene {
   }
 
   private spawnPlayer() {
-    this.player = new Player(this, this.spawn.x, this.spawn.y);
+    this.player = new Player(this, this.spawn.x, this.spawn.y, this.classDef);
     this.physics.add.collider(this.player, this.wallLayer);
   }
 
   private setupProjectiles() {
-    this.bullets = new Bullets(this);
+    // The player projectile pool is configured from the chosen class primary.
+    const prim = this.classDef.primary;
+    if (prim.kind === "beam") {
+      this.bullets = new Bullets(this, { tint: this.classDef.color }); // unused by beam
+    } else {
+      this.bullets = new Bullets(this, {
+        speed: prim.speed,
+        lifetimeMs: prim.lifetimeMs,
+        radius: BULLET.radius,
+        maxActive: 96,
+        tint: this.classDef.color,
+        damage: prim.damage,
+      });
+    }
     this.enemyBullets = new Bullets(this, {
       speed: ENEMY_BULLET.speed,
       lifetimeMs: ENEMY_BULLET.lifetimeMs,
@@ -364,7 +379,7 @@ export default class GameScene extends Phaser.Scene {
   private updateHud() {
     this.hud.update({
       hp: this.player.hp,
-      hpMax: PLAYER.maxHp,
+      hpMax: this.player.maxHp,
       heat: this.heat.value,
       heatNorm: this.heat.normalized,
       overclock: this.heat.buffActive,
@@ -549,12 +564,122 @@ export default class GameScene extends Phaser.Scene {
   }
 
   private fireWeapon(angle: number) {
-    const sx = this.player.x + Math.cos(angle) * 14;
-    const sy = this.player.y + Math.sin(angle) * 14;
-    this.bullets.fire(sx, sy, angle);
-    this.muzzleFlash(sx, sy);
+    const prim = this.classDef.primary;
+    switch (prim.kind) {
+      case "spread":
+        this.fireSpread(angle, prim);
+        break;
+      case "burst":
+        this.fireBurst(angle, prim);
+        break;
+      case "rapid":
+        this.fireRapid(angle, prim);
+        break;
+      case "beam":
+        this.fireBeam(angle, prim);
+        break;
+    }
     this.cameras.main.shake(40, 0.0018);
     this.synth.shoot();
+  }
+
+  private muzzleAt(angle: number): { x: number; y: number } {
+    return {
+      x: this.player.x + Math.cos(angle) * 14,
+      y: this.player.y + Math.sin(angle) * 14,
+    };
+  }
+
+  private fireSpread(angle: number, prim: Extract<PrimaryDef, { kind: "spread" }>) {
+    const half = Phaser.Math.DegToRad(prim.spreadDeg) / 2;
+    for (let i = 0; i < prim.pellets; i++) {
+      const t = prim.pellets === 1 ? 0.5 : i / (prim.pellets - 1);
+      const a = angle - half + t * 2 * half + Phaser.Math.FloatBetween(-0.04, 0.04);
+      const m = this.muzzleAt(a);
+      this.bullets.fire(m.x, m.y, a);
+    }
+    const m = this.muzzleAt(angle);
+    this.muzzleFlash(m.x, m.y);
+  }
+
+  private fireBurst(angle: number, prim: Extract<PrimaryDef, { kind: "burst" }>) {
+    const shoot = () => {
+      const m = this.muzzleAt(angle);
+      this.bullets.fire(m.x, m.y, angle);
+      this.muzzleFlash(m.x, m.y);
+    };
+    shoot();
+    for (let i = 1; i < prim.burstCount; i++) {
+      this.time.delayedCall(i * prim.burstGapMs, shoot);
+    }
+  }
+
+  private fireRapid(angle: number, prim: Extract<PrimaryDef, { kind: "rapid" }>) {
+    const j = Phaser.Math.DegToRad(prim.jitterDeg);
+    const a = angle + Phaser.Math.FloatBetween(-j, j);
+    const m = this.muzzleAt(a);
+    this.bullets.fire(m.x, m.y, a);
+    this.muzzleFlash(m.x, m.y);
+  }
+
+  private fireBeam(angle: number, prim: Extract<PrimaryDef, { kind: "beam" }>) {
+    const px = this.player.x;
+    const py = this.player.y;
+    const ex = px + Math.cos(angle) * prim.range;
+    const ey = py + Math.sin(angle) * prim.range;
+    const dmg = prim.damage * this.heat.damageMult;
+
+    // Pierce: hit every cop near the beam line.
+    this.enemies.getChildren().forEach((go) => {
+      const cop = go as TuringCop;
+      if (!cop.active || cop.isDead) return;
+      if (this.pointSegDist(cop.x, cop.y, px, py, ex, ey) <= prim.halfWidth + 10) {
+        this.spark(cop.x, cop.y, this.classDef.color, 1.4);
+        this.damageCop(cop, dmg);
+      }
+    });
+
+    const g = this.add.graphics().setDepth(11);
+    g.lineStyle(4, this.classDef.color, 0.85).lineBetween(px, py, ex, ey);
+    g.lineStyle(1.5, 0xffffff, 0.9).lineBetween(px, py, ex, ey);
+    this.tweens.add({
+      targets: g,
+      alpha: 0,
+      duration: 130,
+      onComplete: () => g.destroy(),
+    });
+  }
+
+  /** Distance from a point to a segment (clamped), for beam hit tests. */
+  private pointSegDist(
+    px: number,
+    py: number,
+    ax: number,
+    ay: number,
+    bx: number,
+    by: number,
+  ): number {
+    const dx = bx - ax;
+    const dy = by - ay;
+    const len2 = dx * dx + dy * dy || 1;
+    let t = ((px - ax) * dx + (py - ay) * dy) / len2;
+    t = Phaser.Math.Clamp(t, 0, 1);
+    return Phaser.Math.Distance.Between(px, py, ax + t * dx, ay + t * dy);
+  }
+
+  /** Apply damage to a cop + the shared kill/heat/singularity/feedback handling. */
+  private damageCop(cop: TuringCop, dmg: number) {
+    const killed = cop.hurt(dmg);
+    this.heat.add(dmg * HEAT.perDamage, this.time.now);
+    if (killed) {
+      this.heat.add(HEAT.perKill, this.time.now);
+      this.singularity.add(SINGULARITY.perKill);
+      this.synth.kill();
+      this.hitStop(60);
+      this.cameras.main.shake(140, 0.006);
+    } else {
+      this.synth.hit();
+    }
   }
 
   /** Brief impact freeze for game feel (pauses physics + sim). */
@@ -576,21 +701,10 @@ export default class GameScene extends Phaser.Scene {
 
   private onBulletHitsCop(bullet: Phaser.Physics.Arcade.Image, cop: TuringCop) {
     if (!cop.active || cop.isDead) return;
+    const dmg = (bullet.getData("dmg") as number) * this.heat.damageMult;
     this.bullets.kill(bullet);
     this.spark(bullet.x, bullet.y, COLORS.enemyEdge, 1.6);
-
-    const dmg = BULLET.damage * this.heat.damageMult; // overclock hits harder
-    const killed = cop.hurt(dmg);
-    this.heat.add(dmg * HEAT.perDamage, this.time.now);
-    if (killed) {
-      this.heat.add(HEAT.perKill, this.time.now);
-      this.singularity.add(SINGULARITY.perKill);
-      this.synth.kill();
-      this.hitStop(60);
-      this.cameras.main.shake(140, 0.006);
-    } else {
-      this.synth.hit();
-    }
+    this.damageCop(cop, dmg);
   }
 
   private onEnemyBulletHitsPlayer(bullet: Phaser.Physics.Arcade.Image) {

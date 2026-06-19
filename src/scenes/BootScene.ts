@@ -41,6 +41,6 @@ export default class BootScene extends Phaser.Scene {
       );
     }
 
-    this.scene.start("Game");
+    this.scene.start("Select");
   }
 }

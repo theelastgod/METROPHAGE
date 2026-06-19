@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { PLAYER, COLORS } from "../config";
 import { PLAYER_KEY, faceFrame } from "../assets/manifest";
+import { ClassDef } from "../game/classes";
 
 /** Per-frame input snapshot, decoupled from the raw key/pointer objects. */
 export interface PlayerInput {
@@ -16,11 +17,13 @@ export interface PlayerInput {
 
 /**
  * Player entity: twin-stick movement (WASD move, mouse aim), a dash with
- * invulnerability frames, and a fire-rate-gated projectile weapon. Combat state
- * lives here so the scene stays thin.
+ * invulnerability frames, and a fire-rate-gated primary weapon. The chosen class
+ * supplies stats + the primary config; the scene reads classDef.primary to fire.
  */
 export default class Player extends Phaser.Physics.Arcade.Sprite {
-  hp: number = PLAYER.maxHp;
+  readonly classDef: ClassDef;
+  readonly maxHp: number;
+  hp: number;
   /** Movement multiplier applied by the scene from Heat (overclock buff). */
   speedMult = 1;
 
@@ -32,10 +35,14 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
   private dashVy = 0;
   private lastGhostAt = 0;
 
-  constructor(scene: Phaser.Scene, x: number, y: number) {
+  constructor(scene: Phaser.Scene, x: number, y: number, classDef: ClassDef) {
     super(scene, x, y, PLAYER_KEY);
+    this.classDef = classDef;
+    this.maxHp = classDef.maxHp;
+    this.hp = classDef.maxHp;
     scene.add.existing(this);
     scene.physics.add.existing(this);
+    this.setTint(classDef.color);
     this.setCollideWorldBounds(true);
     this.setDepth(10);
     (this.body as Phaser.Physics.Arcade.Body).setCircle(9, 7, 9);
@@ -85,7 +92,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
         this.lastGhostAt = now;
       }
     } else if (dir.lengthSq() > 0) {
-      dir.normalize().scale(PLAYER.speed * this.speedMult);
+      dir.normalize().scale(this.classDef.speed * this.speedMult);
       this.setVelocity(dir.x, dir.y);
     } else {
       this.setVelocity(0, 0);
@@ -95,12 +102,12 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this.setAlpha(this.invulnerable ? 0.55 : 1);
   }
 
-  /** If firing and off cooldown, returns the aim angle to spawn a bullet at. */
+  /** If firing and off cooldown, returns the aim angle. Cadence = class primary. */
   tryFire(input: PlayerInput): number | null {
     if (!input.fire) return null;
     const now = this.scene.time.now;
     if (now < this.nextFireAt) return null;
-    this.nextFireAt = now + PLAYER.fireRateMs;
+    this.nextFireAt = now + this.classDef.primary.fireRateMs;
     return Phaser.Math.Angle.Between(this.x, this.y, input.aimX, input.aimY);
   }
 
@@ -110,15 +117,15 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this.hp = Math.max(0, this.hp - dmg);
     this.invulnUntil = this.scene.time.now + PLAYER.hitIframeMs;
     this.setTint(COLORS.hurt);
-    this.scene.time.delayedCall(90, () => this.clearTint());
+    this.scene.time.delayedCall(90, () => this.setTint(this.classDef.color));
     return this.hp <= 0;
   }
 
   respawn(x: number, y: number) {
-    this.hp = PLAYER.maxHp;
+    this.hp = this.maxHp;
     this.setPosition(x, y);
     this.setVelocity(0, 0);
-    this.clearTint();
+    this.setTint(this.classDef.color);
     this.invulnUntil = this.scene.time.now + 1200; // brief grace on respawn
   }
 
@@ -127,7 +134,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
       .image(this.x, this.y, this.texture.key, this.frame.name)
       .setDepth(9)
       .setAlpha(0.4)
-      .setTint(COLORS.neonCyan);
+      .setTint(this.classDef.color);
     this.scene.tweens.add({
       targets: ghost,
       alpha: 0,

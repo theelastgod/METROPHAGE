@@ -8,6 +8,7 @@ export interface BulletOpts {
   lifetimeMs: number;
   radius: number;
   maxActive: number;
+  damage: number; // applied on hit (read back via getData("dmg"))
   tint?: number; // optional recolor (e.g. hostile fire)
 }
 
@@ -17,6 +18,7 @@ const DEFAULTS: BulletOpts = {
   lifetimeMs: BULLET.lifetimeMs,
   radius: BULLET.radius,
   maxActive: BULLET.maxActive,
+  damage: BULLET.damage,
 };
 
 /**
@@ -53,6 +55,7 @@ export default class Bullets {
     body.setAllowGravity(false);
     this.scene.physics.velocityFromRotation(angle, this.opts.speed, body.velocity);
     b.setData("dieAt", this.scene.time.now + this.opts.lifetimeMs);
+    b.setData("dmg", this.opts.damage);
   }
 
   kill(obj: Phaser.GameObjects.GameObject) {
