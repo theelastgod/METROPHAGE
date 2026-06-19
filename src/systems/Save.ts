@@ -1,5 +1,6 @@
 import type { ProgressData } from "./Progression";
 import type { InventoryData } from "./Inventory";
+import type { ContractsData } from "./Contracts";
 
 // METROPHAGE — local save (localStorage). Single slot.
 
@@ -10,6 +11,7 @@ export interface SaveState {
   progress: ProgressData;
   singularity: number;
   inventory: InventoryData;
+  contracts?: ContractsData;
 }
 
 export function loadSave(): SaveState | null {

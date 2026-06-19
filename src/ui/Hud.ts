@@ -23,6 +23,7 @@ export interface HudState {
   skillPoints: number;
   shield: number;
   shieldMax: number;
+  contract: string;
 }
 
 const hex = (c: number) => "#" + c.toString(16).padStart(6, "0");
@@ -41,6 +42,7 @@ export default class Hud {
   private overdriveText: Phaser.GameObjects.Text;
   private metaText: Phaser.GameObjects.Text;
   private skillText: Phaser.GameObjects.Text;
+  private contractText: Phaser.GameObjects.Text;
 
   private readonly px = 14;
   private readonly py = 14;
@@ -77,6 +79,17 @@ export default class Hud {
         align: "right",
       })
       .setOrigin(1, 0)
+      .setScrollFactor(0)
+      .setDepth(1001);
+    // Contract tracker, top-center.
+    this.contractText = scene.add
+      .text(scene.scale.width / 2, 12, "", {
+        fontFamily: "Courier New, monospace",
+        fontSize: "12px",
+        color: "#f7ff3c",
+        align: "center",
+      })
+      .setOrigin(0.5, 0)
       .setScrollFactor(0)
       .setDepth(1001);
 
@@ -147,6 +160,7 @@ export default class Hud {
     );
 
     this.metaText.setText(`LV ${s.level}   ₵ ${s.credits}`);
+    this.contractText.setText(s.contract ? `◢ ${s.contract}` : "");
     this.skillText
       .setText(s.skillPoints > 0 ? `K SKILLS (${s.skillPoints} pts!)` : "K SKILLS")
       .setColor(s.skillPoints > 0 ? "#39ff88" : "#5a6172");

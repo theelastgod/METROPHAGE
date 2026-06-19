@@ -38,16 +38,20 @@ import Heat from "../systems/Heat";
 import Singularity from "../systems/Singularity";
 import Progression from "../systems/Progression";
 import Inventory from "../systems/Inventory";
+import Contracts from "../systems/Contracts";
 import { loadSave, writeSave } from "../systems/Save";
 import { ModBag, ZERO_MODS, addMods } from "../game/stats";
 import { rollItem } from "../game/items";
+import { Contract, objectiveLabel } from "../game/contracts";
 import Pickup from "../entities/Pickup";
+import Terminal from "../entities/Terminal";
 import NeonPipeline from "../render/NeonPipeline";
 import Synth from "../audio/Synth";
 import Hud from "../ui/Hud";
 import DialogueBox, { DialoguePage } from "../ui/DialogueBox";
 import SkillPanel from "../ui/SkillPanel";
 import InventoryPanel from "../ui/InventoryPanel";
+import ContractPanel from "../ui/ContractPanel";
 
 /**
  * GameScene — Phase 0.
@@ -72,9 +76,13 @@ export default class GameScene
   private singularity = new Singularity();
   private progression!: Progression;
   private inventory = new Inventory();
+  private contracts!: Contracts;
   private mods: ModBag = ZERO_MODS;
   private skillPanel!: SkillPanel;
   private inventoryPanel!: InventoryPanel;
+  private contractPanel!: ContractPanel;
+  private terminal!: Terminal;
+  private contractMarker!: Phaser.GameObjects.Graphics;
   private pickups!: Phaser.Physics.Arcade.Group;
   private nextAutosaveAt = 0;
   private synth = new Synth(); // persists across scene.restart()
@@ -134,10 +142,13 @@ export default class GameScene
       this.progression = new Progression(save.progress.classId, save.progress);
       this.singularity.value = save.singularity;
       this.inventory.load(save.inventory);
+      this.contracts = new Contracts(save.contracts);
     } else {
       this.classDef = getClass(this.registry.get("classId") as string | undefined);
       this.progression = new Progression(this.classDef.id);
+      this.contracts = new Contracts();
     }
+    this.contracts.refresh(this.progression.level);
 
     // Audio needs a user gesture; the intro requires a click/key to advance.
     this.input.once("pointerdown", () => this.synth.ensureStarted());
@@ -149,6 +160,8 @@ export default class GameScene
     this.setupEnemies();
     this.createNode();
     this.createNpc();
+    this.terminal = new Terminal(this, 23 * TILE + TILE / 2, 14 * TILE + TILE / 2);
+    this.contractMarker = this.add.graphics().setDepth(4);
     this.createAgents();
     this.minions = this.physics.add.group();
     this.physics.add.collider(this.minions, this.wallLayer);
@@ -168,6 +181,12 @@ export default class GameScene
     };
     this.skillPanel = new SkillPanel(this, this.classDef, this.progression, onLoadoutChange);
     this.inventoryPanel = new InventoryPanel(this, this.inventory, onLoadoutChange);
+    this.contractPanel = new ContractPanel(
+      this,
+      this.contracts,
+      (c) => this.acceptContract(c),
+      () => this.autosave(true),
+    );
     this.recomputeStats();
     this.autosave(true); // persist the (possibly fresh) run immediately
 
@@ -194,6 +213,7 @@ export default class GameScene
       progress: this.progression.toData(),
       singularity: this.singularity.value,
       inventory: this.inventory.toData(),
+      contracts: this.contracts.toData(),
     });
   }
 
@@ -218,6 +238,62 @@ export default class GameScene
     const boost = tier.id === "purge" ? 2 : tier.id === "enforcer" ? 0.6 : 0;
     const item = rollItem(this.progression.level, boost);
     this.pickups.add(new Pickup(this, cop.x, cop.y, item));
+  }
+
+  // ---- contracts ----
+
+  private acceptContract(c: Contract) {
+    for (const o of c.objectives) {
+      if (o.type === "hold" || o.type === "deliver") {
+        o.zone = this.pickZone(o.type === "hold" ? 72 : 40);
+      }
+    }
+    this.contracts.accept(c);
+    this.contractPanel.close();
+    this.autosave(true);
+    if (c.authored && c.briefing) {
+      this.dialogue.show(
+        c.briefing.map((text) => ({
+          speaker: "FIXER",
+          portrait: { key: PORTRAIT_NPC_KEY, frame: 0 },
+          text,
+        })),
+      );
+    } else {
+      this.floatText("CONTRACT ACCEPTED", this.classDef.hex);
+    }
+  }
+
+  private completeContract() {
+    const c = this.contracts.completeActive();
+    if (!c) return;
+    this.progression.addXp(c.rewards.xp);
+    this.progression.addCurrency(c.rewards.currency);
+    for (let i = 0; i < c.rewards.loot; i++) {
+      const item = rollItem(this.progression.level, c.rewards.lootBoost);
+      if (!this.inventory.add(item)) {
+        this.pickups.add(new Pickup(this, this.player.x, this.player.y, item));
+      }
+    }
+    this.recomputeStats();
+    this.floatText("CONTRACT COMPLETE", "#39ff88");
+    this.synth.infect();
+    this.contracts.refresh(this.progression.level);
+    this.autosave(true);
+  }
+
+  /** A walkable point in a ring around the player (for hold/deliver objectives). */
+  private pickZone(r: number): { x: number; y: number; r: number } {
+    for (let tries = 0; tries < 24; tries++) {
+      const a = Math.random() * Math.PI * 2;
+      const rad = 150 + Math.random() * 160;
+      const x = Phaser.Math.Clamp(this.player.x + Math.cos(a) * rad, TILE * 2, WORLD_W - TILE * 2);
+      const y = Phaser.Math.Clamp(this.player.y + Math.sin(a) * rad, TILE * 2, WORLD_H - TILE * 2);
+      const tx = Math.floor(x / TILE);
+      const ty = Math.floor(y / TILE);
+      if (this.grid[ty]?.[tx] !== undefined && !isWall(this.grid[ty][tx])) return { x, y, r };
+    }
+    return { x: this.player.x, y: this.player.y, r };
   }
 
   private grantKillRewards(tierXp: number, tierCredits: number) {
@@ -488,6 +564,7 @@ export default class GameScene
     kb.on("keydown-ESC", () => {
       this.skillPanel?.close();
       this.inventoryPanel?.close();
+      this.contractPanel?.close();
     });
     this.input.mouse?.disableContextMenu();
   }
@@ -572,6 +649,9 @@ export default class GameScene
       skillPoints: this.progression.skillPoints,
       shield: this.player.shield,
       shieldMax: this.player.maxShield,
+      contract: this.contracts.active
+        ? `${this.contracts.active.name}: ${objectiveLabel(this.contracts.active.objectives[0])}`
+        : "",
     });
   }
 
@@ -595,7 +675,8 @@ export default class GameScene
 
     this.updateHud();
     this.autosave();
-    if (this.skillPanel.isOpen || this.inventoryPanel.isOpen) return; // menu open: freeze sim
+    if (this.skillPanel.isOpen || this.inventoryPanel.isOpen || this.contractPanel.isOpen)
+      return; // menu open: freeze sim
     if (this.dialogue.isOpen) return; // freeze the sim while a dialogue is up
 
     // HEAT: pinned during Overdrive, else decay. Drives post-FX + music.
@@ -650,6 +731,7 @@ export default class GameScene
         this.synth.infect();
         this.cameras.main.shake(220, 0.005);
         this.grantKillRewards(40, 0); // XP for capturing a node
+        this.contracts.onInfect();
         this.autosave(true);
       }
       this.singularity.add(SINGULARITY.perInfectedSec * (delta / 1000));
@@ -660,17 +742,35 @@ export default class GameScene
       return;
     }
 
-    // NPC interaction.
-    const npcDist = Phaser.Math.Distance.Between(
-      this.player.x,
-      this.player.y,
-      this.npc.x,
-      this.npc.y,
-    );
-    const inRange = this.npc.update(npcDist);
-    if (inRange && Phaser.Input.Keyboard.JustDown(this.eKey)) {
-      this.dialogue.show(this.npcPages());
+    // CONTRACTS: advance hold/deliver objectives, draw the marker, complete.
+    this.contracts.tick(this.player.x, this.player.y, delta);
+    this.drawContractMarker();
+    if (this.contracts.isComplete) this.completeContract();
+
+    // Interactions (E): contract terminal takes priority, else the NPC.
+    const termDist = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.terminal.x, this.terminal.y);
+    const nearTerminal = this.terminal.update(termDist);
+    const npcDist = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y);
+    const nearNpc = this.npc.update(npcDist);
+    if (Phaser.Input.Keyboard.JustDown(this.eKey)) {
+      if (nearTerminal) {
+        this.skillPanel.close();
+        this.inventoryPanel.close();
+        this.contractPanel.toggle();
+      } else if (nearNpc) {
+        this.dialogue.show(this.npcPages());
+      }
     }
+  }
+
+  private drawContractMarker() {
+    const g = this.contractMarker;
+    g.clear();
+    const o = this.contracts.active?.objectives.find((x) => x.zone);
+    if (!o || !o.zone) return;
+    const color = o.type === "hold" ? 0x39ff88 : 0xf7ff3c;
+    g.lineStyle(2, color, 0.8).strokeCircle(o.zone.x, o.zone.y, o.zone.r);
+    g.fillStyle(color, 0.08).fillCircle(o.zone.x, o.zone.y, o.zone.r);
   }
 
   private triggerMeltdown() {
@@ -888,13 +988,16 @@ export default class GameScene
   damageCop(cop: TuringCop, dmg: number, juice = true, shieldMult = 1) {
     if (!cop.active || cop.isDead) return;
     const heatGain = 1 + this.mods.heatGainPct;
+    const wasShielded = cop.shielded;
     const killed = cop.hurt(dmg, shieldMult);
+    if (wasShielded && !cop.shielded && !killed) this.contracts.onShieldBreak();
     this.heat.add(dmg * HEAT.perDamage * heatGain, this.time.now);
     if (killed) {
       this.heat.add(HEAT.perKill * heatGain, this.time.now);
       this.singularity.add(SINGULARITY.perKill);
       this.grantKillRewards(cop.tier.xp, cop.tier.credits);
       this.maybeDropLoot(cop);
+      this.contracts.onKill();
       this.synth.kill();
       if (juice) {
         this.hitStop(60);
