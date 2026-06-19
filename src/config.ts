@@ -73,6 +73,21 @@ export const NPC = {
   interactRange: 70, // press E within this to talk
 } as const;
 
+/** Ambient wandering crowd (idle <-> wander FSM, no combat). */
+export const AGENT = {
+  count: 6,
+  speed: 42,
+  wanderRadius: 104,
+  idleMinMs: 700,
+  idleMaxMs: 2400,
+  wanderMaxMs: 3200,
+} as const;
+
+/** Neon tints so the crowd reads as varied citizens. */
+export const AGENT_TINTS = [
+  0x00e5ff, 0xff2bd6, 0xf7ff3c, 0x39ff88, 0xb06bff, 0xff8a3c,
+] as const;
+
 /** Cop projectile tuning (reuses the bullet texture, tinted hostile). */
 export const ENEMY_BULLET = {
   speed: 300,

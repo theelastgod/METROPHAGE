@@ -13,6 +13,7 @@ import {
   COP_KEY,
   NODE_KEY,
   NPC_KEY,
+  AGENT_KEY,
   PORTRAIT_PLAYER_KEY,
 } from "./manifest";
 
@@ -131,6 +132,20 @@ function makeNpc(scene: Phaser.Scene) {
   g.destroy();
 }
 
+/** Build an ambient citizen: a light figure (tinted per-instance in the scene). */
+function makeAgent(scene: Phaser.Scene) {
+  const w = 18;
+  const h = 22;
+  const cx = w / 2;
+  const g = scene.add.graphics();
+  // near-white so per-instance tints read true; nub (head) points "up"
+  g.fillStyle(0xe6f2ff, 1).fillRoundedRect(2, 8, w - 4, h - 8, 5); // body
+  g.fillStyle(0xffffff, 1).fillCircle(cx, 6, 5); // head
+  g.lineStyle(1, 0x0a0a16, 0.5).strokeRoundedRect(2, 8, w - 4, h - 8, 5);
+  g.generateTexture(AGENT_KEY, w, h);
+  g.destroy();
+}
+
 /** Build the player dialogue portrait: a neon cyberian visor-head bust. */
 function makePortraitPlayer(scene: Phaser.Scene) {
   const w = 96;
@@ -169,5 +184,6 @@ export function generatePlaceholders(scene: Phaser.Scene) {
   if (!scene.textures.exists(COP_KEY)) makeCop(scene);
   if (!scene.textures.exists(NODE_KEY)) makeNode(scene);
   if (!scene.textures.exists(NPC_KEY)) makeNpc(scene);
+  if (!scene.textures.exists(AGENT_KEY)) makeAgent(scene);
   if (!scene.textures.exists(PORTRAIT_PLAYER_KEY)) makePortraitPlayer(scene);
 }

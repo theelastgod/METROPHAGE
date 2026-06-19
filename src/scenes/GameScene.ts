@@ -9,6 +9,8 @@ import {
   HEAT,
   SINGULARITY,
   PLAYER,
+  AGENT,
+  AGENT_TINTS,
 } from "../config";
 import { buildGrid, spawnPoint, isWall, TILE_WALL, TileGrid } from "../world/district";
 import {
@@ -21,6 +23,7 @@ import Bullets from "../entities/Bullets";
 import TuringCop from "../entities/TuringCop";
 import InfectionNode from "../entities/InfectionNode";
 import Npc from "../entities/Npc";
+import Agent from "../entities/Agent";
 import Heat from "../systems/Heat";
 import Singularity from "../systems/Singularity";
 import NeonPipeline from "../render/NeonPipeline";
@@ -46,6 +49,7 @@ export default class GameScene extends Phaser.Scene {
   private won = false;
   private node!: InfectionNode;
   private npc!: Npc;
+  private agents!: Phaser.Physics.Arcade.Group;
   private neon?: NeonPipeline;
   private hud!: Hud;
   private dialogue!: DialogueBox;
@@ -78,6 +82,7 @@ export default class GameScene extends Phaser.Scene {
     this.setupEnemies();
     this.createNode();
     this.createNpc();
+    this.createAgents();
     this.setupCamera();
     this.setupPostFX();
     this.setupInput();
@@ -93,6 +98,35 @@ export default class GameScene extends Phaser.Scene {
       ty = 16;
     }
     this.npc = new Npc(this, tx * TILE + TILE / 2, ty * TILE + TILE / 2);
+  }
+
+  private createAgents() {
+    this.agents = this.physics.add.group();
+    // Candidate anchors spread across the streets/plaza; validated walkable.
+    const spots: Array<[number, number]> = [
+      [11, 4],
+      [26, 10],
+      [33, 18],
+      [20, 9],
+      [7, 20],
+      [30, 28],
+      [24, 20],
+      [10, 16],
+    ];
+    let placed = 0;
+    for (const [tx, ty] of spots) {
+      if (placed >= AGENT.count) break;
+      if (this.grid[ty]?.[tx] === undefined || isWall(this.grid[ty][tx])) continue;
+      const agent = new Agent(
+        this,
+        tx * TILE + TILE / 2,
+        ty * TILE + TILE / 2,
+        AGENT_TINTS[placed % AGENT_TINTS.length],
+      );
+      this.agents.add(agent);
+      placed++;
+    }
+    this.physics.add.collider(this.agents, this.wallLayer);
   }
 
   private setupUi() {
@@ -334,6 +368,8 @@ export default class GameScene extends Phaser.Scene {
         );
       }
     });
+
+    this.agents.getChildren().forEach((go) => (go as Agent).step(now));
 
     // INFECTION + SINGULARITY: channel the node by proximity; infected node ticks
     // the global meter upward.

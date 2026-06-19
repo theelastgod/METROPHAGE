@@ -23,6 +23,7 @@ export const BULLET_KEY = "bullet";
 export const COP_KEY = "cop";
 export const NODE_KEY = "node";
 export const NPC_KEY = "npc";
+export const AGENT_KEY = "agent";
 
 export const PORTRAIT_PLAYER_KEY = "portrait_player";
 export const PORTRAIT_NPC_KEY = "portrait_npc";
@@ -37,6 +38,7 @@ export const ASSETS: Record<string, AssetEntry[]> = {
     { key: COP_KEY, file: null },
     { key: NODE_KEY, file: null },
     { key: NPC_KEY, file: null },
+    { key: AGENT_KEY, file: null },
   ],
   portraits: [
     { key: PORTRAIT_PLAYER_KEY, file: null },
