@@ -24,6 +24,7 @@ export interface HudState {
   shield: number;
   shieldMax: number;
   contract: string;
+  consumables: string;
 }
 
 const hex = (c: number) => "#" + c.toString(16).padStart(6, "0");
@@ -43,6 +44,7 @@ export default class Hud {
   private metaText: Phaser.GameObjects.Text;
   private skillText: Phaser.GameObjects.Text;
   private contractText: Phaser.GameObjects.Text;
+  private consumeText: Phaser.GameObjects.Text;
 
   private readonly px = 14;
   private readonly py = 14;
@@ -71,6 +73,7 @@ export default class Hud {
     this.ultText = label(this.py + this.ph + 22, "#9aa3b2", "11px");
     this.overdriveText = label(this.py + this.ph + 38, "#f7ff3c", "12px");
     this.skillText = label(this.py + this.ph + 54, "#9aa3b2", "11px");
+    this.consumeText = label(this.py + this.ph + 70, "#9aa3b2", "10px");
     this.metaText = scene.add
       .text(this.px + this.pw - 10, this.py + 8, "", {
         fontFamily: "Courier New, monospace",
@@ -161,6 +164,7 @@ export default class Hud {
 
     this.metaText.setText(`LV ${s.level}   ₵ ${s.credits}`);
     this.contractText.setText(s.contract ? `◢ ${s.contract}` : "");
+    this.consumeText.setText(s.consumables);
     this.skillText
       .setText(s.skillPoints > 0 ? `K SKILLS (${s.skillPoints} pts!)` : "K SKILLS")
       .setColor(s.skillPoints > 0 ? "#39ff88" : "#5a6172");

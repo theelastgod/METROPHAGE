@@ -12,6 +12,7 @@ export interface ProgressData {
   skillPoints: number;
   currency: number;
   allocations: Record<string, number>;
+  consumables?: Record<string, number>;
 }
 
 const xpToNext = (level: number) => 60 + (level - 1) * 45;
@@ -31,6 +32,7 @@ export default class Progression {
   skillPoints = 0;
   currency = 0;
   allocations: Record<string, number> = {};
+  consumables: Record<string, number> = {};
 
   constructor(classId: string, data?: ProgressData) {
     this.classId = classId;
@@ -40,7 +42,18 @@ export default class Progression {
       this.skillPoints = data.skillPoints;
       this.currency = data.currency;
       this.allocations = { ...data.allocations };
+      this.consumables = { ...(data.consumables ?? {}) };
     }
+  }
+
+  addConsumable(id: string, n = 1) {
+    this.consumables[id] = (this.consumables[id] ?? 0) + n;
+  }
+  /** Consume one; returns false if none held. */
+  useConsumable(id: string): boolean {
+    if ((this.consumables[id] ?? 0) <= 0) return false;
+    this.consumables[id]--;
+    return true;
   }
 
   get nextLevelXp(): number {
@@ -123,6 +136,7 @@ export default class Progression {
       skillPoints: this.skillPoints,
       currency: this.currency,
       allocations: { ...this.allocations },
+      consumables: { ...this.consumables },
     };
   }
 }

@@ -106,6 +106,21 @@ export function rollItem(level = 1, rarityBoost = 0, forceRarity?: Rarity): Item
   };
 }
 
+const RARITY_BASE: Record<Rarity, number> = {
+  standard: 30,
+  tuned: 80,
+  blackice: 180,
+  singular: 400,
+};
+
+/** Buy price (also the basis for sell value). */
+export function itemValue(item: Item): number {
+  return RARITY_BASE[item.rarity] + Object.keys(item.mods).length * 15;
+}
+export function sellValue(item: Item): number {
+  return Math.max(5, Math.floor(itemValue(item) * 0.4));
+}
+
 /** Human-readable stat lines for tooltips/UI. */
 export function itemStatLines(item: Item): string[] {
   return (Object.keys(item.mods) as (keyof ModBag)[]).map((key) => {

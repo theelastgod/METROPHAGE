@@ -3,28 +3,35 @@ import { NPC } from "../config";
 import { UI_FRAME_KEY } from "../assets/manifest";
 
 /**
- * Contract-board terminal in the hub. Shows an "E BOARD" prompt when the player
- * is near; the scene opens the ContractPanel on E.
+ * A hub interaction point (contract board / vendor). Shows an "E …" prompt when
+ * the player is near; the scene opens the matching panel on E.
  */
 export default class Terminal {
   readonly x: number;
   readonly y: number;
   private prompt: Phaser.GameObjects.Text;
 
-  constructor(scene: Phaser.Scene, x: number, y: number) {
+  constructor(
+    scene: Phaser.Scene,
+    x: number,
+    y: number,
+    label = "CONTRACTS",
+    promptText = "E  BOARD",
+    tint = 0x29e7ff,
+  ) {
     this.x = x;
     this.y = y;
-    const sprite = scene.add.image(x, y, UI_FRAME_KEY).setDepth(6).setTint(0x29e7ff);
+    const sprite = scene.add.image(x, y, UI_FRAME_KEY).setDepth(6).setTint(tint);
     scene.add
-      .text(x, y - 24, "CONTRACTS", {
+      .text(x, y - 24, label, {
         fontFamily: "Courier New, monospace",
         fontSize: "10px",
-        color: "#29e7ff",
+        color: "#" + tint.toString(16).padStart(6, "0"),
       })
       .setOrigin(0.5)
       .setDepth(7);
     this.prompt = scene.add
-      .text(x, y + 24, "E  BOARD", {
+      .text(x, y + 24, promptText, {
         fontFamily: "Courier New, monospace",
         fontSize: "11px",
         color: "#f7ff3c",

@@ -39,7 +39,9 @@ import Singularity from "../systems/Singularity";
 import Progression from "../systems/Progression";
 import Inventory from "../systems/Inventory";
 import Contracts from "../systems/Contracts";
+import Vendor from "../systems/Vendor";
 import { loadSave, writeSave } from "../systems/Save";
+import { CONSUMABLES, CONSUMABLE_KEYS } from "../game/consumables";
 import { ModBag, ZERO_MODS, addMods } from "../game/stats";
 import { rollItem } from "../game/items";
 import { Contract, objectiveLabel } from "../game/contracts";
@@ -52,6 +54,7 @@ import DialogueBox, { DialoguePage } from "../ui/DialogueBox";
 import SkillPanel from "../ui/SkillPanel";
 import InventoryPanel from "../ui/InventoryPanel";
 import ContractPanel from "../ui/ContractPanel";
+import VendorPanel from "../ui/VendorPanel";
 
 /**
  * GameScene — Phase 0.
@@ -77,12 +80,16 @@ export default class GameScene
   private progression!: Progression;
   private inventory = new Inventory();
   private contracts!: Contracts;
+  private vendor!: Vendor;
   private mods: ModBag = ZERO_MODS;
   private skillPanel!: SkillPanel;
   private inventoryPanel!: InventoryPanel;
   private contractPanel!: ContractPanel;
+  private vendorPanel!: VendorPanel;
   private terminal!: Terminal;
+  private vendorTerminal!: Terminal;
   private contractMarker!: Phaser.GameObjects.Graphics;
+  private consumeKeys!: Phaser.Input.Keyboard.Key[];
   private pickups!: Phaser.Physics.Arcade.Group;
   private nextAutosaveAt = 0;
   private synth = new Synth(); // persists across scene.restart()
@@ -149,6 +156,7 @@ export default class GameScene
       this.contracts = new Contracts();
     }
     this.contracts.refresh(this.progression.level);
+    this.vendor = new Vendor(this.progression.level);
 
     // Audio needs a user gesture; the intro requires a click/key to advance.
     this.input.once("pointerdown", () => this.synth.ensureStarted());
@@ -161,6 +169,14 @@ export default class GameScene
     this.createNode();
     this.createNpc();
     this.terminal = new Terminal(this, 23 * TILE + TILE / 2, 14 * TILE + TILE / 2);
+    this.vendorTerminal = new Terminal(
+      this,
+      17 * TILE + TILE / 2,
+      18 * TILE + TILE / 2,
+      "FIXER",
+      "E  SHOP",
+      0xf7ff3c,
+    );
     this.contractMarker = this.add.graphics().setDepth(4);
     this.createAgents();
     this.minions = this.physics.add.group();
@@ -187,6 +203,7 @@ export default class GameScene
       (c) => this.acceptContract(c),
       () => this.autosave(true),
     );
+    this.vendorPanel = new VendorPanel(this, this.vendor, this.progression, this.inventory, onLoadoutChange);
     this.recomputeStats();
     this.autosave(true); // persist the (possibly fresh) run immediately
 
@@ -561,10 +578,16 @@ export default class GameScene
     this.overdriveKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.R);
     this.skillKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.K);
     this.invKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.I);
+    this.consumeKeys = [
+      kb.addKey(Phaser.Input.Keyboard.KeyCodes.ONE),
+      kb.addKey(Phaser.Input.Keyboard.KeyCodes.TWO),
+      kb.addKey(Phaser.Input.Keyboard.KeyCodes.THREE),
+    ];
     kb.on("keydown-ESC", () => {
       this.skillPanel?.close();
       this.inventoryPanel?.close();
       this.contractPanel?.close();
+      this.vendorPanel?.close();
     });
     this.input.mouse?.disableContextMenu();
   }
@@ -652,6 +675,9 @@ export default class GameScene
       contract: this.contracts.active
         ? `${this.contracts.active.name}: ${objectiveLabel(this.contracts.active.objectives[0])}`
         : "",
+      consumables: CONSUMABLE_KEYS.map(
+        (id, i) => `${i + 1}:${id.slice(0, 3).toUpperCase()}x${this.progression.consumables[id] ?? 0}`,
+      ).join("  "),
     });
   }
 
@@ -675,9 +701,16 @@ export default class GameScene
 
     this.updateHud();
     this.autosave();
-    if (this.skillPanel.isOpen || this.inventoryPanel.isOpen || this.contractPanel.isOpen)
+    if (
+      this.skillPanel.isOpen ||
+      this.inventoryPanel.isOpen ||
+      this.contractPanel.isOpen ||
+      this.vendorPanel.isOpen
+    )
       return; // menu open: freeze sim
     if (this.dialogue.isOpen) return; // freeze the sim while a dialogue is up
+
+    this.handleConsumables(now);
 
     // HEAT: pinned during Overdrive, else decay. Drives post-FX + music.
     if (this.inOverdrive) {
@@ -747,20 +780,44 @@ export default class GameScene
     this.drawContractMarker();
     if (this.contracts.isComplete) this.completeContract();
 
-    // Interactions (E): contract terminal takes priority, else the NPC.
-    const termDist = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.terminal.x, this.terminal.y);
-    const nearTerminal = this.terminal.update(termDist);
-    const npcDist = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.npc.x, this.npc.y);
-    const nearNpc = this.npc.update(npcDist);
+    // Interactions (E): contract board / vendor / NPC by proximity.
+    const dist = (x: number, y: number) =>
+      Phaser.Math.Distance.Between(this.player.x, this.player.y, x, y);
+    const nearTerminal = this.terminal.update(dist(this.terminal.x, this.terminal.y));
+    const nearVendor = this.vendorTerminal.update(dist(this.vendorTerminal.x, this.vendorTerminal.y));
+    const nearNpc = this.npc.update(dist(this.npc.x, this.npc.y));
     if (Phaser.Input.Keyboard.JustDown(this.eKey)) {
+      this.skillPanel.close();
+      this.inventoryPanel.close();
       if (nearTerminal) {
-        this.skillPanel.close();
-        this.inventoryPanel.close();
+        this.vendorPanel.close();
         this.contractPanel.toggle();
+      } else if (nearVendor) {
+        this.contractPanel.close();
+        this.vendorPanel.toggle();
       } else if (nearNpc) {
         this.dialogue.show(this.npcPages());
       }
     }
+  }
+
+  private handleConsumables(now: number) {
+    void now;
+    for (let i = 0; i < this.consumeKeys.length; i++) {
+      if (Phaser.Input.Keyboard.JustDown(this.consumeKeys[i])) this.useConsumable(i);
+    }
+  }
+
+  private useConsumable(index: number) {
+    const id = CONSUMABLE_KEYS[index];
+    if (!this.progression.useConsumable(id)) return;
+    if (id === "repair") this.player.hp = Math.min(this.player.maxHp, this.player.hp + 40);
+    else if (id === "shield") this.player.shield = this.player.maxShield;
+    else if (id === "heatcharge") this.heat.add(40, this.time.now);
+    const def = CONSUMABLES.find((c) => c.id === id)!;
+    this.floatText(def.name, def.hex);
+    this.synth.infect();
+    this.autosave(true);
   }
 
   private drawContractMarker() {
