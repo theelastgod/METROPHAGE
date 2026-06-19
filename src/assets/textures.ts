@@ -12,6 +12,8 @@ import {
   BULLET_KEY,
   COP_KEY,
   NODE_KEY,
+  NPC_KEY,
+  PORTRAIT_PLAYER_KEY,
 } from "./manifest";
 
 /** Build a 4-tile horizontal tileset strip: [floor, wall, plaza, lane]. */
@@ -115,6 +117,40 @@ function makeNode(scene: Phaser.Scene) {
   g.destroy();
 }
 
+/** Build the friendly NPC: a lime contact, distinct from cyan player / red cops. */
+function makeNpc(scene: Phaser.Scene) {
+  const size = 26;
+  const c = size / 2;
+  const g = scene.add.graphics();
+  g.fillStyle(COLORS.npc, 0.16).fillCircle(c, c, 12);
+  g.fillStyle(COLORS.npc, 1).fillCircle(c, c, 9);
+  g.lineStyle(2, COLORS.neonYellow, 1).strokeCircle(c, c, 9);
+  g.fillStyle(0x0c2a08, 1).fillCircle(c, c, 5);
+  g.fillStyle(COLORS.neonYellow, 1).fillCircle(c, 4, 2); // antenna bead
+  g.generateTexture(NPC_KEY, size, size);
+  g.destroy();
+}
+
+/** Build the player dialogue portrait: a neon cyberian visor-head bust. */
+function makePortraitPlayer(scene: Phaser.Scene) {
+  const w = 96;
+  const h = 96;
+  const g = scene.add.graphics();
+  g.fillStyle(0x0a1420, 1).fillRect(0, 0, w, h);
+  // shoulders
+  g.fillStyle(0x13243a, 1).fillRoundedRect(14, 64, w - 28, 40, 10);
+  // head
+  g.fillStyle(0x1b3550, 1).fillRoundedRect(28, 20, 40, 46, 12);
+  g.lineStyle(2, COLORS.neonCyan, 0.9).strokeRoundedRect(28, 20, 40, 46, 12);
+  // visor
+  g.fillStyle(COLORS.neonCyan, 1).fillRoundedRect(33, 36, 30, 9, 3);
+  g.fillStyle(COLORS.playerCore, 1).fillRect(36, 38, 6, 4);
+  // jack
+  g.fillStyle(COLORS.neonMagenta, 0.9).fillRect(66, 28, 4, 12);
+  g.generateTexture(PORTRAIT_PLAYER_KEY, w, h);
+  g.destroy();
+}
+
 /** Helper: flat [x,y,x,y,...] -> Vector2-ish points for fill/strokePoints. */
 function toPts(flat: number[]) {
   const pts: Phaser.Types.Math.Vector2Like[] = [];
@@ -132,4 +168,6 @@ export function generatePlaceholders(scene: Phaser.Scene) {
   if (!scene.textures.exists(BULLET_KEY)) makeBullet(scene);
   if (!scene.textures.exists(COP_KEY)) makeCop(scene);
   if (!scene.textures.exists(NODE_KEY)) makeNode(scene);
+  if (!scene.textures.exists(NPC_KEY)) makeNpc(scene);
+  if (!scene.textures.exists(PORTRAIT_PLAYER_KEY)) makePortraitPlayer(scene);
 }

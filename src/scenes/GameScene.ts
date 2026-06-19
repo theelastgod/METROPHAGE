@@ -8,16 +8,24 @@ import {
   ENEMY_BULLET,
   HEAT,
   SINGULARITY,
+  PLAYER,
 } from "../config";
 import { buildGrid, spawnPoint, isWall, TILE_WALL, TileGrid } from "../world/district";
-import { TILESET_KEY } from "../assets/manifest";
+import {
+  TILESET_KEY,
+  PORTRAIT_PLAYER_KEY,
+  PORTRAIT_NPC_KEY,
+} from "../assets/manifest";
 import Player, { PlayerInput } from "../entities/Player";
 import Bullets from "../entities/Bullets";
 import TuringCop from "../entities/TuringCop";
 import InfectionNode from "../entities/InfectionNode";
+import Npc from "../entities/Npc";
 import Heat from "../systems/Heat";
 import Singularity from "../systems/Singularity";
 import NeonPipeline from "../render/NeonPipeline";
+import Hud from "../ui/Hud";
+import DialogueBox, { DialoguePage } from "../ui/DialogueBox";
 
 /**
  * GameScene — Phase 0.
@@ -37,14 +45,15 @@ export default class GameScene extends Phaser.Scene {
   private singularity = new Singularity();
   private won = false;
   private node!: InfectionNode;
+  private npc!: Npc;
   private neon?: NeonPipeline;
-  private hud!: Phaser.GameObjects.Graphics;
-  private heatLabel!: Phaser.GameObjects.Text;
-  private singLabel!: Phaser.GameObjects.Text;
+  private hud!: Hud;
+  private dialogue!: DialogueBox;
 
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
   private wasd!: Record<"W" | "A" | "S" | "D", Phaser.Input.Keyboard.Key>;
   private dashKey!: Phaser.Input.Keyboard.Key;
+  private eKey!: Phaser.Input.Keyboard.Key;
 
   constructor() {
     super("Game");
@@ -68,10 +77,28 @@ export default class GameScene extends Phaser.Scene {
     this.setupProjectiles();
     this.setupEnemies();
     this.createNode();
+    this.createNpc();
     this.setupCamera();
     this.setupPostFX();
     this.setupInput();
-    this.addHint();
+    this.setupUi();
+  }
+
+  private createNpc() {
+    // Friendly contact near the plaza spawn so the player meets it early.
+    let tx = 16;
+    let ty = 16;
+    if (this.grid[ty]?.[tx] === undefined || isWall(this.grid[ty][tx])) {
+      tx = 17;
+      ty = 16;
+    }
+    this.npc = new Npc(this, tx * TILE + TILE / 2, ty * TILE + TILE / 2);
+  }
+
+  private setupUi() {
+    this.hud = new Hud(this);
+    this.dialogue = new DialogueBox(this);
+    this.dialogue.show(this.introPages());
   }
 
   private createNode() {
@@ -210,7 +237,8 @@ export default class GameScene extends Phaser.Scene {
     const cam = this.cameras.main;
     cam.setBounds(0, 0, WORLD_W, WORLD_H);
     cam.startFollow(this.player, true, 0.12, 0.12);
-    cam.setZoom(1.5);
+    // Zoom stays at 1: the close feel comes from the small logical resolution
+    // (Scale.FIT upscales). Zooming here would displace scroll-fixed HUD/dialogue.
   }
 
   private setupInput() {
@@ -218,73 +246,69 @@ export default class GameScene extends Phaser.Scene {
     this.cursors = kb.createCursorKeys();
     this.wasd = kb.addKeys("W,A,S,D") as typeof this.wasd;
     this.dashKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+    this.eKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.E);
     this.input.mouse?.disableContextMenu();
   }
 
-  private addHint() {
-    const txt = this.add
-      .text(16, 16, "WASD MOVE · MOUSE AIM · CLICK FIRE · SPACE DASH", {
-        fontFamily: "Courier New, monospace",
-        fontSize: "14px",
-        color: "#00e5ff",
-      })
-      .setScrollFactor(0)
-      .setDepth(1000);
-    txt.setShadow(0, 0, "#00e5ff", 8, true, true);
-
-    // Temporary Heat gauge (replaced by the full HUD in Step 7).
-    this.hud = this.add.graphics().setScrollFactor(0).setDepth(1000);
-    this.heatLabel = this.add
-      .text(18, 38, "HEAT 0", {
-        fontFamily: "Courier New, monospace",
-        fontSize: "12px",
-        color: "#ff2bd6",
-      })
-      .setScrollFactor(0)
-      .setDepth(1001);
-    this.singLabel = this.add
-      .text(18, 70, "SINGULARITY 0", {
-        fontFamily: "Courier New, monospace",
-        fontSize: "12px",
-        color: "#39ff88",
-      })
-      .setScrollFactor(0)
-      .setDepth(1001);
+  private introPages(): DialoguePage[] {
+    const me = { key: PORTRAIT_PLAYER_KEY };
+    return [
+      {
+        speaker: "// SYSTEM",
+        portrait: me,
+        text: "Cyberian online. You are a process the city cannot account for.",
+      },
+      {
+        speaker: "// SYSTEM",
+        portrait: me,
+        text: "Burn the Turing cops. Infect the node. Drive the Singularity to 100 and the Human Security System melts down.",
+      },
+      {
+        speaker: "// SYSTEM",
+        portrait: me,
+        text: "WASD move · MOUSE aim · CLICK fire · SPACE dash · E talk. Heat fuels you — and lights the sky.",
+      },
+    ];
   }
 
-  private drawHud() {
-    const x = 18;
-    const w = 180;
-    const buff = this.heat.buffActive;
+  private npcPages(): DialoguePage[] {
+    const fixer = { key: PORTRAIT_NPC_KEY, frame: 0 };
+    return [
+      {
+        speaker: "FIXER",
+        portrait: fixer,
+        text: "You actually showed. Most cyberians flatline before they reach the plaza.",
+      },
+      {
+        speaker: "FIXER",
+        portrait: fixer,
+        text: "That node down the street pipes straight into the city's spine. Channel it and the meltdown does the rest.",
+      },
+      {
+        speaker: "FIXER",
+        portrait: fixer,
+        text: "Keep your Heat up — the hotter you run, the harder you hit. Just don't let the cops box you in.",
+      },
+    ];
+  }
 
-    this.hud.clear();
-
-    // Heat bar
-    const hy = 54;
-    this.hud.fillStyle(0x1a0a1e, 0.85).fillRect(x, hy, w, 8);
-    this.hud
-      .fillStyle(buff ? COLORS.neonYellow : COLORS.neonMagenta, 1)
-      .fillRect(x + 1, hy + 1, (w - 2) * this.heat.normalized, 6);
-    this.hud.fillStyle(COLORS.neonCyan, 0.8).fillRect(x + (w - 2) * 0.5, hy - 1, 1, 10);
-    this.heatLabel
-      .setText(`HEAT ${Math.round(this.heat.value)}${buff ? "  ⚡OVERCLOCK" : ""}`)
-      .setColor(buff ? "#f7ff3c" : "#ff2bd6");
-
-    // Singularity bar
-    const sy = 86;
-    this.hud.fillStyle(0x07221a, 0.85).fillRect(x, sy, w, 8);
-    this.hud
-      .fillStyle(COLORS.singularity, 1)
-      .fillRect(x + 1, sy + 1, (w - 2) * this.singularity.normalized, 6);
-    this.singLabel.setText(
-      this.singularity.isComplete
-        ? "SINGULARITY 100  ▓ CRITICAL"
-        : `SINGULARITY ${Math.round(this.singularity.value)}`,
-    );
+  private updateHud() {
+    this.hud.update({
+      hp: this.player.hp,
+      hpMax: PLAYER.maxHp,
+      heat: this.heat.value,
+      heatNorm: this.heat.normalized,
+      overclock: this.heat.buffActive,
+      sing: this.singularity.value,
+      singNorm: this.singularity.normalized,
+    });
   }
 
   update(_time: number, delta: number) {
     if (this.won) return; // meltdown sequence runs on tweens/timers; freeze the sim
+
+    this.updateHud();
+    if (this.dialogue.isOpen) return; // freeze the sim while a dialogue is up
 
     const now = this.time.now;
 
@@ -324,9 +348,22 @@ export default class GameScene extends Phaser.Scene {
       this.singularity.add(SINGULARITY.perInfectedSec * (delta / 1000));
     }
 
-    if (this.singularity.isComplete) this.triggerMeltdown();
+    if (this.singularity.isComplete) {
+      this.triggerMeltdown();
+      return;
+    }
 
-    this.drawHud();
+    // NPC interaction.
+    const npcDist = Phaser.Math.Distance.Between(
+      this.player.x,
+      this.player.y,
+      this.npc.x,
+      this.npc.y,
+    );
+    const inRange = this.npc.update(npcDist);
+    if (inRange && Phaser.Input.Keyboard.JustDown(this.eKey)) {
+      this.dialogue.show(this.npcPages());
+    }
   }
 
   private triggerMeltdown() {

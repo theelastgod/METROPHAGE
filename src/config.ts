@@ -10,9 +10,13 @@ export const GRID_H = 30;
 export const WORLD_W = GRID_W * TILE;
 export const WORLD_H = GRID_H * TILE;
 
-/** Logical render size. The canvas scales to fit the window (Phaser.Scale.FIT). */
-export const VIEW_W = 960;
-export const VIEW_H = 540;
+/**
+ * Logical render size. The canvas scales to fit the window (Phaser.Scale.FIT).
+ * Kept small (and the camera at zoom 1) for a close "field view" feel via upscale,
+ * AND so scroll-fixed UI isn't displaced by camera zoom.
+ */
+export const VIEW_W = 720;
+export const VIEW_H = 405;
 
 /** Player tuning. */
 export const PLAYER = {
@@ -64,6 +68,11 @@ export const NODE = {
   channelDecayMs: 1500, // progress bleed-off when you step away
 } as const;
 
+/** Friendly NPC. */
+export const NPC = {
+  interactRange: 70, // press E within this to talk
+} as const;
+
 /** Cop projectile tuning (reuses the bullet texture, tinted hostile). */
 export const ENEMY_BULLET = {
   speed: 300,
@@ -111,4 +120,7 @@ export const COLORS = {
   node: 0x8a5cff, // dormant infection node (violet)
   nodeInfected: 0x39ff88, // captured (neon green)
   singularity: 0x39ff88,
+  npc: 0x9dff3c, // friendly contact (lime)
+  hp: 0x39ff88,
+  hpLow: 0xff2d2d,
 } as const;

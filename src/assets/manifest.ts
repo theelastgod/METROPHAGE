@@ -22,6 +22,12 @@ export const PLAYER_KEY = "player";
 export const BULLET_KEY = "bullet";
 export const COP_KEY = "cop";
 export const NODE_KEY = "node";
+export const NPC_KEY = "npc";
+
+export const PORTRAIT_PLAYER_KEY = "portrait_player";
+export const PORTRAIT_NPC_KEY = "portrait_npc";
+export const UI_FRAME_KEY = "ui_frame";
+export const UI_GUN_KEY = "ui_gun";
 
 export const ASSETS: Record<string, AssetEntry[]> = {
   tilesets: [{ key: TILESET_KEY, file: null }],
@@ -30,9 +36,22 @@ export const ASSETS: Record<string, AssetEntry[]> = {
     { key: BULLET_KEY, file: null },
     { key: COP_KEY, file: null },
     { key: NODE_KEY, file: null },
+    { key: NPC_KEY, file: null },
   ],
-  portraits: [],
-  ui: [],
+  portraits: [
+    { key: PORTRAIT_PLAYER_KEY, file: null },
+    // Real (side-on) art used for a portrait, per the art-direction decision.
+    {
+      key: PORTRAIT_NPC_KEY,
+      file: "assets/portraits/striker_idle.png",
+      frameWidth: 96,
+      frameHeight: 96,
+    },
+  ],
+  ui: [
+    { key: UI_FRAME_KEY, file: "assets/ui/skill_frame.png" },
+    { key: UI_GUN_KEY, file: "assets/ui/gun_01.png" },
+  ],
 };
 
 /** Flat list of every declared asset. */
