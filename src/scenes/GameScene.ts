@@ -17,6 +17,7 @@ import {
   TILESET_KEY,
   PORTRAIT_PLAYER_KEY,
   PORTRAIT_NPC_KEY,
+  VO_MELTDOWN_KEY,
 } from "../assets/manifest";
 import Player, { PlayerInput } from "../entities/Player";
 import Bullets from "../entities/Bullets";
@@ -27,6 +28,7 @@ import Agent from "../entities/Agent";
 import Heat from "../systems/Heat";
 import Singularity from "../systems/Singularity";
 import NeonPipeline from "../render/NeonPipeline";
+import Synth from "../audio/Synth";
 import Hud from "../ui/Hud";
 import DialogueBox, { DialoguePage } from "../ui/DialogueBox";
 
@@ -46,7 +48,10 @@ export default class GameScene extends Phaser.Scene {
 
   private heat = new Heat();
   private singularity = new Singularity();
+  private synth = new Synth(); // persists across scene.restart()
   private won = false;
+  private hitStopActive = false;
+  private nodeWasInfected = false;
   private node!: InfectionNode;
   private npc!: Npc;
   private agents!: Phaser.Physics.Arcade.Group;
@@ -73,8 +78,15 @@ export default class GameScene extends Phaser.Scene {
     // Reset run state (scene.restart() reuses the instance; field initializers
     // only run once at construction, so reset explicitly here).
     this.won = false;
+    this.hitStopActive = false;
+    this.nodeWasInfected = false;
+    this.physics.world.resume();
     this.heat = new Heat();
     this.singularity = new Singularity();
+
+    // Audio needs a user gesture; the intro requires a click/key to advance.
+    this.input.once("pointerdown", () => this.synth.ensureStarted());
+    this.input.keyboard?.once("keydown", () => this.synth.ensureStarted());
 
     this.buildDistrict();
     this.spawnPlayer();
@@ -340,16 +352,18 @@ export default class GameScene extends Phaser.Scene {
 
   update(_time: number, delta: number) {
     if (this.won) return; // meltdown sequence runs on tweens/timers; freeze the sim
+    if (this.hitStopActive) return; // brief impact freeze
 
     this.updateHud();
     if (this.dialogue.isOpen) return; // freeze the sim while a dialogue is up
 
     const now = this.time.now;
 
-    // HEAT: decay when passive, apply overclock buff, drive the post-FX.
+    // HEAT: decay when passive, apply overclock buff, drive the post-FX + music.
     this.heat.update(now, delta);
     this.player.speedMult = this.heat.speedMult;
     if (this.neon) this.neon.heat = this.heat.normalized;
+    this.synth.setIntensity(this.heat.normalized);
 
     const input = this.readInput();
     this.player.step(input);
@@ -381,6 +395,11 @@ export default class GameScene extends Phaser.Scene {
     );
     this.node.update(nodeDist, delta);
     if (this.node.infected) {
+      if (!this.nodeWasInfected) {
+        this.nodeWasInfected = true;
+        this.synth.infect();
+        this.cameras.main.shake(220, 0.005);
+      }
       this.singularity.add(SINGULARITY.perInfectedSec * (delta / 1000));
     }
 
@@ -405,6 +424,12 @@ export default class GameScene extends Phaser.Scene {
   private triggerMeltdown() {
     this.won = true;
     this.player.setVelocity(0, 0);
+    this.synth.meltdown();
+    this.synth.setIntensity(1);
+    // Optional ElevenLabs VO stinger (build-time generated); sting plays regardless.
+    if (this.cache.audio.exists(VO_MELTDOWN_KEY)) {
+      this.time.delayedCall(650, () => this.sound.play(VO_MELTDOWN_KEY, { volume: 0.9 }));
+    }
 
     const cam = this.cameras.main;
     cam.shake(800, 0.014);
@@ -506,6 +531,18 @@ export default class GameScene extends Phaser.Scene {
     this.bullets.fire(sx, sy, angle);
     this.muzzleFlash(sx, sy);
     this.cameras.main.shake(40, 0.0018);
+    this.synth.shoot();
+  }
+
+  /** Brief impact freeze for game feel (pauses physics + sim). */
+  private hitStop(ms: number) {
+    if (this.hitStopActive) return;
+    this.hitStopActive = true;
+    this.physics.world.pause();
+    this.time.delayedCall(ms, () => {
+      this.hitStopActive = false;
+      this.physics.world.resume();
+    });
   }
 
   private onBulletHitWall(manager: Bullets, bullet: Phaser.Physics.Arcade.Image) {
@@ -525,6 +562,11 @@ export default class GameScene extends Phaser.Scene {
     if (killed) {
       this.heat.add(HEAT.perKill, this.time.now);
       this.singularity.add(SINGULARITY.perKill);
+      this.synth.kill();
+      this.hitStop(60);
+      this.cameras.main.shake(140, 0.006);
+    } else {
+      this.synth.hit();
     }
   }
 
@@ -533,6 +575,8 @@ export default class GameScene extends Phaser.Scene {
     if (this.player.invulnerable) return; // negated by dash / respawn i-frames
     const died = this.player.applyDamage(ENEMY_BULLET.damage);
     this.cameras.main.shake(60, 0.004);
+    this.synth.hit();
+    this.hitStop(45);
     if (died) this.respawnPlayer();
   }
 

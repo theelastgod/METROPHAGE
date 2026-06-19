@@ -73,8 +73,10 @@ top-down gameplay. `image/Present_image2.png` = color/vibe reference only.
 ## Audio
 
 - **Required loop:** procedural darksynth via Web Audio API (Step 9) — no files.
-- **Optional VO / stingers:** an ElevenLabs key is available in `.env` (gitignored,
-  server/build-side only — never the client bundle). If used, audio is pre-generated
-  **at build time** by a script in `tools/` into `public/assets/audio/`; the key is
-  never shipped to the browser. Reserved for the Step 9 polish pass (e.g. intro VO,
-  a "MELTDOWN" stinger), not required for the core slice.
+- **Procedural SFX:** shoot / hit / kill / infect / meltdown one-shots, same
+  Web Audio context (`src/audio/Synth.ts`).
+- **VO stinger (ElevenLabs):** `public/assets/audio/meltdown_vo.mp3` is generated
+  **at build time** by `tools/gen-vo.sh` (reads the key from gitignored `.env`; the
+  key never ships to the browser). It plays on the meltdown and is fully optional —
+  the procedural meltdown sting plays regardless, and the game runs fine if the mp3
+  is absent (load is guarded). Re-generate with `bash tools/gen-vo.sh`.

@@ -29,6 +29,7 @@ export const PORTRAIT_PLAYER_KEY = "portrait_player";
 export const PORTRAIT_NPC_KEY = "portrait_npc";
 export const UI_FRAME_KEY = "ui_frame";
 export const UI_GUN_KEY = "ui_gun";
+export const VO_MELTDOWN_KEY = "vo_meltdown";
 
 export const ASSETS: Record<string, AssetEntry[]> = {
   tilesets: [{ key: TILESET_KEY, file: null }],
@@ -54,6 +55,9 @@ export const ASSETS: Record<string, AssetEntry[]> = {
     { key: UI_FRAME_KEY, file: "assets/ui/skill_frame.png" },
     { key: UI_GUN_KEY, file: "assets/ui/gun_01.png" },
   ],
+  // Build-time generated VO (ElevenLabs). Optional flavour; the procedural
+  // meltdown sting plays regardless. See tools/gen-vo.sh + ART_NOTES.md.
+  audio: [{ key: VO_MELTDOWN_KEY, file: "assets/audio/meltdown_vo.mp3" }],
 };
 
 /** Flat list of every declared asset. */

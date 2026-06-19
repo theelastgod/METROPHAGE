@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { allAssets } from "../assets/manifest";
+import { ASSETS } from "../assets/manifest";
 import { generatePlaceholders } from "../assets/textures";
 import NeonPipeline from "../render/NeonPipeline";
 
@@ -13,15 +13,19 @@ export default class BootScene extends Phaser.Scene {
   }
 
   preload() {
-    for (const a of allAssets()) {
-      if (!a.file) continue;
-      if (a.frameWidth && a.frameHeight) {
-        this.load.spritesheet(a.key, a.file, {
-          frameWidth: a.frameWidth,
-          frameHeight: a.frameHeight,
-        });
-      } else {
-        this.load.image(a.key, a.file);
+    for (const [category, list] of Object.entries(ASSETS)) {
+      for (const a of list) {
+        if (!a.file) continue;
+        if (category === "audio") {
+          this.load.audio(a.key, a.file);
+        } else if (a.frameWidth && a.frameHeight) {
+          this.load.spritesheet(a.key, a.file, {
+            frameWidth: a.frameWidth,
+            frameHeight: a.frameHeight,
+          });
+        } else {
+          this.load.image(a.key, a.file);
+        }
       }
     }
   }
