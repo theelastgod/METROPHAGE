@@ -8,7 +8,6 @@ import {
   ENEMY_BULLET,
   HEAT,
   OVERDRIVE,
-  SINGULARITY,
   AGENT,
   AGENT_TINTS,
   SPAWN,
@@ -18,7 +17,7 @@ import { getClass, ClassDef, PrimaryDef } from "../game/classes";
 import { AbilityHost, AbilityDef } from "../game/ability";
 import { ENEMY_TIERS, EnemyHost } from "../game/enemies";
 import { buildGrid, spawnPoint, isWall, TILE_WALL, TileGrid } from "../world/district";
-import { getDistrict, DistrictDef } from "../game/districts";
+import { DistrictDef, DISTRICTS } from "../game/districts";
 import {
   TILESET_KEY,
   PORTRAIT_PLAYER_KEY,
@@ -36,7 +35,7 @@ import Npc from "../entities/Npc";
 import Agent from "../entities/Agent";
 import Minion from "../entities/Minion";
 import Heat from "../systems/Heat";
-import Singularity from "../systems/Singularity";
+import City from "../systems/City";
 import Progression from "../systems/Progression";
 import Inventory from "../systems/Inventory";
 import Contracts from "../systems/Contracts";
@@ -48,6 +47,7 @@ import { rollItem } from "../game/items";
 import { Contract, objectiveLabel } from "../game/contracts";
 import Pickup from "../entities/Pickup";
 import Terminal from "../entities/Terminal";
+import ExtractionGate from "../entities/ExtractionGate";
 import NeonPipeline from "../render/NeonPipeline";
 import Synth from "../audio/Synth";
 import Hud from "../ui/Hud";
@@ -79,7 +79,7 @@ export default class GameScene
   private spawn = { x: 0, y: 0 };
 
   private heat = new Heat();
-  private singularity = new Singularity();
+  private city!: City;
   private progression!: Progression;
   private inventory = new Inventory();
   private contracts!: Contracts;
@@ -97,8 +97,10 @@ export default class GameScene
   private nextAutosaveAt = 0;
   private synth = new Synth(); // persists across scene.restart()
   private won = false;
+  private traveling = false;
   private hitStopActive = false;
   private nodeWasInfected = false;
+  private gate?: ExtractionGate;
   private node!: InfectionNode;
   private npc!: Npc;
   private agents!: Phaser.Physics.Arcade.Group;
@@ -134,14 +136,15 @@ export default class GameScene
     // Reset run state (scene.restart() reuses the instance; field initializers
     // only run once at construction, so reset explicitly here).
     this.won = false;
+    this.traveling = false;
     this.hitStopActive = false;
     this.nodeWasInfected = false;
+    this.gate = undefined;
     this.overdriveActive = false;
     this.overdriveUntil = 0;
     this.nextSpawnAt = 0;
     this.physics.world.resume();
     this.heat = new Heat();
-    this.singularity = new Singularity();
     this.nextAutosaveAt = 0;
 
     // Resume from save (Continue) or start a fresh run for the chosen class.
@@ -150,20 +153,21 @@ export default class GameScene
     if (save) {
       this.classDef = getClass(save.progress.classId);
       this.progression = new Progression(save.progress.classId, save.progress);
-      this.singularity.value = save.singularity;
+      this.city = new City(save.city);
       this.inventory.load(save.inventory);
       this.contracts = new Contracts(save.contracts);
     } else {
       this.classDef = getClass(this.registry.get("classId") as string | undefined);
       this.progression = new Progression(this.classDef.id);
+      this.city = new City();
       this.contracts = new Contracts();
     }
     this.contracts.refresh(this.progression.level);
     this.vendor = new Vendor(this.progression.level);
 
-    // Resolve which district to run (Step 2 sets this on extraction; default = first).
-    this.districtIndex = (this.registry.get("districtIndex") as number) ?? 0;
-    this.district = getDistrict(this.districtIndex);
+    // The district to run comes from campaign meta (advanced on extraction).
+    this.districtIndex = this.city.index;
+    this.district = this.city.current;
 
     // Audio needs a user gesture; the intro requires a click/key to advance.
     this.input.once("pointerdown", () => this.synth.ensureStarted());
@@ -214,6 +218,9 @@ export default class GameScene
     this.recomputeStats();
     this.autosave(true); // persist the (possibly fresh) run immediately
 
+    // Fade in on arrival (fresh boot or district travel).
+    this.cameras.main.fadeIn(450, 4, 2, 10);
+
     // Persist on tab close / hide.
     const flush = () => this.autosave(true);
     window.addEventListener("beforeunload", flush);
@@ -235,7 +242,7 @@ export default class GameScene
     writeSave({
       v: 1,
       progress: this.progression.toData(),
-      singularity: this.singularity.value,
+      city: this.city.toData(),
       inventory: this.inventory.toData(),
       contracts: this.contracts.toData(),
     });
@@ -391,7 +398,10 @@ export default class GameScene
   private setupUi() {
     this.hud = new Hud(this);
     this.dialogue = new DialogueBox(this);
-    this.dialogue.show(this.introPages());
+    // Intro only on the very first district of a fresh cycle.
+    if (this.districtIndex === 0 && this.city.cycle === 0 && !this.city.isCleared(this.district.id)) {
+      this.dialogue.show(this.introPages());
+    }
   }
 
   private createNode() {
@@ -603,7 +613,7 @@ export default class GameScene
       {
         speaker: "// SYSTEM",
         portrait: me,
-        text: "Burn the Turing cops. Infect the node. Drive the Singularity to 100 and the Human Security System melts down.",
+        text: "Burn the Turing cops. Infect the district node, then reach the extraction gate. Take every district and the Human Security System melts down.",
       },
       {
         speaker: "// SYSTEM",
@@ -657,8 +667,8 @@ export default class GameScene
       heat: this.heat.value,
       heatNorm: this.heat.normalized,
       overclock: this.heat.buffActive,
-      sing: this.singularity.value,
-      singNorm: this.singularity.normalized,
+      contagion: this.city.contagion,
+      contagionNorm: this.city.normalized,
       classColor: this.classDef.color,
       abilityName: this.classDef.ability.name,
       abilityReady: now >= this.player.nextAbilityAt,
@@ -683,6 +693,7 @@ export default class GameScene
 
   update(_time: number, delta: number) {
     if (this.won) return; // meltdown sequence runs on tweens/timers; freeze the sim
+    if (this.traveling) return; // district transition in flight
     if (this.hitStopActive) return; // brief impact freeze
 
     const now = this.time.now;
@@ -749,8 +760,8 @@ export default class GameScene
       (go as Minion).step(now, cops, (cop, dmg) => this.damageCop(cop, dmg, false)),
     );
 
-    // INFECTION + SINGULARITY: channel the node by proximity; infected node ticks
-    // the global meter upward.
+    // INFECTION: channel the district node by proximity. Capturing it clears the
+    // district and lights the extraction gate.
     const nodeDist = Phaser.Math.Distance.Between(
       this.player.x,
       this.player.y,
@@ -758,21 +769,18 @@ export default class GameScene
       this.node.y,
     );
     this.node.update(nodeDist, delta * (1 + this.mods.infectPct)); // skills speed channel
-    if (this.node.infected) {
-      if (!this.nodeWasInfected) {
-        this.nodeWasInfected = true;
-        this.synth.infect();
-        this.cameras.main.shake(220, 0.005);
-        this.grantKillRewards(40, 0); // XP for capturing a node
-        this.contracts.onInfect();
-        this.autosave(true);
-      }
-      this.singularity.add(SINGULARITY.perInfectedSec * (delta / 1000));
+    if (this.node.infected && !this.nodeWasInfected) {
+      this.nodeWasInfected = true;
+      this.onNodeCaptured();
     }
 
-    if (this.singularity.isComplete) {
-      this.triggerMeltdown();
-      return;
+    // EXTRACTION: once the gate is lit, walking into it advances the campaign.
+    if (this.gate) {
+      this.gate.update(delta);
+      if (this.gate.contains(this.player.x, this.player.y)) {
+        this.extract();
+        return;
+      }
     }
 
     // CONTRACTS: advance hold/deliver objectives, draw the marker, complete.
@@ -828,6 +836,72 @@ export default class GameScene
     const color = o.type === "hold" ? 0x39ff88 : 0xf7ff3c;
     g.lineStyle(2, color, 0.8).strokeCircle(o.zone.x, o.zone.y, o.zone.r);
     g.fillStyle(color, 0.08).fillCircle(o.zone.x, o.zone.y, o.zone.r);
+  }
+
+  // ---- district lifecycle: capture -> extract -> next district ----
+
+  /** District node captured: reward, mark cleared, light the extraction gate. */
+  private onNodeCaptured() {
+    this.synth.infect();
+    this.cameras.main.shake(220, 0.005);
+    this.grantKillRewards(40, 0); // XP for capturing the node
+    this.contracts.onInfect();
+    this.gate = new ExtractionGate(this, this.spawn.x, this.spawn.y, this.district.accent);
+    this.gate.activate();
+    this.floatText("NODE INFECTED — EXTRACT", this.district.accentHex);
+    this.autosave(true);
+  }
+
+  /** Step through the gate: bank contagion, advance the campaign (or melt down). */
+  private extract() {
+    if (this.traveling || this.won) return;
+    this.traveling = true;
+    const cityComplete = this.city.clearCurrent();
+    this.autosave(true);
+    if (cityComplete) this.triggerMeltdown();
+    else this.districtTransition();
+  }
+
+  /** Fade out, announce the next district, then reload the scene into it. */
+  private districtTransition() {
+    const next = this.city.current; // already advanced by clearCurrent()
+    this.player.setVelocity(0, 0);
+    this.synth.infect();
+    this.cameras.main.shake(280, 0.006);
+
+    const w = this.scale.width;
+    const h = this.scale.height;
+    const cover = this.add
+      .rectangle(w / 2, h / 2, w, h, 0x04020a, 1)
+      .setScrollFactor(0)
+      .setDepth(3000)
+      .setAlpha(0);
+    this.tweens.add({ targets: cover, alpha: 1, duration: 480, ease: "Quad.in" });
+
+    const mk = (y: number, text: string, size: string, color: string) =>
+      this.add
+        .text(w / 2, y, text, {
+          fontFamily: "Courier New, monospace",
+          fontSize: size,
+          color,
+          fontStyle: "bold",
+          align: "center",
+        })
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setDepth(3001)
+        .setAlpha(0);
+
+    const num = mk(h / 2 - 30, `DISTRICT ${this.city.index + 1} / ${DISTRICTS.length}`, "16px", "#9aa3b2");
+    const name = mk(h / 2 + 4, next.name, "40px", next.accentHex);
+    const sub = mk(h / 2 + 42, next.subtitle, "13px", "#00e5ff");
+    name.setShadow(0, 0, "#00e5ff", 18, true, true);
+    this.tweens.add({ targets: [num, name, sub], alpha: 1, duration: 500, delay: 420 });
+
+    this.time.delayedCall(2000, () => {
+      this.registry.set("resume", true);
+      this.scene.restart();
+    });
   }
 
   private triggerMeltdown() {
@@ -1051,7 +1125,6 @@ export default class GameScene
     this.heat.add(dmg * HEAT.perDamage * heatGain, this.time.now);
     if (killed) {
       this.heat.add(HEAT.perKill * heatGain, this.time.now);
-      this.singularity.add(SINGULARITY.perKill);
       this.grantKillRewards(cop.tier.xp, cop.tier.credits);
       this.maybeDropLoot(cop);
       this.contracts.onKill();

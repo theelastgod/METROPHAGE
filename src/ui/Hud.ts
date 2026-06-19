@@ -8,8 +8,8 @@ export interface HudState {
   heat: number; // 0..100
   heatNorm: number; // 0..1
   overclock: boolean;
-  sing: number; // 0..100
-  singNorm: number; // 0..1
+  contagion: number; // 0..100 (city takeover toward meltdown)
+  contagionNorm: number; // 0..1
   classColor: number;
   abilityName: string;
   abilityReady: boolean;
@@ -138,14 +138,16 @@ export default class Hud {
       s.overclock ? COLORS.neonYellow : COLORS.neonMagenta,
       true,
     );
-    this.bar(this.py + 58, s.singNorm, COLORS.singularity);
+    this.bar(this.py + 58, s.contagionNorm, COLORS.singularity);
 
     this.hpText.setText(`HP ${Math.ceil(s.hp)}`);
     this.heatText
       .setText(`HEAT ${Math.round(s.heat)}${s.overclock ? " ⚡" : ""}`)
       .setColor(s.overclock ? "#f7ff3c" : "#ff2bd6");
     this.singText.setText(
-      s.singNorm >= 1 ? "SING 100 ▲CRITICAL" : `SING ${Math.round(s.sing)}`,
+      s.contagionNorm >= 1
+        ? "CITY 100% ▲MELTDOWN"
+        : `CITY ${Math.round(s.contagion)}%`,
     );
 
     this.abilityText

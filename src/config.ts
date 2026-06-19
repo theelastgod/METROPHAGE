@@ -99,13 +99,6 @@ export const MINION = {
   aggroRange: 360,
 } as const;
 
-/** SINGULARITY — global win meter. Only ever rises (infected node + kills). */
-export const SINGULARITY = {
-  max: 100,
-  perKill: 6,
-  perInfectedSec: 4.5, // passive gain while a node is infected
-} as const;
-
 /** Infection node — channel by proximity to capture it. */
 export const NODE = {
   channelRange: 74, // stand within this to channel

@@ -1,6 +1,7 @@
 import type { ProgressData } from "./Progression";
 import type { InventoryData } from "./Inventory";
 import type { ContractsData } from "./Contracts";
+import type { CityData } from "./City";
 
 // METROPHAGE — local save (localStorage). Single slot.
 
@@ -9,7 +10,7 @@ const KEY = "metrophage_save_v1";
 export interface SaveState {
   v: number;
   progress: ProgressData;
-  singularity: number;
+  city?: CityData; // campaign meta (district index, contagion, cycle)
   inventory: InventoryData;
   contracts?: ContractsData;
 }
