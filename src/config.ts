@@ -50,6 +50,20 @@ export const HEAT = {
   buffSpeedMult: 1.22,
 } as const;
 
+/** SINGULARITY — global win meter. Only ever rises (infected node + kills). */
+export const SINGULARITY = {
+  max: 100,
+  perKill: 6,
+  perInfectedSec: 4.5, // passive gain while a node is infected
+} as const;
+
+/** Infection node — channel by proximity to capture it. */
+export const NODE = {
+  channelRange: 74, // stand within this to channel
+  channelTimeMs: 2200, // time to fully infect
+  channelDecayMs: 1500, // progress bleed-off when you step away
+} as const;
+
 /** Cop projectile tuning (reuses the bullet texture, tinted hostile). */
 export const ENEMY_BULLET = {
   speed: 300,
@@ -94,4 +108,7 @@ export const COLORS = {
   enemyEdge: 0xff8a3c, // orange trim
   enemyCore: 0xffe08a,
   hurt: 0xff2d2d,
+  node: 0x8a5cff, // dormant infection node (violet)
+  nodeInfected: 0x39ff88, // captured (neon green)
+  singularity: 0x39ff88,
 } as const;

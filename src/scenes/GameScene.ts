@@ -7,13 +7,16 @@ import {
   BULLET,
   ENEMY_BULLET,
   HEAT,
+  SINGULARITY,
 } from "../config";
 import { buildGrid, spawnPoint, isWall, TILE_WALL, TileGrid } from "../world/district";
 import { TILESET_KEY } from "../assets/manifest";
 import Player, { PlayerInput } from "../entities/Player";
 import Bullets from "../entities/Bullets";
 import TuringCop from "../entities/TuringCop";
+import InfectionNode from "../entities/InfectionNode";
 import Heat from "../systems/Heat";
+import Singularity from "../systems/Singularity";
 import NeonPipeline from "../render/NeonPipeline";
 
 /**
@@ -31,9 +34,12 @@ export default class GameScene extends Phaser.Scene {
   private spawn = { x: 0, y: 0 };
 
   private heat = new Heat();
+  private singularity = new Singularity();
+  private node!: InfectionNode;
   private neon?: NeonPipeline;
   private hud!: Phaser.GameObjects.Graphics;
   private heatLabel!: Phaser.GameObjects.Text;
+  private singLabel!: Phaser.GameObjects.Text;
 
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
   private wasd!: Record<"W" | "A" | "S" | "D", Phaser.Input.Keyboard.Key>;
@@ -54,10 +60,35 @@ export default class GameScene extends Phaser.Scene {
     this.spawnPlayer();
     this.setupProjectiles();
     this.setupEnemies();
+    this.createNode();
     this.setupCamera();
     this.setupPostFX();
     this.setupInput();
     this.addHint();
+  }
+
+  private createNode() {
+    // A capture target placed on open street, away from the player spawn.
+    let tx = 13;
+    let ty = 24;
+    if (this.grid[ty]?.[tx] === undefined || isWall(this.grid[ty][tx])) {
+      // fallback: first walkable tile reasonably far from spawn
+      outer: for (let y = 1; y < this.grid.length - 1; y++) {
+        for (let x = 1; x < this.grid[0].length - 1; x++) {
+          const wx = x * TILE + TILE / 2;
+          const wy = y * TILE + TILE / 2;
+          if (
+            !isWall(this.grid[y][x]) &&
+            Phaser.Math.Distance.Between(wx, wy, this.spawn.x, this.spawn.y) > 200
+          ) {
+            tx = x;
+            ty = y;
+            break outer;
+          }
+        }
+      }
+    }
+    this.node = new InfectionNode(this, tx * TILE + TILE / 2, ty * TILE + TILE / 2);
   }
 
   private setupPostFX() {
@@ -204,28 +235,45 @@ export default class GameScene extends Phaser.Scene {
       })
       .setScrollFactor(0)
       .setDepth(1001);
+    this.singLabel = this.add
+      .text(18, 70, "SINGULARITY 0", {
+        fontFamily: "Courier New, monospace",
+        fontSize: "12px",
+        color: "#39ff88",
+      })
+      .setScrollFactor(0)
+      .setDepth(1001);
   }
 
   private drawHud() {
     const x = 18;
-    const y = 54;
     const w = 180;
-    const n = this.heat.normalized;
     const buff = this.heat.buffActive;
 
     this.hud.clear();
-    this.hud.fillStyle(0x1a0a1e, 0.85).fillRect(x, y, w, 8);
+
+    // Heat bar
+    const hy = 54;
+    this.hud.fillStyle(0x1a0a1e, 0.85).fillRect(x, hy, w, 8);
     this.hud
       .fillStyle(buff ? COLORS.neonYellow : COLORS.neonMagenta, 1)
-      .fillRect(x + 1, y + 1, (w - 2) * n, 6);
-    // threshold tick at 50
-    this.hud
-      .fillStyle(COLORS.neonCyan, 0.8)
-      .fillRect(x + (w - 2) * 0.5, y - 1, 1, 10);
-
+      .fillRect(x + 1, hy + 1, (w - 2) * this.heat.normalized, 6);
+    this.hud.fillStyle(COLORS.neonCyan, 0.8).fillRect(x + (w - 2) * 0.5, hy - 1, 1, 10);
     this.heatLabel
       .setText(`HEAT ${Math.round(this.heat.value)}${buff ? "  ⚡OVERCLOCK" : ""}`)
       .setColor(buff ? "#f7ff3c" : "#ff2bd6");
+
+    // Singularity bar
+    const sy = 86;
+    this.hud.fillStyle(0x07221a, 0.85).fillRect(x, sy, w, 8);
+    this.hud
+      .fillStyle(COLORS.singularity, 1)
+      .fillRect(x + 1, sy + 1, (w - 2) * this.singularity.normalized, 6);
+    this.singLabel.setText(
+      this.singularity.isComplete
+        ? "SINGULARITY 100  ▓ CRITICAL"
+        : `SINGULARITY ${Math.round(this.singularity.value)}`,
+    );
   }
 
   update(_time: number, delta: number) {
@@ -253,6 +301,19 @@ export default class GameScene extends Phaser.Scene {
         );
       }
     });
+
+    // INFECTION + SINGULARITY: channel the node by proximity; infected node ticks
+    // the global meter upward.
+    const nodeDist = Phaser.Math.Distance.Between(
+      this.player.x,
+      this.player.y,
+      this.node.x,
+      this.node.y,
+    );
+    this.node.update(nodeDist, delta);
+    if (this.node.infected) {
+      this.singularity.add(SINGULARITY.perInfectedSec * (delta / 1000));
+    }
 
     this.drawHud();
   }
@@ -294,8 +355,10 @@ export default class GameScene extends Phaser.Scene {
     const dmg = BULLET.damage * this.heat.damageMult; // overclock hits harder
     const killed = cop.hurt(dmg);
     this.heat.add(dmg * HEAT.perDamage, this.time.now);
-    if (killed) this.heat.add(HEAT.perKill, this.time.now);
-    // (Singularity gain on kills is wired in Step 5.)
+    if (killed) {
+      this.heat.add(HEAT.perKill, this.time.now);
+      this.singularity.add(SINGULARITY.perKill);
+    }
   }
 
   private onEnemyBulletHitsPlayer(bullet: Phaser.Physics.Arcade.Image) {

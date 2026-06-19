@@ -6,7 +6,13 @@
 
 import Phaser from "phaser";
 import { TILE, COLORS } from "../config";
-import { TILESET_KEY, PLAYER_KEY, BULLET_KEY, COP_KEY } from "./manifest";
+import {
+  TILESET_KEY,
+  PLAYER_KEY,
+  BULLET_KEY,
+  COP_KEY,
+  NODE_KEY,
+} from "./manifest";
 
 /** Build a 4-tile horizontal tileset strip: [floor, wall, plaza, lane]. */
 function makeTileset(scene: Phaser.Scene) {
@@ -87,6 +93,28 @@ function makeCop(scene: Phaser.Scene) {
   g.destroy();
 }
 
+/** Build the infection node: a hexagonal city terminal/pylon. */
+function makeNode(scene: Phaser.Scene) {
+  const size = 32;
+  const c = size / 2;
+  const g = scene.add.graphics();
+  const hex = (r: number) => {
+    const pts: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      const a = -Math.PI / 2 + (i * Math.PI) / 3;
+      pts.push(c + Math.cos(a) * r, c + Math.sin(a) * r);
+    }
+    return pts;
+  };
+  g.fillStyle(COLORS.node, 0.16).fillCircle(c, c, 15);
+  g.fillStyle(0x140a26, 1).fillPoints(toPts(hex(13)), true);
+  g.lineStyle(2, COLORS.node, 1).strokePoints(toPts(hex(13)), true, true);
+  g.lineStyle(1, COLORS.neonCyan, 0.7).strokePoints(toPts(hex(8)), true, true);
+  g.fillStyle(COLORS.playerCore, 1).fillCircle(c, c, 3);
+  g.generateTexture(NODE_KEY, size, size);
+  g.destroy();
+}
+
 /** Helper: flat [x,y,x,y,...] -> Vector2-ish points for fill/strokePoints. */
 function toPts(flat: number[]) {
   const pts: Phaser.Types.Math.Vector2Like[] = [];
@@ -103,4 +131,5 @@ export function generatePlaceholders(scene: Phaser.Scene) {
   if (!scene.textures.exists(PLAYER_KEY)) makePlayer(scene);
   if (!scene.textures.exists(BULLET_KEY)) makeBullet(scene);
   if (!scene.textures.exists(COP_KEY)) makeCop(scene);
+  if (!scene.textures.exists(NODE_KEY)) makeNode(scene);
 }
