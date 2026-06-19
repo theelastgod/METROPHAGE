@@ -45,13 +45,38 @@ export const COP = {
 /** HEAT — risk/reward meter that also drives the post-processing intensity. */
 export const HEAT = {
   max: 100,
-  perDamage: 0.55, // heat gained per point of damage dealt
+  perDamage: 0.5, // heat gained per point of damage dealt
   perKill: 12, // bonus on a cop kill
-  decayPerSec: 14, // passive cooldown rate
-  decayDelayMs: 1400, // grace after last gain before decay starts
-  buffThreshold: 50, // > this = "overclocked" tier
-  buffDamageMult: 1.5,
-  buffSpeedMult: 1.22,
+  decayPerSec: 12, // passive cooldown rate
+  decayDelayMs: 1500, // grace after last gain before decay starts
+  tierStep: 25, // tiers at 0 / 25 / 50 / 75 / 100
+  // escalating buffs per tier: damage, move speed, ability charge rate
+  tiers: [
+    { dmg: 1.0, spd: 1.0, ability: 1.0 },
+    { dmg: 1.12, spd: 1.05, ability: 1.2 },
+    { dmg: 1.28, spd: 1.1, ability: 1.45 },
+    { dmg: 1.5, spd: 1.18, ability: 1.8 },
+    { dmg: 1.7, spd: 1.26, ability: 2.2 },
+  ],
+  ultThreshold: 50, // heat needed to cast an ultimate
+  ultHeatCost: 30, // heat spent per ultimate
+} as const;
+
+/** OVERDRIVE — manual meltdown burst at HEAT 100. */
+export const OVERDRIVE = {
+  durationMs: 6000,
+  damageMult: 2.2,
+  speedMult: 1.45,
+  abilityRate: 6, // near-instant ability cooldowns ("ability spam")
+  purgeCops: 6, // System purge wave focused on the player afterward
+} as const;
+
+/** Ally minions (WINTERMUTE drones / SWARM minions). */
+export const MINION = {
+  speed: 150,
+  meleeRange: 26,
+  attackCooldownMs: 480,
+  aggroRange: 360,
 } as const;
 
 /** SINGULARITY — global win meter. Only ever rises (infected node + kills). */

@@ -26,6 +26,9 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
   hp: number;
   /** Movement multiplier applied by the scene from Heat (overclock buff). */
   speedMult = 1;
+  /** Ability / ultimate cooldown timestamps (scene-managed). */
+  nextAbilityAt = 0;
+  nextUltAt = 0;
 
   private dashUntil = 0;
   private dashReadyAt = 0;
@@ -100,6 +103,16 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
 
     // i-frame flicker.
     this.setAlpha(this.invulnerable ? 0.55 : 1);
+  }
+
+  /** Ability-driven dash (e.g. K-GUERILLA Dash-Strike). */
+  forceDash(angle: number, speed: number, durMs: number) {
+    const now = this.scene.time.now;
+    this.dashVx = Math.cos(angle) * speed;
+    this.dashVy = Math.sin(angle) * speed;
+    this.dashUntil = now + durMs;
+    this.invulnUntil = Math.max(this.invulnUntil, now + durMs + 80);
+    this.spawnAfterimage();
   }
 
   /** If firing and off cooldown, returns the aim angle. Cadence = class primary. */

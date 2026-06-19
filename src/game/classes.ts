@@ -1,8 +1,10 @@
 // METROPHAGE — data-driven class system.
 //
-// Each archetype is a data entry: identity color, base stats, and a PRIMARY
-// weapon config the weapon system interprets. Abilities/ultimates are added in
-// Phase 1 Step 2 as more data fields + small hooks — classes stay config, not code.
+// Each archetype is a data entry: identity color, base stats, a PRIMARY weapon
+// config, plus an ability + ultimate whose effects are tiny hooks calling the
+// generic AbilityHost. Classes stay config, not bespoke systems.
+
+import type { AbilityDef } from "./ability";
 
 /** Primary-weapon configs, interpreted generically by GameScene.fireWeapon. */
 export type PrimaryDef =
@@ -50,6 +52,8 @@ export interface ClassDef {
   primary: PrimaryDef;
   primaryName: string;
   primaryDesc: string;
+  ability: AbilityDef; // cooldown-gated
+  ultimate: AbilityDef; // Heat-gated
 }
 
 export const CLASSES: ClassDef[] = [
@@ -71,6 +75,24 @@ export const CLASSES: ClassDef[] = [
       pellets: 5,
       spreadDeg: 42,
     },
+    ability: {
+      name: "INFECTION POD",
+      desc: "Lob a pod that bursts into a lingering infection pool.",
+      cooldownMs: 4500,
+      run: (c) => {
+        c.host.telegraphBlast(c.aimX, c.aimY, 46, 22, 420, 0x6bff3d);
+        c.host.lingeringPool(c.aimX, c.aimY, 50, 30, 3000, 0x6bff3d);
+      },
+    },
+    ultimate: {
+      name: "CONTAGION BLOOM",
+      desc: "Wide AoE infection burst + heavy damage-over-time.",
+      cooldownMs: 11000,
+      run: (c) => {
+        c.host.aoeDamage(c.player.x, c.player.y, 150, 38);
+        c.host.lingeringPool(c.player.x, c.player.y, 150, 44, 4000, 0x6bff3d);
+      },
+    },
   },
   {
     id: "k-guerilla",
@@ -90,6 +112,18 @@ export const CLASSES: ClassDef[] = [
       burstCount: 3,
       burstGapMs: 55,
     },
+    ability: {
+      name: "DASH-STRIKE",
+      desc: "Dash forward and plant a delayed charge at your start point.",
+      cooldownMs: 4200,
+      run: (c) => c.host.dashStrike(c.player, c.aimAngle, 0xff2d9b),
+    },
+    ultimate: {
+      name: "AIRSTRIKE",
+      desc: "Mark a zone; a heavy strike lands after a short delay.",
+      cooldownMs: 12000,
+      run: (c) => c.host.telegraphBlast(c.aimX, c.aimY, 92, 80, 1100, 0xff2d9b),
+    },
   },
   {
     id: "wintermute",
@@ -106,6 +140,18 @@ export const CLASSES: ClassDef[] = [
       damage: 16,
       range: 360,
       halfWidth: 11,
+    },
+    ability: {
+      name: "HACK CONE",
+      desc: "Disable enemies in a cone (and break shields) briefly.",
+      cooldownMs: 6000,
+      run: (c) => c.host.coneDisable(c.aimAngle, 230, 34, 2500, 0x29e7ff),
+    },
+    ultimate: {
+      name: "DEPLOY DRONES",
+      desc: "Two autonomous drones hunt and attack nearby enemies.",
+      cooldownMs: 13000,
+      run: (c) => c.host.spawnMinions(2, c.player.x, c.player.y, 9000, 0x29e7ff, 11),
     },
   },
   {
@@ -124,6 +170,18 @@ export const CLASSES: ClassDef[] = [
       speed: 520,
       lifetimeMs: 700,
       jitterDeg: 10,
+    },
+    ability: {
+      name: "MINION PACK",
+      desc: "Release a small pack of roaming minions.",
+      cooldownMs: 6000,
+      run: (c) => c.host.spawnMinions(3, c.player.x, c.player.y, 7000, 0x9b5cff, 7),
+    },
+    ultimate: {
+      name: "SWARM TIDE",
+      desc: "Flood a target area with a swarm of minions.",
+      cooldownMs: 13000,
+      run: (c) => c.host.spawnMinions(8, c.aimX, c.aimY, 8000, 0x9b5cff, 7),
     },
   },
 ];

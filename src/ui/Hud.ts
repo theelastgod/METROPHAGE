@@ -10,17 +10,29 @@ export interface HudState {
   overclock: boolean;
   sing: number; // 0..100
   singNorm: number; // 0..1
+  classColor: number;
+  abilityName: string;
+  abilityReady: boolean;
+  ultName: string;
+  ultReady: boolean;
+  overdriveReady: boolean;
+  overdriveActive: boolean;
 }
 
+const hex = (c: number) => "#" + c.toString(16).padStart(6, "0");
+
 /**
- * Top-left HUD: framed panel with HP / Heat / Singularity bars plus a weapon slot
- * built from the supplied UI art (skill_frame + gun icon). Camera-fixed.
+ * Top-left HUD: framed panel with HP / Heat / Singularity bars + a weapon slot
+ * (skill_frame + gun art), plus ability / ultimate / overdrive status lines.
  */
 export default class Hud {
   private g: Phaser.GameObjects.Graphics;
   private hpText: Phaser.GameObjects.Text;
   private heatText: Phaser.GameObjects.Text;
   private singText: Phaser.GameObjects.Text;
+  private abilityText: Phaser.GameObjects.Text;
+  private ultText: Phaser.GameObjects.Text;
+  private overdriveText: Phaser.GameObjects.Text;
 
   private readonly px = 14;
   private readonly py = 14;
@@ -32,11 +44,11 @@ export default class Hud {
   constructor(scene: Phaser.Scene) {
     this.g = scene.add.graphics().setScrollFactor(0).setDepth(1000);
 
-    const label = (y: number, color: string) =>
+    const label = (y: number, color: string, size = "12px") =>
       scene.add
         .text(this.px + 8, y, "", {
           fontFamily: "Courier New, monospace",
-          fontSize: "12px",
+          fontSize: size,
           color,
         })
         .setScrollFactor(0)
@@ -45,6 +57,9 @@ export default class Hud {
     this.hpText = label(this.py + 12, "#39ff88");
     this.heatText = label(this.py + 34, "#ff2bd6");
     this.singText = label(this.py + 56, "#00e5ff");
+    this.abilityText = label(this.py + this.ph + 6, "#9aa3b2", "11px");
+    this.ultText = label(this.py + this.ph + 22, "#9aa3b2", "11px");
+    this.overdriveText = label(this.py + this.ph + 38, "#f7ff3c", "12px");
 
     // Weapon slot (real UI art), just right of the panel.
     const sx = this.px + this.pw + 26;
@@ -54,21 +69,15 @@ export default class Hud {
       .setScrollFactor(0)
       .setDepth(1000)
       .setDisplaySize(48, 48);
-    scene.add
-      .image(sx, sy, UI_GUN_KEY)
-      .setScrollFactor(0)
-      .setDepth(1001)
-      .setScale(1.2);
+    scene.add.image(sx, sy, UI_GUN_KEY).setScrollFactor(0).setDepth(1001).setScale(1.2);
   }
 
   update(s: HudState) {
     const g = this.g;
     g.clear();
 
-    // panel
     g.fillStyle(0x07061a, 0.72).fillRect(this.px, this.py, this.pw, this.ph);
     g.lineStyle(2, COLORS.neonCyan, 0.85).strokeRect(this.px, this.py, this.pw, this.ph);
-    // corner accents
     g.lineStyle(2, COLORS.neonMagenta, 0.9);
     g.beginPath();
     g.moveTo(this.px, this.py + 12);
@@ -77,9 +86,13 @@ export default class Hud {
     g.strokePath();
 
     const hpNorm = s.hpMax > 0 ? Math.max(0, s.hp / s.hpMax) : 0;
-    const hpColor = hpNorm > 0.3 ? COLORS.hp : COLORS.hpLow;
-    this.bar(this.py + 14, hpNorm, hpColor);
-    this.bar(this.py + 36, s.heatNorm, s.overclock ? COLORS.neonYellow : COLORS.neonMagenta, true);
+    this.bar(this.py + 14, hpNorm, hpNorm > 0.3 ? COLORS.hp : COLORS.hpLow);
+    this.bar(
+      this.py + 36,
+      s.heatNorm,
+      s.overclock ? COLORS.neonYellow : COLORS.neonMagenta,
+      true,
+    );
     this.bar(this.py + 58, s.singNorm, COLORS.singularity);
 
     this.hpText.setText(`HP ${Math.ceil(s.hp)}`);
@@ -89,6 +102,20 @@ export default class Hud {
     this.singText.setText(
       s.singNorm >= 1 ? "SING 100 ▲CRITICAL" : `SING ${Math.round(s.sing)}`,
     );
+
+    this.abilityText
+      .setText(`Q ${s.abilityName}  ${s.abilityReady ? "●" : "···"}`)
+      .setColor(s.abilityReady ? hex(s.classColor) : "#5a6172");
+    this.ultText
+      .setText(`F ${s.ultName}  ${s.ultReady ? "●" : "locked"}`)
+      .setColor(s.ultReady ? "#f7ff3c" : "#5a6172");
+    this.overdriveText.setText(
+      s.overdriveActive
+        ? "★ OVERDRIVE"
+        : s.overdriveReady
+          ? "R → OVERDRIVE READY"
+          : "",
+    );
   }
 
   private bar(y: number, norm: number, color: number, tickAt50 = false) {
@@ -96,7 +123,12 @@ export default class Hud {
     const x = this.barX;
     const w = this.barW;
     g.fillStyle(0x140a1e, 0.9).fillRect(x, y, w, 9);
-    g.fillStyle(color, 1).fillRect(x + 1, y + 1, Math.max(0, (w - 2) * Phaser.Math.Clamp(norm, 0, 1)), 7);
+    g.fillStyle(color, 1).fillRect(
+      x + 1,
+      y + 1,
+      Math.max(0, (w - 2) * Phaser.Math.Clamp(norm, 0, 1)),
+      7,
+    );
     if (tickAt50) g.fillStyle(COLORS.neonCyan, 0.8).fillRect(x + w * 0.5, y - 1, 1, 11);
   }
 }

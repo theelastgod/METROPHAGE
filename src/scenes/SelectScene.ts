@@ -79,6 +79,14 @@ export default class SelectScene extends Phaser.Scene {
         })
         .setOrigin(0);
       this.add
+        .text(x + 10, cardY + 178, `Q  ${c.ability.name}\nF  ${c.ultimate.name}`, {
+          fontFamily: "Courier New, monospace",
+          fontSize: "9px",
+          color: c.hex,
+          lineSpacing: 3,
+        })
+        .setOrigin(0);
+      this.add
         .text(cx, cardY + cardH - 16, `[ ${i + 1} ]`, {
           fontFamily: "Courier New, monospace",
           fontSize: "12px",

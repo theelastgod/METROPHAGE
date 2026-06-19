@@ -26,6 +26,7 @@ export default class TuringCop extends Phaser.Physics.Arcade.Sprite {
   private nextAttackAt = 0;
   private repathAt = 0;
   private dead = false;
+  private disabledUntil = 0;
 
   constructor(scene: Phaser.Scene, x: number, y: number) {
     super(scene, x, y, COP_KEY);
@@ -43,10 +44,23 @@ export default class TuringCop extends Phaser.Physics.Arcade.Sprite {
     return this.dead;
   }
 
+  /** Hacked: stunned (no move/attack) for ms. WINTERMUTE's Hack Cone. */
+  disable(ms: number) {
+    if (this.dead) return;
+    this.disabledUntil = Math.max(this.disabledUntil, this.scene.time.now + ms);
+    this.setTint(0x29e7ff);
+  }
+
   /** Advance the FSM one frame against the player target. */
   step(player: Phaser.Physics.Arcade.Sprite, fire: FireFn) {
     if (this.dead) return;
     const now = this.scene.time.now;
+
+    if (now < this.disabledUntil) {
+      this.setVelocity(0, 0);
+      return; // hacked: frozen
+    }
+    if (this.tintTopLeft === 0x29e7ff) this.clearTint(); // hack expired
     const dist = Phaser.Math.Distance.Between(this.x, this.y, player.x, player.y);
 
     switch (this.state) {

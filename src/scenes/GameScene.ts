@@ -7,11 +7,13 @@ import {
   BULLET,
   ENEMY_BULLET,
   HEAT,
+  OVERDRIVE,
   SINGULARITY,
   AGENT,
   AGENT_TINTS,
 } from "../config";
 import { getClass, ClassDef, PrimaryDef } from "../game/classes";
+import { AbilityHost, AbilityDef } from "../game/ability";
 import { buildGrid, spawnPoint, isWall, TILE_WALL, TileGrid } from "../world/district";
 import {
   TILESET_KEY,
@@ -28,6 +30,7 @@ import TuringCop from "../entities/TuringCop";
 import InfectionNode from "../entities/InfectionNode";
 import Npc from "../entities/Npc";
 import Agent from "../entities/Agent";
+import Minion from "../entities/Minion";
 import Heat from "../systems/Heat";
 import Singularity from "../systems/Singularity";
 import NeonPipeline from "../render/NeonPipeline";
@@ -40,7 +43,7 @@ import DialogueBox, { DialoguePage } from "../ui/DialogueBox";
  * Step 1: movable, colliding player. Step 2: mouse-aim, dash, projectile weapon.
  * Step 3: Turing Cops with a patrol->chase->attack FSM that take damage and die.
  */
-export default class GameScene extends Phaser.Scene {
+export default class GameScene extends Phaser.Scene implements AbilityHost {
   private classDef!: ClassDef;
   private player!: Player;
   private bullets!: Bullets; // player weapon
@@ -59,14 +62,21 @@ export default class GameScene extends Phaser.Scene {
   private node!: InfectionNode;
   private npc!: Npc;
   private agents!: Phaser.Physics.Arcade.Group;
+  private minions!: Phaser.Physics.Arcade.Group;
   private neon?: NeonPipeline;
   private hud!: Hud;
   private dialogue!: DialogueBox;
+
+  private overdriveActive = false;
+  private overdriveUntil = 0;
 
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
   private wasd!: Record<"W" | "A" | "S" | "D", Phaser.Input.Keyboard.Key>;
   private dashKey!: Phaser.Input.Keyboard.Key;
   private eKey!: Phaser.Input.Keyboard.Key;
+  private abilityKey!: Phaser.Input.Keyboard.Key;
+  private ultKey!: Phaser.Input.Keyboard.Key;
+  private overdriveKey!: Phaser.Input.Keyboard.Key;
 
   constructor() {
     super("Game");
@@ -84,6 +94,8 @@ export default class GameScene extends Phaser.Scene {
     this.won = false;
     this.hitStopActive = false;
     this.nodeWasInfected = false;
+    this.overdriveActive = false;
+    this.overdriveUntil = 0;
     this.physics.world.resume();
     this.heat = new Heat();
     this.singularity = new Singularity();
@@ -100,6 +112,8 @@ export default class GameScene extends Phaser.Scene {
     this.createNode();
     this.createNpc();
     this.createAgents();
+    this.minions = this.physics.add.group();
+    this.physics.add.collider(this.minions, this.wallLayer);
     this.createDecor();
     this.setupCamera();
     this.setupPostFX();
@@ -331,6 +345,9 @@ export default class GameScene extends Phaser.Scene {
     this.wasd = kb.addKeys("W,A,S,D") as typeof this.wasd;
     this.dashKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
     this.eKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.E);
+    this.abilityKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.Q);
+    this.ultKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.F);
+    this.overdriveKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.R);
     this.input.mouse?.disableContextMenu();
   }
 
@@ -376,7 +393,22 @@ export default class GameScene extends Phaser.Scene {
     ];
   }
 
+  // --- combat modifiers: Overdrive overrides Heat tiers while active ---
+  private get inOverdrive(): boolean {
+    return this.overdriveActive;
+  }
+  private get dmgMult(): number {
+    return this.inOverdrive ? OVERDRIVE.damageMult : this.heat.damageMult;
+  }
+  private get spdMult(): number {
+    return this.inOverdrive ? OVERDRIVE.speedMult : this.heat.speedMult;
+  }
+  private get abilityRate(): number {
+    return this.inOverdrive ? OVERDRIVE.abilityRate : this.heat.abilityRate;
+  }
+
   private updateHud() {
+    const now = this.time.now;
     this.hud.update({
       hp: this.player.hp,
       hpMax: this.player.maxHp,
@@ -385,6 +417,13 @@ export default class GameScene extends Phaser.Scene {
       overclock: this.heat.buffActive,
       sing: this.singularity.value,
       singNorm: this.singularity.normalized,
+      classColor: this.classDef.color,
+      abilityName: this.classDef.ability.name,
+      abilityReady: now >= this.player.nextAbilityAt,
+      ultName: this.classDef.ultimate.name,
+      ultReady: this.heat.canUlt && now >= this.player.nextUltAt,
+      overdriveReady: this.heat.canOverdrive,
+      overdriveActive: this.inOverdrive,
     });
   }
 
@@ -392,22 +431,33 @@ export default class GameScene extends Phaser.Scene {
     if (this.won) return; // meltdown sequence runs on tweens/timers; freeze the sim
     if (this.hitStopActive) return; // brief impact freeze
 
+    const now = this.time.now;
+
+    // OVERDRIVE lifecycle.
+    if (this.overdriveActive && now >= this.overdriveUntil) this.endOverdrive();
+
     this.updateHud();
     if (this.dialogue.isOpen) return; // freeze the sim while a dialogue is up
 
-    const now = this.time.now;
-
-    // HEAT: decay when passive, apply overclock buff, drive the post-FX + music.
-    this.heat.update(now, delta);
-    this.player.speedMult = this.heat.speedMult;
-    if (this.neon) this.neon.heat = this.heat.normalized;
-    this.synth.setIntensity(this.heat.normalized);
+    // HEAT: pinned during Overdrive, else decay. Drives post-FX + music.
+    if (this.inOverdrive) {
+      this.heat.value = HEAT.max;
+      if (this.neon) this.neon.heat = 1;
+      this.synth.setIntensity(1);
+    } else {
+      this.heat.update(now, delta);
+      if (this.neon) this.neon.heat = this.heat.normalized;
+      this.synth.setIntensity(this.heat.normalized);
+    }
+    this.player.speedMult = this.spdMult;
 
     const input = this.readInput();
     this.player.step(input);
 
     const angle = this.player.tryFire(input);
     if (angle !== null) this.fireWeapon(angle);
+
+    this.handleAbilities(now);
 
     this.bullets.update(now);
     this.enemyBullets.update(now);
@@ -422,6 +472,11 @@ export default class GameScene extends Phaser.Scene {
     });
 
     this.agents.getChildren().forEach((go) => (go as Agent).step(now));
+
+    const cops = this.enemies.getChildren() as TuringCop[];
+    this.minions.getChildren().forEach((go) =>
+      (go as Minion).step(now, cops, (cop, dmg) => this.damageCop(cop, dmg, false)),
+    );
 
     // INFECTION + SINGULARITY: channel the node by proximity; infected node ticks
     // the global meter upward.
@@ -627,7 +682,7 @@ export default class GameScene extends Phaser.Scene {
     const py = this.player.y;
     const ex = px + Math.cos(angle) * prim.range;
     const ey = py + Math.sin(angle) * prim.range;
-    const dmg = prim.damage * this.heat.damageMult;
+    const dmg = prim.damage * this.dmgMult;
 
     // Pierce: hit every cop near the beam line.
     this.enemies.getChildren().forEach((go) => {
@@ -667,19 +722,258 @@ export default class GameScene extends Phaser.Scene {
     return Phaser.Math.Distance.Between(px, py, ax + t * dx, ay + t * dy);
   }
 
-  /** Apply damage to a cop + the shared kill/heat/singularity/feedback handling. */
-  private damageCop(cop: TuringCop, dmg: number) {
+  /**
+   * Apply damage to a cop + shared kill/heat/singularity/feedback. `juice` adds
+   * hit-stop + shake (player hits); minion/DoT hits pass false to avoid spam.
+   */
+  damageCop(cop: TuringCop, dmg: number, juice = true) {
+    if (!cop.active || cop.isDead) return;
     const killed = cop.hurt(dmg);
     this.heat.add(dmg * HEAT.perDamage, this.time.now);
     if (killed) {
       this.heat.add(HEAT.perKill, this.time.now);
       this.singularity.add(SINGULARITY.perKill);
       this.synth.kill();
-      this.hitStop(60);
-      this.cameras.main.shake(140, 0.006);
-    } else {
+      if (juice) {
+        this.hitStop(60);
+        this.cameras.main.shake(140, 0.006);
+      }
+    } else if (juice) {
       this.synth.hit();
     }
+  }
+
+  // ---- abilities / ultimate / overdrive ----
+
+  private handleAbilities(now: number) {
+    if (
+      Phaser.Input.Keyboard.JustDown(this.abilityKey) &&
+      now >= this.player.nextAbilityAt
+    ) {
+      this.player.nextAbilityAt =
+        now + this.classDef.ability.cooldownMs / this.abilityRate;
+      this.runAbility(this.classDef.ability);
+    }
+
+    if (
+      Phaser.Input.Keyboard.JustDown(this.ultKey) &&
+      this.heat.canUlt &&
+      now >= this.player.nextUltAt
+    ) {
+      this.player.nextUltAt = now + this.classDef.ultimate.cooldownMs;
+      this.heat.spend(HEAT.ultHeatCost);
+      this.runAbility(this.classDef.ultimate);
+      this.cameras.main.flash(120, 40, 0, 80);
+    }
+
+    if (
+      Phaser.Input.Keyboard.JustDown(this.overdriveKey) &&
+      this.heat.canOverdrive &&
+      !this.overdriveActive
+    ) {
+      this.startOverdrive(now);
+    }
+  }
+
+  private runAbility(def: AbilityDef) {
+    const p = this.input.activePointer;
+    const w = this.cameras.main.getWorldPoint(p.x, p.y);
+    const aimAngle = Phaser.Math.Angle.Between(this.player.x, this.player.y, w.x, w.y);
+    def.run({ host: this, player: this.player, aimX: w.x, aimY: w.y, aimAngle });
+    this.synth.infect(); // cast sfx
+  }
+
+  private startOverdrive(now: number) {
+    this.overdriveActive = true;
+    this.overdriveUntil = now + OVERDRIVE.durationMs;
+    this.player.nextAbilityAt = 0; // ability spam
+    this.cameras.main.flash(300, 120, 0, 160);
+    this.cameras.main.shake(400, 0.006);
+    this.synth.meltdown();
+    if (this.neon) {
+      this.neon.glitch = 0.5;
+      this.tweens.add({ targets: this.neon, glitch: 0, duration: 900 });
+    }
+    this.floatText("OVERDRIVE", this.classDef.hex);
+  }
+
+  private endOverdrive() {
+    this.overdriveActive = false;
+    this.heat.reset(this.time.now);
+    this.cameras.main.flash(220, 80, 0, 40);
+    this.floatText("SYSTEM PURGE", "#ff3b6b");
+    this.spawnPurgeWave();
+  }
+
+  private spawnPurgeWave() {
+    for (let i = 0; i < OVERDRIVE.purgeCops; i++) {
+      const a = (i / OVERDRIVE.purgeCops) * Math.PI * 2 + Math.random() * 0.4;
+      const r = 180 + Math.random() * 120;
+      const x = Phaser.Math.Clamp(
+        this.player.x + Math.cos(a) * r,
+        TILE * 1.5,
+        WORLD_W - TILE * 1.5,
+      );
+      const y = Phaser.Math.Clamp(
+        this.player.y + Math.sin(a) * r,
+        TILE * 1.5,
+        WORLD_H - TILE * 1.5,
+      );
+      this.spawnCopAt(x, y);
+    }
+  }
+
+  private spawnCopAt(x: number, y: number) {
+    const cop = new TuringCop(this, x, y);
+    this.enemies.add(cop);
+  }
+
+  // ---- AbilityHost (effects invoked by class ability/ultimate hooks) ----
+
+  aoeDamage(x: number, y: number, radius: number, dmg: number) {
+    this.enemies.getChildren().forEach((go) => {
+      const cop = go as TuringCop;
+      if (!cop.active || cop.isDead) return;
+      if (Phaser.Math.Distance.Between(cop.x, cop.y, x, y) <= radius) {
+        this.damageCop(cop, dmg, false);
+      }
+    });
+  }
+
+  telegraphBlast(
+    x: number,
+    y: number,
+    radius: number,
+    dmg: number,
+    delayMs: number,
+    color: number,
+  ) {
+    const ring = this.add
+      .circle(x, y, radius, color, 0.12)
+      .setStrokeStyle(2, color, 0.8)
+      .setDepth(5);
+    this.tweens.add({
+      targets: ring,
+      alpha: { from: 0.15, to: 0.4 },
+      yoyo: true,
+      repeat: -1,
+      duration: 180,
+    });
+    this.time.delayedCall(delayMs, () => {
+      ring.destroy();
+      this.aoeDamage(x, y, radius, dmg);
+      const b = this.add.circle(x, y, radius, color, 0.5).setDepth(6);
+      this.tweens.add({
+        targets: b,
+        alpha: 0,
+        scale: 1.3,
+        duration: 320,
+        onComplete: () => b.destroy(),
+      });
+      this.spark(x, y, color, 4);
+      this.cameras.main.shake(160, 0.009);
+    });
+  }
+
+  lingeringPool(
+    x: number,
+    y: number,
+    radius: number,
+    dps: number,
+    durMs: number,
+    color: number,
+  ) {
+    const pool = this.add.circle(x, y, radius, color, 0.16).setDepth(4);
+    this.tweens.add({
+      targets: pool,
+      alpha: { from: 0.1, to: 0.24 },
+      yoyo: true,
+      repeat: -1,
+      duration: 380,
+    });
+    const tick = this.time.addEvent({
+      delay: 300,
+      loop: true,
+      callback: () => this.aoeDamage(x, y, radius, dps * 0.3),
+    });
+    this.time.delayedCall(durMs, () => {
+      tick.remove();
+      this.tweens.add({
+        targets: pool,
+        alpha: 0,
+        duration: 320,
+        onComplete: () => pool.destroy(),
+      });
+    });
+  }
+
+  coneDisable(angle: number, range: number, halfDeg: number, durMs: number, color: number) {
+    const half = Phaser.Math.DegToRad(halfDeg);
+    this.enemies.getChildren().forEach((go) => {
+      const cop = go as TuringCop;
+      if (!cop.active || cop.isDead) return;
+      if (Phaser.Math.Distance.Between(cop.x, cop.y, this.player.x, this.player.y) > range)
+        return;
+      const a = Phaser.Math.Angle.Between(this.player.x, this.player.y, cop.x, cop.y);
+      if (Math.abs(Phaser.Math.Angle.Wrap(a - angle)) <= half) cop.disable(durMs);
+    });
+    const g = this.add.graphics().setDepth(11);
+    g.fillStyle(color, 0.18);
+    g.fillTriangle(
+      this.player.x,
+      this.player.y,
+      this.player.x + Math.cos(angle - half) * range,
+      this.player.y + Math.sin(angle - half) * range,
+      this.player.x + Math.cos(angle + half) * range,
+      this.player.y + Math.sin(angle + half) * range,
+    );
+    this.tweens.add({ targets: g, alpha: 0, duration: 300, onComplete: () => g.destroy() });
+  }
+
+  spawnMinions(
+    count: number,
+    x: number,
+    y: number,
+    lifeMs: number,
+    tint: number,
+    dmg: number,
+  ) {
+    for (let i = 0; i < count; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const r = 10 + Math.random() * 30;
+      this.minions.add(
+        new Minion(this, x + Math.cos(a) * r, y + Math.sin(a) * r, lifeMs, tint, dmg),
+      );
+    }
+  }
+
+  dashStrike(player: Player, angle: number, color: number) {
+    this.telegraphBlast(player.x, player.y, 60, 46, 650, color); // charge at start point
+    player.forceDash(angle, 720, 180);
+  }
+
+  private floatText(msg: string, color: string) {
+    const t = this.add
+      .text(this.scale.width / 2, this.scale.height / 2 - 44, msg, {
+        fontFamily: "Courier New, monospace",
+        fontSize: "40px",
+        color,
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(2000)
+      .setAlpha(0);
+    t.setShadow(0, 0, "#00e5ff", 16, true, true);
+    this.tweens.add({
+      targets: t,
+      alpha: 1,
+      scale: { from: 1.5, to: 1 },
+      duration: 280,
+      yoyo: true,
+      hold: 650,
+      onComplete: () => t.destroy(),
+    });
   }
 
   /** Brief impact freeze for game feel (pauses physics + sim). */
@@ -701,7 +995,7 @@ export default class GameScene extends Phaser.Scene {
 
   private onBulletHitsCop(bullet: Phaser.Physics.Arcade.Image, cop: TuringCop) {
     if (!cop.active || cop.isDead) return;
-    const dmg = (bullet.getData("dmg") as number) * this.heat.damageMult;
+    const dmg = (bullet.getData("dmg") as number) * this.dmgMult;
     this.bullets.kill(bullet);
     this.spark(bullet.x, bullet.y, COLORS.enemyEdge, 1.6);
     this.damageCop(cop, dmg);
