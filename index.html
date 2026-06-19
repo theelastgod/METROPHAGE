@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>METROPHAGE</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        background: #04020a;
+        overflow: hidden;
+        font-family: "Courier New", ui-monospace, monospace;
+      }
+      #game-root {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #game-root canvas {
+        image-rendering: pixelated;
+      }
+      /* Boot flash while the bundle loads */
+      #boot {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #ff2bd6;
+        letter-spacing: 0.4em;
+        text-shadow: 0 0 12px #ff2bd6;
+        font-size: 14px;
+        pointer-events: none;
+        transition: opacity 0.6s ease;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="game-root"></div>
+    <div id="boot">METROPHAGE // BOOTING</div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

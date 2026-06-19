@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "metrophage",
+      "runtimeExecutable": "/Users/wendellphillips/.local/node/bin/node",
+      "runtimeArgs": ["node_modules/vite/bin/vite.js", "--host", "--port", "5188"],
+      "port": 5188
+    }
+  ]
+}

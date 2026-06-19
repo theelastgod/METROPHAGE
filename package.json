@@ -1,0 +1,20 @@
+{
+  "name": "metrophage",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "METROPHAGE — top-down neon-noir cyberpunk action-RPG (Phase 0 vertical slice)",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "phaser": "^3.90.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10"
+  }
+}
