@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { NODE, COLORS } from "../config";
-import { NODE_KEY } from "../assets/manifest";
+import { NODE_KEY, NODE_INFECTED_KEY } from "../assets/manifest";
 
 type NodeState = "dormant" | "channeling" | "infected";
 
@@ -82,7 +82,7 @@ export default class InfectionNode {
   private infect() {
     this.state = "infected";
     this.progress = 1;
-    this.base.setTint(COLORS.nodeInfected);
+    this.base.setTexture(NODE_INFECTED_KEY); // swap clean -> glitched-green terminal
     this.label.setText("INFECTED").setColor("#39ff88");
     this.drawRing(1);
 
@@ -97,7 +97,7 @@ export default class InfectionNode {
 
   private pulse() {
     const wave = this.scene.add
-      .circle(this.x, this.y, 12, COLORS.nodeInfected, 0.5)
+      .circle(this.x, this.y, 18, COLORS.nodeInfected, 0.5)
       .setDepth(5);
     this.scene.tweens.add({
       targets: wave,
@@ -110,7 +110,7 @@ export default class InfectionNode {
   }
 
   private drawRing(p: number) {
-    const r = 18;
+    const r = 28;
     const color = this.state === "infected" ? COLORS.nodeInfected : COLORS.neonMagenta;
     this.ring.clear();
     this.ring.lineStyle(3, 0x2a1740, 0.9).strokeCircle(this.x, this.y, r);

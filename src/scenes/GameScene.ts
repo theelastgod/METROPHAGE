@@ -18,6 +18,9 @@ import {
   PORTRAIT_PLAYER_KEY,
   PORTRAIT_NPC_KEY,
   VO_MELTDOWN_KEY,
+  GLOW_KEY,
+  SPARK_KEY,
+  STREETLIGHT_KEY,
 } from "../assets/manifest";
 import Player, { PlayerInput } from "../entities/Player";
 import Bullets from "../entities/Bullets";
@@ -95,6 +98,7 @@ export default class GameScene extends Phaser.Scene {
     this.createNode();
     this.createNpc();
     this.createAgents();
+    this.createDecor();
     this.setupCamera();
     this.setupPostFX();
     this.setupInput();
@@ -139,6 +143,25 @@ export default class GameScene extends Phaser.Scene {
       placed++;
     }
     this.physics.add.collider(this.agents, this.wallLayer);
+  }
+
+  private createDecor() {
+    // Streetlights — pure ambiance (no collision), anchored at their base.
+    const spots: Array<[number, number]> = [
+      [14, 11],
+      [25, 11],
+      [14, 20],
+      [25, 20],
+      [7, 11],
+      [33, 12],
+    ];
+    for (const [tx, ty] of spots) {
+      if (this.grid[ty]?.[tx] === undefined || isWall(this.grid[ty][tx])) continue;
+      this.add
+        .image(tx * TILE + TILE / 2, ty * TILE + TILE, STREETLIGHT_KEY)
+        .setOrigin(0.5, 1)
+        .setDepth(6);
+    }
   }
 
   private setupUi() {
@@ -586,23 +609,33 @@ export default class GameScene extends Phaser.Scene {
   }
 
   private muzzleFlash(x: number, y: number) {
-    const f = this.add.circle(x, y, 6, COLORS.bullet, 0.9).setDepth(11);
+    const f = this.add
+      .image(x, y, GLOW_KEY)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setTint(COLORS.bullet)
+      .setDepth(11)
+      .setScale(0.45);
     this.tweens.add({
       targets: f,
       scale: 0,
       alpha: 0,
-      duration: 90,
+      duration: 110,
       onComplete: () => f.destroy(),
     });
   }
 
   private spark(x: number, y: number, color: number, scale: number) {
-    const s = this.add.circle(x, y, 5, color, 1).setDepth(11);
+    const s = this.add
+      .image(x, y, SPARK_KEY)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setTint(color)
+      .setDepth(11)
+      .setScale(0.8);
     this.tweens.add({
       targets: s,
-      scale,
+      scale: scale * 1.4,
       alpha: 0,
-      duration: 140,
+      duration: 160,
       onComplete: () => s.destroy(),
     });
   }

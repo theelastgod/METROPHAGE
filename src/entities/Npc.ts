@@ -16,7 +16,7 @@ export default class Npc {
   constructor(scene: Phaser.Scene, x: number, y: number) {
     this.x = x;
     this.y = y;
-    this.sprite = scene.add.image(x, y, NPC_KEY).setDepth(8);
+    this.sprite = scene.add.image(x, y, NPC_KEY, 0).setDepth(8); // frame 0 = facing down
     this.prompt = scene.add
       .text(x, y - 26, "E  TALK", {
         fontFamily: "Courier New, monospace",

@@ -4,10 +4,12 @@
 
 import { GRID_W, GRID_H, TILE } from "../config";
 
-export const TILE_FLOOR = 0; // street, walkable
-export const TILE_WALL = 1; // building, collides
-export const TILE_PLAZA = 2; // open plaza, walkable
-export const TILE_LANE = 3; // street lane marking, walkable
+// Indices into the drop-in tileset (256×64, sixteen 32×32 cells):
+// 0 floor · 2 road · 3 plaza · 4 wall (see ART_NOTES).
+export const TILE_FLOOR = 0; // floor, walkable
+export const TILE_WALL = 4; // wall/building, collides
+export const TILE_PLAZA = 3; // open plaza, walkable
+export const TILE_LANE = 2; // road, walkable
 
 export type TileGrid = number[][];
 

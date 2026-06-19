@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { COP, COLORS } from "../config";
-import { COP_KEY } from "../assets/manifest";
+import { COP_KEY, faceFrame } from "../assets/manifest";
 
 export enum CopState {
   Patrol = "patrol",
@@ -33,7 +33,7 @@ export default class TuringCop extends Phaser.Physics.Arcade.Sprite {
     scene.physics.add.existing(this);
     this.setCollideWorldBounds(true);
     this.setDepth(8);
-    (this.body as Phaser.Physics.Arcade.Body).setCircle(11, 3, 3);
+    (this.body as Phaser.Physics.Arcade.Body).setCircle(9, 7, 9);
     this.home = new Phaser.Math.Vector2(x, y);
     this.patrolTarget = this.home.clone();
     this.pickPatrolTarget();
@@ -91,11 +91,12 @@ export default class TuringCop extends Phaser.Physics.Arcade.Sprite {
 
   private faceTarget(player: Phaser.Physics.Arcade.Sprite) {
     const body = this.body as Phaser.Physics.Arcade.Body;
-    const facing =
-      this.state === CopState.Patrol && body.velocity.lengthSq() > 1
-        ? body.velocity.angle()
-        : Phaser.Math.Angle.Between(this.x, this.y, player.x, player.y);
-    this.setRotation(facing + Math.PI / 2);
+    // Directional sheet (0=down 1=left 2=right 3=up): patrol faces travel, else player.
+    if (this.state === CopState.Patrol && body.velocity.lengthSq() > 1) {
+      this.setFrame(faceFrame(body.velocity.x, body.velocity.y));
+    } else {
+      this.setFrame(faceFrame(player.x - this.x, player.y - this.y));
+    }
   }
 
   private patrol(now: number) {

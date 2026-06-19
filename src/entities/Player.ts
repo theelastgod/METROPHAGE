@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { PLAYER, COLORS } from "../config";
-import { PLAYER_KEY } from "../assets/manifest";
+import { PLAYER_KEY, faceFrame } from "../assets/manifest";
 
 /** Per-frame input snapshot, decoupled from the raw key/pointer objects. */
 export interface PlayerInput {
@@ -38,7 +38,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     scene.physics.add.existing(this);
     this.setCollideWorldBounds(true);
     this.setDepth(10);
-    (this.body as Phaser.Physics.Arcade.Body).setCircle(9, 4, 4);
+    (this.body as Phaser.Physics.Arcade.Body).setCircle(9, 7, 9);
   }
 
   get invulnerable(): boolean {
@@ -55,9 +55,9 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
   step(input: PlayerInput) {
     const now = this.scene.time.now;
 
-    // Aim: face the pointer (sprite nub points "up" at rotation 0).
+    // Aim: face the pointer via the directional sheet (0=down 1=left 2=right 3=up).
     const aim = Phaser.Math.Angle.Between(this.x, this.y, input.aimX, input.aimY);
-    this.setRotation(aim + Math.PI / 2);
+    this.setFrame(faceFrame(Math.cos(aim), Math.sin(aim)));
 
     const dir = new Phaser.Math.Vector2(
       (input.right ? 1 : 0) - (input.left ? 1 : 0),
@@ -124,8 +124,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
 
   private spawnAfterimage() {
     const ghost = this.scene.add
-      .image(this.x, this.y, this.texture.key)
-      .setRotation(this.rotation)
+      .image(this.x, this.y, this.texture.key, this.frame.name)
       .setDepth(9)
       .setAlpha(0.4)
       .setTint(COLORS.neonCyan);
