@@ -77,6 +77,8 @@ export function buildGrid(def: DistrictDef = DISTRICTS[0]): TileGrid {
   // node (and neighbours) are walkable, regardless of how the layout was authored.
   carve(grid, def.spawnTile[0], def.spawnTile[1]);
   carve(grid, def.diveTile[0], def.diveTile[1]);
+  carve(grid, def.boardTile[0], def.boardTile[1]);
+  carve(grid, def.shopTile[0], def.shopTile[1]);
   for (const n of def.nodes) carve(grid, n.tile[0], n.tile[1]);
 
   return grid;

@@ -24,6 +24,7 @@ export interface HudState {
   shield: number;
   shieldMax: number;
   contract: string;
+  quest: string;
   consumables: string;
 }
 
@@ -44,6 +45,7 @@ export default class Hud {
   private metaText: Phaser.GameObjects.Text;
   private skillText: Phaser.GameObjects.Text;
   private contractText: Phaser.GameObjects.Text;
+  private questText: Phaser.GameObjects.Text;
   private consumeText: Phaser.GameObjects.Text;
 
   private readonly px = 14;
@@ -90,6 +92,17 @@ export default class Hud {
         fontFamily: "Courier New, monospace",
         fontSize: "12px",
         color: "#f7ff3c",
+        align: "center",
+      })
+      .setOrigin(0.5, 0)
+      .setScrollFactor(0)
+      .setDepth(1001);
+    // Active quest tracker, just under the contract line.
+    this.questText = scene.add
+      .text(scene.scale.width / 2, 28, "", {
+        fontFamily: "Courier New, monospace",
+        fontSize: "11px",
+        color: "#8a5cff",
         align: "center",
       })
       .setOrigin(0.5, 0)
@@ -166,6 +179,7 @@ export default class Hud {
 
     this.metaText.setText(`LV ${s.level}   ₵ ${s.credits}`);
     this.contractText.setText(s.contract ? `◢ ${s.contract}` : "");
+    this.questText.setText(s.quest ? `◆ ${s.quest}` : "");
     this.consumeText.setText(s.consumables);
     this.skillText
       .setText(s.skillPoints > 0 ? `K SKILLS (${s.skillPoints} pts!)` : "K SKILLS")

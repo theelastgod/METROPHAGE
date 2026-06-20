@@ -215,11 +215,15 @@ export default class GameScene
     this.setupEnemies();
     this.createTerritory();
     this.createNpc();
-    this.terminal = new Terminal(this, 23 * TILE + TILE / 2, 14 * TILE + TILE / 2);
+    this.terminal = new Terminal(
+      this,
+      this.district.boardTile[0] * TILE + TILE / 2,
+      this.district.boardTile[1] * TILE + TILE / 2,
+    );
     this.vendorTerminal = new Terminal(
       this,
-      17 * TILE + TILE / 2,
-      18 * TILE + TILE / 2,
+      this.district.shopTile[0] * TILE + TILE / 2,
+      this.district.shopTile[1] * TILE + TILE / 2,
       "FIXER",
       "E  SHOP",
       0xf7ff3c,
@@ -395,12 +399,22 @@ export default class GameScene
   }
 
   private createNpc() {
-    // Friendly contact near the plaza spawn so the player meets it early.
-    let tx = 16;
-    let ty = 16;
-    if (this.grid[ty]?.[tx] === undefined || isWall(this.grid[ty][tx])) {
-      tx = 17;
-      ty = 16;
+    // The FIXER (contact + quest giver) sits a couple of tiles off the player's
+    // insertion point, so they meet it on entering any district.
+    const [sx, sy] = this.district.spawnTile;
+    let tx = sx;
+    let ty = sy;
+    const offsets: Array<[number, number]> = [
+      [2, 0], [-2, 0], [0, -2], [0, 2], [3, 0], [-3, 0], [2, 2], [-2, 2],
+    ];
+    for (const [dx, dy] of offsets) {
+      const nx = sx + dx;
+      const ny = sy + dy;
+      if (this.grid[ny]?.[nx] !== undefined && !isWall(this.grid[ny][nx])) {
+        tx = nx;
+        ty = ny;
+        break;
+      }
     }
     this.npc = new Npc(this, tx * TILE + TILE / 2, ty * TILE + TILE / 2);
   }
@@ -774,6 +788,9 @@ export default class GameScene
       contract: this.contracts.active
         ? `${this.contracts.active.name}: ${objectiveLabel(this.contracts.active.objectives[0])}`
         : "",
+      quest: this.quests.active
+        ? `${this.quests.active.name}: ${this.quests.currentStage?.objective ?? ""}`
+        : "",
       consumables: CONSUMABLE_KEYS.map(
         (id, i) => `${i + 1}:${id.slice(0, 3).toUpperCase()}x${this.progression.consumables[id] ?? 0}`,
       ).join("  "),
@@ -835,8 +852,15 @@ export default class GameScene
       this.synth.setIntensity(1);
     } else {
       this.heat.update(now, delta, 1 - this.mods.heatDecayPct);
-      if (this.neon) this.neon.heat = this.heat.normalized;
-      this.synth.setIntensity(this.heat.normalized);
+      // The world destabilizes as the city-wide Singularity climbs toward meltdown,
+      // not just with the player's Heat — the closer to 100%, the hotter the screen.
+      const sing = this.city.normalized;
+      const intensity = Math.max(this.heat.normalized, sing * 0.7);
+      if (this.neon) {
+        this.neon.heat = intensity;
+        this.neon.glitch = sing > 0.82 ? ((sing - 0.82) / 0.18) * 0.3 : 0;
+      }
+      this.synth.setIntensity(Math.max(this.heat.normalized, sing * 0.5));
     }
     this.player.speedMult = this.spdMult;
     this.player.tickShield(now, delta);
