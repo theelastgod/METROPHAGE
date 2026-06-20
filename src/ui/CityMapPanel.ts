@@ -5,20 +5,23 @@ import { DISTRICTS } from "../game/districts";
 import { drawPanelFrame } from "./panelChrome";
 
 /**
- * City map overlay (M). A read-only view of the campaign: the four districts as
- * stations on a contagion route, colored by state (cleared / current / locked),
- * plus the global contagion % toward meltdown. Camera-fixed; the scene freezes
- * the sim while it's open. Travel happens via extraction, not from here.
+ * City map overlay (M) — the fast-travel hub. The districts are stations on a
+ * contagion route, colored by state (secured / current / unlocked / locked), plus
+ * the save-wide Singularity %. Click an unlocked district to travel there; the
+ * frontier unlocks as you secure the one before it. Camera-fixed; the scene
+ * freezes the sim while it's open.
  */
 export default class CityMapPanel {
   private scene: Phaser.Scene;
   private city: City;
+  private onTravel: (index: number) => void;
 
   private g: Phaser.GameObjects.Graphics;
   private statics: Phaser.GameObjects.Text[] = [];
   private threatTexts: Phaser.GameObjects.Text[] = [];
   private nameTexts: Phaser.GameObjects.Text[] = [];
   private stateTexts: Phaser.GameObjects.Text[] = [];
+  private zones: Phaser.GameObjects.Zone[] = [];
   private contagionText!: Phaser.GameObjects.Text;
   private cycleText!: Phaser.GameObjects.Text;
   private open = false;
@@ -30,9 +33,10 @@ export default class CityMapPanel {
   private readonly routeY: number;
   private readonly stationX: number[] = [];
 
-  constructor(scene: Phaser.Scene, city: City) {
+  constructor(scene: Phaser.Scene, city: City, onTravel: (index: number) => void) {
     this.scene = scene;
     this.city = city;
+    this.onTravel = onTravel;
     this.g = scene.add.graphics().setScrollFactor(0).setDepth(1600);
     const D = 1601;
 
@@ -64,10 +68,27 @@ export default class CityMapPanel {
       this.nameTexts.push(this.centered(sx, this.routeY + 30, d.name, "#eafdff", "11px", D));
       this.stateTexts.push(this.centered(sx, this.routeY + 48, "", "#9aa3b2", "9px", D));
       this.centered(sx, this.routeY + 64, d.subtitle, "#5a6172", "8px", D);
+
+      const z = scene.add
+        .zone(sx - 60, this.routeY - 70, 120, 150)
+        .setOrigin(0)
+        .setScrollFactor(0)
+        .setDepth(D)
+        .setInteractive({ useHandCursor: true });
+      z.on("pointerdown", () => this.tryTravel(i));
+      this.zones.push(z);
     });
 
+    this.text(this.x + 16, this.y + this.h - 20, "CLICK an unlocked district to fast-travel", "#f7ff3c", "10px", D);
     this.text(this.x + this.w - 116, this.y + this.h - 20, "M / ESC to close", "#9aa3b2", "10px", D);
     this.setVisible(false);
+  }
+
+  private tryTravel(i: number) {
+    if (!this.open) return;
+    if (i === this.city.index) return; // already here
+    if (!this.city.isUnlocked(i)) return; // locked frontier
+    this.onTravel(i);
   }
 
   get isOpen(): boolean {
@@ -118,17 +139,19 @@ export default class CityMapPanel {
       const sx = this.stationX[i];
       const isCleared = this.city.isCleared(d.id);
       const isCurrent = i === this.city.index;
+      const unlocked = this.city.isUnlocked(i);
       const r = isCurrent ? 18 : 14;
 
-      if (isCleared) {
-        g.fillStyle(0x39ff88, 0.9).fillCircle(sx, this.routeY, r);
-        g.lineStyle(2, 0x39ff88, 1).strokeCircle(sx, this.routeY, r + 3);
-      } else if (isCurrent) {
+      if (isCurrent) {
         g.fillStyle(d.accent, 0.85).fillCircle(sx, this.routeY, r);
         g.lineStyle(2, 0xffffff, 0.95).strokeCircle(sx, this.routeY, r + 4);
+      } else if (isCleared) {
+        g.fillStyle(0x39ff88, 0.9).fillCircle(sx, this.routeY, r);
+        g.lineStyle(2, 0x39ff88, 1).strokeCircle(sx, this.routeY, r + 3);
       } else {
+        // unlocked frontier glows in its accent; locked stays dim
         g.fillStyle(0x0c0a18, 0.95).fillCircle(sx, this.routeY, r);
-        g.lineStyle(2, d.accent, 0.4).strokeCircle(sx, this.routeY, r);
+        g.lineStyle(2, d.accent, unlocked ? 0.9 : 0.35).strokeCircle(sx, this.routeY, r);
       }
 
       this.threatTexts[i].setText(
@@ -136,10 +159,24 @@ export default class CityMapPanel {
       );
       this.nameTexts[i]
         .setText(d.name)
-        .setColor(isCleared || isCurrent ? "#eafdff" : "#6b7184");
-      this.stateTexts[i]
-        .setText(isCleared ? "INFECTED" : isCurrent ? "▶ ACTIVE" : "LOCKED")
-        .setColor(isCleared ? "#39ff88" : isCurrent ? d.accentHex : "#5a6172");
+        .setColor(unlocked || isCurrent ? "#eafdff" : "#6b7184");
+
+      let label: string;
+      let color: string;
+      if (isCurrent) {
+        label = "▶ ACTIVE";
+        color = d.accentHex;
+      } else if (isCleared) {
+        label = "SECURED · TRAVEL";
+        color = "#39ff88";
+      } else if (unlocked) {
+        label = "▶ TRAVEL";
+        color = d.accentHex;
+      } else {
+        label = "LOCKED";
+        color = "#5a6172";
+      }
+      this.stateTexts[i].setText(label).setColor(color);
     });
   }
 
@@ -149,6 +186,11 @@ export default class CityMapPanel {
     this.threatTexts.forEach((t) => t.setVisible(v));
     this.nameTexts.forEach((t) => t.setVisible(v));
     this.stateTexts.forEach((t) => t.setVisible(v));
+    // Disable the click zones while hidden so they can't catch world clicks.
+    this.zones.forEach((z) => {
+      z.setVisible(v);
+      if (z.input) z.input.enabled = v;
+    });
   }
 
   private centered(x: number, y: number, s: string, color: string, size: string, depth: number) {

@@ -43,6 +43,13 @@ export default class City {
     return this.cleared.includes(id);
   }
 
+  /** A district is reachable once the previous one is secured (index 0 is always). */
+  isUnlocked(index: number): boolean {
+    if (index <= 0) return true;
+    const prev = DISTRICTS[index - 1];
+    return !!prev && this.isCleared(prev.id);
+  }
+
   /** Every district secured — the last gate before the city can melt down. */
   get allSecured(): boolean {
     return DISTRICTS.every((d) => this.cleared.includes(d.id));
@@ -69,11 +76,6 @@ export default class City {
     if (!this.cleared.includes(id)) this.cleared.push(id);
     this.addSingularity(bonus);
     if (this.allSecured) this.contagion = 100;
-  }
-
-  /** Linear travel: step to the next district (fast-travel sets index directly). */
-  advance() {
-    if (this.index < DISTRICTS.length - 1) this.index++;
   }
 
   toData(): CityData {

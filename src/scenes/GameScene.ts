@@ -227,7 +227,7 @@ export default class GameScene
       () => this.autosave(true),
     );
     this.vendorPanel = new VendorPanel(this, this.vendor, this.progression, this.inventory, onLoadoutChange);
-    this.cityMapPanel = new CityMapPanel(this, this.city);
+    this.cityMapPanel = new CityMapPanel(this, this.city, (i) => this.travelTo(i));
     this.recomputeStats();
     this.maybeSpawnBoss();
     this.autosave(true); // persist the (possibly fresh) run immediately
@@ -951,18 +951,26 @@ export default class GameScene
     this.autosave(true);
   }
 
-  /** Step through the gate: travel to the next district. (Meltdown is meter-driven.) */
+  /** Step through the gate → open the fast-travel hub to choose the next district. */
   private extract() {
+    if (this.traveling || this.won || this.cityMapPanel.isOpen) return;
+    this.cityMapPanel.show();
+  }
+
+  /** Fast-travel to an unlocked district (chosen on the city map). */
+  private travelTo(index: number) {
     if (this.traveling || this.won) return;
+    if (index === this.city.index || !this.city.isUnlocked(index)) return;
+    this.cityMapPanel.close();
     this.traveling = true;
-    this.city.advance();
+    this.city.index = index;
     this.autosave(true);
     this.districtTransition();
   }
 
-  /** Fade out, announce the next district, then reload the scene into it. */
+  /** Fade out, announce the destination, then reload the scene into it. */
   private districtTransition() {
-    const next = this.city.current; // already advanced by clearCurrent()
+    const next = this.city.current; // city.index was set by travelTo()
     this.player.setVelocity(0, 0);
     this.synth.infect();
     this.cameras.main.shake(280, 0.006);
