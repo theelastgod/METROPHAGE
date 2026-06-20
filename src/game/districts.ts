@@ -179,6 +179,7 @@ const CORE: DistrictDef = {
   threat: 3,
   contagion: 28,
   isFinal: true,
+  bossId: "overmind",
   enemyWeights: { patrol: 0.34, enforcer: 0.4, purge: 0.26 },
   layout: {
     buildings: [

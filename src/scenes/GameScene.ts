@@ -410,9 +410,11 @@ export default class GameScene
     this.hud = new Hud(this);
     this.bossBar = new BossBar(this);
     this.dialogue = new DialogueBox(this);
-    // Intro only on the very first district of a fresh cycle.
+    // Intro on the first district of a fresh cycle; a warning at the HSS core.
     if (this.districtIndex === 0 && this.city.cycle === 0 && !this.city.isCleared(this.district.id)) {
       this.dialogue.show(this.introPages());
+    } else if (this.district.isFinal && !this.city.isCleared(this.district.id)) {
+      this.dialogue.show(this.finalApproachPages());
     }
   }
 
@@ -658,6 +660,22 @@ export default class GameScene
     ];
   }
 
+  private finalApproachPages(): DialoguePage[] {
+    const me = { key: PORTRAIT_PLAYER_KEY };
+    return [
+      {
+        speaker: "// SYSTEM",
+        portrait: me,
+        text: "You're inside the spine. Every Turing cop in the city routes through the kernel ahead.",
+      },
+      {
+        speaker: "// SYSTEM",
+        portrait: me,
+        text: "WINTERMUTE sees you now. Kill the OVERMIND and the Human Security System has no floor left to stand on.",
+      },
+    ];
+  }
+
   // --- combat modifiers: Overdrive overrides Heat tiers while active ---
   private get inOverdrive(): boolean {
     return this.overdriveActive;
@@ -879,15 +897,12 @@ export default class GameScene
     this.cameras.main.flash(260, (def.tint >> 16) & 0xff, (def.tint >> 8) & 0xff, def.tint & 0xff);
   }
 
-  /** Boss down: unlock the node, pay out big, drop guaranteed loot. */
+  /** Boss down: pay out big, drop loot. On the final boss this ends the cycle. */
   private onBossDefeated(boss: Boss) {
     this.bossBar.hide();
-    this.node.setLocked(false);
     this.progression.addCurrency(boss.def.credits);
     const gained = this.progression.addXp(boss.def.xp);
     this.recomputeStats();
-    if (gained > 0) this.floatText(`LEVEL ${this.progression.level}`, "#f7ff3c");
-    else this.floatText(`${boss.def.name} DOWN`, "#39ff88");
     for (let i = 0; i < 2; i++) {
       const item = rollItem(this.progression.level, 1.2);
       this.pickups.add(
@@ -901,8 +916,20 @@ export default class GameScene
     }
     this.cameras.main.flash(320, 40, 120, 60);
     this.cameras.main.shake(320, 0.01);
-    this.synth.meltdown();
     this.boss = undefined;
+
+    // The HSS kernel falling IS the meltdown — no node to capture here.
+    if (this.district.isFinal) {
+      this.city.clearCurrent(); // bank the final contagion -> 100
+      this.autosave(true);
+      this.triggerMeltdown();
+      return;
+    }
+
+    this.node.setLocked(false);
+    if (gained > 0) this.floatText(`LEVEL ${this.progression.level}`, "#f7ff3c");
+    else this.floatText(`${boss.def.name} DOWN`, "#39ff88");
+    this.synth.meltdown();
     this.autosave(true);
   }
 
