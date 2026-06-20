@@ -404,7 +404,8 @@ export default class GameScene
       this.add
         .image(tx * TILE + TILE / 2, ty * TILE + TILE, STREETLIGHT_KEY)
         .setOrigin(0.5, 1)
-        .setDepth(6);
+        .setDepth(6)
+        .setTint(this.district.accent);
     }
   }
 
@@ -450,6 +451,10 @@ export default class GameScene
     cam.setPostPipeline("Neon");
     const p = cam.getPostPipeline("Neon");
     this.neon = (Array.isArray(p) ? p[0] : p) as NeonPipeline;
+    // Bias the post-FX toward the district accent so each district reads distinct.
+    const a = this.district.accent;
+    this.neon.tint = [((a >> 16) & 0xff) / 255, ((a >> 8) & 0xff) / 255, (a & 0xff) / 255];
+    this.neon.tintAmt = 0.22;
   }
 
   private buildDistrict() {
@@ -556,6 +561,7 @@ export default class GameScene
 
   /** Heat-scaled spawn pressure: faster + tougher tiers as the map heats up. */
   private spawnPressure(now: number) {
+    if (this.boss && !this.boss.isDead) return; // boss fight: no ambient reinforcements
     if (now < this.nextSpawnAt) return;
     const heat = this.heat.value;
     const interval = Phaser.Math.Linear(

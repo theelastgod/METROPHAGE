@@ -13,6 +13,8 @@ uniform float uHeat;
 uniform float uTime;
 uniform float uGlitch;
 uniform vec2 uResolution;
+uniform vec3 uTint;     // district accent (0..1)
+uniform float uTintAmt; // how hard to bias toward the accent
 varying vec2 outTexCoord;
 
 float rand(vec2 c) { return fract(sin(dot(c, vec2(12.9898, 78.233))) * 43758.5453); }
@@ -68,6 +70,11 @@ void main() {
   // vignette
   col *= 1.0 - dist * dist * (0.22 + uHeat * 0.28);
 
+  // district accent wash — a subtle hue signature per district (fades under heat
+  // so the screen still "whites out" hot, and is overridden by meltdown glitch)
+  vec3 acc = mix(vec3(1.0), uTint, uTintAmt * (1.0 - uHeat * 0.5) * (1.0 - uGlitch));
+  col *= acc;
+
   gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
 }
 `;
@@ -78,6 +85,9 @@ export default class NeonPipeline extends Phaser.Renderer.WebGL.Pipelines
   heat = 0;
   /** 0..1, ramped during the meltdown victory sequence. */
   glitch = 0;
+  /** District accent as RGB (0..1) + how hard to bias toward it. */
+  tint: [number, number, number] = [1, 1, 1];
+  tintAmt = 0;
 
   constructor(game: Phaser.Game) {
     super({ game, name: "Neon", fragShader: FRAG });
@@ -88,5 +98,7 @@ export default class NeonPipeline extends Phaser.Renderer.WebGL.Pipelines
     this.set1f("uGlitch", this.glitch);
     this.set1f("uTime", this.game.loop.time / 1000);
     this.set2f("uResolution", this.renderer.width, this.renderer.height);
+    this.set3f("uTint", this.tint[0], this.tint[1], this.tint[2]);
+    this.set1f("uTintAmt", this.tintAmt);
   }
 }
