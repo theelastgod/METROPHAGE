@@ -35,6 +35,14 @@ export default class Territory {
     this.nodes[0]?.setLocked(v);
   }
 
+  /** Revisiting an already-secured district: show every node held (no rewards). */
+  restoreAllInfected() {
+    this.nodes.forEach((n, i) => {
+      n.restoreInfected();
+      this.wasInfected[i] = true;
+    });
+  }
+
   /**
    * HSS push-back: on a Heat-shortened timer, re-secure one infected frontier node
    * (never the core, never one the player is channeling). Returns the purged index

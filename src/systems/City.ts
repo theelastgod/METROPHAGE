@@ -71,10 +71,12 @@ export default class City {
     this.contagion = Math.min(cap, this.contagion + amount);
   }
 
-  /** Mark a district secured + bank its worth. The final secure completes the city. */
+  /** Mark a district secured + bank its worth ONCE. The final secure completes the city. */
   secure(id: string, bonus: number) {
-    if (!this.cleared.includes(id)) this.cleared.push(id);
-    this.addSingularity(bonus);
+    if (!this.cleared.includes(id)) {
+      this.cleared.push(id);
+      this.addSingularity(bonus); // bank the worth only the first time it's secured
+    }
     if (this.allSecured) this.contagion = 100;
   }
 

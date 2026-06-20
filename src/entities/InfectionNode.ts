@@ -53,6 +53,13 @@ export default class InfectionNode {
     return this.state === "infected";
   }
 
+  /** Restore as already-infected (revisiting a secured district), no fanfare. */
+  restoreInfected() {
+    if (this.state === "infected") return;
+    this.locked = false;
+    this.infect();
+  }
+
   /** HSS re-secures this node: revert infected → dormant, with a red flash. */
   purge() {
     if (this.state !== "infected") return;

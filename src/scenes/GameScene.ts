@@ -425,6 +425,12 @@ export default class GameScene
   private createTerritory() {
     // The district's infection graph (nodes carved walkable by the builder).
     this.territory = new Territory(this, this.district.nodes, (i) => this.onNodeInfected(i));
+    // Revisiting a district we already secured: show it conquered — held nodes, no
+    // boss, no re-banking, no purge (it's ours).
+    if (this.city.isCleared(this.district.id)) {
+      this.territory.restoreAllInfected();
+      this.districtSecured = true;
+    }
   }
 
   private setupPostFX() {
@@ -889,7 +895,7 @@ export default class GameScene
 
   /** Spawn the district's guardian (if any), lock the node, raise the boss bar. */
   private maybeSpawnBoss() {
-    if (!this.district.bossId) return;
+    if (!this.district.bossId || this.city.isCleared(this.district.id)) return; // already secured
     const def = getBoss(this.district.bossId);
     const hp = Math.round(def.hp * (1 + this.district.threat * 0.4) * this.cycleMult);
     const core = this.territory.nodes[0];
