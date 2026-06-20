@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { TILE, TERRITORY, COLORS } from "../config";
+import { TILE, TERRITORY, PURGE, NODE, COLORS } from "../config";
 import InfectionNode from "../entities/InfectionNode";
 import { NodeDef } from "./districts";
 
@@ -16,6 +16,7 @@ export default class Territory {
   private graph: Phaser.GameObjects.Graphics;
   private wasInfected: boolean[];
   private onInfect: (index: number) => void;
+  private nextPurgeAt = 0;
 
   constructor(scene: Phaser.Scene, defs: NodeDef[], onInfect: (index: number) => void) {
     this.links = defs.map((d) => d.links);
@@ -32,6 +33,36 @@ export default class Territory {
   /** Lock/unlock the core node (boss districts). */
   setCoreLocked(v: boolean) {
     this.nodes[0]?.setLocked(v);
+  }
+
+  /**
+   * HSS push-back: on a Heat-shortened timer, re-secure one infected frontier node
+   * (never the core, never one the player is channeling). Returns the purged index
+   * or -1. The shrunk cluster ticks the Singularity slower — territory must be held.
+   */
+  tryPurge(now: number, heatNorm: number, player: Phaser.GameObjects.Components.Transform): number {
+    if (this.nextPurgeAt === 0) {
+      this.nextPurgeAt = now + PURGE.baseIntervalMs; // arm on first call
+      return -1;
+    }
+    if (now < this.nextPurgeAt) return -1;
+    this.nextPurgeAt = now + Phaser.Math.Linear(PURGE.baseIntervalMs, PURGE.minIntervalMs, heatNorm);
+
+    const infected = this.nodes.map((n) => n.infected);
+    const cand: number[] = [];
+    for (let i = 1; i < this.nodes.length; i++) {
+      if (!infected[i]) continue;
+      const n = this.nodes[i];
+      if (Phaser.Math.Distance.Between(player.x, player.y, n.x, n.y) <= NODE.channelRange + 30) {
+        continue; // don't yank a node you're actively holding
+      }
+      if (this.links[i].some((j) => !infected[j])) cand.push(i); // frontier only
+    }
+    if (cand.length === 0) return -1;
+    const pick = cand[Math.floor(Math.random() * cand.length)];
+    this.nodes[pick].purge();
+    this.wasInfected[pick] = false; // re-infection re-triggers the reward hook
+    return pick;
   }
 
   update(player: Phaser.GameObjects.Components.Transform, dtMs: number) {

@@ -21,6 +21,7 @@ export default class InfectionNode {
   private label: Phaser.GameObjects.Text;
   private state: NodeState = "dormant";
   private locked = false; // guarded by a boss — can't channel until it falls
+  private pulseEvent?: Phaser.Time.TimerEvent; // broadcast pulse while infected
 
   constructor(scene: Phaser.Scene, x: number, y: number) {
     this.scene = scene;
@@ -50,6 +51,26 @@ export default class InfectionNode {
 
   get infected(): boolean {
     return this.state === "infected";
+  }
+
+  /** HSS re-secures this node: revert infected → dormant, with a red flash. */
+  purge() {
+    if (this.state !== "infected") return;
+    this.pulseEvent?.remove();
+    this.pulseEvent = undefined;
+    this.state = "dormant";
+    this.progress = 0;
+    this.base.setTexture(NODE_KEY).clearTint();
+    this.label.setText("◇ PURGED").setColor("#ff3b6b");
+    this.drawRing(0);
+    const wave = this.scene.add.circle(this.x, this.y, 16, 0xff3b6b, 0.6).setDepth(5);
+    this.scene.tweens.add({
+      targets: wave,
+      scale: 4,
+      alpha: 0,
+      duration: 500,
+      onComplete: () => wave.destroy(),
+    });
   }
 
   /** Boss districts lock the node until the guardian falls. */
@@ -121,6 +142,7 @@ export default class InfectionNode {
   }
 
   destroy() {
+    this.pulseEvent?.remove();
     this.base.destroy();
     this.ring.destroy();
     this.label.destroy();
@@ -134,7 +156,7 @@ export default class InfectionNode {
     this.drawRing(1);
 
     // periodic expanding shockwave so it reads as a corrupted, broadcasting node
-    this.scene.time.addEvent({
+    this.pulseEvent = this.scene.time.addEvent({
       delay: 900,
       loop: true,
       callback: () => this.pulse(),

@@ -111,6 +111,12 @@ export const TERRITORY = {
   spreadPerNeighborSec: 0.1, // an infected node fills a neighbour this fast (per link)
 } as const;
 
+/** HSS purge — rivals re-secure infected frontier nodes; faster under Heat. */
+export const PURGE = {
+  baseIntervalMs: 14000, // calm city: a node is re-secured roughly this often
+  minIntervalMs: 6000, // at max Heat the System pushes back this hard
+} as const;
+
 /** SINGULARITY — the save-wide meltdown meter, fed by all activity. */
 export const SINGULARITY = {
   perKill: 0.18, // each Human Security System unit destroyed

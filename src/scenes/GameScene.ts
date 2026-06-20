@@ -801,6 +801,17 @@ export default class GameScene
       this.onDistrictSecured();
     }
 
+    // HSS push-back: re-secure a frontier node while the district is contested
+    // (not yet secured, no active boss). Faster as Heat climbs.
+    if (!this.districtSecured && !(this.boss && !this.boss.isDead)) {
+      const purged = this.territory.tryPurge(now, this.heat.normalized, this.player);
+      if (purged >= 0) {
+        this.synth.hit();
+        this.cameras.main.shake(120, 0.004);
+        this.floatText("⚠ HSS RE-SECURED A NODE", "#ff3b6b");
+      }
+    }
+
     // SINGULARITY: holding a connected cluster ticks the save-wide meter; once it
     // completes (only possible after the whole city is secured) → meltdown.
     const cluster = this.territory.clusterSize;
