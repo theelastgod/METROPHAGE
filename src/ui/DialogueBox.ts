@@ -6,6 +6,8 @@ export interface DialoguePage {
   speaker: string;
   text: string;
   portrait?: { key: string; frame?: number };
+  /** Branching: choices shown after this page types out (pick via 1–N / click). */
+  choices?: string[];
 }
 
 /**
@@ -33,6 +35,9 @@ export default class DialogueBox {
   private typeEvent?: Phaser.Time.TimerEvent;
   private open = false;
   private onClose?: () => void;
+  private onChoice?: (i: number) => void;
+  private choiceTexts: Phaser.GameObjects.Text[] = [];
+  private choicesActive = false;
 
   private readonly boxX = 40;
   private readonly boxY = VIEW_H - 150;
@@ -107,20 +112,44 @@ export default class DialogueBox {
       ease: "Sine.inOut",
     });
 
+    // Choice rows (branching) — created hidden, just above the box bottom.
+    for (let i = 0; i < 4; i++) {
+      const t = scene.add
+        .text(textX, this.boxY + 60 + i * 17, "", {
+          fontFamily: "Courier New, monospace",
+          fontSize: "14px",
+          color: "#f7ff3c",
+        })
+        .setScrollFactor(0)
+        .setDepth(D + 3)
+        .setVisible(false)
+        .setInteractive({ useHandCursor: true });
+      t.on("pointerover", () => this.choicesActive && t.setColor("#ffffff"));
+      t.on("pointerout", () => this.choicesActive && t.setColor("#f7ff3c"));
+      t.on("pointerdown", () => this.pickChoice(i));
+      this.choiceTexts.push(t);
+    }
+
     // Advance listeners (no-op unless open).
     scene.input.on("pointerdown", this.advance, this);
     scene.input.keyboard?.on("keydown-SPACE", this.advance, this);
     scene.input.keyboard?.on("keydown-ENTER", this.advance, this);
+    scene.input.keyboard?.on("keydown", (e: KeyboardEvent) => {
+      if (!this.choicesActive) return;
+      const n = parseInt(e.key, 10);
+      if (n >= 1 && n <= this.choiceTexts.length) this.pickChoice(n - 1);
+    });
   }
 
   get isOpen(): boolean {
     return this.open;
   }
 
-  show(pages: DialoguePage[], onClose?: () => void) {
+  show(pages: DialoguePage[], onClose?: () => void, onChoice?: (i: number) => void) {
     if (pages.length === 0) return;
     this.pages = pages;
     this.onClose = onClose;
+    this.onChoice = onChoice;
     this.index = 0;
     this.open = true;
     this.setVisible(true);
@@ -129,6 +158,40 @@ export default class DialogueBox {
 
   private setVisible(v: boolean) {
     this.parts.forEach((p) => p.setVisible(v));
+    if (!v) this.hideChoices();
+  }
+
+  private hideChoices() {
+    this.choicesActive = false;
+    this.choiceTexts.forEach((t) => t.setVisible(false));
+  }
+
+  private renderChoices(choices: string[]) {
+    this.arrow.setVisible(false);
+    this.choicesActive = true;
+    // Sit the choices just under the (possibly multi-line) body text.
+    const top = Math.min(this.bodyText.y + this.bodyText.height + 6, this.boxY + this.boxH - 40);
+    this.choiceTexts.forEach((t, i) => {
+      if (i < choices.length) {
+        t.setY(top + i * 17)
+          .setText(`${i + 1})  ${choices[i]}`)
+          .setColor("#f7ff3c")
+          .setVisible(true);
+      } else {
+        t.setVisible(false);
+      }
+    });
+  }
+
+  private pickChoice(i: number) {
+    if (!this.choicesActive || i >= this.choiceTexts.length || !this.choiceTexts[i].visible) return;
+    const cb = this.onChoice;
+    this.hideChoices();
+    this.open = false;
+    this.parts.forEach((p) => p.setVisible(false));
+    this.onChoice = undefined;
+    this.onClose = undefined;
+    cb?.(i); // the runner decides what to show next
   }
 
   private startPage() {
@@ -148,6 +211,7 @@ export default class DialogueBox {
     this.shown = 0;
     this.bodyText.setText("");
     this.arrow.setVisible(false);
+    this.hideChoices();
 
     this.typeEvent?.remove();
     this.typeEvent = this.scene.time.addEvent({
@@ -165,7 +229,9 @@ export default class DialogueBox {
     this.typeEvent?.remove();
     this.typeEvent = undefined;
     this.bodyText.setText(this.full);
-    this.arrow.setVisible(true);
+    const choices = this.pages[this.index]?.choices;
+    if (choices && choices.length) this.renderChoices(choices);
+    else this.arrow.setVisible(true);
   }
 
   private advance() {
@@ -174,6 +240,7 @@ export default class DialogueBox {
       this.finishTyping(); // snap to full line first
       return;
     }
+    if (this.choicesActive) return; // must pick a choice to proceed
     this.index++;
     if (this.index >= this.pages.length) this.close();
     else this.startPage();

@@ -3,6 +3,7 @@ import type { InventoryData } from "./Inventory";
 import type { ContractsData } from "./Contracts";
 import type { CityData } from "./City";
 import type { MemoryData } from "./Memory";
+import type { QuestsData } from "./Quests";
 
 // METROPHAGE — local save (localStorage). Single slot.
 
@@ -15,6 +16,7 @@ export interface SaveState {
   inventory: InventoryData;
   contracts?: ContractsData;
   memory?: MemoryData; // recovered story fragments
+  quests?: QuestsData; // quest progress + flags
 }
 
 export function loadSave(): SaveState | null {

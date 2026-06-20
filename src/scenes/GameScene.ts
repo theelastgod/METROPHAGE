@@ -65,7 +65,9 @@ import InventoryPanel from "../ui/InventoryPanel";
 import ContractPanel from "../ui/ContractPanel";
 import VendorPanel from "../ui/VendorPanel";
 import CityMapPanel from "../ui/CityMapPanel";
-import MemoryPanel from "../ui/MemoryPanel";
+import JournalPanel from "../ui/JournalPanel";
+import Quests from "../systems/Quests";
+import { DIALOGUE_TREES } from "../game/dialogue";
 import BossBar from "../ui/BossBar";
 
 /**
@@ -102,7 +104,8 @@ export default class GameScene
   private contractPanel!: ContractPanel;
   private vendorPanel!: VendorPanel;
   private cityMapPanel!: CityMapPanel;
-  private memoryPanel!: MemoryPanel;
+  private journalPanel!: JournalPanel;
+  private quests!: Quests;
   private memory!: Memory;
   private terminal!: Terminal;
   private vendorTerminal!: Terminal;
@@ -183,6 +186,7 @@ export default class GameScene
       this.progression = new Progression(save.progress.classId, save.progress);
       this.city = new City(save.city);
       this.memory = new Memory(save.memory);
+      this.quests = new Quests(save.quests);
       this.inventory.load(save.inventory);
       this.contracts = new Contracts(save.contracts);
     } else {
@@ -190,6 +194,7 @@ export default class GameScene
       this.progression = new Progression(this.classDef.id);
       this.city = new City();
       this.memory = new Memory();
+      this.quests = new Quests();
       this.contracts = new Contracts();
     }
     this.contracts.refresh(this.progression.level);
@@ -255,7 +260,7 @@ export default class GameScene
     );
     this.vendorPanel = new VendorPanel(this, this.vendor, this.progression, this.inventory, onLoadoutChange);
     this.cityMapPanel = new CityMapPanel(this, this.city, (i) => this.travelTo(i));
-    this.memoryPanel = new MemoryPanel(this, this.memory);
+    this.journalPanel = new JournalPanel(this, this.memory, this.quests);
     this.recomputeStats();
     this.maybeSpawnBoss();
     this.worldEvents = new WorldEvents(this);
@@ -295,6 +300,7 @@ export default class GameScene
       progress: this.progression.toData(),
       city: this.city.toData(),
       memory: this.memory.toData(),
+      quests: this.quests.toData(),
       inventory: this.inventory.toData(),
       contracts: this.contracts.toData(),
     });
@@ -664,7 +670,7 @@ export default class GameScene
       this.contractPanel?.close();
       this.vendorPanel?.close();
       this.cityMapPanel?.close();
-      this.memoryPanel?.close();
+      this.journalPanel?.close();
     });
     this.input.mouse?.disableContextMenu();
   }
@@ -685,7 +691,7 @@ export default class GameScene
       {
         speaker: "// SYSTEM",
         portrait: me,
-        text: "WASD move · MOUSE aim · CLICK fire · SPACE dash · E talk · M city map. Heat fuels you — and lights the sky.",
+        text: "WASD move · MOUSE aim · CLICK fire · SPACE dash · E talk · M map · J journal. Heat fuels you — and lights the sky.",
       },
     ];
   }
@@ -797,14 +803,14 @@ export default class GameScene
     if (Phaser.Input.Keyboard.JustDown(this.mapKey)) {
       this.skillPanel.close();
       this.inventoryPanel.close();
-      this.memoryPanel.close();
+      this.journalPanel.close();
       this.cityMapPanel.toggle();
     }
     if (Phaser.Input.Keyboard.JustDown(this.journalKey)) {
       this.skillPanel.close();
       this.inventoryPanel.close();
       this.cityMapPanel.close();
-      this.memoryPanel.toggle();
+      this.journalPanel.toggle();
     }
 
     this.updateHud();
@@ -815,7 +821,7 @@ export default class GameScene
       this.contractPanel.isOpen ||
       this.vendorPanel.isOpen ||
       this.cityMapPanel.isOpen ||
-      this.memoryPanel.isOpen
+      this.journalPanel.isOpen
     )
       return; // menu open: freeze sim
     if (this.dialogue.isOpen) return; // freeze the sim while a dialogue is up
@@ -929,9 +935,116 @@ export default class GameScene
       } else if (nearDive) {
         this.enterDive();
       } else if (nearNpc) {
-        this.dialogue.show(this.npcPages());
+        this.talkToNpc();
       }
     }
+  }
+
+  // ---- quests + branching dialogue (the FIXER is the giver) ----
+
+  /** Route an NPC conversation: offer / advance the active quest, or small talk. */
+  private talkToNpc() {
+    const q = this.quests;
+    const offer = q.nextOffer();
+    if (q.isTalkStage()) {
+      this.runDialogueTree(q.currentStage!.talkTree!);
+    } else if (q.active) {
+      const s = q.currentStage!;
+      this.dialogue.show([
+        {
+          speaker: "FIXER",
+          portrait: { key: PORTRAIT_NPC_KEY, frame: 0 },
+          text: `The signal's still buried. ${s.objective} — then come back.`,
+        },
+      ]);
+    } else if (offer) {
+      this.runDialogueTree(offer.offerTree);
+    } else {
+      this.dialogue.show(this.npcPages());
+    }
+  }
+
+  /** Walk a dialogue tree through the DialogueBox; choices fire quest actions. */
+  private runDialogueTree(treeId: string) {
+    const tree = DIALOGUE_TREES[treeId];
+    if (tree) this.runDialogueNode(tree, tree.start);
+  }
+
+  private runDialogueNode(tree: (typeof DIALOGUE_TREES)[string], nodeId: string) {
+    const node = tree.nodes[nodeId];
+    if (!node) return;
+    const portrait =
+      node.portrait === "player"
+        ? { key: PORTRAIT_PLAYER_KEY }
+        : { key: PORTRAIT_NPC_KEY, frame: 0 };
+    const pages: DialoguePage[] = node.lines.map((text, i) => ({
+      speaker: node.speaker,
+      portrait,
+      text,
+      choices:
+        i === node.lines.length - 1 && node.choices ? node.choices.map((c) => c.text) : undefined,
+    }));
+    const hasChoices = !!node.choices?.length;
+    this.dialogue.show(
+      pages,
+      () => {
+        // Reached the end with no choice picked: chain or fire a terminal action.
+        if (hasChoices) return;
+        if (node.then) this.runDialogueNode(tree, node.then);
+        else if (node.action) this.onQuestAction(node.action);
+      },
+      hasChoices
+        ? (i) => {
+            const c = node.choices![i];
+            if (c.action) this.onQuestAction(c.action);
+            if (c.goto) this.runDialogueNode(tree, c.goto);
+          }
+        : undefined,
+    );
+  }
+
+  private onQuestAction(action: string) {
+    if (action === "accept") {
+      const offer = this.quests.nextOffer();
+      if (!offer) return;
+      this.quests.accept(offer.id);
+      this.journalPanel.refresh();
+      this.floatText(`CONTRACT: ${offer.name}`, this.classDef.hex);
+      const s = this.quests.currentStage;
+      if (s) this.floatText(`OBJECTIVE: ${s.objective}`, this.classDef.hex);
+      this.autosave(true);
+    } else if (action === "complete") {
+      const q = this.quests.completeActive();
+      if (!q) return;
+      this.progression.addCurrency(q.reward.currency);
+      this.progression.addXp(q.reward.xp);
+      for (let i = 0; i < q.reward.loot; i++) {
+        const item = rollItem(this.progression.level, q.reward.lootBoost);
+        if (!this.inventory.add(item)) {
+          this.pickups.add(new Pickup(this, this.player.x, this.player.y, item));
+        }
+      }
+      this.recomputeStats();
+      this.journalPanel.refresh();
+      this.cameras.main.flash(360, 60, 0, 90);
+      this.floatText(`THE WAKE IS YOURS`, "#8a5cff");
+      this.autosave(true);
+    }
+  }
+
+  /** Fire a gameplay quest trigger; on stage advance, surface the new objective. */
+  private fireQuestTrigger(type: "infect" | "dive" | "kill" | "secure") {
+    if (this.quests.onTrigger(type) !== "advanced") return;
+    this.journalPanel.refresh();
+    const s = this.quests.currentStage;
+    if (!s) return;
+    if (s.onEnterLine && !this.dialogue.isOpen) {
+      this.dialogue.show([
+        { speaker: "// SYSTEM", portrait: { key: PORTRAIT_PLAYER_KEY }, text: s.onEnterLine },
+      ]);
+    }
+    this.floatText(`OBJECTIVE: ${s.objective}`, this.classDef.hex);
+    this.autosave(true);
   }
 
   // ---- ICE dives (instanced runs launched over this paused scene) ----
@@ -939,8 +1052,14 @@ export default class GameScene
   /** Launch an instanced dive; carries the next un-recovered fragment to its core. */
   private enterDive() {
     const dive = generateDive(this.progression.level, this.district.threat);
-    const nextFrag = FRAGMENTS.find((f) => !this.memory.has(f.id));
-    if (nextFrag) dive.fragmentId = nextFrag.id;
+    // During "The Wake" dive stage, the core carries the wake fragment specifically;
+    // otherwise it surfaces the next un-recovered fragment.
+    if (this.quests.active?.id === "the_wake" && this.quests.currentStage?.id === "dive") {
+      dive.fragmentId = "frag_the_wake";
+    } else {
+      const nextFrag = FRAGMENTS.find((f) => !this.memory.has(f.id));
+      if (nextFrag) dive.fragmentId = nextFrag.id;
+    }
     this.autosave(true);
     this.scene.pause();
     this.scene.launch("Dive", {
@@ -968,6 +1087,7 @@ export default class GameScene
     if (gained > 0) this.floatText(`LEVEL ${this.progression.level}`, "#f7ff3c");
     if (res.fragmentId) this.recoverFragment(res.fragmentId);
     else this.floatText("DIVE COMPLETE", "#29e7ff");
+    this.fireQuestTrigger("dive");
     this.autosave(true);
   }
 
@@ -1004,7 +1124,7 @@ export default class GameScene
   recoverFragment(id: string) {
     const frag = getFragment(id);
     if (!frag || !this.memory.recover(id)) return;
-    this.memoryPanel.refresh();
+    this.journalPanel.refresh();
     this.floatText("MEMORY RECOVERED", "#8a5cff");
     this.synth.infect();
     this.autosave(true);
@@ -1202,6 +1322,7 @@ export default class GameScene
     this.grantKillRewards(20, 0); // XP per node taken
     this.city.addSingularity(SINGULARITY.perNode);
     this.contracts.onInfect();
+    this.fireQuestTrigger("infect");
     this.floatText(
       `NODE ${this.territory.infectedCount}/${this.territory.total} INFECTED`,
       this.district.accentHex,
@@ -1215,6 +1336,7 @@ export default class GameScene
     this.cameras.main.shake(260, 0.006);
     this.grantKillRewards(60, 0); // securing bonus
     this.city.secure(this.district.id, this.district.contagion); // bank the district's worth
+    this.fireQuestTrigger("secure");
     this.gate = new ExtractionGate(this, this.spawn.x, this.spawn.y, this.district.accent);
     this.gate.activate();
     this.floatText("DISTRICT SECURED — EXTRACT", "#39ff88");
@@ -1520,6 +1642,7 @@ export default class GameScene
         this.maybeDropLoot(cop);
       }
       this.contracts.onKill();
+      this.fireQuestTrigger("kill");
       this.synth.kill();
       if (juice) {
         this.hitStop(60);
