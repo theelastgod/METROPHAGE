@@ -215,18 +215,19 @@ export default class Boss extends Phaser.Physics.Arcade.Sprite {
     body.enable = false;
     this.aura.destroy();
 
+    // Capture scene + position so the staggered bursts survive this sprite's
+    // own destroy() (Phaser nulls instance refs on destroy).
+    const scene = this.scene;
+    const dx = this.x;
+    const dy = this.y;
+    const tint = this.def.tint;
+    const r = 12 * this.def.scale;
     for (let i = 0; i < 3; i++) {
-      this.scene.time.delayedCall(i * 90, () => {
-        const burst = this.scene.add
-          .circle(
-            this.x + Phaser.Math.Between(-20, 20),
-            this.y + Phaser.Math.Between(-20, 20),
-            12 * this.def.scale,
-            this.def.tint,
-            0.9,
-          )
+      scene.time.delayedCall(i * 90, () => {
+        const burst = scene.add
+          .circle(dx + Phaser.Math.Between(-20, 20), dy + Phaser.Math.Between(-20, 20), r, tint, 0.9)
           .setDepth(11);
-        this.scene.tweens.add({
+        scene.tweens.add({
           targets: burst,
           scale: 3,
           alpha: 0,
@@ -235,7 +236,7 @@ export default class Boss extends Phaser.Physics.Arcade.Sprite {
         });
       });
     }
-    this.scene.tweens.add({
+    scene.tweens.add({
       targets: this,
       alpha: 0,
       scale: this.def.scale * 0.3,

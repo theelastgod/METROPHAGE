@@ -69,6 +69,12 @@ export default class TuringCop extends Phaser.Physics.Arcade.Sprite {
     return this.shield > 0;
   }
 
+  /** NG+ scaling: multiply this unit's pools. Applied once at spawn. */
+  scaleHp(mult: number) {
+    this.hp = Math.round(this.hp * mult);
+    if (this.shield > 0) this.shield = Math.round(this.shield * mult);
+  }
+
   private applyTierTint() {
     if (this.tier.tint === null) this.clearTint();
     else this.setTint(this.tier.tint);

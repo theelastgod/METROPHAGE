@@ -73,6 +73,7 @@ export default class GameScene
   private classDef!: ClassDef;
   private district!: DistrictDef;
   private districtIndex = 0;
+  private cycleMult = 1; // NG+ difficulty scalar (1 + cycle * step)
   private nextSpawnAt = 0;
   private player!: Player;
   private bullets!: Bullets; // player weapon
@@ -177,6 +178,7 @@ export default class GameScene
     // The district to run comes from campaign meta (advanced on extraction).
     this.districtIndex = this.city.index;
     this.district = this.city.current;
+    this.cycleMult = 1 + this.city.cycle * 0.35; // NG+ makes the whole city tougher
 
     // Audio needs a user gesture; the intro requires a click/key to advance.
     this.input.once("pointerdown", () => this.synth.ensureStarted());
@@ -277,7 +279,7 @@ export default class GameScene
     const tier = cop.tier;
     const chance = tier.id === "purge" ? 0.7 : tier.id === "enforcer" ? 0.28 : 0.12;
     if (Math.random() > chance) return;
-    const boost = tier.id === "purge" ? 2 : tier.id === "enforcer" ? 0.6 : 0;
+    const boost = (tier.id === "purge" ? 2 : tier.id === "enforcer" ? 0.6 : 0) + this.city.cycle * 0.3;
     const item = rollItem(this.progression.level, boost);
     this.pickups.add(new Pickup(this, cop.x, cop.y, item));
   }
@@ -547,7 +549,9 @@ export default class GameScene
   }
 
   private spawnEnemy(tierId: string, x: number, y: number) {
-    this.enemies.add(new TuringCop(this, x, y, ENEMY_TIERS[tierId]));
+    const cop = new TuringCop(this, x, y, ENEMY_TIERS[tierId]);
+    if (this.cycleMult > 1) cop.scaleHp(this.cycleMult);
+    this.enemies.add(cop);
   }
 
   /** Heat-scaled spawn pressure: faster + tougher tiers as the map heats up. */
@@ -885,7 +889,7 @@ export default class GameScene
   private maybeSpawnBoss() {
     if (!this.district.bossId) return;
     const def = getBoss(this.district.bossId);
-    const hp = Math.round(def.hp * (1 + this.district.threat * 0.4));
+    const hp = Math.round(def.hp * (1 + this.district.threat * 0.4) * this.cycleMult);
     this.boss = new Boss(this, this.node.x, this.node.y, def, hp, (x, y, tier) =>
       this.spawnEnemy(tier, x, y),
     );
@@ -904,7 +908,7 @@ export default class GameScene
     const gained = this.progression.addXp(boss.def.xp);
     this.recomputeStats();
     for (let i = 0; i < 2; i++) {
-      const item = rollItem(this.progression.level, 1.2);
+      const item = rollItem(this.progression.level, 1.2 + this.city.cycle * 0.3);
       this.pickups.add(
         new Pickup(
           this,
@@ -1060,9 +1064,9 @@ export default class GameScene
         .setDepth(2000)
         .setAlpha(0);
       const prompt = this.add
-        .text(cx, cy + 92, "▶ CLICK or press R to RESTART", {
+        .text(cx, cy + 92, `▶ CLICK or press R  →  NEW CYCLE ${this.city.cycle + 2}  ·  the city reboots, harder`, {
           fontFamily: "Courier New, monospace",
-          fontSize: "18px",
+          fontSize: "16px",
           color: "#f7ff3c",
         })
         .setOrigin(0.5)
@@ -1083,9 +1087,20 @@ export default class GameScene
   }
 
   private enableRestart() {
-    const restart = () => this.scene.restart();
-    this.input.once("pointerdown", restart);
-    this.input.keyboard?.once("keydown-R", restart);
+    const newCycle = () => this.startNewCycle();
+    this.input.once("pointerdown", newCycle);
+    this.input.keyboard?.once("keydown-R", newCycle);
+  }
+
+  /** Victory -> NG+: reboot the city harder, keep level / skills / gear. */
+  private startNewCycle() {
+    this.city.cycle += 1;
+    this.city.index = 0;
+    this.city.contagion = 0;
+    this.city.cleared = [];
+    this.autosave(true);
+    this.registry.set("resume", true);
+    this.scene.restart();
   }
 
   private readInput(): PlayerInput {
