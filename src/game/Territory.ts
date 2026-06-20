@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { TILE, TERRITORY, PURGE, NODE, COLORS } from "../config";
+import { TILE, TERRITORY, PURGE, NODE, WORLD_EVENT, COLORS } from "../config";
 import InfectionNode from "../entities/InfectionNode";
 import { NodeDef } from "./districts";
 
@@ -17,6 +17,7 @@ export default class Territory {
   private wasInfected: boolean[];
   private onInfect: (index: number) => void;
   private nextPurgeAt = 0;
+  private outbreak = false; // contagion-outbreak event: dormant nodes self-infect
 
   constructor(scene: Phaser.Scene, defs: NodeDef[], onInfect: (index: number) => void) {
     this.links = defs.map((d) => d.links);
@@ -33,6 +34,11 @@ export default class Territory {
   /** Lock/unlock the core node (boss districts). */
   setCoreLocked(v: boolean) {
     this.nodes[0]?.setLocked(v);
+  }
+
+  /** Contagion-outbreak event: dormant nodes self-infect while active. */
+  setOutbreak(v: boolean) {
+    this.outbreak = v;
   }
 
   /** Revisiting an already-secured district: show every node held (no rewards). */
@@ -80,6 +86,7 @@ export default class Territory {
       if (!infected[i]) {
         const liveNeighbors = this.links[i].reduce((c, j) => c + (infected[j] ? 1 : 0), 0);
         spread = liveNeighbors * TERRITORY.spreadPerNeighborSec * (dtMs / 1000);
+        if (this.outbreak) spread += WORLD_EVENT.outbreakSpreadPerSec * (dtMs / 1000);
       }
       const dist = Phaser.Math.Distance.Between(player.x, player.y, n.x, n.y);
       n.tick(dist, dtMs, spread);

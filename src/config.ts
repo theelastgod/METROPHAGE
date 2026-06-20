@@ -117,6 +117,14 @@ export const PURGE = {
   minIntervalMs: 6000, // at max Heat the System pushes back this hard
 } as const;
 
+/** Dynamic world events — telegraphed per-district phenomena. */
+export const WORLD_EVENT = {
+  firstDelayMs: 18000, // grace before the first event of a district run
+  intervalMinMs: 26000, // gap between events
+  intervalMaxMs: 42000,
+  outbreakSpreadPerSec: 0.2, // contagion-outbreak: passive infect rate on dormant nodes
+} as const;
+
 /** SINGULARITY — the save-wide meltdown meter, fed by all activity. */
 export const SINGULARITY = {
   perKill: 0.18, // each Human Security System unit destroyed

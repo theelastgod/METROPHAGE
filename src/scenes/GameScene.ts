@@ -38,6 +38,8 @@ import Minion from "../entities/Minion";
 import Heat from "../systems/Heat";
 import City from "../systems/City";
 import Memory from "../systems/Memory";
+import WorldEvents, { WorldEventHost } from "../systems/WorldEvents";
+import { WorldEventDef } from "../game/worldEvents";
 import Progression from "../systems/Progression";
 import Inventory from "../systems/Inventory";
 import Contracts from "../systems/Contracts";
@@ -73,7 +75,7 @@ import BossBar from "../ui/BossBar";
  */
 export default class GameScene
   extends Phaser.Scene
-  implements AbilityHost, EnemyHost
+  implements AbilityHost, EnemyHost, WorldEventHost
 {
   private classDef!: ClassDef;
   private district!: DistrictDef;
@@ -117,6 +119,10 @@ export default class GameScene
   private gate?: ExtractionGate;
   private boss?: Boss;
   private bossBar!: BossBar;
+  private worldEvents!: WorldEvents;
+  private eventBanner!: Phaser.GameObjects.Text;
+  private blackoutOverlay?: Phaser.GameObjects.Rectangle;
+  private stormStrikeAt = 0;
   private territory!: Territory;
   private npc!: Npc;
   private agents!: Phaser.Physics.Arcade.Group;
@@ -159,6 +165,9 @@ export default class GameScene
     this.districtSecured = false;
     this.gate = undefined;
     this.boss = undefined;
+    this.blackoutOverlay?.destroy();
+    this.blackoutOverlay = undefined;
+    this.stormStrikeAt = 0;
     this.overdriveActive = false;
     this.overdriveUntil = 0;
     this.nextSpawnAt = 0;
@@ -249,6 +258,8 @@ export default class GameScene
     this.memoryPanel = new MemoryPanel(this, this.memory);
     this.recomputeStats();
     this.maybeSpawnBoss();
+    this.worldEvents = new WorldEvents(this);
+    this.worldEvents.reset(this.time.now);
     this.autosave(true); // persist the (possibly fresh) run immediately
 
     // Fade in on arrival (fresh boot or district travel).
@@ -440,6 +451,19 @@ export default class GameScene
   private setupUi() {
     this.hud = new Hud(this);
     this.bossBar = new BossBar(this);
+    // Bottom-center ticker — clear of the HUD panel + boss bar.
+    this.eventBanner = this.add
+      .text(this.scale.width / 2, this.scale.height - 14, "", {
+        fontFamily: "Courier New, monospace",
+        fontSize: "13px",
+        color: "#8a5cff",
+        fontStyle: "bold",
+        align: "center",
+      })
+      .setOrigin(0.5, 1)
+      .setScrollFactor(0)
+      .setDepth(1002)
+      .setVisible(false);
     this.dialogue = new DialogueBox(this);
     // Intro on the first district of a fresh cycle; a warning at the HSS core.
     if (this.districtIndex === 0 && this.city.cycle === 0 && !this.city.isCleared(this.district.id)) {
@@ -829,6 +853,14 @@ export default class GameScene
     this.spawnPressure(now);
     if (this.boss && !this.boss.isDead) this.bossBar.update(this.boss.hp / this.boss.maxHp);
 
+    // DYNAMIC WORLD EVENTS — paused during boss fights so the duel stays the focus.
+    if (this.boss && !this.boss.isDead) {
+      this.eventBanner.setVisible(false);
+    } else {
+      this.worldEvents.update(now, delta);
+      this.updateEventBanner(now);
+    }
+
     this.agents.getChildren().forEach((go) => (go as Agent).step(now));
 
     const cops = this.enemies.getChildren() as TuringCop[];
@@ -983,6 +1015,133 @@ export default class GameScene
         text: `${frag.title} — ${frag.lines.join(" ")}`,
       },
     ]);
+  }
+
+  // ---- dynamic world events (WorldEventHost) ----
+
+  heatNorm(): number {
+    return this.heat.normalized;
+  }
+  contagionNorm(): number {
+    return this.city.normalized;
+  }
+
+  private updateEventBanner(now: number) {
+    const tg = this.worldEvents.telegraphing;
+    const ac = this.worldEvents.active;
+    if (tg) {
+      this.eventBanner
+        .setText(`⚠ ${tg.name} INCOMING — ${tg.tagline}  (${this.worldEvents.secondsLeft(now)}s)`)
+        .setColor(tg.hex)
+        .setVisible(true);
+    } else if (ac) {
+      this.eventBanner
+        .setText(`◈ ${ac.name} ACTIVE  (${this.worldEvents.secondsLeft(now)}s)`)
+        .setColor(ac.hex)
+        .setVisible(true);
+    } else {
+      this.eventBanner.setVisible(false);
+    }
+  }
+
+  onEventTelegraph(def: WorldEventDef) {
+    this.floatText(`⚠ ${def.name}`, def.hex);
+    this.cameras.main.shake(220, 0.004);
+    this.synth.hit();
+  }
+
+  onEventStart(def: WorldEventDef) {
+    this.cameras.main.flash(220, (def.color >> 16) & 0xff, (def.color >> 8) & 0xff, def.color & 0xff);
+    switch (def.id) {
+      case "neon_storm":
+        this.stormStrikeAt = this.time.now; // strikes spawn in onEventTick
+        break;
+      case "blackout":
+        this.startBlackout();
+        break;
+      case "purge_wave":
+        this.eventPurgeWave();
+        break;
+      case "contagion_outbreak":
+        this.territory.setOutbreak(true);
+        break;
+    }
+  }
+
+  onEventTick(def: WorldEventDef, _dtMs: number) {
+    if (def.id === "neon_storm" && this.time.now >= this.stormStrikeAt) {
+      this.stormStrikeAt = this.time.now + 720;
+      this.spawnStormStrike(def.color);
+    }
+  }
+
+  onEventEnd(def: WorldEventDef) {
+    if (def.id === "blackout") this.endBlackout();
+    if (def.id === "contagion_outbreak") this.territory.setOutbreak(false);
+    this.progression.addCurrency(def.reward.currency);
+    const gained = this.progression.addXp(def.reward.xp);
+    this.recomputeStats();
+    if (gained > 0) this.floatText(`LEVEL ${this.progression.level}`, "#f7ff3c");
+    else this.floatText(`${def.name} SURVIVED  +${def.reward.xp} XP`, "#39ff88");
+    this.synth.infect();
+    this.autosave(true);
+  }
+
+  private startBlackout() {
+    this.blackoutOverlay?.destroy();
+    const o = this.add
+      .rectangle(this.scale.width / 2, this.scale.height / 2, this.scale.width, this.scale.height, 0x01030c, 0)
+      .setScrollFactor(0)
+      .setDepth(920);
+    this.tweens.add({ targets: o, alpha: 0.76, duration: 600 });
+    this.blackoutOverlay = o;
+  }
+
+  private endBlackout() {
+    const o = this.blackoutOverlay;
+    if (!o) return;
+    this.blackoutOverlay = undefined;
+    this.tweens.add({ targets: o, alpha: 0, duration: 600, onComplete: () => o.destroy() });
+  }
+
+  /** A neon-storm lightning strike: telegraph ring, then a damaging burst. */
+  private spawnStormStrike(color: number) {
+    const a = Math.random() * Math.PI * 2;
+    const rad = 60 + Math.random() * 180;
+    const x = Phaser.Math.Clamp(this.player.x + Math.cos(a) * rad, TILE, WORLD_W - TILE);
+    const y = Phaser.Math.Clamp(this.player.y + Math.sin(a) * rad, TILE, WORLD_H - TILE);
+    const r = 56;
+    const ring = this.add
+      .circle(x, y, r, color, 0.12)
+      .setStrokeStyle(2, color, 0.85)
+      .setDepth(5);
+    this.tweens.add({ targets: ring, alpha: { from: 0.15, to: 0.5 }, yoyo: true, repeat: 2, duration: 150 });
+    this.time.delayedCall(520, () => {
+      ring.destroy();
+      const b = this.add.circle(x, y, r, color, 0.5).setDepth(6);
+      this.tweens.add({ targets: b, alpha: 0, scale: 1.3, duration: 280, onComplete: () => b.destroy() });
+      this.spark(x, y, color, 3);
+      this.cameras.main.shake(120, 0.005);
+      if (!this.player.invulnerable && Phaser.Math.Distance.Between(this.player.x, this.player.y, x, y) <= r) {
+        const died = this.player.applyDamage(15);
+        this.onPlayerHurt();
+        if (died) this.respawnPlayer();
+      }
+    });
+  }
+
+  /** A System purge wave: HSS reinforcements ring the player, scaled by Heat. */
+  private eventPurgeWave() {
+    const count = 4 + Math.floor(this.heat.normalized * 4);
+    const hot = this.heat.normalized;
+    for (let i = 0; i < count; i++) {
+      const a = (i / count) * Math.PI * 2 + Math.random() * 0.4;
+      const r = 180 + Math.random() * 120;
+      const x = Phaser.Math.Clamp(this.player.x + Math.cos(a) * r, TILE * 1.5, WORLD_W - TILE * 1.5);
+      const y = Phaser.Math.Clamp(this.player.y + Math.sin(a) * r, TILE * 1.5, WORLD_H - TILE * 1.5);
+      const tier = hot >= 0.7 && i % 3 === 0 ? "purge" : hot >= 0.45 && i % 2 === 0 ? "enforcer" : "patrol";
+      this.spawnEnemy(tier, x, y);
+    }
   }
 
   // ---- district boss: guards the node until defeated ----
