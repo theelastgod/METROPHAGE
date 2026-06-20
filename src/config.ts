@@ -111,6 +111,13 @@ export const TERRITORY = {
   spreadPerNeighborSec: 0.1, // an infected node fills a neighbour this fast (per link)
 } as const;
 
+/** SINGULARITY — the save-wide meltdown meter, fed by all activity. */
+export const SINGULARITY = {
+  perKill: 0.18, // each Human Security System unit destroyed
+  perNode: 1.5, // each territory node infected
+  clusterPerSec: 0.12, // per held node in the largest connected cluster, per second
+} as const;
+
 /** Friendly NPC. */
 export const NPC = {
   interactRange: 70, // press E within this to talk

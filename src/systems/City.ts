@@ -1,10 +1,12 @@
 import { DISTRICTS, getDistrict, DistrictDef } from "../game/districts";
 
 /**
- * CITY — campaign meta-state. Tracks which district the run is in, which have been
- * cleared (node infected), and the global contagion % (sum of cleared districts'
- * worth). When contagion hits 100 — i.e. the final district falls — the city melts
- * down. Pure logic, no Phaser; persisted in the save. NG+ cycle lives here too.
+ * CITY — campaign meta-state + the save-wide SINGULARITY. Tracks the current
+ * district, which are secured, and the contagion meter (0..100) that ALL activity
+ * pushes — kills, node infections, held-cluster ticks, and securing districts.
+ * It can't pass 96 until every district is secured (so the boss-gated HSS CORE
+ * must fall first); the final secure completes it → meltdown. Pure logic, no
+ * Phaser; persisted in the save. NG+ cycle lives here too.
  */
 export interface CityData {
   index: number;
@@ -41,28 +43,37 @@ export default class City {
     return this.cleared.includes(id);
   }
 
+  /** Every district secured — the last gate before the city can melt down. */
+  get allSecured(): boolean {
+    return DISTRICTS.every((d) => this.cleared.includes(d.id));
+  }
+
   get normalized(): number {
     return Math.min(1, this.contagion / 100);
   }
 
-  /** True once the whole city is taken (final district cleared). */
+  /** Threshold reached → meltdown (only possible once every district is secured). */
   get isComplete(): boolean {
     return this.contagion >= 100;
   }
 
-  /**
-   * Mark the current district cleared: bank its contagion and advance the index.
-   * Returns true if this completed the city (final district / contagion 100).
-   */
-  clearCurrent(): boolean {
-    const d = this.current;
-    if (!this.isCleared(d.id)) {
-      this.cleared.push(d.id);
-      this.contagion = Math.min(100, this.contagion + d.contagion);
-    }
-    const wasFinal = !!d.isFinal || this.index >= DISTRICTS.length - 1;
-    if (!wasFinal) this.index++;
-    return wasFinal || this.isComplete;
+  /** Push the Singularity. Clamped to 96 until the whole city is secured. */
+  addSingularity(amount: number) {
+    if (amount <= 0) return;
+    const cap = this.allSecured ? 100 : 96;
+    this.contagion = Math.min(cap, this.contagion + amount);
+  }
+
+  /** Mark a district secured + bank its worth. The final secure completes the city. */
+  secure(id: string, bonus: number) {
+    if (!this.cleared.includes(id)) this.cleared.push(id);
+    this.addSingularity(bonus);
+    if (this.allSecured) this.contagion = 100;
+  }
+
+  /** Linear travel: step to the next district (fast-travel sets index directly). */
+  advance() {
+    if (this.index < DISTRICTS.length - 1) this.index++;
   }
 
   toData(): CityData {

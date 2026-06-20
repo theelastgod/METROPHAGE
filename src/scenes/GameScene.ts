@@ -8,6 +8,7 @@ import {
   ENEMY_BULLET,
   HEAT,
   OVERDRIVE,
+  SINGULARITY,
   AGENT,
   AGENT_TINTS,
   SPAWN,
@@ -800,6 +801,15 @@ export default class GameScene
       this.onDistrictSecured();
     }
 
+    // SINGULARITY: holding a connected cluster ticks the save-wide meter; once it
+    // completes (only possible after the whole city is secured) → meltdown.
+    const cluster = this.territory.clusterSize;
+    if (cluster > 0) this.city.addSingularity(cluster * SINGULARITY.clusterPerSec * (delta / 1000));
+    if (this.city.isComplete) {
+      this.triggerMeltdown();
+      return;
+    }
+
     // EXTRACTION: once the gate is lit, walking into it advances the campaign.
     if (this.gate) {
       this.gate.update(delta);
@@ -904,15 +914,9 @@ export default class GameScene
     this.cameras.main.shake(320, 0.01);
     this.boss = undefined;
 
-    // The HSS kernel falling IS the meltdown — no node to capture here.
-    if (this.district.isFinal) {
-      this.city.clearCurrent(); // bank the final contagion -> 100
-      this.autosave(true);
-      this.triggerMeltdown();
-      return;
-    }
-
-    this.territory.setCoreLocked(false); // core exposed — take it to secure the district
+    // Guardian down → core exposed. On the HSS CORE this is the OVERMIND: take the
+    // core to push the Singularity to 100 and melt the city down.
+    this.territory.setCoreLocked(false);
     if (gained > 0) this.floatText(`LEVEL ${this.progression.level}`, "#f7ff3c");
     else this.floatText(`${boss.def.name} DOWN — CORE EXPOSED`, "#39ff88");
     this.synth.meltdown();
@@ -926,6 +930,7 @@ export default class GameScene
     this.synth.infect();
     this.cameras.main.shake(140, 0.004);
     this.grantKillRewards(20, 0); // XP per node taken
+    this.city.addSingularity(SINGULARITY.perNode);
     this.contracts.onInfect();
     this.floatText(
       `NODE ${this.territory.infectedCount}/${this.territory.total} INFECTED`,
@@ -939,20 +944,20 @@ export default class GameScene
     this.synth.infect();
     this.cameras.main.shake(260, 0.006);
     this.grantKillRewards(60, 0); // securing bonus
+    this.city.secure(this.district.id, this.district.contagion); // bank the district's worth
     this.gate = new ExtractionGate(this, this.spawn.x, this.spawn.y, this.district.accent);
     this.gate.activate();
     this.floatText("DISTRICT SECURED — EXTRACT", "#39ff88");
     this.autosave(true);
   }
 
-  /** Step through the gate: bank contagion, advance the campaign (or melt down). */
+  /** Step through the gate: travel to the next district. (Meltdown is meter-driven.) */
   private extract() {
     if (this.traveling || this.won) return;
     this.traveling = true;
-    const cityComplete = this.city.clearCurrent();
+    this.city.advance();
     this.autosave(true);
-    if (cityComplete) this.triggerMeltdown();
-    else this.districtTransition();
+    this.districtTransition();
   }
 
   /** Fade out, announce the next district, then reload the scene into it. */
@@ -1229,6 +1234,7 @@ export default class GameScene
     this.heat.add(dmg * HEAT.perDamage * heatGain, this.time.now);
     if (killed) {
       this.heat.add(HEAT.perKill * heatGain, this.time.now);
+      this.city.addSingularity(SINGULARITY.perKill);
       if (cop instanceof Boss) {
         this.onBossDefeated(cop);
       } else {
