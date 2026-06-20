@@ -97,6 +97,7 @@ const STACKS: DistrictDef = {
   accentHex: "#f7ff3c",
   threat: 1,
   contagion: 24,
+  bossId: "sentinel",
   enemyWeights: { patrol: 0.7, enforcer: 0.3, purge: 0 },
   layout: {
     buildings: [
@@ -138,6 +139,7 @@ const SPIRE: DistrictDef = {
   accentHex: "#00e5ff",
   threat: 2,
   contagion: 26,
+  bossId: "sentinel",
   enemyWeights: { patrol: 0.5, enforcer: 0.35, purge: 0.15 },
   layout: {
     buildings: [

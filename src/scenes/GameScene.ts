@@ -48,6 +48,8 @@ import { Contract, objectiveLabel } from "../game/contracts";
 import Pickup from "../entities/Pickup";
 import Terminal from "../entities/Terminal";
 import ExtractionGate from "../entities/ExtractionGate";
+import Boss from "../entities/Boss";
+import { getBoss } from "../game/bosses";
 import NeonPipeline from "../render/NeonPipeline";
 import Synth from "../audio/Synth";
 import Hud from "../ui/Hud";
@@ -57,6 +59,7 @@ import InventoryPanel from "../ui/InventoryPanel";
 import ContractPanel from "../ui/ContractPanel";
 import VendorPanel from "../ui/VendorPanel";
 import CityMapPanel from "../ui/CityMapPanel";
+import BossBar from "../ui/BossBar";
 
 /**
  * GameScene — Phase 0.
@@ -103,6 +106,8 @@ export default class GameScene
   private hitStopActive = false;
   private nodeWasInfected = false;
   private gate?: ExtractionGate;
+  private boss?: Boss;
+  private bossBar!: BossBar;
   private node!: InfectionNode;
   private npc!: Npc;
   private agents!: Phaser.Physics.Arcade.Group;
@@ -143,6 +148,7 @@ export default class GameScene
     this.hitStopActive = false;
     this.nodeWasInfected = false;
     this.gate = undefined;
+    this.boss = undefined;
     this.overdriveActive = false;
     this.overdriveUntil = 0;
     this.nextSpawnAt = 0;
@@ -220,6 +226,7 @@ export default class GameScene
     this.vendorPanel = new VendorPanel(this, this.vendor, this.progression, this.inventory, onLoadoutChange);
     this.cityMapPanel = new CityMapPanel(this, this.city);
     this.recomputeStats();
+    this.maybeSpawnBoss();
     this.autosave(true); // persist the (possibly fresh) run immediately
 
     // Fade in on arrival (fresh boot or district travel).
@@ -401,6 +408,7 @@ export default class GameScene
 
   private setupUi() {
     this.hud = new Hud(this);
+    this.bossBar = new BossBar(this);
     this.dialogue = new DialogueBox(this);
     // Intro only on the very first district of a fresh cycle.
     if (this.districtIndex === 0 && this.city.cycle === 0 && !this.city.isCleared(this.district.id)) {
@@ -766,6 +774,7 @@ export default class GameScene
       if (cop.active && !cop.isDead) cop.step(this.player, this);
     });
     this.spawnPressure(now);
+    if (this.boss && !this.boss.isDead) this.bossBar.update(this.boss.hp / this.boss.maxHp);
 
     this.agents.getChildren().forEach((go) => (go as Agent).step(now));
 
@@ -850,6 +859,51 @@ export default class GameScene
     const color = o.type === "hold" ? 0x39ff88 : 0xf7ff3c;
     g.lineStyle(2, color, 0.8).strokeCircle(o.zone.x, o.zone.y, o.zone.r);
     g.fillStyle(color, 0.08).fillCircle(o.zone.x, o.zone.y, o.zone.r);
+  }
+
+  // ---- district boss: guards the node until defeated ----
+
+  /** Spawn the district's guardian (if any), lock the node, raise the boss bar. */
+  private maybeSpawnBoss() {
+    if (!this.district.bossId) return;
+    const def = getBoss(this.district.bossId);
+    const hp = Math.round(def.hp * (1 + this.district.threat * 0.4));
+    this.boss = new Boss(this, this.node.x, this.node.y, def, hp, (x, y, tier) =>
+      this.spawnEnemy(tier, x, y),
+    );
+    this.enemies.add(this.boss);
+    this.node.setLocked(true);
+    this.bossBar.show(def.name, def.title, def.hex);
+    this.floatText("⚠ " + def.name, def.hex);
+    this.cameras.main.shake(380, 0.007);
+    this.cameras.main.flash(260, (def.tint >> 16) & 0xff, (def.tint >> 8) & 0xff, def.tint & 0xff);
+  }
+
+  /** Boss down: unlock the node, pay out big, drop guaranteed loot. */
+  private onBossDefeated(boss: Boss) {
+    this.bossBar.hide();
+    this.node.setLocked(false);
+    this.progression.addCurrency(boss.def.credits);
+    const gained = this.progression.addXp(boss.def.xp);
+    this.recomputeStats();
+    if (gained > 0) this.floatText(`LEVEL ${this.progression.level}`, "#f7ff3c");
+    else this.floatText(`${boss.def.name} DOWN`, "#39ff88");
+    for (let i = 0; i < 2; i++) {
+      const item = rollItem(this.progression.level, 1.2);
+      this.pickups.add(
+        new Pickup(
+          this,
+          boss.x + Phaser.Math.Between(-20, 20),
+          boss.y + Phaser.Math.Between(-20, 20),
+          item,
+        ),
+      );
+    }
+    this.cameras.main.flash(320, 40, 120, 60);
+    this.cameras.main.shake(320, 0.01);
+    this.synth.meltdown();
+    this.boss = undefined;
+    this.autosave(true);
   }
 
   // ---- district lifecycle: capture -> extract -> next district ----
@@ -1139,8 +1193,12 @@ export default class GameScene
     this.heat.add(dmg * HEAT.perDamage * heatGain, this.time.now);
     if (killed) {
       this.heat.add(HEAT.perKill * heatGain, this.time.now);
-      this.grantKillRewards(cop.tier.xp, cop.tier.credits);
-      this.maybeDropLoot(cop);
+      if (cop instanceof Boss) {
+        this.onBossDefeated(cop);
+      } else {
+        this.grantKillRewards(cop.tier.xp, cop.tier.credits);
+        this.maybeDropLoot(cop);
+      }
       this.contracts.onKill();
       this.synth.kill();
       if (juice) {

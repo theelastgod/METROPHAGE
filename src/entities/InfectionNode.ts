@@ -20,6 +20,7 @@ export default class InfectionNode {
   private ring: Phaser.GameObjects.Graphics;
   private label: Phaser.GameObjects.Text;
   private state: NodeState = "dormant";
+  private locked = false; // guarded by a boss — can't channel until it falls
 
   constructor(scene: Phaser.Scene, x: number, y: number) {
     this.scene = scene;
@@ -51,8 +52,38 @@ export default class InfectionNode {
     return this.state === "infected";
   }
 
+  /** Boss districts lock the node until the guardian falls. */
+  setLocked(v: boolean) {
+    this.locked = v;
+    if (v) {
+      this.state = "dormant";
+      this.progress = 0;
+      this.base.setTint(0xff3b6b);
+      this.label.setText("◈ GUARDED").setColor("#ff3b6b");
+      this.drawRing(0);
+    } else {
+      this.base.clearTint();
+      this.label.setText("NODE EXPOSED").setColor("#39ff88");
+      // brief unlock flare
+      const wave = this.scene.add
+        .circle(this.x, this.y, 16, COLORS.nodeInfected, 0.6)
+        .setDepth(5);
+      this.scene.tweens.add({
+        targets: wave,
+        scale: 4,
+        alpha: 0,
+        duration: 600,
+        onComplete: () => wave.destroy(),
+      });
+    }
+  }
+
   /** Feed the player's distance to the node + frame delta (ms). */
   update(playerDist: number, dtMs: number) {
+    if (this.locked) {
+      this.drawRing(0);
+      return; // guarded — no channel
+    }
     if (this.state === "infected") {
       this.drawRing(1);
       return;
