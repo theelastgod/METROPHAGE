@@ -2,6 +2,7 @@ import type { ProgressData } from "./Progression";
 import type { InventoryData } from "./Inventory";
 import type { ContractsData } from "./Contracts";
 import type { CityData } from "./City";
+import type { MemoryData } from "./Memory";
 
 // METROPHAGE — local save (localStorage). Single slot.
 
@@ -13,6 +14,7 @@ export interface SaveState {
   city?: CityData; // campaign meta (district index, contagion, cycle)
   inventory: InventoryData;
   contracts?: ContractsData;
+  memory?: MemoryData; // recovered story fragments
 }
 
 export function loadSave(): SaveState | null {

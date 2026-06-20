@@ -37,6 +37,7 @@ import Agent from "../entities/Agent";
 import Minion from "../entities/Minion";
 import Heat from "../systems/Heat";
 import City from "../systems/City";
+import Memory from "../systems/Memory";
 import Progression from "../systems/Progression";
 import Inventory from "../systems/Inventory";
 import Contracts from "../systems/Contracts";
@@ -46,6 +47,7 @@ import { CONSUMABLES, CONSUMABLE_KEYS } from "../game/consumables";
 import { ModBag, ZERO_MODS, addMods } from "../game/stats";
 import { rollItem } from "../game/items";
 import { Contract, objectiveLabel } from "../game/contracts";
+import { getFragment } from "../game/fragments";
 import Pickup from "../entities/Pickup";
 import Terminal from "../entities/Terminal";
 import ExtractionGate from "../entities/ExtractionGate";
@@ -60,6 +62,7 @@ import InventoryPanel from "../ui/InventoryPanel";
 import ContractPanel from "../ui/ContractPanel";
 import VendorPanel from "../ui/VendorPanel";
 import CityMapPanel from "../ui/CityMapPanel";
+import MemoryPanel from "../ui/MemoryPanel";
 import BossBar from "../ui/BossBar";
 
 /**
@@ -96,6 +99,8 @@ export default class GameScene
   private contractPanel!: ContractPanel;
   private vendorPanel!: VendorPanel;
   private cityMapPanel!: CityMapPanel;
+  private memoryPanel!: MemoryPanel;
+  private memory!: Memory;
   private terminal!: Terminal;
   private vendorTerminal!: Terminal;
   private contractMarker!: Phaser.GameObjects.Graphics;
@@ -131,6 +136,7 @@ export default class GameScene
   private skillKey!: Phaser.Input.Keyboard.Key;
   private invKey!: Phaser.Input.Keyboard.Key;
   private mapKey!: Phaser.Input.Keyboard.Key;
+  private journalKey!: Phaser.Input.Keyboard.Key;
 
   constructor() {
     super("Game");
@@ -165,12 +171,14 @@ export default class GameScene
       this.classDef = getClass(save.progress.classId);
       this.progression = new Progression(save.progress.classId, save.progress);
       this.city = new City(save.city);
+      this.memory = new Memory(save.memory);
       this.inventory.load(save.inventory);
       this.contracts = new Contracts(save.contracts);
     } else {
       this.classDef = getClass(this.registry.get("classId") as string | undefined);
       this.progression = new Progression(this.classDef.id);
       this.city = new City();
+      this.memory = new Memory();
       this.contracts = new Contracts();
     }
     this.contracts.refresh(this.progression.level);
@@ -228,6 +236,7 @@ export default class GameScene
     );
     this.vendorPanel = new VendorPanel(this, this.vendor, this.progression, this.inventory, onLoadoutChange);
     this.cityMapPanel = new CityMapPanel(this, this.city, (i) => this.travelTo(i));
+    this.memoryPanel = new MemoryPanel(this, this.memory);
     this.recomputeStats();
     this.maybeSpawnBoss();
     this.autosave(true); // persist the (possibly fresh) run immediately
@@ -257,6 +266,7 @@ export default class GameScene
       v: 1,
       progress: this.progression.toData(),
       city: this.city.toData(),
+      memory: this.memory.toData(),
       inventory: this.inventory.toData(),
       contracts: this.contracts.toData(),
     });
@@ -601,6 +611,7 @@ export default class GameScene
     this.skillKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.K);
     this.invKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.I);
     this.mapKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.M);
+    this.journalKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.J);
     this.consumeKeys = [
       kb.addKey(Phaser.Input.Keyboard.KeyCodes.ONE),
       kb.addKey(Phaser.Input.Keyboard.KeyCodes.TWO),
@@ -612,6 +623,7 @@ export default class GameScene
       this.contractPanel?.close();
       this.vendorPanel?.close();
       this.cityMapPanel?.close();
+      this.memoryPanel?.close();
     });
     this.input.mouse?.disableContextMenu();
   }
@@ -744,7 +756,14 @@ export default class GameScene
     if (Phaser.Input.Keyboard.JustDown(this.mapKey)) {
       this.skillPanel.close();
       this.inventoryPanel.close();
+      this.memoryPanel.close();
       this.cityMapPanel.toggle();
+    }
+    if (Phaser.Input.Keyboard.JustDown(this.journalKey)) {
+      this.skillPanel.close();
+      this.inventoryPanel.close();
+      this.cityMapPanel.close();
+      this.memoryPanel.toggle();
     }
 
     this.updateHud();
@@ -754,7 +773,8 @@ export default class GameScene
       this.inventoryPanel.isOpen ||
       this.contractPanel.isOpen ||
       this.vendorPanel.isOpen ||
-      this.cityMapPanel.isOpen
+      this.cityMapPanel.isOpen ||
+      this.memoryPanel.isOpen
     )
       return; // menu open: freeze sim
     if (this.dialogue.isOpen) return; // freeze the sim while a dialogue is up
@@ -889,6 +909,23 @@ export default class GameScene
     const color = o.type === "hold" ? 0x39ff88 : 0xf7ff3c;
     g.lineStyle(2, color, 0.8).strokeCircle(o.zone.x, o.zone.y, o.zone.r);
     g.fillStyle(color, 0.08).fillCircle(o.zone.x, o.zone.y, o.zone.r);
+  }
+
+  /** Surface a memory fragment (recovered at a dive core) into the Memory log. */
+  recoverFragment(id: string) {
+    const frag = getFragment(id);
+    if (!frag || !this.memory.recover(id)) return;
+    this.memoryPanel.refresh();
+    this.floatText("MEMORY RECOVERED", "#8a5cff");
+    this.synth.infect();
+    this.autosave(true);
+    this.dialogue.show([
+      {
+        speaker: "// MEMORY",
+        portrait: { key: PORTRAIT_PLAYER_KEY },
+        text: `${frag.title} — ${frag.lines.join(" ")}`,
+      },
+    ]);
   }
 
   // ---- district boss: guards the node until defeated ----
