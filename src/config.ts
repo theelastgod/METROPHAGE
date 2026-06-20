@@ -106,6 +106,11 @@ export const NODE = {
   channelDecayMs: 1500, // progress bleed-off when you step away
 } as const;
 
+/** Territory — multi-node districts; contagion spreads along the node graph. */
+export const TERRITORY = {
+  spreadPerNeighborSec: 0.1, // an infected node fills a neighbour this fast (per link)
+} as const;
+
 /** Friendly NPC. */
 export const NPC = {
   interactRange: 70, // press E within this to talk

@@ -78,20 +78,28 @@ export default class InfectionNode {
     }
   }
 
-  /** Feed the player's distance to the node + frame delta (ms). */
-  update(playerDist: number, dtMs: number) {
+  /**
+   * Advance one frame. `playerDist` channels by proximity; `spread` (0..1 progress
+   * units for this frame) is contagion bleeding in from infected neighbours. The
+   * node only decays when receiving neither.
+   */
+  tick(playerDist: number, dtMs: number, spread = 0) {
     if (this.locked) {
       this.drawRing(0);
-      return; // guarded — no channel
+      return; // guarded — no channel, no spread
     }
     if (this.state === "infected") {
       this.drawRing(1);
       return;
     }
 
-    if (playerDist <= NODE.channelRange) {
+    const channeling = playerDist <= NODE.channelRange;
+    let gain = spread;
+    if (channeling) gain += dtMs / NODE.channelTimeMs;
+
+    if (gain > 0) {
       this.state = "channeling";
-      this.progress = Math.min(1, this.progress + dtMs / NODE.channelTimeMs);
+      this.progress = Math.min(1, this.progress + gain);
     } else {
       this.progress = Math.max(0, this.progress - dtMs / NODE.channelDecayMs);
       if (this.progress === 0) this.state = "dormant";
@@ -103,11 +111,19 @@ export default class InfectionNode {
     }
 
     this.label.setText(
-      this.state === "channeling"
+      channeling
         ? `INFECTING ${Math.round(this.progress * 100)}%`
-        : "NODE",
+        : spread > 0
+          ? `SPREADING ${Math.round(this.progress * 100)}%`
+          : "NODE",
     );
     this.drawRing(this.progress);
+  }
+
+  destroy() {
+    this.base.destroy();
+    this.ring.destroy();
+    this.label.destroy();
   }
 
   private infect() {

@@ -73,10 +73,10 @@ export function buildGrid(def: DistrictDef = DISTRICTS[0]): TileGrid {
     }
   }
 
-  // Safety: guarantee the player start + node tiles (and neighbours) are walkable,
-  // regardless of how the layout was authored.
+  // Safety: guarantee the player start + every territory node (and neighbours) are
+  // walkable, regardless of how the layout was authored.
   carve(grid, def.spawnTile[0], def.spawnTile[1]);
-  carve(grid, def.nodeTile[0], def.nodeTile[1]);
+  for (const n of def.nodes) carve(grid, n.tile[0], n.tile[1]);
 
   return grid;
 }

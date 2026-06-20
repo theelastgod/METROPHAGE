@@ -30,7 +30,7 @@ import {
 import Player, { PlayerInput } from "../entities/Player";
 import Bullets from "../entities/Bullets";
 import TuringCop from "../entities/TuringCop";
-import InfectionNode from "../entities/InfectionNode";
+import Territory from "../game/Territory";
 import Npc from "../entities/Npc";
 import Agent from "../entities/Agent";
 import Minion from "../entities/Minion";
@@ -105,11 +105,11 @@ export default class GameScene
   private won = false;
   private traveling = false;
   private hitStopActive = false;
-  private nodeWasInfected = false;
+  private districtSecured = false;
   private gate?: ExtractionGate;
   private boss?: Boss;
   private bossBar!: BossBar;
-  private node!: InfectionNode;
+  private territory!: Territory;
   private npc!: Npc;
   private agents!: Phaser.Physics.Arcade.Group;
   private minions!: Phaser.Physics.Arcade.Group;
@@ -147,7 +147,7 @@ export default class GameScene
     this.won = false;
     this.traveling = false;
     this.hitStopActive = false;
-    this.nodeWasInfected = false;
+    this.districtSecured = false;
     this.gate = undefined;
     this.boss = undefined;
     this.overdriveActive = false;
@@ -188,7 +188,7 @@ export default class GameScene
     this.spawnPlayer();
     this.setupProjectiles();
     this.setupEnemies();
-    this.createNode();
+    this.createTerritory();
     this.createNpc();
     this.terminal = new Terminal(this, 23 * TILE + TILE / 2, 14 * TILE + TILE / 2);
     this.vendorTerminal = new Terminal(
@@ -421,28 +421,9 @@ export default class GameScene
     }
   }
 
-  private createNode() {
-    // Capture target — placed from the district def (carved walkable by the builder).
-    let tx = this.district.nodeTile[0];
-    let ty = this.district.nodeTile[1];
-    if (this.grid[ty]?.[tx] === undefined || isWall(this.grid[ty][tx])) {
-      // fallback: first walkable tile reasonably far from spawn
-      outer: for (let y = 1; y < this.grid.length - 1; y++) {
-        for (let x = 1; x < this.grid[0].length - 1; x++) {
-          const wx = x * TILE + TILE / 2;
-          const wy = y * TILE + TILE / 2;
-          if (
-            !isWall(this.grid[y][x]) &&
-            Phaser.Math.Distance.Between(wx, wy, this.spawn.x, this.spawn.y) > 200
-          ) {
-            tx = x;
-            ty = y;
-            break outer;
-          }
-        }
-      }
-    }
-    this.node = new InfectionNode(this, tx * TILE + TILE / 2, ty * TILE + TILE / 2);
+  private createTerritory() {
+    // The district's infection graph (nodes carved walkable by the builder).
+    this.territory = new Territory(this, this.district.nodes, (i) => this.onNodeInfected(i));
   }
 
   private setupPostFX() {
@@ -811,18 +792,12 @@ export default class GameScene
       (go as Minion).step(now, cops, (cop, dmg) => this.damageCop(cop, dmg, false)),
     );
 
-    // INFECTION: channel the district node by proximity. Capturing it clears the
-    // district and lights the extraction gate.
-    const nodeDist = Phaser.Math.Distance.Between(
-      this.player.x,
-      this.player.y,
-      this.node.x,
-      this.node.y,
-    );
-    this.node.update(nodeDist, delta * (1 + this.mods.infectPct)); // skills speed channel
-    if (this.node.infected && !this.nodeWasInfected) {
-      this.nodeWasInfected = true;
-      this.onNodeCaptured();
+    // TERRITORY: channel nodes by proximity; infected nodes spread contagion to
+    // their neighbours. Holding every node secures the district and lights the gate.
+    this.territory.update(this.player, delta * (1 + this.mods.infectPct));
+    if (this.territory.secured && !this.districtSecured) {
+      this.districtSecured = true;
+      this.onDistrictSecured();
     }
 
     // EXTRACTION: once the gate is lit, walking into it advances the campaign.
@@ -896,11 +871,12 @@ export default class GameScene
     if (!this.district.bossId) return;
     const def = getBoss(this.district.bossId);
     const hp = Math.round(def.hp * (1 + this.district.threat * 0.4) * this.cycleMult);
-    this.boss = new Boss(this, this.node.x, this.node.y, def, hp, (x, y, tier) =>
+    const core = this.territory.nodes[0];
+    this.boss = new Boss(this, core.x, core.y, def, hp, (x, y, tier) =>
       this.spawnEnemy(tier, x, y),
     );
     this.enemies.add(this.boss);
-    this.node.setLocked(true);
+    this.territory.setCoreLocked(true); // can't take the core until the guardian falls
     this.bossBar.show(def.name, def.title, def.hex);
     this.floatText("⚠ " + def.name, def.hex);
     this.cameras.main.shake(380, 0.007);
@@ -936,24 +912,36 @@ export default class GameScene
       return;
     }
 
-    this.node.setLocked(false);
+    this.territory.setCoreLocked(false); // core exposed — take it to secure the district
     if (gained > 0) this.floatText(`LEVEL ${this.progression.level}`, "#f7ff3c");
-    else this.floatText(`${boss.def.name} DOWN`, "#39ff88");
+    else this.floatText(`${boss.def.name} DOWN — CORE EXPOSED`, "#39ff88");
     this.synth.meltdown();
     this.autosave(true);
   }
 
   // ---- district lifecycle: capture -> extract -> next district ----
 
-  /** District node captured: reward, mark cleared, light the extraction gate. */
-  private onNodeCaptured() {
+  /** A single node flipped to infected — light feedback + per-node reward. */
+  private onNodeInfected(_index: number) {
     this.synth.infect();
-    this.cameras.main.shake(220, 0.005);
-    this.grantKillRewards(40, 0); // XP for capturing the node
+    this.cameras.main.shake(140, 0.004);
+    this.grantKillRewards(20, 0); // XP per node taken
     this.contracts.onInfect();
+    this.floatText(
+      `NODE ${this.territory.infectedCount}/${this.territory.total} INFECTED`,
+      this.district.accentHex,
+    );
+    this.autosave(true);
+  }
+
+  /** Every node held: district secured — light the extraction gate. */
+  private onDistrictSecured() {
+    this.synth.infect();
+    this.cameras.main.shake(260, 0.006);
+    this.grantKillRewards(60, 0); // securing bonus
     this.gate = new ExtractionGate(this, this.spawn.x, this.spawn.y, this.district.accent);
     this.gate.activate();
-    this.floatText("NODE INFECTED — EXTRACT", this.district.accentHex);
+    this.floatText("DISTRICT SECURED — EXTRACT", "#39ff88");
     this.autosave(true);
   }
 

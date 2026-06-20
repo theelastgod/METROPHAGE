@@ -27,6 +27,16 @@ export interface EnemyWeights {
   purge: number;
 }
 
+/**
+ * A territory node in a district's infection graph. `links` are indices into the
+ * district's `nodes` array (undirected adjacency) — contagion spreads along them.
+ * Node 0 is the "core": in boss districts the guardian locks it until it falls.
+ */
+export interface NodeDef {
+  tile: [number, number];
+  links: number[];
+}
+
 export interface DistrictDef {
   id: string;
   name: string;
@@ -39,9 +49,10 @@ export interface DistrictDef {
   contagion: number;
   enemyWeights: EnemyWeights;
   layout: DistrictLayout;
-  /** Player start + node placement, in tile coords (carved walkable by the builder). */
+  /** Player start, in tile coords (carved walkable by the builder). */
   spawnTile: [number, number];
-  nodeTile: [number, number];
+  /** Infection graph — node 0 is the core (boss-guarded where a boss exists). */
+  nodes: NodeDef[];
   /** Hand-placed garrison posts: [tileX, tileY, tier]. */
   copPosts: Array<[number, number, "patrol" | "enforcer"]>;
   /** Boss archetype guarding the node (added in later steps; undefined = none yet). */
@@ -77,7 +88,11 @@ const DOWNTOWN: DistrictDef = {
     laneCols: [13],
   },
   spawnTile: [19, 15],
-  nodeTile: [13, 24],
+  nodes: [
+    { tile: [13, 24], links: [1] },
+    { tile: [22, 17], links: [0, 2] },
+    { tile: [27, 11], links: [1] },
+  ],
   copPosts: [
     [13, 5, "patrol"],
     [27, 6, "patrol"],
@@ -118,7 +133,11 @@ const STACKS: DistrictDef = {
     laneCols: [19, 28],
   },
   spawnTile: [19, 27],
-  nodeTile: [24, 13],
+  nodes: [
+    { tile: [24, 13], links: [1, 2] }, // core — Sentinel guards it
+    { tile: [6, 21], links: [0] },
+    { tile: [33, 21], links: [0] },
+  ],
   copPosts: [
     [6, 9, "patrol"],
     [15, 9, "enforcer"],
@@ -155,7 +174,11 @@ const SPIRE: DistrictDef = {
     laneCols: [13, 26],
   },
   spawnTile: [19, 25],
-  nodeTile: [19, 14],
+  nodes: [
+    { tile: [19, 14], links: [1, 2] }, // core — Sentinel guards it
+    { tile: [13, 14], links: [0] },
+    { tile: [26, 14], links: [0] },
+  ],
   copPosts: [
     [7, 7, "enforcer"],
     [31, 7, "enforcer"],
@@ -197,7 +220,11 @@ const CORE: DistrictDef = {
     laneCols: [19],
   },
   spawnTile: [19, 25],
-  nodeTile: [19, 14],
+  nodes: [
+    { tile: [19, 14], links: [1, 2] }, // core — the OVERMIND guards it
+    { tile: [13, 13], links: [0] },
+    { tile: [25, 13], links: [0] },
+  ],
   copPosts: [
     [10, 9, "enforcer"],
     [29, 9, "enforcer"],
