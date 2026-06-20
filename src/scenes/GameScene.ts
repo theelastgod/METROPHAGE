@@ -47,7 +47,8 @@ import { CONSUMABLES, CONSUMABLE_KEYS } from "../game/consumables";
 import { ModBag, ZERO_MODS, addMods } from "../game/stats";
 import { rollItem } from "../game/items";
 import { Contract, objectiveLabel } from "../game/contracts";
-import { getFragment } from "../game/fragments";
+import { getFragment, FRAGMENTS } from "../game/fragments";
+import { generateDive, DiveResult } from "../game/dives";
 import Pickup from "../entities/Pickup";
 import Terminal from "../entities/Terminal";
 import ExtractionGate from "../entities/ExtractionGate";
@@ -103,6 +104,7 @@ export default class GameScene
   private memory!: Memory;
   private terminal!: Terminal;
   private vendorTerminal!: Terminal;
+  private diveTerminal!: Terminal;
   private contractMarker!: Phaser.GameObjects.Graphics;
   private consumeKeys!: Phaser.Input.Keyboard.Key[];
   private pickups!: Phaser.Physics.Arcade.Group;
@@ -208,6 +210,14 @@ export default class GameScene
       "E  SHOP",
       0xf7ff3c,
     );
+    this.diveTerminal = new Terminal(
+      this,
+      this.district.diveTile[0] * TILE + TILE / 2,
+      this.district.diveTile[1] * TILE + TILE / 2,
+      "ICE NODE",
+      "E  DIVE",
+      0x29e7ff,
+    );
     this.contractMarker = this.add.graphics().setDepth(4);
     this.createAgents();
     this.minions = this.physics.add.group();
@@ -244,10 +254,17 @@ export default class GameScene
     // Fade in on arrival (fresh boot or district travel).
     this.cameras.main.fadeIn(450, 4, 2, 10);
 
+    // Apply dive payouts when control returns from a launched DiveScene.
+    const onResume = () => this.onDiveReturn();
+    this.events.on("resume", onResume);
+
     // Persist on tab close / hide.
     const flush = () => this.autosave(true);
     window.addEventListener("beforeunload", flush);
-    this.events.once("shutdown", () => window.removeEventListener("beforeunload", flush));
+    this.events.once("shutdown", () => {
+      window.removeEventListener("beforeunload", flush);
+      this.events.off("resume", onResume);
+    });
   }
 
   /** Resolve skill + gear mods into effective player stats. */
@@ -866,6 +883,7 @@ export default class GameScene
       Phaser.Math.Distance.Between(this.player.x, this.player.y, x, y);
     const nearTerminal = this.terminal.update(dist(this.terminal.x, this.terminal.y));
     const nearVendor = this.vendorTerminal.update(dist(this.vendorTerminal.x, this.vendorTerminal.y));
+    const nearDive = this.diveTerminal.update(dist(this.diveTerminal.x, this.diveTerminal.y));
     const nearNpc = this.npc.update(dist(this.npc.x, this.npc.y));
     if (Phaser.Input.Keyboard.JustDown(this.eKey)) {
       this.skillPanel.close();
@@ -876,10 +894,49 @@ export default class GameScene
       } else if (nearVendor) {
         this.contractPanel.close();
         this.vendorPanel.toggle();
+      } else if (nearDive) {
+        this.enterDive();
       } else if (nearNpc) {
         this.dialogue.show(this.npcPages());
       }
     }
+  }
+
+  // ---- ICE dives (instanced runs launched over this paused scene) ----
+
+  /** Launch an instanced dive; carries the next un-recovered fragment to its core. */
+  private enterDive() {
+    const dive = generateDive(this.progression.level, this.district.threat);
+    const nextFrag = FRAGMENTS.find((f) => !this.memory.has(f.id));
+    if (nextFrag) dive.fragmentId = nextFrag.id;
+    this.autosave(true);
+    this.scene.pause();
+    this.scene.launch("Dive", {
+      classId: this.classDef.id,
+      level: this.progression.level,
+      dive,
+      cycleMult: this.cycleMult,
+    });
+  }
+
+  /** Back from a dive (scene resumed): apply the payout + any recovered fragment. */
+  private onDiveReturn() {
+    const res = this.registry.get("diveResult") as DiveResult | undefined;
+    this.registry.remove("diveResult");
+    if (!res || !res.success) return;
+    this.progression.addCurrency(res.reward.currency);
+    const gained = this.progression.addXp(res.reward.xp);
+    for (let i = 0; i < res.reward.loot; i++) {
+      const item = rollItem(this.progression.level, res.reward.lootBoost);
+      if (!this.inventory.add(item)) {
+        this.pickups.add(new Pickup(this, this.player.x, this.player.y, item));
+      }
+    }
+    this.recomputeStats();
+    if (gained > 0) this.floatText(`LEVEL ${this.progression.level}`, "#f7ff3c");
+    if (res.fragmentId) this.recoverFragment(res.fragmentId);
+    else this.floatText("DIVE COMPLETE", "#29e7ff");
+    this.autosave(true);
   }
 
   private handleConsumables(now: number) {

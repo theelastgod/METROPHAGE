@@ -51,6 +51,8 @@ export interface DistrictDef {
   layout: DistrictLayout;
   /** Player start, in tile coords (carved walkable by the builder). */
   spawnTile: [number, number];
+  /** ICE-dive entrance, in tile coords (carved walkable). One per district. */
+  diveTile: [number, number];
   /** Infection graph — node 0 is the core (boss-guarded where a boss exists). */
   nodes: NodeDef[];
   /** Hand-placed garrison posts: [tileX, tileY, tier]. */
@@ -88,6 +90,7 @@ const DOWNTOWN: DistrictDef = {
     laneCols: [13],
   },
   spawnTile: [19, 15],
+  diveTile: [16, 15],
   nodes: [
     { tile: [13, 24], links: [1] },
     { tile: [22, 17], links: [0, 2] },
@@ -133,6 +136,7 @@ const STACKS: DistrictDef = {
     laneCols: [19, 28],
   },
   spawnTile: [19, 27],
+  diveTile: [22, 27],
   nodes: [
     { tile: [24, 13], links: [1, 2] }, // core — Sentinel guards it
     { tile: [6, 21], links: [0] },
@@ -174,6 +178,7 @@ const SPIRE: DistrictDef = {
     laneCols: [13, 26],
   },
   spawnTile: [19, 25],
+  diveTile: [16, 25],
   nodes: [
     { tile: [19, 14], links: [1, 2] }, // core — Sentinel guards it
     { tile: [13, 14], links: [0] },
@@ -220,6 +225,7 @@ const CORE: DistrictDef = {
     laneCols: [19],
   },
   spawnTile: [19, 25],
+  diveTile: [22, 25],
   nodes: [
     { tile: [19, 14], links: [1, 2] }, // core — the OVERMIND guards it
     { tile: [13, 13], links: [0] },
