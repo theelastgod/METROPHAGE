@@ -3,13 +3,14 @@ import { TILE, COLORS, BULLET, ENEMY_BULLET } from "../config";
 import { getClass, ClassDef, PrimaryDef } from "../game/classes";
 import { ENEMY_TIERS, EnemyHost } from "../game/enemies";
 import { DiveDef, DiveResult } from "../game/dives";
-import { TILESET_KEY, GLOW_KEY, SPARK_KEY } from "../assets/manifest";
+import { TILESET_KEY, GLOW_KEY } from "../assets/manifest";
 import Player, { PlayerInput } from "../entities/Player";
 import Bullets from "../entities/Bullets";
 import TuringCop from "../entities/TuringCop";
 import NeonPipeline from "../render/NeonPipeline";
 import { juiceShake, juiceFlash } from "../systems/juice";
 import Synth from "../audio/Synth";
+import Particles from "../render/Particles";
 
 const TILE_FLOOR = 0;
 const TILE_WALL = 4;
@@ -53,6 +54,7 @@ export default class DiveScene extends Phaser.Scene implements EnemyHost {
   private ending = false;
 
   private synth?: Synth; // shared GameScene synth (from the registry)
+  private particles!: Particles; // pooled spark FX
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
   private wasd!: Record<"W" | "A" | "S" | "D", Phaser.Input.Keyboard.Key>;
   private dashKey!: Phaser.Input.Keyboard.Key;
@@ -71,6 +73,7 @@ export default class DiveScene extends Phaser.Scene implements EnemyHost {
     this.dive = data.dive;
     this.cycleMult = data.cycleMult ?? 1;
     this.synth = this.registry.get("synth") as Synth | undefined;
+    this.particles = new Particles(this);
     this.coreHp = this.coreMaxHp = Math.round(220 + data.level * 12);
     this.coreUnlocked = false;
     this.waveIndex = 0;
@@ -497,13 +500,7 @@ export default class DiveScene extends Phaser.Scene implements EnemyHost {
   // ---- fx + hud ----
 
   private spark(x: number, y: number, color: number, scale: number) {
-    const s = this.add
-      .image(x, y, SPARK_KEY)
-      .setBlendMode(Phaser.BlendModes.ADD)
-      .setTint(color)
-      .setDepth(11)
-      .setScale(0.8);
-    this.tweens.add({ targets: s, scale: scale * 1.4, alpha: 0, duration: 160, onComplete: () => s.destroy() });
+    this.particles.spark(x, y, color, scale);
   }
 
   private drawCoreRing() {

@@ -24,8 +24,6 @@ import {
   PORTRAIT_PLAYER_KEY,
   PORTRAIT_NPC_KEY,
   VO_MELTDOWN_KEY,
-  GLOW_KEY,
-  SPARK_KEY,
   STREETLIGHT_KEY,
 } from "../assets/manifest";
 import Player, { PlayerInput } from "../entities/Player";
@@ -59,6 +57,7 @@ import { getBoss } from "../game/bosses";
 import NeonPipeline from "../render/NeonPipeline";
 import Synth from "../audio/Synth";
 import Pops from "../render/Pops";
+import Particles from "../render/Particles";
 import { juiceShake, juiceFlash } from "../systems/juice";
 import Hud from "../ui/Hud";
 import DialogueBox, { DialoguePage } from "../ui/DialogueBox";
@@ -120,6 +119,7 @@ export default class GameScene
   private nextAutosaveAt = 0;
   private synth = new Synth(); // persists across scene.restart()
   private pops!: Pops; // pooled damage-number / callout text
+  private particles!: Particles; // pooled spark / glow FX
   private prevHeatTier = 0;
   private combatHeat = 0; // 0..1, spikes on hits + decays — swells the music in fights
   private won = false;
@@ -494,6 +494,7 @@ export default class GameScene
   private setupUi() {
     this.hud = new Hud(this);
     this.pops = new Pops(this);
+    this.particles = new Particles(this);
     this.bossBar = new BossBar(this);
     // Bottom-center ticker — clear of the HUD panel + boss bar.
     this.eventBanner = this.add
@@ -2056,34 +2057,10 @@ export default class GameScene
   }
 
   private muzzleFlash(x: number, y: number) {
-    const f = this.add
-      .image(x, y, GLOW_KEY)
-      .setBlendMode(Phaser.BlendModes.ADD)
-      .setTint(COLORS.bullet)
-      .setDepth(11)
-      .setScale(0.45);
-    this.tweens.add({
-      targets: f,
-      scale: 0,
-      alpha: 0,
-      duration: 110,
-      onComplete: () => f.destroy(),
-    });
+    this.particles.flash(x, y, COLORS.bullet);
   }
 
   private spark(x: number, y: number, color: number, scale: number) {
-    const s = this.add
-      .image(x, y, SPARK_KEY)
-      .setBlendMode(Phaser.BlendModes.ADD)
-      .setTint(color)
-      .setDepth(11)
-      .setScale(0.8);
-    this.tweens.add({
-      targets: s,
-      scale: scale * 1.4,
-      alpha: 0,
-      duration: 160,
-      onComplete: () => s.destroy(),
-    });
+    this.particles.spark(x, y, color, scale);
   }
 }

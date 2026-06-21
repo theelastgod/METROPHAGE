@@ -8,6 +8,8 @@ const KEY = "metrophage_settings_v1";
 export interface SettingsData {
   /** ⚠ Photosensitivity safety: caps flashing/glitch, softens the meltdown. */
   reduceFlashing: boolean;
+  /** Low-FX / device tier: thins particles + skips the costly bloom (low-end/mobile). */
+  lowFx: boolean;
   shake: number; // 0..1 screen-shake intensity (0 = off)
   master: number; // 0..1
   music: number; // 0..1
@@ -16,6 +18,7 @@ export interface SettingsData {
 
 const DEFAULTS: SettingsData = {
   reduceFlashing: false,
+  lowFx: false,
   shake: 1,
   master: 0.9,
   music: 0.8,

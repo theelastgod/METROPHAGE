@@ -16,6 +16,7 @@ uniform float uGlitch;
 uniform vec2 uResolution;
 uniform vec3 uTint;     // district accent (0..1)
 uniform float uTintAmt; // how hard to bias toward the accent
+uniform float uLowFx;   // 1 = low-FX tier: skip bloom + chromatic aberration
 varying vec2 outTexCoord;
 
 float rand(vec2 c) { return fract(sin(dot(c, vec2(12.9898, 78.233))) * 43758.5453); }
@@ -34,25 +35,30 @@ void main() {
   float dist = length(toC);
   vec2 dir = toC / (dist + 1e-5);
 
-  // radial chromatic aberration, grows with heat + glitch
-  float ca = (0.0012 + uHeat * 0.0065 + uGlitch * 0.012) * (0.4 + dist);
-  float r = texture2D(uMainSampler, uv - dir * ca).r;
-  float g = texture2D(uMainSampler, uv).g;
-  float b = texture2D(uMainSampler, uv + dir * ca).b;
-  vec3 col = vec3(r, g, b);
+  // radial chromatic aberration, grows with heat + glitch (skipped on low-FX)
+  vec3 col;
+  if (uLowFx > 0.5) {
+    col = texture2D(uMainSampler, uv).rgb;
+  } else {
+    float ca = (0.0012 + uHeat * 0.0065 + uGlitch * 0.012) * (0.4 + dist);
+    float r = texture2D(uMainSampler, uv - dir * ca).r;
+    float g = texture2D(uMainSampler, uv).g;
+    float b = texture2D(uMainSampler, uv + dir * ca).b;
+    col = vec3(r, g, b);
 
-  // cheap bloom: bright-pass 3x3 with heat-scaled spread
-  vec2 px = (1.0 / uResolution) * (1.5 + uHeat * 4.0 + uGlitch * 3.0);
-  vec3 bloom = vec3(0.0);
-  for (int i = -1; i <= 1; i++) {
-    for (int j = -1; j <= 1; j++) {
-      vec3 s = texture2D(uMainSampler, uv + vec2(float(i), float(j)) * px).rgb;
-      float bright = max(s.r, max(s.g, s.b));
-      bloom += s * smoothstep(0.55, 1.0, bright);
+    // cheap bloom: bright-pass 3x3 with heat-scaled spread (the costliest op)
+    vec2 px = (1.0 / uResolution) * (1.5 + uHeat * 4.0 + uGlitch * 3.0);
+    vec3 bloom = vec3(0.0);
+    for (int i = -1; i <= 1; i++) {
+      for (int j = -1; j <= 1; j++) {
+        vec3 s = texture2D(uMainSampler, uv + vec2(float(i), float(j)) * px).rgb;
+        float bright = max(s.r, max(s.g, s.b));
+        bloom += s * smoothstep(0.55, 1.0, bright);
+      }
     }
+    bloom /= 9.0;
+    col += bloom * (0.7 + uHeat * 1.6 + uGlitch * 1.5);
   }
-  bloom /= 9.0;
-  col += bloom * (0.7 + uHeat * 1.6 + uGlitch * 1.5);
 
   // saturation lift with heat
   float l = dot(col, vec3(0.299, 0.587, 0.114));
@@ -107,5 +113,6 @@ export default class NeonPipeline extends Phaser.Renderer.WebGL.Pipelines
     this.set2f("uResolution", this.renderer.width, this.renderer.height);
     this.set3f("uTint", this.tint[0], this.tint[1], this.tint[2]);
     this.set1f("uTintAmt", this.tintAmt);
+    this.set1f("uLowFx", getSettings().lowFx ? 1 : 0);
   }
 }

@@ -31,9 +31,9 @@ export default class OptionsPanel {
   private open = false;
 
   private readonly w = 384;
-  private readonly h = 252;
+  private readonly h = 276;
   private readonly x = (VIEW_W - 384) / 2;
-  private readonly y = (VIEW_H - 252) / 2;
+  private readonly y = (VIEW_H - 276) / 2;
   private readonly trackX: number;
   private readonly trackW: number;
 
@@ -54,21 +54,23 @@ export default class OptionsPanel {
 
     this.text(this.x + 18, this.y + 14, "OPTIONS", "#eafdff", "14px", D);
 
-    let ry = this.y + 52;
+    let ry = this.y + 50;
     this.addRow("reduceFlashing", "REDUCE FLASHING", true, ry, D, "#ff3b6b"); // ⚠ safety
-    ry += 36;
+    ry += 31;
+    this.addRow("lowFx", "LOW-FX MODE", true, ry, D, "#29e7ff");
+    ry += 33;
     this.addRow("shake", "SCREEN SHAKE", false, ry, D);
-    ry += 32;
+    ry += 31;
     this.addRow("master", "MASTER VOLUME", false, ry, D);
-    ry += 32;
+    ry += 31;
     this.addRow("music", "MUSIC VOLUME", false, ry, D);
-    ry += 32;
+    ry += 31;
     this.addRow("sfx", "SFX VOLUME", false, ry, D);
 
     this.text(
       this.x + 18,
       this.y + this.h - 22,
-      "Reduce Flashing softens bloom, glitch + the meltdown.",
+      "Reduce Flashing = photosensitivity-safe.  Low-FX = lighter for low-end devices.",
       "#9aa3b2",
       "9px",
       D,
