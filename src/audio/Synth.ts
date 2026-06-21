@@ -6,7 +6,10 @@
 // share the same context. Everything is guarded so a missing/blocked AudioContext
 // simply yields silence — never an error.
 
+import { getSettings } from "../systems/Settings";
+
 const A_MINOR_BASS = [33, 29, 36, 31]; // A1, F1, C2, G1 — brooding i-VI-III-VII
+const MASTER_BASE = 0.26; // master ceiling before the user volume scales it
 const LEAD_ARP = [57, 60, 64, 67, 69, 72]; // A minor pentatonic up
 
 const midiToFreq = (m: number) => 440 * Math.pow(2, (m - 69) / 12);
@@ -15,6 +18,8 @@ const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
 export default class Synth {
   private ctx?: AudioContext;
   private master?: GainNode;
+  private musicBus?: GainNode; // lead + bass + hats (scaled by settings.music)
+  private sfxBus?: GainNode; // one-shots (scaled by settings.sfx)
   private reverb?: ConvolverNode;
   private leadBus?: GainNode;
   private bassBus?: GainNode;
@@ -43,7 +48,10 @@ export default class Synth {
       this.nextNoteTime = this.ctx.currentTime + 0.1;
       this.timer = window.setInterval(() => this.scheduler(), 25);
       this.master!.gain.setValueAtTime(0.0001, this.ctx.currentTime);
-      this.master!.gain.linearRampToValueAtTime(0.26, this.ctx.currentTime + 2.5);
+      this.master!.gain.linearRampToValueAtTime(
+        MASTER_BASE * getSettings().master,
+        this.ctx.currentTime + 2.5,
+      );
     } catch {
       this.ctx = undefined; // audio unavailable; stay silent
     }
@@ -63,25 +71,44 @@ export default class Synth {
 
   private buildGraph() {
     const ctx = this.ctx!;
+    const s = getSettings();
     this.master = ctx.createGain();
     this.master.gain.value = 0.0001;
     this.master.connect(ctx.destination);
+
+    // Music + SFX channels under the master, scaled by the user volume settings.
+    this.musicBus = ctx.createGain();
+    this.musicBus.gain.value = s.music;
+    this.musicBus.connect(this.master);
+    this.sfxBus = ctx.createGain();
+    this.sfxBus.gain.value = s.sfx;
+    this.sfxBus.connect(this.master);
 
     this.reverb = ctx.createConvolver();
     this.reverb.buffer = this.impulse(2.6, 2.2);
     const wet = ctx.createGain();
     wet.gain.value = 0.9;
     this.reverb.connect(wet);
-    wet.connect(this.master);
+    wet.connect(this.musicBus);
 
     this.leadBus = ctx.createGain();
     this.leadBus.gain.value = 0.8;
     this.leadBus.connect(this.reverb);
-    this.leadBus.connect(this.master);
+    this.leadBus.connect(this.musicBus);
 
     this.bassBus = ctx.createGain();
     this.bassBus.gain.value = 0.55;
-    this.bassBus.connect(this.master);
+    this.bassBus.connect(this.musicBus);
+  }
+
+  /** Live-apply the current volume settings (called from the options menu). */
+  applyVolumes() {
+    if (!this.ctx) return;
+    const s = getSettings();
+    const t = this.ctx.currentTime;
+    this.master?.gain.setTargetAtTime(MASTER_BASE * s.master, t, 0.05);
+    this.musicBus?.gain.setTargetAtTime(s.music, t, 0.05);
+    this.sfxBus?.gain.setTargetAtTime(s.sfx, t, 0.05);
   }
 
   private impulse(dur: number, decay: number): AudioBuffer {
@@ -196,7 +223,7 @@ export default class Synth {
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
     src.connect(hp);
     hp.connect(g);
-    g.connect(this.master!);
+    g.connect(this.musicBus ?? this.master!);
     src.start(t);
     src.stop(t + 0.06);
   }
@@ -239,7 +266,7 @@ export default class Synth {
     g.gain.setValueAtTime(gain, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + dur);
     o.connect(g);
-    g.connect(this.master ?? ctx.destination);
+    g.connect(this.sfxBus ?? this.master ?? ctx.destination);
     o.start(t);
     o.stop(t + dur + 0.02);
   }
@@ -259,7 +286,7 @@ export default class Synth {
     g.gain.exponentialRampToValueAtTime(0.001, t + dur);
     src.connect(lp);
     lp.connect(g);
-    g.connect(this.master ?? ctx.destination);
+    g.connect(this.sfxBus ?? this.master ?? ctx.destination);
     src.start(t);
     src.stop(t + dur + 0.02);
   }

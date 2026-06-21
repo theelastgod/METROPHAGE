@@ -58,6 +58,7 @@ import Boss from "../entities/Boss";
 import { getBoss } from "../game/bosses";
 import NeonPipeline from "../render/NeonPipeline";
 import Synth from "../audio/Synth";
+import { juiceShake, juiceFlash } from "../systems/juice";
 import Hud from "../ui/Hud";
 import DialogueBox, { DialoguePage } from "../ui/DialogueBox";
 import SkillPanel from "../ui/SkillPanel";
@@ -66,6 +67,7 @@ import ContractPanel from "../ui/ContractPanel";
 import VendorPanel from "../ui/VendorPanel";
 import CityMapPanel from "../ui/CityMapPanel";
 import JournalPanel from "../ui/JournalPanel";
+import OptionsPanel from "../ui/OptionsPanel";
 import Quests from "../systems/Quests";
 import { DIALOGUE_TREES } from "../game/dialogue";
 import BossBar from "../ui/BossBar";
@@ -105,6 +107,7 @@ export default class GameScene
   private vendorPanel!: VendorPanel;
   private cityMapPanel!: CityMapPanel;
   private journalPanel!: JournalPanel;
+  private optionsPanel!: OptionsPanel;
   private quests!: Quests;
   private memory!: Memory;
   private terminal!: Terminal;
@@ -148,6 +151,7 @@ export default class GameScene
   private invKey!: Phaser.Input.Keyboard.Key;
   private mapKey!: Phaser.Input.Keyboard.Key;
   private journalKey!: Phaser.Input.Keyboard.Key;
+  private optionsKey!: Phaser.Input.Keyboard.Key;
 
   constructor() {
     super("Game");
@@ -265,6 +269,7 @@ export default class GameScene
     this.vendorPanel = new VendorPanel(this, this.vendor, this.progression, this.inventory, onLoadoutChange);
     this.cityMapPanel = new CityMapPanel(this, this.city, (i) => this.travelTo(i));
     this.journalPanel = new JournalPanel(this, this.memory, this.quests);
+    this.optionsPanel = new OptionsPanel(this, () => this.synth.applyVolumes());
     this.recomputeStats();
     this.maybeSpawnBoss();
     this.worldEvents = new WorldEvents(this);
@@ -673,6 +678,7 @@ export default class GameScene
     this.invKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.I);
     this.mapKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.M);
     this.journalKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.J);
+    this.optionsKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.O);
     this.consumeKeys = [
       kb.addKey(Phaser.Input.Keyboard.KeyCodes.ONE),
       kb.addKey(Phaser.Input.Keyboard.KeyCodes.TWO),
@@ -685,6 +691,7 @@ export default class GameScene
       this.vendorPanel?.close();
       this.cityMapPanel?.close();
       this.journalPanel?.close();
+      this.optionsPanel?.close();
     });
     this.input.mouse?.disableContextMenu();
   }
@@ -829,6 +836,13 @@ export default class GameScene
       this.cityMapPanel.close();
       this.journalPanel.toggle();
     }
+    if (Phaser.Input.Keyboard.JustDown(this.optionsKey)) {
+      this.skillPanel.close();
+      this.inventoryPanel.close();
+      this.cityMapPanel.close();
+      this.journalPanel.close();
+      this.optionsPanel.toggle();
+    }
 
     this.updateHud();
     this.autosave();
@@ -838,7 +852,8 @@ export default class GameScene
       this.contractPanel.isOpen ||
       this.vendorPanel.isOpen ||
       this.cityMapPanel.isOpen ||
-      this.journalPanel.isOpen
+      this.journalPanel.isOpen ||
+      this.optionsPanel.isOpen
     )
       return; // menu open: freeze sim
     if (this.dialogue.isOpen) return; // freeze the sim while a dialogue is up
@@ -912,7 +927,7 @@ export default class GameScene
       const purged = this.territory.tryPurge(now, this.heat.normalized, this.player);
       if (purged >= 0) {
         this.synth.hit();
-        this.cameras.main.shake(120, 0.004);
+        juiceShake(this, 120, 0.004);
         this.floatText("⚠ HSS RE-SECURED A NODE", "#ff3b6b");
       }
     }
@@ -1050,7 +1065,7 @@ export default class GameScene
       }
       this.recomputeStats();
       this.journalPanel.refresh();
-      this.cameras.main.flash(360, 60, 0, 90);
+      juiceFlash(this, 360, 60, 0, 90);
       this.floatText(`THE WAKE IS YOURS`, "#8a5cff");
       this.autosave(true);
     }
@@ -1190,12 +1205,12 @@ export default class GameScene
 
   onEventTelegraph(def: WorldEventDef) {
     this.floatText(`⚠ ${def.name}`, def.hex);
-    this.cameras.main.shake(220, 0.004);
+    juiceShake(this, 220, 0.004);
     this.synth.hit();
   }
 
   onEventStart(def: WorldEventDef) {
-    this.cameras.main.flash(220, (def.color >> 16) & 0xff, (def.color >> 8) & 0xff, def.color & 0xff);
+    juiceFlash(this, 220, (def.color >> 16) & 0xff, (def.color >> 8) & 0xff, def.color & 0xff);
     switch (def.id) {
       case "neon_storm":
         this.stormStrikeAt = this.time.now; // strikes spawn in onEventTick
@@ -1265,7 +1280,7 @@ export default class GameScene
       const b = this.add.circle(x, y, r, color, 0.5).setDepth(6);
       this.tweens.add({ targets: b, alpha: 0, scale: 1.3, duration: 280, onComplete: () => b.destroy() });
       this.spark(x, y, color, 3);
-      this.cameras.main.shake(120, 0.005);
+      juiceShake(this, 120, 0.005);
       if (!this.player.invulnerable && Phaser.Math.Distance.Between(this.player.x, this.player.y, x, y) <= r) {
         const died = this.player.applyDamage(15);
         this.onPlayerHurt();
@@ -1303,8 +1318,8 @@ export default class GameScene
     this.territory.setCoreLocked(true); // can't take the core until the guardian falls
     this.bossBar.show(def.name, def.title, def.hex);
     this.floatText("⚠ " + def.name, def.hex);
-    this.cameras.main.shake(380, 0.007);
-    this.cameras.main.flash(260, (def.tint >> 16) & 0xff, (def.tint >> 8) & 0xff, def.tint & 0xff);
+    juiceShake(this, 380, 0.007);
+    juiceFlash(this, 260, (def.tint >> 16) & 0xff, (def.tint >> 8) & 0xff, def.tint & 0xff);
   }
 
   /** Boss down: pay out big, drop loot. On the final boss this ends the cycle. */
@@ -1324,8 +1339,8 @@ export default class GameScene
         ),
       );
     }
-    this.cameras.main.flash(320, 40, 120, 60);
-    this.cameras.main.shake(320, 0.01);
+    juiceFlash(this, 320, 40, 120, 60);
+    juiceShake(this, 320, 0.01);
     this.boss = undefined;
 
     // Guardian down → core exposed. On the HSS CORE this is the OVERMIND: take the
@@ -1342,7 +1357,7 @@ export default class GameScene
   /** A single node flipped to infected — light feedback + per-node reward. */
   private onNodeInfected(_index: number) {
     this.synth.infect();
-    this.cameras.main.shake(140, 0.004);
+    juiceShake(this, 140, 0.004);
     this.grantKillRewards(20, 0); // XP per node taken
     this.city.addSingularity(SINGULARITY.perNode);
     this.contracts.onInfect();
@@ -1357,7 +1372,7 @@ export default class GameScene
   /** Every node held: district secured — light the extraction gate. */
   private onDistrictSecured() {
     this.synth.infect();
-    this.cameras.main.shake(260, 0.006);
+    juiceShake(this, 260, 0.006);
     this.grantKillRewards(60, 0); // securing bonus
     this.city.secure(this.district.id, this.district.contagion); // bank the district's worth
     this.fireQuestTrigger("secure");
@@ -1389,7 +1404,7 @@ export default class GameScene
     const next = this.city.current; // city.index was set by travelTo()
     this.player.setVelocity(0, 0);
     this.synth.infect();
-    this.cameras.main.shake(280, 0.006);
+    juiceShake(this, 280, 0.006);
 
     const w = this.scale.width;
     const h = this.scale.height;
@@ -1436,9 +1451,8 @@ export default class GameScene
       this.time.delayedCall(650, () => this.sound.play(VO_MELTDOWN_KEY, { volume: 0.9 }));
     }
 
-    const cam = this.cameras.main;
-    cam.shake(800, 0.014);
-    cam.flash(450, 180, 0, 220);
+    juiceShake(this, 800, 0.014);
+    juiceFlash(this, 450, 180, 0, 220);
 
     // Ramp the post-FX past its normal ceiling into full glitch overload.
     if (this.neon) {
@@ -1557,7 +1571,7 @@ export default class GameScene
         this.fireBeam(angle, prim);
         break;
     }
-    this.cameras.main.shake(40, 0.0018);
+    juiceShake(this, 40, 0.0018);
     this.synth.shoot();
   }
 
@@ -1670,7 +1684,7 @@ export default class GameScene
       this.synth.kill();
       if (juice) {
         this.hitStop(60);
-        this.cameras.main.shake(140, 0.006);
+        juiceShake(this, 140, 0.006);
       }
     } else if (juice) {
       this.synth.hit();
@@ -1700,7 +1714,7 @@ export default class GameScene
       this.player.nextUltAt = now + this.classDef.ultimate.cooldownMs;
       this.heat.spend(HEAT.ultHeatCost);
       this.runAbility(this.classDef.ultimate);
-      this.cameras.main.flash(120, 40, 0, 80);
+      juiceFlash(this, 120, 40, 0, 80);
     }
 
     if (
@@ -1724,8 +1738,8 @@ export default class GameScene
     this.overdriveActive = true;
     this.overdriveUntil = now + OVERDRIVE.durationMs;
     this.player.nextAbilityAt = 0; // ability spam
-    this.cameras.main.flash(300, 120, 0, 160);
-    this.cameras.main.shake(400, 0.006);
+    juiceFlash(this, 300, 120, 0, 160);
+    juiceShake(this, 400, 0.006);
     this.synth.meltdown();
     if (this.neon) {
       this.neon.glitch = 0.5;
@@ -1737,7 +1751,7 @@ export default class GameScene
   private endOverdrive() {
     this.overdriveActive = false;
     this.heat.reset(this.time.now);
-    this.cameras.main.flash(220, 80, 0, 40);
+    juiceFlash(this, 220, 80, 0, 40);
     this.floatText("SYSTEM PURGE", "#ff3b6b");
     this.spawnPurgeWave();
   }
@@ -1805,7 +1819,7 @@ export default class GameScene
         onComplete: () => b.destroy(),
       });
       this.spark(x, y, color, 4);
-      this.cameras.main.shake(160, 0.009);
+      juiceShake(this, 160, 0.009);
     });
   }
 
@@ -1947,8 +1961,8 @@ export default class GameScene
 
   /** Player-damage feedback: red screen flash + shake. */
   private onPlayerHurt() {
-    this.cameras.main.flash(120, 90, 0, 10);
-    this.cameras.main.shake(70, 0.005);
+    juiceFlash(this, 120, 90, 0, 10);
+    juiceShake(this, 70, 0.005);
     this.synth.hit();
   }
 
@@ -1985,7 +1999,7 @@ export default class GameScene
         duration: 280,
         onComplete: () => b.destroy(),
       });
-      this.cameras.main.shake(180, 0.01);
+      juiceShake(this, 180, 0.01);
       const d = Phaser.Math.Distance.Between(this.player.x, this.player.y, x, y);
       if (d <= radius && !this.player.invulnerable) {
         const died = this.player.applyDamage(damage);
@@ -1997,7 +2011,7 @@ export default class GameScene
 
   private respawnPlayer() {
     this.player.respawn(this.spawn.x, this.spawn.y);
-    this.cameras.main.flash(220, 60, 0, 24);
+    juiceFlash(this, 220, 60, 0, 24);
   }
 
   private muzzleFlash(x: number, y: number) {

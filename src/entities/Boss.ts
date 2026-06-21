@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { COP_KEY, faceFrame } from "../assets/manifest";
 import { EnemyHost } from "../game/enemies";
 import { BossDef } from "../game/bosses";
+import { juiceShake } from "../systems/juice";
 
 /**
  * District boss. Implements the same surface GameScene uses on a TuringCop
@@ -176,7 +177,7 @@ export default class Boss extends Phaser.Physics.Arcade.Sprite {
     this.enraged = true;
     this.setTint(0xff5bbf);
     this.aura.setStrokeStyle(3, 0xff5bbf, 0.8);
-    this.scene.cameras.main.shake(240, 0.007);
+    juiceShake(this.scene, 240, 0.007);
     const flare = this.scene.add.circle(this.x, this.y, 14, 0xff5bbf, 0.5).setDepth(7);
     this.scene.tweens.add({
       targets: flare,

@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { getSettings } from "../systems/Settings";
 
 /**
  * Neon post-FX: radial chromatic aberration + cheap bright-pass bloom +
@@ -94,8 +95,14 @@ export default class NeonPipeline extends Phaser.Renderer.WebGL.Pipelines
   }
 
   onPreRender() {
-    this.set1f("uHeat", this.heat);
-    this.set1f("uGlitch", this.glitch);
+    // ⚠ Photosensitivity safety: when reduce-flashing is on, cap the heat-driven
+    // bloom/chromatic-aberration and clamp the glitch hard, so even the meltdown
+    // reads as a steady wash instead of a screen-blowing strobe.
+    const reduce = getSettings().reduceFlashing;
+    const heat = reduce ? Math.min(this.heat, 0.5) : this.heat;
+    const glitch = reduce ? Math.min(this.glitch, 0.16) : this.glitch;
+    this.set1f("uHeat", heat);
+    this.set1f("uGlitch", glitch);
     this.set1f("uTime", this.game.loop.time / 1000);
     this.set2f("uResolution", this.renderer.width, this.renderer.height);
     this.set3f("uTint", this.tint[0], this.tint[1], this.tint[2]);

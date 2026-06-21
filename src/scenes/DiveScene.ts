@@ -8,6 +8,7 @@ import Player, { PlayerInput } from "../entities/Player";
 import Bullets from "../entities/Bullets";
 import TuringCop from "../entities/TuringCop";
 import NeonPipeline from "../render/NeonPipeline";
+import { juiceShake, juiceFlash } from "../systems/juice";
 
 const TILE_FLOOR = 0;
 const TILE_WALL = 4;
@@ -302,13 +303,13 @@ export default class DiveScene extends Phaser.Scene implements EnemyHost {
       if (this.cycleMult > 1) cop.scaleHp(this.cycleMult);
       this.enemies.add(cop);
     }
-    this.cameras.main.shake(160, 0.004);
+    juiceShake(this, 160, 0.004);
   }
 
   private unlockCore() {
     this.coreUnlocked = true;
     this.core.setTint(0xff2bd6);
-    this.cameras.main.flash(260, 40, 200, 220);
+    juiceFlash(this, 260, 40, 200, 220);
     this.spark(this.core.x, this.core.y, 0x29e7ff, 4);
   }
 
@@ -331,7 +332,7 @@ export default class DiveScene extends Phaser.Scene implements EnemyHost {
       this.spark(x, y, 0x8a5cff, 3);
       if (!this.player.invulnerable && Phaser.Math.Distance.Between(this.player.x, this.player.y, x, y) <= r) {
         if (this.player.applyDamage(18)) this.finish(false);
-        this.cameras.main.shake(120, 0.006);
+        juiceShake(this, 120, 0.006);
       }
     });
   }
@@ -436,7 +437,7 @@ export default class DiveScene extends Phaser.Scene implements EnemyHost {
     const killed = cop.hurt(dmg, shieldMult);
     if (killed) {
       this.spark(cop.x, cop.y, COLORS.enemy, 2);
-      this.cameras.main.shake(80, 0.004);
+      juiceShake(this, 80, 0.004);
     } else {
       cop.knock(cop.x - this.player.x, cop.y - this.player.y, 140);
     }
@@ -461,7 +462,7 @@ export default class DiveScene extends Phaser.Scene implements EnemyHost {
     this.enemyBullets.kill(bullet);
     if (this.player.invulnerable) return;
     const died = this.player.applyDamage(dmg);
-    this.cameras.main.flash(110, 90, 0, 10);
+    juiceFlash(this, 110, 90, 0, 10);
     if (died) this.finish(false);
   }
 
@@ -480,7 +481,7 @@ export default class DiveScene extends Phaser.Scene implements EnemyHost {
     this.time.delayedCall(windupMs, () => {
       ring.destroy();
       this.spark(x, y, 0xff7a3c, 3);
-      this.cameras.main.shake(160, 0.009);
+      juiceShake(this, 160, 0.009);
       if (!this.player.invulnerable && Phaser.Math.Distance.Between(this.player.x, this.player.y, x, y) <= radius) {
         if (this.player.applyDamage(damage)) this.finish(false);
       }
@@ -571,8 +572,8 @@ export default class DiveScene extends Phaser.Scene implements EnemyHost {
       .setScrollFactor(0)
       .setDepth(2000);
     msg.setShadow(0, 0, "#00e5ff", 18, true, true);
-    if (success) this.cameras.main.flash(300, 40, 200, 160);
-    this.cameras.main.shake(300, 0.008);
+    if (success) juiceFlash(this, 300, 40, 200, 160);
+    juiceShake(this, 300, 0.008);
 
     this.time.delayedCall(1100, () => {
       this.cameras.main.fadeOut(300, 2, 6, 14);

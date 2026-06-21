@@ -3,6 +3,7 @@ import { VIEW_W, VIEW_H, COLORS } from "../config";
 import { PLAYER_KEY } from "../assets/manifest";
 import { CLASSES, getClass } from "../game/classes";
 import { loadSave } from "../systems/Save";
+import OptionsPanel from "../ui/OptionsPanel";
 
 /**
  * Class-select screen. Boot -> Select -> Game. Picks a ClassDef, stashes its id in
@@ -13,6 +14,7 @@ export default class SelectScene extends Phaser.Scene {
   private hover = -1;
   private frames!: Phaser.GameObjects.Graphics;
   private cardRects: Array<{ x: number; y: number; w: number; h: number }> = [];
+  private options!: OptionsPanel;
 
   constructor() {
     super("Select");
@@ -141,9 +143,32 @@ export default class SelectScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
 
+    // Options / accessibility (top-right).
+    this.options = new OptionsPanel(this);
+    const optBtn = this.add
+      .text(VIEW_W - 16, 14, "⚙ OPTIONS", {
+        fontFamily: "Courier New, monospace",
+        fontSize: "12px",
+        color: "#9aa3b2",
+      })
+      .setOrigin(1, 0)
+      .setInteractive({ useHandCursor: true });
+    optBtn.on("pointerover", () => optBtn.setColor("#eafdff"));
+    optBtn.on("pointerout", () => optBtn.setColor("#9aa3b2"));
+    optBtn.on("pointerdown", () => this.options.toggle());
+
     this.drawFrames();
 
     this.input.keyboard?.on("keydown", (e: KeyboardEvent) => {
+      if (e.key === "o" || e.key === "O") {
+        this.options.toggle();
+        return;
+      }
+      if (e.key === "Escape") {
+        this.options.close();
+        return;
+      }
+      if (this.options.isOpen) return;
       const k = parseInt(e.key, 10);
       if (k >= 1 && k <= CLASSES.length) this.select(k - 1);
     });
@@ -163,6 +188,7 @@ export default class SelectScene extends Phaser.Scene {
   }
 
   private select(i: number) {
+    if (this.options?.isOpen) return;
     this.registry.set("classId", CLASSES[i].id);
     this.registry.set("resume", false); // a class card = a fresh run (overwrites save)
     this.scene.start("Game");
