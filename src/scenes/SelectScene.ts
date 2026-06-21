@@ -4,6 +4,7 @@ import { PLAYER_KEY } from "../assets/manifest";
 import { CLASSES, getClass } from "../game/classes";
 import { loadSave } from "../systems/Save";
 import OptionsPanel from "../ui/OptionsPanel";
+import NeonPipeline from "../render/NeonPipeline";
 
 /**
  * Class-select screen. Boot -> Select -> Game. Picks a ClassDef, stashes its id in
@@ -15,6 +16,7 @@ export default class SelectScene extends Phaser.Scene {
   private frames!: Phaser.GameObjects.Graphics;
   private cardRects: Array<{ x: number; y: number; w: number; h: number }> = [];
   private options!: OptionsPanel;
+  private neon?: NeonPipeline;
 
   constructor() {
     super("Select");
@@ -25,21 +27,51 @@ export default class SelectScene extends Phaser.Scene {
     if (boot) boot.remove();
 
     this.cameras.main.setBackgroundColor(COLORS.bgVoid);
+    this.cameras.main.fadeIn(500, 2, 2, 8);
+    this.applyNeon();
 
-    this.add
-      .text(VIEW_W / 2, 30, "METROPHAGE", {
+    const title = this.add
+      .text(VIEW_W / 2, 28, "METROPHAGE", {
         fontFamily: "Courier New, monospace",
-        fontSize: "34px",
+        fontSize: "42px",
         color: "#ff2bd6",
         fontStyle: "bold",
       })
       .setOrigin(0.5)
-      .setShadow(0, 0, "#00e5ff", 16, true, true);
+      .setShadow(0, 0, "#00e5ff", 16, true, true)
+      .setAlpha(0);
+    // Entrance + a recurring broadcast-interference flicker on the neon title.
+    this.tweens.add({
+      targets: title,
+      alpha: 1,
+      scale: { from: 1.5, to: 1 },
+      duration: 700,
+      ease: "Back.out",
+    });
+    this.time.addEvent({
+      delay: 2600,
+      loop: true,
+      callback: () => {
+        if (!this.neon) return;
+        this.neon.glitch = 0.24;
+        this.tweens.add({ targets: this.neon, glitch: 0, duration: 300 });
+        this.tweens.add({ targets: title, x: VIEW_W / 2 + 3, duration: 60, yoyo: true });
+      },
+    });
+
     this.add
       .text(VIEW_W / 2, 62, "SELECT YOUR CYBERIAN", {
         fontFamily: "Courier New, monospace",
         fontSize: "13px",
         color: "#00e5ff",
+      })
+      .setOrigin(0.5);
+    this.add
+      .text(VIEW_W / 2, 74, "the city rebuilds what you burn", {
+        fontFamily: "Courier New, monospace",
+        fontSize: "10px",
+        color: "#6b7184",
+        fontStyle: "italic",
       })
       .setOrigin(0.5);
 
@@ -56,13 +88,10 @@ export default class SelectScene extends Phaser.Scene {
         )
         .setOrigin(0.5)
         .setInteractive({ useHandCursor: true });
-      cont.on("pointerdown", () => {
-        this.registry.set("resume", true);
-        this.scene.start("Game");
-      });
+      cont.on("pointerdown", () => this.startGame(true));
       this.input.keyboard?.on("keydown-ENTER", () => {
-        this.registry.set("resume", true);
-        this.scene.start("Game");
+        if (this.options.isOpen) return;
+        this.startGame(true);
       });
     }
 
@@ -187,10 +216,30 @@ export default class SelectScene extends Phaser.Scene {
     });
   }
 
+  private applyNeon() {
+    if (this.renderer.type !== Phaser.WEBGL) return;
+    const cam = this.cameras.main;
+    cam.setPostPipeline("Neon");
+    const p = cam.getPostPipeline("Neon");
+    this.neon = (Array.isArray(p) ? p[0] : p) as NeonPipeline;
+    if (this.neon) {
+      this.neon.heat = 0.46; // steady title glow, still legible
+      this.neon.tint = [1, 0.17, 0.84];
+      this.neon.tintAmt = 0.16;
+    }
+  }
+
+  /** Fade out, then enter the game (fresh class run or resume). */
+  private startGame(resume: boolean) {
+    if (this.options?.isOpen) return;
+    this.registry.set("resume", resume);
+    this.cameras.main.fadeOut(350, 2, 2, 8);
+    this.cameras.main.once("camerafadeoutcomplete", () => this.scene.start("Game"));
+  }
+
   private select(i: number) {
     if (this.options?.isOpen) return;
-    this.registry.set("classId", CLASSES[i].id);
-    this.registry.set("resume", false); // a class card = a fresh run (overwrites save)
-    this.scene.start("Game");
+    this.registry.set("classId", CLASSES[i].id); // a class card = a fresh run
+    this.startGame(false);
   }
 }
