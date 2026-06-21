@@ -47,9 +47,9 @@ export const ASSETS: Record<string, AssetEntry[]> = {
   // 256×64 image, sliced into sixteen 32×32 cells by addTilesetImage.
   tilesets: [{ key: TILESET_KEY, file: "assets/tilesets/tileset.png" }],
   sprites: [
-    { key: PLAYER_KEY, file: "assets/sprites/player.png", ...CHAR },
-    { key: COP_KEY, file: "assets/sprites/cop.png", ...CHAR },
-    { key: NPC_KEY, file: "assets/sprites/npc.png", ...CHAR },
+    { key: PLAYER_KEY, file: null, ...CHAR }, // code-authored pixel art (charart.ts)
+    { key: COP_KEY, file: null, ...CHAR }, // code-authored pixel art (charart.ts)
+    { key: NPC_KEY, file: null, ...CHAR }, // code-authored pixel art (charart.ts)
     { key: BULLET_KEY, file: null }, // procedural (no bullet art in pack)
     { key: AGENT_KEY, file: null }, // procedural light figure (tinted crowd)
   ],

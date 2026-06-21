@@ -16,6 +16,15 @@ import {
   AGENT_KEY,
   PORTRAIT_PLAYER_KEY,
 } from "./manifest";
+import { bakeFrames, mirror } from "./pixelart";
+import {
+  PLAYER_FRAMES,
+  PLAYER_PAL,
+  COP_FRAMES,
+  COP_PAL,
+  NPC_FRAMES,
+  NPC_PAL,
+} from "./charart";
 
 /** Build a 4-tile horizontal tileset strip: [floor, wall, plaza, lane]. */
 function makeTileset(scene: Phaser.Scene) {
@@ -48,24 +57,10 @@ function makeTileset(scene: Phaser.Scene) {
   g.destroy();
 }
 
-/** Build the player sprite: a glowing cyan body with a facing nub. */
+/** Player: a top-down cyberian, grayscale so the class tint recolors it. 4 frames. */
 function makePlayer(scene: Phaser.Scene) {
-  const size = 26;
-  const c = size / 2;
-  const g = scene.add.graphics();
-
-  // soft outer glow
-  g.fillStyle(COLORS.neonCyan, 0.18).fillCircle(c, c, 12);
-  // body
-  g.fillStyle(COLORS.player, 1).fillCircle(c, c, 9);
-  g.lineStyle(2, COLORS.neonCyan, 1).strokeCircle(c, c, 9);
-  // bright core
-  g.fillStyle(COLORS.playerCore, 1).fillCircle(c, c, 4);
-  // facing nub (points up = default facing)
-  g.fillStyle(COLORS.playerCore, 1).fillTriangle(c - 4, 4, c + 4, 4, c, -2);
-
-  g.generateTexture(PLAYER_KEY, size, size);
-  g.destroy();
+  const [down, left, , up] = PLAYER_FRAMES;
+  bakeFrames(scene, PLAYER_KEY, [down!, left!, mirror(left!), up!], PLAYER_PAL, 2);
 }
 
 /** Build the projectile: a bright bolt with a hot core and soft glow. */
@@ -80,20 +75,10 @@ function makeBullet(scene: Phaser.Scene) {
   g.destroy();
 }
 
-/** Build the Turing Cop: a red angular diamond — clearly hostile vs. the player disc. */
+/** Turing Cop: grayscale armored trooper, tinted per tier. 4 frames. */
 function makeCop(scene: Phaser.Scene) {
-  const size = 28;
-  const c = size / 2;
-  const g = scene.add.graphics();
-  const diamond = (r: number) => [c, c - r, c + r, c, c, c + r, c - r, c];
-
-  g.fillStyle(COLORS.enemy, 0.16).fillCircle(c, c, 13); // glow
-  g.fillStyle(COLORS.enemy, 1).fillPoints(toPts(diamond(11)), true);
-  g.lineStyle(2, COLORS.enemyEdge, 1).strokePoints(toPts(diamond(11)), true, true);
-  g.fillStyle(0x2a0712, 1).fillPoints(toPts(diamond(6)), true); // dark inner
-  g.fillStyle(COLORS.enemyCore, 1).fillRect(c - 1.5, c - 4, 3, 8); // visor slit (faces up)
-  g.generateTexture(COP_KEY, size, size);
-  g.destroy();
+  const [down, left, , up] = COP_FRAMES;
+  bakeFrames(scene, COP_KEY, [down!, left!, mirror(left!), up!], COP_PAL, 2);
 }
 
 /** Build the infection node: a hexagonal city terminal/pylon. */
@@ -118,18 +103,10 @@ function makeNode(scene: Phaser.Scene) {
   g.destroy();
 }
 
-/** Build the friendly NPC: a lime contact, distinct from cyan player / red cops. */
+/** Friendly NPC (the FIXER contact): lime civilian w/ a yellow antenna. 4 frames. */
 function makeNpc(scene: Phaser.Scene) {
-  const size = 26;
-  const c = size / 2;
-  const g = scene.add.graphics();
-  g.fillStyle(COLORS.npc, 0.16).fillCircle(c, c, 12);
-  g.fillStyle(COLORS.npc, 1).fillCircle(c, c, 9);
-  g.lineStyle(2, COLORS.neonYellow, 1).strokeCircle(c, c, 9);
-  g.fillStyle(0x0c2a08, 1).fillCircle(c, c, 5);
-  g.fillStyle(COLORS.neonYellow, 1).fillCircle(c, 4, 2); // antenna bead
-  g.generateTexture(NPC_KEY, size, size);
-  g.destroy();
+  const [down, left, , up] = NPC_FRAMES;
+  bakeFrames(scene, NPC_KEY, [down!, left!, mirror(left!), up!], NPC_PAL, 2);
 }
 
 /** Build an ambient citizen: a light figure (tinted per-instance in the scene). */

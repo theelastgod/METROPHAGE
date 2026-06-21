@@ -34,7 +34,7 @@ export const ENEMY_TIERS: Record<string, EnemyTierDef> = {
   patrol: {
     id: "patrol",
     name: "PATROL",
-    tint: null,
+    tint: 0xff5a6e, // hostile red (the cop sprite is now grayscale, tinted per tier)
     scale: 1,
     bodyRadius: 9,
     hp: 60,
