@@ -45,7 +45,7 @@ const CHAR: Pick<AssetEntry, "frameWidth" | "frameHeight"> = {
 
 export const ASSETS: Record<string, AssetEntry[]> = {
   // 256×64 image, sliced into sixteen 32×32 cells by addTilesetImage.
-  tilesets: [{ key: TILESET_KEY, file: "assets/tilesets/tileset.png" }],
+  tilesets: [{ key: TILESET_KEY, file: null }], // code-authored tileset (textures.ts)
   sprites: [
     { key: PLAYER_KEY, file: null, ...CHAR }, // code-authored pixel art (charart.ts)
     { key: COP_KEY, file: null, ...CHAR }, // code-authored pixel art (charart.ts)
@@ -54,14 +54,14 @@ export const ASSETS: Record<string, AssetEntry[]> = {
     { key: AGENT_KEY, file: null }, // procedural light figure (tinted crowd)
   ],
   objects: [
-    { key: NODE_KEY, file: "assets/objects/node_clean.png" },
-    { key: NODE_INFECTED_KEY, file: "assets/objects/node_infected.png" },
-    { key: CRATE_KEY, file: "assets/objects/crate.png" },
-    { key: STREETLIGHT_KEY, file: "assets/objects/streetlight.png" },
+    { key: NODE_KEY, file: null }, // code-authored (textures.ts)
+    { key: NODE_INFECTED_KEY, file: null },
+    { key: CRATE_KEY, file: null },
+    { key: STREETLIGHT_KEY, file: null },
   ],
   fx: [
-    { key: GLOW_KEY, file: "assets/fx/glow.png" },
-    { key: SPARK_KEY, file: "assets/fx/spark.png" },
+    { key: GLOW_KEY, file: null }, // code-authored radial glow
+    { key: SPARK_KEY, file: null }, // code-authored hit star
   ],
   portraits: [
     { key: PORTRAIT_PLAYER_KEY, file: "assets/portraits/portrait_placeholder.png" },
