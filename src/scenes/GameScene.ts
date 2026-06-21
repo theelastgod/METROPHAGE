@@ -58,6 +58,7 @@ import Boss from "../entities/Boss";
 import { getBoss } from "../game/bosses";
 import NeonPipeline from "../render/NeonPipeline";
 import Synth from "../audio/Synth";
+import Pops from "../render/Pops";
 import { juiceShake, juiceFlash } from "../systems/juice";
 import Hud from "../ui/Hud";
 import DialogueBox, { DialoguePage } from "../ui/DialogueBox";
@@ -118,6 +119,8 @@ export default class GameScene
   private pickups!: Phaser.Physics.Arcade.Group;
   private nextAutosaveAt = 0;
   private synth = new Synth(); // persists across scene.restart()
+  private pops!: Pops; // pooled damage-number / callout text
+  private prevHeatTier = 0;
   private won = false;
   private traveling = false;
   private hitStopActive = false;
@@ -175,6 +178,7 @@ export default class GameScene
     this.blackoutOverlay?.destroy();
     this.blackoutOverlay = undefined;
     this.stormStrikeAt = 0;
+    this.prevHeatTier = 0;
     this.overdriveActive = false;
     this.overdriveUntil = 0;
     this.nextSpawnAt = 0;
@@ -319,7 +323,8 @@ export default class GameScene
     if (!pk.active) return;
     if (this.inventory.add(pk.item)) {
       this.floatText(pk.item.name, "#39ff88");
-      this.synth.infect();
+      this.pops.pop(pk.x, pk.y - 10, "+ " + pk.item.name, "#39ff88", 12, 32);
+      this.synth.pickup();
       this.autosave(true);
     } else {
       this.floatText("INVENTORY FULL", "#ff3b6b");
@@ -400,7 +405,17 @@ export default class GameScene
     if (gained > 0) {
       this.recomputeStats();
       this.floatText(`LEVEL ${this.progression.level}`, "#f7ff3c");
+      this.synth.levelUp();
+      this.spark(this.player.x, this.player.y, 0xf7ff3c, 4);
     }
+  }
+
+  /** Crossing up a Heat tier — pop + swell + brief accent flash. */
+  private onHeatTierUp(tier: number) {
+    const label = tier >= 4 ? "OVERDRIVE READY" : tier >= 2 ? "OVERCLOCK" : "HEAT RISING";
+    this.pops.pop(this.player.x, this.player.y - 26, `▲ ${label}`, "#f7ff3c", tier >= 2 ? 16 : 13, 34);
+    this.synth.tierUp(tier);
+    if (tier >= 2) juiceFlash(this, 160, 60, 40, 0);
   }
 
   private createNpc() {
@@ -475,6 +490,7 @@ export default class GameScene
 
   private setupUi() {
     this.hud = new Hud(this);
+    this.pops = new Pops(this);
     this.bossBar = new BossBar(this);
     // Bottom-center ticker — clear of the HUD panel + boss bar.
     this.eventBanner = this.add
@@ -877,11 +893,18 @@ export default class GameScene
       }
       this.synth.setIntensity(Math.max(this.heat.normalized, sing * 0.5));
     }
+    // Crossing UP a Heat tier = powering up: pop + swell + flash.
+    const tier = this.heat.tier;
+    if (tier > this.prevHeatTier) this.onHeatTierUp(tier);
+    this.prevHeatTier = tier;
+
     this.player.speedMult = this.spdMult;
     this.player.tickShield(now, delta);
 
     const input = this.readInput();
+    const willDash = input.dash && this.player.dashReady;
     this.player.step(input);
+    if (willDash) this.synth.dash();
 
     const angle = this.player.tryFire(input);
     if (angle !== null) this.fireWeapon(angle);
@@ -1669,6 +1692,16 @@ export default class GameScene
     const wasShielded = cop.shielded;
     const killed = cop.hurt(dmg, shieldMult);
     if (wasShielded && !cop.shielded && !killed) this.contracts.onShieldBreak();
+    if (juice) {
+      const shieldHit = wasShielded && cop.shielded; // absorbed by ICE shield
+      this.pops.pop(
+        cop.x,
+        cop.y - 14,
+        String(Math.round(dmg)),
+        shieldHit ? "#6ab0ff" : killed ? "#ffffff" : this.classDef.hex,
+        killed ? 19 : 14,
+      );
+    }
     this.heat.add(dmg * HEAT.perDamage * heatGain, this.time.now);
     if (killed) {
       this.heat.add(HEAT.perKill * heatGain, this.time.now);

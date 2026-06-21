@@ -247,6 +247,30 @@ export default class Synth {
     this.blip("sawtooth", 420, 38, 1.5, 0.18);
     this.burst(1.1, 0.13);
   }
+  /** Item picked up — short bright tick. */
+  pickup() {
+    this.blip("square", 1180, 1480, 0.07, 0.05);
+  }
+  /** Dash — quick downward woosh. */
+  dash() {
+    this.burst(0.16, 0.05);
+    this.blip("sawtooth", 700, 220, 0.12, 0.035);
+  }
+  /** Level up — rising two-note flourish. */
+  levelUp() {
+    this.blip("triangle", 660, 990, 0.18, 0.08);
+    this.delayed(90, () => this.blip("triangle", 990, 1320, 0.22, 0.08));
+  }
+  /** Heat tier crossed — a rising power swell (bigger at the top tiers). */
+  tierUp(tier: number) {
+    const base = 300 + tier * 130;
+    this.blip("sawtooth", base, base * 2.2, 0.2, 0.06 + tier * 0.01);
+  }
+
+  private delayed(ms: number, fn: () => void) {
+    if (!this.ctx) return;
+    window.setTimeout(fn, ms);
+  }
 
   private blip(
     type: OscillatorType,
