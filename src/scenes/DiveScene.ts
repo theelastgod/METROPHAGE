@@ -9,6 +9,7 @@ import Bullets from "../entities/Bullets";
 import TuringCop from "../entities/TuringCop";
 import NeonPipeline from "../render/NeonPipeline";
 import { juiceShake, juiceFlash } from "../systems/juice";
+import Synth from "../audio/Synth";
 
 const TILE_FLOOR = 0;
 const TILE_WALL = 4;
@@ -51,6 +52,7 @@ export default class DiveScene extends Phaser.Scene implements EnemyHost {
   private nextHazardAt = 0;
   private ending = false;
 
+  private synth?: Synth; // shared GameScene synth (from the registry)
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
   private wasd!: Record<"W" | "A" | "S" | "D", Phaser.Input.Keyboard.Key>;
   private dashKey!: Phaser.Input.Keyboard.Key;
@@ -68,6 +70,7 @@ export default class DiveScene extends Phaser.Scene implements EnemyHost {
     this.classDef = getClass(data.classId);
     this.dive = data.dive;
     this.cycleMult = data.cycleMult ?? 1;
+    this.synth = this.registry.get("synth") as Synth | undefined;
     this.coreHp = this.coreMaxHp = Math.round(220 + data.level * 12);
     this.coreUnlocked = false;
     this.waveIndex = 0;
@@ -359,6 +362,7 @@ export default class DiveScene extends Phaser.Scene implements EnemyHost {
   }
 
   private fireWeapon(angle: number) {
+    this.synth?.shoot();
     const prim = this.classDef.primary;
     switch (prim.kind) {
       case "spread": {
@@ -438,8 +442,10 @@ export default class DiveScene extends Phaser.Scene implements EnemyHost {
     if (killed) {
       this.spark(cop.x, cop.y, COLORS.enemy, 2);
       juiceShake(this, 80, 0.004);
+      this.synth?.kill();
     } else {
       cop.knock(cop.x - this.player.x, cop.y - this.player.y, 140);
+      this.synth?.hit();
     }
   }
 
@@ -558,6 +564,7 @@ export default class DiveScene extends Phaser.Scene implements EnemyHost {
       fragmentId: success ? this.dive.fragmentId : undefined,
     };
     this.registry.set("diveResult", result);
+    if (success) this.synth?.iceShatter();
 
     const cx = this.scale.width / 2;
     const cy = this.scale.height / 2;

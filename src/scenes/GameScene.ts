@@ -121,6 +121,7 @@ export default class GameScene
   private synth = new Synth(); // persists across scene.restart()
   private pops!: Pops; // pooled damage-number / callout text
   private prevHeatTier = 0;
+  private combatHeat = 0; // 0..1, spikes on hits + decays — swells the music in fights
   private won = false;
   private traveling = false;
   private hitStopActive = false;
@@ -179,6 +180,7 @@ export default class GameScene
     this.blackoutOverlay = undefined;
     this.stormStrikeAt = 0;
     this.prevHeatTier = 0;
+    this.combatHeat = 0;
     this.overdriveActive = false;
     this.overdriveUntil = 0;
     this.nextSpawnAt = 0;
@@ -216,6 +218,7 @@ export default class GameScene
     // Audio needs a user gesture; the intro requires a click/key to advance.
     this.input.once("pointerdown", () => this.synth.ensureStarted());
     this.input.keyboard?.once("keydown", () => this.synth.ensureStarted());
+    this.registry.set("synth", this.synth); // shared with the DiveScene
 
     this.buildDistrict();
     this.spawnPlayer();
@@ -862,6 +865,7 @@ export default class GameScene
 
     this.updateHud();
     this.autosave();
+    this.synth.setDialogueDuck(this.dialogue.isOpen); // duck music under dialogue
     if (
       this.skillPanel.isOpen ||
       this.inventoryPanel.isOpen ||
@@ -891,7 +895,9 @@ export default class GameScene
         this.neon.heat = intensity;
         this.neon.glitch = sing > 0.82 ? ((sing - 0.82) / 0.18) * 0.3 : 0;
       }
-      this.synth.setIntensity(Math.max(this.heat.normalized, sing * 0.5));
+      // Music swells with Heat, the city-wide Singularity, AND live combat.
+      this.combatHeat = Math.max(0, this.combatHeat - delta / 2600);
+      this.synth.setIntensity(Math.max(this.heat.normalized, this.combatHeat, sing * 0.5));
     }
     // Crossing UP a Heat tier = powering up: pop + swell + flash.
     const tier = this.heat.tier;
@@ -1693,6 +1699,7 @@ export default class GameScene
     const killed = cop.hurt(dmg, shieldMult);
     if (wasShielded && !cop.shielded && !killed) this.contracts.onShieldBreak();
     if (juice) {
+      this.combatHeat = 1; // swell the music in combat
       const shieldHit = wasShielded && cop.shielded; // absorbed by ICE shield
       this.pops.pop(
         cop.x,
@@ -1994,6 +2001,7 @@ export default class GameScene
 
   /** Player-damage feedback: red screen flash + shake. */
   private onPlayerHurt() {
+    this.combatHeat = 1; // taking fire swells the music too
     juiceFlash(this, 120, 90, 0, 10);
     juiceShake(this, 70, 0.005);
     this.synth.hit();

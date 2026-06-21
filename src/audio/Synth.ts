@@ -18,7 +18,9 @@ const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
 export default class Synth {
   private ctx?: AudioContext;
   private master?: GainNode;
+  private limiter?: DynamicsCompressorNode; // master limiter — no clipping when SFX stack
   private musicBus?: GainNode; // lead + bass + hats (scaled by settings.music)
+  private musicDuck?: GainNode; // ducks music under dialogue
   private sfxBus?: GainNode; // one-shots (scaled by settings.sfx)
   private reverb?: ConvolverNode;
   private leadBus?: GainNode;
@@ -74,12 +76,24 @@ export default class Synth {
     const s = getSettings();
     this.master = ctx.createGain();
     this.master.gain.value = 0.0001;
-    this.master.connect(ctx.destination);
 
-    // Music + SFX channels under the master, scaled by the user volume settings.
+    // Master limiter so stacked SFX never clip.
+    this.limiter = ctx.createDynamicsCompressor();
+    this.limiter.threshold.value = -6;
+    this.limiter.knee.value = 0;
+    this.limiter.ratio.value = 20;
+    this.limiter.attack.value = 0.003;
+    this.limiter.release.value = 0.08;
+    this.master.connect(this.limiter);
+    this.limiter.connect(ctx.destination);
+
+    // Music (via a duck node) + SFX channels, scaled by the user volume settings.
+    this.musicDuck = ctx.createGain();
+    this.musicDuck.gain.value = 1;
+    this.musicDuck.connect(this.master);
     this.musicBus = ctx.createGain();
     this.musicBus.gain.value = s.music;
-    this.musicBus.connect(this.master);
+    this.musicBus.connect(this.musicDuck);
     this.sfxBus = ctx.createGain();
     this.sfxBus.gain.value = s.sfx;
     this.sfxBus.connect(this.master);
@@ -109,6 +123,12 @@ export default class Synth {
     this.master?.gain.setTargetAtTime(MASTER_BASE * s.master, t, 0.05);
     this.musicBus?.gain.setTargetAtTime(s.music, t, 0.05);
     this.sfxBus?.gain.setTargetAtTime(s.sfx, t, 0.05);
+  }
+
+  /** Duck the music under dialogue so spoken lines read clearly. */
+  setDialogueDuck(on: boolean) {
+    if (!this.ctx || !this.musicDuck) return;
+    this.musicDuck.gain.setTargetAtTime(on ? 0.4 : 1, this.ctx.currentTime, 0.08);
   }
 
   private impulse(dur: number, decay: number): AudioBuffer {
@@ -265,6 +285,12 @@ export default class Synth {
   tierUp(tier: number) {
     const base = 300 + tier * 130;
     this.blip("sawtooth", base, base * 2.2, 0.2, 0.06 + tier * 0.01);
+  }
+  /** ICE core shattered — bright crack + glassy burst. */
+  iceShatter() {
+    this.blip("square", 1600, 240, 0.35, 0.12);
+    this.burst(0.45, 0.12);
+    this.delayed(60, () => this.blip("triangle", 2100, 900, 0.2, 0.07));
   }
 
   private delayed(ms: number, fn: () => void) {
