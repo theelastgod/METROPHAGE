@@ -64,14 +64,8 @@ export const ASSETS: Record<string, AssetEntry[]> = {
     { key: SPARK_KEY, file: null }, // code-authored hit star
   ],
   portraits: [
-    { key: PORTRAIT_PLAYER_KEY, file: "assets/portraits/portrait_placeholder.png" },
-    // Real (side-on) art used for a portrait, per the art-direction decision.
-    {
-      key: PORTRAIT_NPC_KEY,
-      file: "assets/portraits/striker_idle.png",
-      frameWidth: 96,
-      frameHeight: 96,
-    },
+    { key: PORTRAIT_PLAYER_KEY, file: null }, // code-authored cyberian bust
+    { key: PORTRAIT_NPC_KEY, file: null }, // code-authored FIXER bust (frame 0 registered)
   ],
   ui: [
     { key: UI_FRAME_KEY, file: "assets/ui/skill_frame.png" },

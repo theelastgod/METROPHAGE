@@ -5,7 +5,6 @@
 // art is added to the manifest, the matching generator is simply skipped.
 
 import Phaser from "phaser";
-import { COLORS } from "../config";
 import {
   TILESET_KEY,
   PLAYER_KEY,
@@ -20,8 +19,9 @@ import {
   GLOW_KEY,
   SPARK_KEY,
   PORTRAIT_PLAYER_KEY,
+  PORTRAIT_NPC_KEY,
 } from "./manifest";
-import { bakeFrames, bakeCanvas, mirror } from "./pixelart";
+import { bakeFrames, bakeCanvas, bakeSprite, mirror } from "./pixelart";
 import {
   PLAYER_FRAMES,
   PLAYER_PAL,
@@ -121,16 +121,18 @@ function makePlayer(scene: Phaser.Scene) {
   bakeFrames(scene, PLAYER_KEY, [down!, left!, mirror(left!), up!], PLAYER_PAL, 2);
 }
 
-/** Build the projectile: a bright bolt with a hot core and soft glow. */
+/** Projectile: a hot white bolt with a soft glow (tinted to the class per shot). */
 function makeBullet(scene: Phaser.Scene) {
-  const size = 12;
-  const c = size / 2;
-  const g = scene.add.graphics();
-  g.fillStyle(COLORS.bulletGlow, 0.25).fillCircle(c, c, 6);
-  g.fillStyle(COLORS.bullet, 1).fillCircle(c, c, 3.5);
-  g.fillStyle(COLORS.spark, 1).fillCircle(c, c, 1.6);
-  g.generateTexture(BULLET_KEY, size, size);
-  g.destroy();
+  bakeCanvas(scene, BULLET_KEY, 14, 14, (ctx) => {
+    const grad = ctx.createRadialGradient(7, 7, 0.5, 7, 7, 7);
+    grad.addColorStop(0, "rgba(255,255,255,1)");
+    grad.addColorStop(0.4, "rgba(255,255,255,0.8)");
+    grad.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 14, 14);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(6, 6, 2, 2); // hot core
+  });
 }
 
 /** Turing Cop: grayscale armored trooper, tinted per tier. 4 frames. */
@@ -282,38 +284,140 @@ function makeStreetlight(scene: Phaser.Scene) {
   });
 }
 
-/** Build an ambient citizen: a light figure (tinted per-instance in the scene). */
+/** Ambient citizen: a small grayscale civilian, tinted per-instance by the crowd. */
 function makeAgent(scene: Phaser.Scene) {
-  const w = 18;
-  const h = 22;
-  const cx = w / 2;
-  const g = scene.add.graphics();
-  // near-white so per-instance tints read true; nub (head) points "up"
-  g.fillStyle(0xe6f2ff, 1).fillRoundedRect(2, 8, w - 4, h - 8, 5); // body
-  g.fillStyle(0xffffff, 1).fillCircle(cx, 6, 5); // head
-  g.lineStyle(1, 0x0a0a16, 0.5).strokeRoundedRect(2, 8, w - 4, h - 8, 5);
-  g.generateTexture(AGENT_KEY, w, h);
-  g.destroy();
+  const map = [
+    "..oooo..",
+    ".obbbbo.",
+    ".obccbo.",
+    ".obddbo.",
+    ".obccbo.",
+    "obbccbbo",
+    "obccccbo",
+    "obccccbo",
+    "obbccbbo",
+    ".obbbbo.",
+    ".ob..bo.",
+    ".oo..oo.",
+  ];
+  bakeSprite(scene, AGENT_KEY, map, PLAYER_PAL, 2);
 }
 
-/** Build the player dialogue portrait: a neon cyberian visor-head bust. */
+/** Player dialogue portrait: a detailed neon cyberian bust against the city. */
 function makePortraitPlayer(scene: Phaser.Scene) {
-  const w = 96;
-  const h = 96;
-  const g = scene.add.graphics();
-  g.fillStyle(0x0a1420, 1).fillRect(0, 0, w, h);
-  // shoulders
-  g.fillStyle(0x13243a, 1).fillRoundedRect(14, 64, w - 28, 40, 10);
-  // head
-  g.fillStyle(0x1b3550, 1).fillRoundedRect(28, 20, 40, 46, 12);
-  g.lineStyle(2, COLORS.neonCyan, 0.9).strokeRoundedRect(28, 20, 40, 46, 12);
-  // visor
-  g.fillStyle(COLORS.neonCyan, 1).fillRoundedRect(33, 36, 30, 9, 3);
-  g.fillStyle(COLORS.playerCore, 1).fillRect(36, 38, 6, 4);
-  // jack
-  g.fillStyle(COLORS.neonMagenta, 0.9).fillRect(66, 28, 4, 12);
-  g.generateTexture(PORTRAIT_PLAYER_KEY, w, h);
-  g.destroy();
+  bakeCanvas(scene, PORTRAIT_PLAYER_KEY, 96, 96, (ctx) => {
+    const cssc = (c: number) => "#" + (c & 0xffffff).toString(16).padStart(6, "0");
+    const px = (x: number, y: number, w: number, h: number, c: number, a = 1) => {
+      ctx.globalAlpha = a;
+      ctx.fillStyle = cssc(c);
+      ctx.fillRect(x, y, w, h);
+      ctx.globalAlpha = 1;
+    };
+    // backdrop city + faint grid + distant window lights
+    px(0, 0, 96, 96, 0x080a14);
+    for (let i = 8; i < 96; i += 8) {
+      px(0, i, 96, 1, 0x0e1422, 0.5);
+      px(i, 0, 1, 96, 0x0e1422, 0.5);
+    }
+    const lights: Array<[number, number, number]> = [
+      [12, 16, 0x29e7ff], [80, 22, 0xff2bd6], [18, 68, 0x29e7ff], [82, 60, 0x39ff88], [70, 14, 0x29e7ff],
+    ];
+    for (const [x, y, c] of lights) px(x, y, 2, 2, c, 0.55);
+    const vg = ctx.createRadialGradient(48, 42, 18, 48, 50, 62);
+    vg.addColorStop(0, "rgba(0,0,0,0)");
+    vg.addColorStop(1, "rgba(0,0,0,0.72)");
+    ctx.fillStyle = vg;
+    ctx.fillRect(0, 0, 96, 96);
+
+    // shoulders / armor
+    px(12, 72, 72, 24, 0x141a2c);
+    px(12, 72, 72, 3, 0x222a44);
+    px(12, 72, 3, 24, 0x2a3450);
+    px(19, 78, 7, 14, 0x29e7ff, 0.35);
+    px(70, 78, 7, 14, 0xff2bd6, 0.3);
+    // neck
+    px(40, 62, 16, 12, 0x1a2236);
+    px(40, 62, 2, 12, 0x2a3450);
+
+    // head / helmet
+    px(28, 16, 40, 50, 0x161c30);
+    px(28, 16, 3, 50, 0x33405e); // left neon rim
+    px(28, 16, 40, 3, 0x222a44); // top
+    px(65, 16, 3, 50, 0x0d1120); // right shadow
+    px(31, 66, 34, 2, 0x0a0c16); // jaw shadow
+    // crest
+    px(43, 9, 10, 8, 0x1a2236);
+    px(45, 7, 6, 2, 0x29e7ff, 0.75);
+
+    // visor — glowing band with scanlines + reflection
+    px(31, 34, 34, 15, 0x06121e);
+    px(33, 36, 30, 11, 0x0a3a52);
+    px(33, 37, 30, 3, 0x29e7ff, 0.95);
+    px(33, 41, 30, 1, 0x29e7ff, 0.5);
+    px(33, 44, 30, 2, 0x18708e, 0.85);
+    px(36, 37, 6, 4, 0xffffff, 0.9); // hot reflection
+    px(54, 38, 4, 2, 0xffffff, 0.5);
+
+    // data-jack (right temple, magenta) + mouth grille
+    px(64, 28, 6, 3, 0xff2bd6);
+    px(67, 31, 2, 9, 0x8a1a6a);
+    px(40, 54, 16, 2, 0x0d1120);
+    px(41, 52, 14, 1, 0x222a44);
+  });
+}
+
+/** FIXER dialogue portrait: a hooded streetwise contact, amber-lit + rebreather. */
+function makePortraitNpc(scene: Phaser.Scene) {
+  bakeCanvas(scene, PORTRAIT_NPC_KEY, 96, 96, (ctx) => {
+    const cssc = (c: number) => "#" + (c & 0xffffff).toString(16).padStart(6, "0");
+    const px = (x: number, y: number, w: number, h: number, c: number, a = 1) => {
+      ctx.globalAlpha = a;
+      ctx.fillStyle = cssc(c);
+      ctx.fillRect(x, y, w, h);
+      ctx.globalAlpha = 1;
+    };
+    px(0, 0, 96, 96, 0x0c0a08); // warm-dark backdrop
+    for (let i = 8; i < 96; i += 8) {
+      px(0, i, 96, 1, 0x140f0a, 0.5);
+      px(i, 0, 1, 96, 0x140f0a, 0.5);
+    }
+    const lights: Array<[number, number, number]> = [
+      [14, 18, 0xf7a23c], [78, 24, 0xf7ff3c], [20, 70, 0xf7a23c], [82, 60, 0xff7a3c],
+    ];
+    for (const [x, y, c] of lights) px(x, y, 2, 2, c, 0.5);
+    const vg = ctx.createRadialGradient(48, 44, 18, 48, 50, 62);
+    vg.addColorStop(0, "rgba(0,0,0,0)");
+    vg.addColorStop(1, "rgba(0,0,0,0.76)");
+    ctx.fillStyle = vg;
+    ctx.fillRect(0, 0, 96, 96);
+
+    // coat shoulders
+    px(10, 72, 76, 24, 0x1a1410);
+    px(10, 72, 76, 3, 0x2c2418);
+    px(10, 72, 3, 24, 0x342a1a);
+    px(17, 78, 8, 15, 0xf7a23c, 0.22);
+    // hood / cowl over a shadowed face
+    px(24, 12, 48, 56, 0x14100c);
+    px(24, 12, 3, 56, 0x342a1a); // warm rim
+    px(69, 12, 3, 56, 0x090705);
+    px(40, 8, 16, 6, 0x14100c); // hood fold
+    px(30, 19, 36, 45, 0x090705); // face cavity (deep shadow)
+    // glowing amber optic + dimmer eye
+    px(35, 35, 11, 6, 0x2a1a08);
+    px(36, 36, 9, 3, 0xf7a23c, 0.95);
+    px(37, 36, 3, 2, 0xffffff, 0.9);
+    px(51, 36, 8, 3, 0x6a4a1a, 0.7);
+    // rebreather mask
+    px(37, 47, 22, 13, 0x1c1610);
+    px(37, 47, 22, 2, 0x342818);
+    px(42, 51, 3, 5, 0x4a3a20);
+    px(47, 51, 3, 5, 0x4a3a20);
+    px(52, 51, 3, 5, 0x4a3a20);
+    px(45, 58, 6, 2, 0xf7a23c, 0.55); // vent glow
+  });
+  // The dialogue requests frame 0 (the striker sheet was multi-frame).
+  const tex = scene.textures.get(PORTRAIT_NPC_KEY);
+  if (!tex.has("0")) tex.add(0, 0, 0, 0, 96, 96);
 }
 
 /**
@@ -335,4 +439,5 @@ export function generatePlaceholders(scene: Phaser.Scene) {
   if (need(GLOW_KEY)) makeGlow(scene);
   if (need(SPARK_KEY)) makeSpark(scene);
   if (need(PORTRAIT_PLAYER_KEY)) makePortraitPlayer(scene);
+  if (need(PORTRAIT_NPC_KEY)) makePortraitNpc(scene);
 }
