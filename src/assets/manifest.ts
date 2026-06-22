@@ -68,8 +68,8 @@ export const ASSETS: Record<string, AssetEntry[]> = {
     { key: PORTRAIT_NPC_KEY, file: null }, // code-authored FIXER bust (frame 0 registered)
   ],
   ui: [
-    { key: UI_FRAME_KEY, file: "assets/ui/skill_frame.png" },
-    { key: UI_GUN_KEY, file: "assets/ui/gun_01.png" },
+    { key: UI_FRAME_KEY, file: null }, // code-authored neon terminal/screen frame
+    { key: UI_GUN_KEY, file: null }, // code-authored weapon icon
   ],
   // Build-time generated VO (ElevenLabs). Optional flavour; the procedural
   // meltdown sting plays regardless. See tools/gen-vo.sh + ART_NOTES.md.

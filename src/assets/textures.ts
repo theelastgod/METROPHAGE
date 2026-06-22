@@ -20,6 +20,8 @@ import {
   SPARK_KEY,
   PORTRAIT_PLAYER_KEY,
   PORTRAIT_NPC_KEY,
+  UI_FRAME_KEY,
+  UI_GUN_KEY,
 } from "./manifest";
 import { bakeFrames, bakeCanvas, bakeSprite, mirror } from "./pixelart";
 import {
@@ -284,6 +286,60 @@ function makeStreetlight(scene: Phaser.Scene) {
   });
 }
 
+/** UI frame — a neon terminal/screen panel. Grayscale so it tints (terminals are
+ *  colored) and reads as a clean frame untinted (dialogue portrait + weapon slot). */
+function makeUiFrame(scene: Phaser.Scene) {
+  bakeCanvas(scene, UI_FRAME_KEY, 32, 32, (ctx) => {
+    const c = (col: number) => "#" + (col & 0xffffff).toString(16).padStart(6, "0");
+    const px = (x: number, y: number, w: number, h: number, col: number, a = 1) => {
+      ctx.globalAlpha = a;
+      ctx.fillStyle = c(col);
+      ctx.fillRect(x, y, w, h);
+      ctx.globalAlpha = 1;
+    };
+    px(3, 3, 26, 26, 0x0a0e1a, 0.82); // dark screen
+    for (let y = 7; y < 28; y += 4) px(6, y, 20, 1, 0xffffff, 0.12); // scanlines
+    px(13, 14, 6, 4, 0xffffff, 0.55); // centre indicator
+    // dim edges
+    px(2, 2, 28, 1, 0xffffff, 0.4);
+    px(2, 29, 28, 1, 0xffffff, 0.4);
+    px(2, 2, 1, 28, 0xffffff, 0.4);
+    px(29, 2, 1, 28, 0xffffff, 0.4);
+    // bright corner brackets
+    px(2, 2, 8, 2, 0xffffff);
+    px(2, 2, 2, 8, 0xffffff); // TL
+    px(22, 2, 8, 2, 0xffffff);
+    px(28, 2, 2, 8, 0xffffff); // TR
+    px(2, 28, 8, 2, 0xffffff);
+    px(2, 22, 2, 8, 0xffffff); // BL
+    px(22, 28, 8, 2, 0xffffff);
+    px(28, 22, 2, 8, 0xffffff); // BR
+  });
+}
+
+/** HUD weapon icon — a sleek neon sidearm silhouette. */
+function makeUiGun(scene: Phaser.Scene) {
+  bakeCanvas(scene, UI_GUN_KEY, 64, 32, (ctx) => {
+    const c = (col: number) => "#" + (col & 0xffffff).toString(16).padStart(6, "0");
+    const px = (x: number, y: number, w: number, h: number, col: number, a = 1) => {
+      ctx.globalAlpha = a;
+      ctx.fillStyle = c(col);
+      ctx.fillRect(x, y, w, h);
+      ctx.globalAlpha = 1;
+    };
+    px(10, 11, 34, 9, 0x474e66); // receiver
+    px(10, 11, 34, 2, 0x9aa0b8); // top highlight
+    px(10, 18, 34, 2, 0x222a3c); // bottom shadow
+    px(42, 13, 18, 4, 0x747c98); // barrel
+    px(42, 13, 18, 1, 0xc8d0e0);
+    px(58, 12, 3, 6, 0x29e7ff); // muzzle glow
+    px(16, 20, 10, 10, 0x3a4156); // grip
+    px(16, 20, 2, 10, 0x586488);
+    px(26, 14, 5, 7, 0xff2bd6, 0.85); // trigger / accent
+    px(12, 13, 6, 3, 0x29e7ff, 0.7); // sight
+  });
+}
+
 /** Ambient citizen: a small grayscale civilian, tinted per-instance by the crowd. */
 function makeAgent(scene: Phaser.Scene) {
   const map = [
@@ -440,4 +496,6 @@ export function generatePlaceholders(scene: Phaser.Scene) {
   if (need(SPARK_KEY)) makeSpark(scene);
   if (need(PORTRAIT_PLAYER_KEY)) makePortraitPlayer(scene);
   if (need(PORTRAIT_NPC_KEY)) makePortraitNpc(scene);
+  if (need(UI_FRAME_KEY)) makeUiFrame(scene);
+  if (need(UI_GUN_KEY)) makeUiGun(scene);
 }
