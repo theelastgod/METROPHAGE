@@ -646,7 +646,7 @@ export default class GameScene
   private spawnPlayer() {
     this.player = new Player(this, this.spawn.x, this.spawn.y, this.classDef, {
       textureKey: PLAYER_CUSTOM_KEY,
-      color: this.playerColor,
+      color: 0xffffff, // the custom sprite is baked in final colours; render it untinted
     });
     this.physics.add.collider(this.player, this.wallLayer);
     // Overclock aura — glows behind the player as Heat climbs (set each frame).

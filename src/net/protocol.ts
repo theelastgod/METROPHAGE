@@ -23,6 +23,9 @@ export interface PlayerLook {
   shoulders: string;
   decal: string;
   cloak: string;
+  skin: number; // -1 = SYNTH (cyber), else a human skin tone
+  hair: string;
+  hairColor: number;
   antennae: boolean;
   emblem: boolean;
   strap: boolean;

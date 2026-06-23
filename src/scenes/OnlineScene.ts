@@ -103,7 +103,7 @@ export default class OnlineScene extends Phaser.Scene {
     bakeCustomPlayer(this, cust);
     this.me = this.add
       .sprite(WORLD_W / 2, WORLD_H / 2, PLAYER_CUSTOM_KEY, 0)
-      .setTint(this.color)
+      .setTint(0xffffff) // baked in final colours — render untinted
       .setDepth(10)
       .setVisible(false);
 
@@ -377,7 +377,7 @@ export default class OnlineScene extends Phaser.Scene {
         const col = r.look ? r.look.color : 0xff79c6;
         this.remoteLabels.get(id)?.setColor("#" + (col & 0xffffff).toString(16).padStart(6, "0"));
       }
-      s.setTint(r.look ? r.look.color : 0xff79c6);
+      s.setTint(r.look ? 0xffffff : 0xff79c6); // look is baked in colour; only the fallback tints
       s.setPosition(r.x, r.y).setVisible(!r.dead).setAlpha(r.dead ? 0.25 : 1);
       this.remoteLabels.get(id)?.setPosition(r.x, r.y - 22).setVisible(!r.dead);
     }

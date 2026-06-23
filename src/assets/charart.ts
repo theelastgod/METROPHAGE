@@ -35,6 +35,25 @@ export const GRAY: Tones = {
   rim: 0x8fa9c8,
 };
 
+const clamp8 = (n: number) => (n < 0 ? 0 : n > 255 ? 255 : n | 0);
+const scaleColor = (color: number, f: number) =>
+  (clamp8(((color >> 16) & 0xff) * f) << 16) | (clamp8(((color >> 8) & 0xff) * f) << 8) | clamp8((color & 0xff) * f);
+
+/** Build a shaded grayscale-style ramp from a base colour, so a sprite can be baked
+ *  in its FINAL colours (instead of grayscale + an in-scene tint). Lets one sprite mix
+ *  a neon signature colour with real skin/hair colours. */
+export function tonesFromColor(color: number): Tones {
+  return {
+    o: 0x0a0b12,
+    a: scaleColor(color, 0.32),
+    b: scaleColor(color, 0.54),
+    c: scaleColor(color, 0.76),
+    d: scaleColor(color, 0.98),
+    e: scaleColor(color, 1.4), // brightened emissive (clamped)
+    rim: scaleColor(color, 0.86),
+  };
+}
+
 /** The FIXER civilian — lime/green with a yellow emissive (NOT tinted in-scene). */
 const GREEN: Tones = {
   o: 0x0c1408,
@@ -52,6 +71,7 @@ export type Visor = "band" | "goggles" | "single" | "wide" | "cross" | "scan" | 
 export type Shoulders = "none" | "pads" | "spikes" | "heavy";
 export type Decal = "none" | "cross" | "triangle" | "ring" | "bars" | "skull";
 export type Cloak = "none" | "cape" | "coat";
+export type Hair = "none" | "short" | "long" | "spiky" | "bun" | "afro" | "ponytail";
 
 export interface CharSpec {
   build: Build;
@@ -65,6 +85,11 @@ export interface CharSpec {
   shoulders?: Shoulders; // shoulder armor
   decal?: Decal; // emissive chest insignia
   cloak?: Cloak; // cape / coat drape
+  // human look — when `skin` is set, the head is a face (eyes + skin) instead of a
+  // visor, and `hair` is drawn on top. The body still uses `tones` (the gear colour).
+  skin?: number; // skin colour
+  hair?: Hair;
+  hairColor?: number;
 }
 
 // ── Per-class player specs (ids match game/classes.ts) ──────────────────────
@@ -252,7 +277,8 @@ function drawPose(ctx: CanvasRenderingContext2D, facing: Facing, spec: CharSpec)
   }
 
   // ── head ────────────────────────────────────────────────────────
-  drawHead(facing, spec, px, part);
+  if (spec.skin != null) drawHumanHead(facing, spec, px, part);
+  else drawHead(facing, spec, px, part);
 }
 
 type Px = (x: number, y: number, w: number, h: number, c: number, a?: number) => void;
@@ -309,6 +335,96 @@ function drawDecal(spec: CharSpec, px: Px, cx: number, top: number) {
     px(cx - 1, y + 3, 2, 1, e);
     px(cx - 2, y + 1, 1, 1, o);
     px(cx + 1, y + 1, 1, 1, o); // dark eye sockets
+  }
+}
+
+/** Human head — skin face with eyes (no cyber visor) + hair, for down/up facings. */
+function drawHumanHead(facing: Facing, spec: CharSpec, px: Px, part: Part) {
+  const cx = 16;
+  const back = facing === "up";
+  const skin = tonesFromColor(spec.skin ?? 0xe0b48a);
+  const hair = tonesFromColor(spec.hairColor ?? 0x2a1d14);
+
+  // skull / head in skin
+  part(cx - 5, 3, 10, 11, skin.b);
+  px(cx - 4, 4, 8, 3, skin.c); // lit forehead
+  px(cx - 4, 4, 6, 1, skin.d); // crown highlight
+  px(cx + 3, 6, 1, 7, skin.a); // side shadow
+  px(cx - 5, 6, 1, 6, skin.rim, 0.6); // cool rim
+
+  if (back) {
+    px(cx - 4, 5, 8, 8, skin.a); // back of the head — no face
+    drawHair("up", spec, px, hair);
+    return;
+  }
+
+  // face — brow / eyes / nose / mouth
+  px(cx - 4, 8, 8, 5, skin.b);
+  px(cx - 4, 12, 8, 1, skin.a); // jaw shadow
+  px(cx - 3, 9, 2, 2, 0x0a0b12);
+  px(cx + 1, 9, 2, 2, 0x0a0b12); // eye sockets
+  px(cx - 3, 9, 1, 1, skin.e);
+  px(cx + 1, 9, 1, 1, skin.e); // catchlights
+  px(cx - 1, 10, 1, 2, skin.a); // nose
+  px(cx - 1, 12, 2, 1, skin.a, 0.7); // mouth
+
+  drawHair(facing, spec, px, hair);
+}
+
+/** Hairstyle drawn on top of the head, in the hair tones. */
+function drawHair(facing: Facing, spec: CharSpec, px: Px, hair: Tones) {
+  if (!spec.hair || spec.hair === "none") return; // bald
+  const cx = 16;
+  const back = facing === "up";
+  // base cap over the crown (all styles)
+  px(cx - 6, 1, 12, 1, hair.o);
+  px(cx - 5, 1, 10, 3, hair.b);
+  px(cx - 5, 2, 10, 1, hair.c);
+  px(cx - 6, 4, 1, 4, hair.b);
+  px(cx + 5, 4, 1, 4, hair.b); // temples
+  if (spec.hair === "long") {
+    px(cx - 7, 4, 1, 9, hair.a);
+    px(cx + 6, 4, 1, 9, hair.a);
+    if (back) px(cx - 6, 4, 12, 9, hair.a);
+  } else if (spec.hair === "spiky") {
+    for (const sx of [cx - 4, cx - 1, cx + 2]) px(sx, 0, 1, 3, hair.c);
+  } else if (spec.hair === "bun") {
+    px(cx - 1, 0, 3, 2, hair.b);
+    px(cx, 0, 1, 1, hair.c);
+  } else if (spec.hair === "afro") {
+    px(cx - 7, 0, 14, 5, hair.b);
+    px(cx - 6, 0, 1, 5, hair.o);
+    px(cx + 6, 0, 1, 5, hair.o);
+    px(cx - 5, 0, 10, 1, hair.c);
+  } else if (spec.hair === "ponytail") {
+    if (back) px(cx - 1, 4, 2, 9, hair.a);
+    else px(cx + 5, 4, 2, 7, hair.a);
+  }
+  // "short" = just the base cap
+}
+
+/** Human head in side profile (facing left) — skin, one eye, hair. */
+function drawHumanProfile(spec: CharSpec, px: Px, part: Part) {
+  const cx = 15;
+  const skin = tonesFromColor(spec.skin ?? 0xe0b48a);
+  const hair = tonesFromColor(spec.hairColor ?? 0x2a1d14);
+  part(cx - 6, 3, 11, 11, skin.b);
+  px(cx - 5, 4, 9, 3, skin.c);
+  px(cx - 5, 4, 7, 1, skin.d);
+  px(cx + 2, 6, 2, 7, skin.a); // back of skull shadow
+  px(cx - 6, 8, 1, 2, skin.c); // nose juts left
+  px(cx - 4, 8, 2, 2, 0x0a0b12); // eye
+  px(cx - 4, 8, 1, 1, skin.e);
+  px(cx - 4, 11, 2, 1, skin.a, 0.7); // mouth
+  if (spec.hair && spec.hair !== "none") {
+    px(cx - 5, 1, 9, 1, hair.o);
+    px(cx - 5, 1, 9, 3, hair.b);
+    px(cx - 5, 2, 9, 1, hair.c);
+    px(cx + 3, 3, 1, 6, hair.a);
+    if (spec.hair === "long" || spec.hair === "ponytail") px(cx + 3, 4, 2, 9, hair.a);
+    else if (spec.hair === "spiky") for (const sx of [cx - 3, cx, cx + 2]) px(sx, 0, 1, 2, hair.c);
+    else if (spec.hair === "afro") part(cx - 6, 0, 11, 5, hair.b);
+    else if (spec.hair === "bun") px(cx + 3, 1, 2, 2, hair.b);
   }
 }
 
@@ -473,10 +589,16 @@ function drawProfile(
   part(cx - 4, 16, 3, 8, t.b);
   px(cx - 3, 17, 1, 6, t.c);
 
-  // antennae
-  if (spec.antennae) {
+  // antennae (cyber heads only)
+  if (spec.antennae && spec.skin == null) {
     px(cx - 4, 1, 1, 4, t.o);
     px(cx - 4, 1, 1, 1, t.e);
+  }
+
+  // human face replaces the cyber visored head
+  if (spec.skin != null) {
+    drawHumanProfile(spec, px, part);
+    return;
   }
 
   // head (profile) — nose/brow to the left

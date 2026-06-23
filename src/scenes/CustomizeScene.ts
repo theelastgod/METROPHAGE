@@ -13,12 +13,16 @@ import {
   CUSTOM_SHOULDERS,
   CUSTOM_DECALS,
   CUSTOM_CLOAKS,
+  SKIN_TONES,
+  HAIR_STYLES,
+  HAIR_COLORS,
   HEAD_LABELS,
   VISOR_LABELS,
   BUILD_LABELS,
   SHOULDERS_LABELS,
   DECAL_LABELS,
   CLOAK_LABELS,
+  HAIR_LABELS,
   CALLSIGN_MAX,
   randomCallsign,
 } from "../game/customization";
@@ -54,7 +58,7 @@ export default class CustomizeScene extends Phaser.Scene {
 
   private readonly panelX = 470;
   private readonly rowTop = 120;
-  private readonly rowH = 34;
+  private readonly rowH = 28;
 
   constructor() {
     super("Customize");
@@ -147,7 +151,7 @@ export default class CustomizeScene extends Phaser.Scene {
         cycle: (d) => {
           const i = Math.max(0, CUSTOM_COLORS.findIndex((c) => c.value === this.cust.color));
           this.cust.color = CUSTOM_COLORS[(i + d + CUSTOM_COLORS.length) % CUSTOM_COLORS.length].value;
-          this.retint(); // colour is a tint — no re-bake needed
+          this.bakeAndRefresh(); // colour is baked into the sprite now — re-bake
         },
       },
       {
@@ -195,6 +199,40 @@ export default class CustomizeScene extends Phaser.Scene {
         value: () => DECAL_LABELS[this.cust.decal],
         cycle: (d) => {
           this.cust.decal = cycleIn(CUSTOM_DECALS, this.cust.decal, d);
+          this.bakeAndRefresh();
+        },
+      },
+      {
+        label: "SKIN",
+        value: () => SKIN_TONES.find((s) => s.value === this.cust.skin)?.name ?? "SYNTH",
+        swatch: () => (this.cust.skin >= 0 ? this.cust.skin : 0x2a2a3a),
+        cycle: (d) => {
+          const i = Math.max(
+            0,
+            SKIN_TONES.findIndex((s) => s.value === this.cust.skin),
+          );
+          this.cust.skin = SKIN_TONES[(i + d + SKIN_TONES.length) % SKIN_TONES.length].value;
+          this.bakeAndRefresh();
+        },
+      },
+      {
+        label: "HAIR",
+        value: () => HAIR_LABELS[this.cust.hair],
+        cycle: (d) => {
+          this.cust.hair = cycleIn(HAIR_STYLES, this.cust.hair, d);
+          this.bakeAndRefresh();
+        },
+      },
+      {
+        label: "HAIR COLOUR",
+        value: () => HAIR_COLORS.find((c) => c.value === this.cust.hairColor)?.name ?? "CUSTOM",
+        swatch: () => this.cust.hairColor,
+        cycle: (d) => {
+          const i = Math.max(
+            0,
+            HAIR_COLORS.findIndex((c) => c.value === this.cust.hairColor),
+          );
+          this.cust.hairColor = HAIR_COLORS[(i + d + HAIR_COLORS.length) % HAIR_COLORS.length].value;
           this.bakeAndRefresh();
         },
       },
@@ -269,25 +307,16 @@ export default class CustomizeScene extends Phaser.Scene {
   // ── preview ─────────────────────────────────────────────────────────
   /** Re-bake the sprite from the current spec, then rebuild the preview images. */
   private bakeAndRefresh() {
-    bakeCustomPlayer(this, this.cust);
+    bakeCustomPlayer(this, this.cust); // baked in final colours — no in-scene tint
     this.preview.removeAll(true);
     // big hero (down-facing) + a row of the other facings beneath
-    const hero = this.add.image(230, 250, PLAYER_CUSTOM_KEY, 0).setScale(7).setTint(this.cust.color);
+    const hero = this.add.image(230, 250, PLAYER_CUSTOM_KEY, 0).setScale(7);
     this.preview.add(hero);
     const facings = [1, 3, 2]; // left / up / right
     facings.forEach((f, i) => {
-      const img = this.add
-        .image(150 + i * 80, 400, PLAYER_CUSTOM_KEY, f)
-        .setScale(3)
-        .setTint(this.cust.color)
-        .setAlpha(0.92);
+      const img = this.add.image(150 + i * 80, 400, PLAYER_CUSTOM_KEY, f).setScale(3).setAlpha(0.92);
       this.preview.add(img);
     });
-  }
-
-  /** Colour-only change: just re-tint the existing preview images. */
-  private retint() {
-    this.preview.list.forEach((o) => (o as Phaser.GameObjects.Image).setTint(this.cust.color));
   }
 
   // ── option rows render ──────────────────────────────────────────────

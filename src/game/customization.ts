@@ -1,8 +1,8 @@
 import Phaser from "phaser";
 import {
   CHAR,
-  GRAY,
   drawCharacter,
+  tonesFromColor,
   PLAYER_SPECS,
   type Build,
   type Head,
@@ -10,6 +10,7 @@ import {
   type Shoulders,
   type Decal,
   type Cloak,
+  type Hair,
   type CharSpec,
 } from "../assets/charart";
 import { bakeDrawnFrames } from "../assets/pixelart";
@@ -33,6 +34,9 @@ export interface Customization {
   shoulders: Shoulders; // shoulder armor
   decal: Decal; // emissive chest insignia
   cloak: Cloak; // cape / coat
+  skin: number; // human skin tone, or -1 = SYNTH (cyber visor, no face)
+  hair: Hair;
+  hairColor: number;
   antennae: boolean;
   emblem: boolean; // glowing chest core
   strap: boolean; // bandolier
@@ -136,6 +140,38 @@ export const CLOAK_LABELS: Record<Cloak, string> = {
   coat: "LONGCOAT",
 };
 
+/** Skin tones. SYNTH (-1) = no human face — keeps the cyber visor/headgear look. */
+export const SKIN_TONES: ReadonlyArray<{ name: string; value: number }> = [
+  { name: "SYNTH", value: -1 },
+  { name: "PORCELAIN", value: 0xf3d2b8 },
+  { name: "FAIR", value: 0xe6b58c },
+  { name: "TAN", value: 0xc98a5e },
+  { name: "OLIVE", value: 0xa9794a },
+  { name: "BROWN", value: 0x7c4f30 },
+  { name: "DEEP", value: 0x4f3220 },
+];
+export const HAIR_STYLES: ReadonlyArray<Hair> = ["none", "short", "long", "spiky", "bun", "afro", "ponytail"];
+export const HAIR_LABELS: Record<Hair, string> = {
+  none: "BALD",
+  short: "SHORT",
+  long: "LONG",
+  spiky: "SPIKED",
+  bun: "TOP-KNOT",
+  afro: "AFRO",
+  ponytail: "PONYTAIL",
+};
+export const HAIR_COLORS: ReadonlyArray<{ name: string; value: number }> = [
+  { name: "BLACK", value: 0x1b1820 },
+  { name: "BROWN", value: 0x4a2f1c },
+  { name: "CHESTNUT", value: 0x7a4a24 },
+  { name: "BLONDE", value: 0xe6c878 },
+  { name: "AUBURN", value: 0x9c3b22 },
+  { name: "SILVER", value: 0xc7cdd8 },
+  { name: "WHITE", value: 0xeef0f5 },
+  { name: "CYAN", value: 0x35e6ff },
+  { name: "PINK", value: 0xff5fb0 },
+];
+
 /** A customization seeded from the chosen class's default look + signature colour. */
 export function defaultCustomization(classId: string | undefined): Customization {
   const cls = getClass(classId);
@@ -149,6 +185,9 @@ export function defaultCustomization(classId: string | undefined): Customization
     shoulders: spec.shoulders ?? "none",
     decal: spec.decal ?? "none",
     cloak: spec.cloak ?? "none",
+    skin: spec.skin ?? -1, // SYNTH — classes default to the cyber look
+    hair: spec.hair ?? "none",
+    hairColor: spec.hairColor ?? 0x4a2f1c,
     antennae: !!spec.antennae,
     emblem: !!spec.emblem,
     strap: !!spec.strap,
@@ -167,7 +206,12 @@ export function customSpec(c: Customization): CharSpec {
     antennae: c.antennae,
     emblem: c.emblem,
     strap: c.strap,
-    tones: GRAY,
+    skin: c.skin >= 0 ? c.skin : undefined, // SYNTH → cyber visor (no human face)
+    hair: c.hair,
+    hairColor: c.hairColor,
+    // Bake in FINAL colours: the gear takes the signature colour, so skin/hair keep
+    // their own. The sprite is then rendered with a neutral (white) tint.
+    tones: tonesFromColor(c.color),
   };
 }
 
@@ -192,16 +236,33 @@ export function customizationToLook(c: Customization): PlayerLook {
     shoulders: c.shoulders,
     decal: c.decal,
     cloak: c.cloak,
+    skin: c.skin,
+    hair: c.hair,
+    hairColor: c.hairColor,
     antennae: c.antennae,
     emblem: c.emblem,
     strap: c.strap,
   };
 }
 
-/** Stable texture-cache key for a look's SHAPE (colour is an in-scene tint, excluded). */
+/** Stable texture-cache key for a look. Colour + skin + hair are BAKED in now, so they
+ *  are part of the key (the sprite is rendered with a neutral tint, not recoloured). */
 export function lookKey(look: PlayerLook | undefined): string {
   const c = sanitizeCustomization(look as unknown as Partial<Customization>, undefined);
-  return `rl_${c.build}_${c.head}_${c.visor}_${c.shoulders}_${c.decal}_${c.cloak}_${c.antennae ? 1 : 0}${c.emblem ? 1 : 0}${c.strap ? 1 : 0}`;
+  return [
+    "rl",
+    c.color,
+    c.build,
+    c.head,
+    c.visor,
+    c.shoulders,
+    c.decal,
+    c.cloak,
+    c.skin,
+    c.hair,
+    c.hairColor,
+    `${c.antennae ? 1 : 0}${c.emblem ? 1 : 0}${c.strap ? 1 : 0}`,
+  ].join("_");
 }
 
 /** Bake a remote player's sprite (grayscale, 4 facings) under `key` from a look (cached). */
@@ -230,6 +291,9 @@ export function sanitizeCustomization(
     shoulders: pick(raw.shoulders, CUSTOM_SHOULDERS, d.shoulders),
     decal: pick(raw.decal, CUSTOM_DECALS, d.decal),
     cloak: pick(raw.cloak, CUSTOM_CLOAKS, d.cloak),
+    skin: typeof raw.skin === "number" ? raw.skin : d.skin,
+    hair: pick(raw.hair, HAIR_STYLES, d.hair),
+    hairColor: typeof raw.hairColor === "number" ? raw.hairColor : d.hairColor,
     antennae: typeof raw.antennae === "boolean" ? raw.antennae : d.antennae,
     emblem: typeof raw.emblem === "boolean" ? raw.emblem : d.emblem,
     strap: typeof raw.strap === "boolean" ? raw.strap : d.strap,
