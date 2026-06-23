@@ -7,10 +7,14 @@ import {
   type Build,
   type Head,
   type Visor,
+  type Shoulders,
+  type Decal,
+  type Cloak,
   type CharSpec,
 } from "../assets/charart";
 import { bakeDrawnFrames } from "../assets/pixelart";
 import { getClass } from "./classes";
+import type { PlayerLook } from "../net/protocol";
 
 // METROPHAGE — player character customization. After picking a class (cyberian),
 // the player tunes a look: signature colour + silhouette (build / headgear / optic
@@ -26,6 +30,9 @@ export interface Customization {
   build: Build;
   head: Head;
   visor: Visor; // optic style
+  shoulders: Shoulders; // shoulder armor
+  decal: Decal; // emissive chest insignia
+  cloak: Cloak; // cape / coat
   antennae: boolean;
   emblem: boolean; // glowing chest core
   strap: boolean; // bandolier
@@ -67,11 +74,22 @@ export const CUSTOM_COLORS: ReadonlyArray<{ name: string; value: number }> = [
   { name: "ICE", value: 0x8fe9ff },
   { name: "LIME", value: 0x9dff3c },
   { name: "ROSE", value: 0xff79c6 },
+  { name: "ORANGE", value: 0xff7a18 },
+  { name: "TEAL", value: 0x2cf5c8 },
+  { name: "AZURE", value: 0x4d8cff },
+  { name: "CRIMSON", value: 0xd6193f },
+  { name: "BUBBLEGUM", value: 0xff5fa2 },
+  { name: "TOXIC", value: 0xc6ff3c },
+  { name: "ULTRA", value: 0xc04bff },
+  { name: "BONE", value: 0xeae6ff },
 ];
 
-export const CUSTOM_BUILDS: ReadonlyArray<Build> = ["slim", "normal", "bulky"];
-export const CUSTOM_HEADS: ReadonlyArray<Head> = ["helmet", "hood", "cap", "drone"];
-export const CUSTOM_VISORS: ReadonlyArray<Visor> = ["band", "goggles", "single", "wide"];
+export const CUSTOM_BUILDS: ReadonlyArray<Build> = ["slim", "normal", "bulky", "huge"];
+export const CUSTOM_HEADS: ReadonlyArray<Head> = ["helmet", "hood", "cap", "drone", "mohawk", "horns", "crown"];
+export const CUSTOM_VISORS: ReadonlyArray<Visor> = ["band", "goggles", "single", "wide", "cross", "scan", "round"];
+export const CUSTOM_SHOULDERS: ReadonlyArray<Shoulders> = ["none", "pads", "spikes", "heavy"];
+export const CUSTOM_DECALS: ReadonlyArray<Decal> = ["none", "cross", "triangle", "ring", "bars", "skull"];
+export const CUSTOM_CLOAKS: ReadonlyArray<Cloak> = ["none", "cape", "coat"];
 
 /** Human-readable labels for the silhouette options. */
 export const HEAD_LABELS: Record<Head, string> = {
@@ -79,18 +97,43 @@ export const HEAD_LABELS: Record<Head, string> = {
   hood: "HOOD",
   cap: "CAP",
   drone: "DRONE",
+  mohawk: "CREST",
+  horns: "HORNS",
+  crown: "CROWN",
 };
 export const VISOR_LABELS: Record<Visor, string> = {
   band: "VISOR BAND",
   goggles: "GOGGLES",
   single: "MONO-OPTIC",
   wide: "WIDE SLIT",
+  cross: "CROSS-OPTIC",
+  scan: "SCANNER",
+  round: "TWIN LENS",
 };
 export const BUILD_LABELS: Record<Build, string> = {
   slim: "SLIM",
   normal: "STANDARD",
   bulky: "HEAVY",
   huge: "TITAN",
+};
+export const SHOULDERS_LABELS: Record<Shoulders, string> = {
+  none: "NONE",
+  pads: "PADS",
+  spikes: "SPIKES",
+  heavy: "PAULDRONS",
+};
+export const DECAL_LABELS: Record<Decal, string> = {
+  none: "NONE",
+  cross: "CROSS",
+  triangle: "DELTA",
+  ring: "RING",
+  bars: "BARS",
+  skull: "SKULL",
+};
+export const CLOAK_LABELS: Record<Cloak, string> = {
+  none: "NONE",
+  cape: "CAPE",
+  coat: "LONGCOAT",
 };
 
 /** A customization seeded from the chosen class's default look + signature colour. */
@@ -103,6 +146,9 @@ export function defaultCustomization(classId: string | undefined): Customization
     build: spec.build === "huge" ? "bulky" : spec.build,
     head: spec.head,
     visor: spec.visor,
+    shoulders: spec.shoulders ?? "none",
+    decal: spec.decal ?? "none",
+    cloak: spec.cloak ?? "none",
     antennae: !!spec.antennae,
     emblem: !!spec.emblem,
     strap: !!spec.strap,
@@ -115,6 +161,9 @@ export function customSpec(c: Customization): CharSpec {
     build: c.build,
     head: c.head,
     visor: c.visor,
+    shoulders: c.shoulders,
+    decal: c.decal,
+    cloak: c.cloak,
     antennae: c.antennae,
     emblem: c.emblem,
     strap: c.strap,
@@ -133,6 +182,35 @@ export function bakeCustomPlayer(scene: Phaser.Scene, c: Customization) {
   );
 }
 
+/** Extract the wire appearance (no callsign) from a customization, for multiplayer. */
+export function customizationToLook(c: Customization): PlayerLook {
+  return {
+    color: c.color,
+    build: c.build,
+    head: c.head,
+    visor: c.visor,
+    shoulders: c.shoulders,
+    decal: c.decal,
+    cloak: c.cloak,
+    antennae: c.antennae,
+    emblem: c.emblem,
+    strap: c.strap,
+  };
+}
+
+/** Stable texture-cache key for a look's SHAPE (colour is an in-scene tint, excluded). */
+export function lookKey(look: PlayerLook | undefined): string {
+  const c = sanitizeCustomization(look as unknown as Partial<Customization>, undefined);
+  return `rl_${c.build}_${c.head}_${c.visor}_${c.shoulders}_${c.decal}_${c.cloak}_${c.antennae ? 1 : 0}${c.emblem ? 1 : 0}${c.strap ? 1 : 0}`;
+}
+
+/** Bake a remote player's sprite (grayscale, 4 facings) under `key` from a look (cached). */
+export function bakeRemoteLook(scene: Phaser.Scene, key: string, look: PlayerLook | undefined): void {
+  if (scene.textures.exists(key)) return;
+  const c = sanitizeCustomization(look as unknown as Partial<Customization>, undefined);
+  bakeDrawnFrames(scene, key, 4, CHAR, CHAR, (ctx, f) => drawCharacter(ctx, f, customSpec(c)));
+}
+
 /** Repair a possibly-stale/partial saved customization against the valid options. */
 export function sanitizeCustomization(
   raw: Partial<Customization> | undefined,
@@ -149,6 +227,9 @@ export function sanitizeCustomization(
     build: pick(raw.build, CUSTOM_BUILDS, d.build),
     head: pick(raw.head, CUSTOM_HEADS, d.head),
     visor: pick(raw.visor, CUSTOM_VISORS, d.visor),
+    shoulders: pick(raw.shoulders, CUSTOM_SHOULDERS, d.shoulders),
+    decal: pick(raw.decal, CUSTOM_DECALS, d.decal),
+    cloak: pick(raw.cloak, CUSTOM_CLOAKS, d.cloak),
     antennae: typeof raw.antennae === "boolean" ? raw.antennae : d.antennae,
     emblem: typeof raw.emblem === "boolean" ? raw.emblem : d.emblem,
     strap: typeof raw.strap === "boolean" ? raw.strap : d.strap,

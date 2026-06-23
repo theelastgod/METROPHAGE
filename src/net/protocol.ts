@@ -12,9 +12,25 @@ export interface InputCmd {
   my: number;
 }
 
+/** Compact player appearance (no callsign) — sent on login, relayed in snapshots so
+ *  everyone renders everyone else's customization. Enums are strings; the receiver
+ *  sanitizes before baking. Colour is applied as an in-scene tint. */
+export interface PlayerLook {
+  color: number;
+  build: string;
+  head: string;
+  visor: string;
+  shoulders: string;
+  decal: string;
+  cloak: string;
+  antennae: boolean;
+  emblem: boolean;
+  strap: boolean;
+}
+
 // client -> server
 export type ClientMsg =
-  | { t: "login"; name: string; faction?: number }
+  | { t: "login"; name: string; faction?: number; look?: PlayerLook }
   | { t: "input"; seq: number; mx: number; my: number }
   | { t: "fire"; seq: number; aim: number } // aim in radians; server validates rate
   | { t: "chat"; ch: "zone" | "party" | "whisper"; to?: string; text: string }
@@ -53,6 +69,7 @@ export interface PlayerSnap {
   faction: number;
   questStep: number; // index into QUESTLINE (=== length when complete)
   questProgress: number; // count toward the current step's objective
+  look?: PlayerLook; // appearance, so remotes render this player's customization
 }
 export interface EnemySnap {
   id: number;

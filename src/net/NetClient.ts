@@ -1,6 +1,6 @@
 import { stepMove, NET_TICK_MS, PLAYER_HP, type MoveState } from "./sim";
 import type { TileGrid } from "../world/district";
-import type { ClientMsg, ServerMsg, InputCmd } from "./protocol";
+import type { ClientMsg, ServerMsg, InputCmd, PlayerLook } from "./protocol";
 
 export interface RemotePlayer {
   id: string;
@@ -10,6 +10,7 @@ export interface RemotePlayer {
   ty: number;
   hp: number;
   dead: boolean;
+  look?: PlayerLook; // appearance, for rendering the remote's customization
 }
 
 export interface NetEnemy {
@@ -104,13 +105,16 @@ export default class NetClient {
     private name: string,
     private url: string,
     private loginFaction = 0,
+    private look?: PlayerLook,
   ) {}
 
   connect() {
     const ws = new WebSocket(this.url);
     this.ws = ws;
     ws.onopen = () =>
-      ws.send(JSON.stringify({ t: "login", name: this.name, faction: this.loginFaction } satisfies ClientMsg));
+      ws.send(
+        JSON.stringify({ t: "login", name: this.name, faction: this.loginFaction, look: this.look } satisfies ClientMsg),
+      );
     ws.onmessage = (e) => this.onMessage(e.data);
     ws.onclose = () => (this.connected = false);
     ws.onerror = () => (this.connected = false);
@@ -208,6 +212,7 @@ export default class NetClient {
           r.ty = sp.y;
           r.hp = sp.hp;
           r.dead = sp.dead;
+          if (sp.look) r.look = sp.look;
           this.remotes.set(sp.id, r);
         }
       }

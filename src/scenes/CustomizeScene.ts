@@ -10,9 +10,15 @@ import {
   CUSTOM_BUILDS,
   CUSTOM_HEADS,
   CUSTOM_VISORS,
+  CUSTOM_SHOULDERS,
+  CUSTOM_DECALS,
+  CUSTOM_CLOAKS,
   HEAD_LABELS,
   VISOR_LABELS,
   BUILD_LABELS,
+  SHOULDERS_LABELS,
+  DECAL_LABELS,
+  CLOAK_LABELS,
   CALLSIGN_MAX,
   randomCallsign,
 } from "../game/customization";
@@ -47,8 +53,8 @@ export default class CustomizeScene extends Phaser.Scene {
   private rowSwatches: Phaser.GameObjects.Rectangle[] = [];
 
   private readonly panelX = 470;
-  private readonly rowTop = 132;
-  private readonly rowH = 40;
+  private readonly rowTop = 120;
+  private readonly rowH = 34;
 
   constructor() {
     super("Customize");
@@ -165,6 +171,30 @@ export default class CustomizeScene extends Phaser.Scene {
         value: () => VISOR_LABELS[this.cust.visor],
         cycle: (d) => {
           this.cust.visor = cycleIn(CUSTOM_VISORS, this.cust.visor, d);
+          this.bakeAndRefresh();
+        },
+      },
+      {
+        label: "SHOULDERS",
+        value: () => SHOULDERS_LABELS[this.cust.shoulders],
+        cycle: (d) => {
+          this.cust.shoulders = cycleIn(CUSTOM_SHOULDERS, this.cust.shoulders, d);
+          this.bakeAndRefresh();
+        },
+      },
+      {
+        label: "CLOAK",
+        value: () => CLOAK_LABELS[this.cust.cloak],
+        cycle: (d) => {
+          this.cust.cloak = cycleIn(CUSTOM_CLOAKS, this.cust.cloak, d);
+          this.bakeAndRefresh();
+        },
+      },
+      {
+        label: "CHEST DECAL",
+        value: () => DECAL_LABELS[this.cust.decal],
+        cycle: (d) => {
+          this.cust.decal = cycleIn(CUSTOM_DECALS, this.cust.decal, d);
           this.bakeAndRefresh();
         },
       },

@@ -47,8 +47,11 @@ const GREEN: Tones = {
 };
 
 export type Build = "slim" | "normal" | "bulky" | "huge";
-export type Head = "helmet" | "hood" | "cap" | "drone";
-export type Visor = "band" | "goggles" | "single" | "wide";
+export type Head = "helmet" | "hood" | "cap" | "drone" | "mohawk" | "horns" | "crown";
+export type Visor = "band" | "goggles" | "single" | "wide" | "cross" | "scan" | "round";
+export type Shoulders = "none" | "pads" | "spikes" | "heavy";
+export type Decal = "none" | "cross" | "triangle" | "ring" | "bars" | "skull";
+export type Cloak = "none" | "cape" | "coat";
 
 export interface CharSpec {
   build: Build;
@@ -59,6 +62,9 @@ export interface CharSpec {
   emblem?: boolean; // glowing chest core
   strap?: boolean; // diagonal bandolier
   collar?: boolean; // raised coat collar (civilian)
+  shoulders?: Shoulders; // shoulder armor
+  decal?: Decal; // emissive chest insignia
+  cloak?: Cloak; // cape / coat drape
 }
 
 // ── Per-class player specs (ids match game/classes.ts) ──────────────────────
@@ -175,6 +181,21 @@ function drawPose(ctx: CanvasRenderingContext2D, facing: Facing, spec: CharSpec)
 
   const back = facing === "up";
 
+  // ── cloak: a cape drapes BEHIND the body (drawn first) ──────────
+  if (spec.cloak === "cape") {
+    const cw = 16 + bulk;
+    if (back) {
+      part(cx - cw / 2, 13, cw, 16, t.a); // full cape down the back
+      px(cx - cw / 2 + 1, 14, cw - 2, 13, t.b);
+      px(cx - 1, 14, 2, 14, t.a, 0.7); // centre fold
+      px(cx - cw / 2 + 1, 14, 1, 13, t.rim, 0.6); // edge rim-light
+    } else {
+      px(cx - cw / 2, 13, 2, 16, t.a); // edges peek past the shoulders
+      px(cx + cw / 2 - 2, 13, 2, 16, t.a);
+      px(cx - cw / 2, 13, 1, 16, t.rim, 0.5);
+    }
+  }
+
   // ── legs (clear stance, dark gap between) ───────────────────────
   for (const lx of [cx - 6, cx + 2]) {
     part(lx, 23, 5, 6, t.b); // 3px-fill leg
@@ -207,17 +228,88 @@ function drawPose(ctx: CanvasRenderingContext2D, facing: Facing, spec: CharSpec)
   px(tx - 2, 16, 1, 5, t.c); // left arm catches light
   px(tx + tw + 1, 17, 1, 5, t.a); // right arm in shadow
 
-  // emblem / bandolier on the chest (front only)
+  // ── shoulder armor (over the arms/yoke) ─────────────────────────
+  if (spec.shoulders && spec.shoulders !== "none") drawShoulders(spec, px, part, tx, tw);
+
+  // ── coat: a skirt drapes OVER the legs (after the torso) ────────
+  if (spec.cloak === "coat") {
+    const cw = tw + 2;
+    part(cx - cw / 2, 22, cw, 8, t.a);
+    px(cx - cw / 2 + 1, 23, cw - 2, 6, t.b);
+    px(cx - 1, 23, 2, 6, t.o, 0.85); // front split
+    if (!back) px(cx - cw / 2 + 1, 23, cw - 2, 1, t.c); // belt line
+    px(cx - cw / 2 + 1, 23, 1, 6, t.rim, 0.5);
+  }
+
+  // emblem / decal / bandolier on the chest (front only)
   if (!back && spec.emblem) {
     px(cx - 2, 18, 4, 4, t.o); // socket
     px(cx - 1, 19, 2, 2, t.e); // compact glowing core
   }
+  if (!back && spec.decal && spec.decal !== "none") drawDecal(spec, px, cx, 16);
   if (!back && spec.strap) {
     for (let i = 0; i < 6; i++) px(tx + 2 + i, 16 + i, 2, 1, t.d, 0.9); // bandolier
   }
 
   // ── head ────────────────────────────────────────────────────────
   drawHead(facing, spec, px, part);
+}
+
+type Px = (x: number, y: number, w: number, h: number, c: number, a?: number) => void;
+type Part = (x: number, y: number, w: number, h: number, fill: number) => void;
+
+/** Shoulder armor: pads / spikes / heavy pauldrons over each shoulder. */
+function drawShoulders(spec: CharSpec, px: Px, part: Part, tx: number, tw: number) {
+  const t = spec.tones;
+  const lx = tx - 4;
+  const rx = tx + tw + 1;
+  if (spec.shoulders === "pads") {
+    part(lx, 13, 4, 4, t.c);
+    part(rx, 13, 4, 4, t.b);
+    px(lx + 1, 14, 2, 1, t.d);
+  } else if (spec.shoulders === "spikes") {
+    part(lx, 13, 4, 3, t.b);
+    part(rx, 13, 4, 3, t.b);
+    px(lx, 10, 1, 4, t.d);
+    px(lx + 2, 11, 1, 3, t.c); // jutting spikes
+    px(rx + 3, 10, 1, 4, t.d);
+    px(rx + 1, 11, 1, 3, t.c);
+  } else if (spec.shoulders === "heavy") {
+    part(lx - 1, 12, 5, 6, t.c);
+    part(rx, 12, 5, 6, t.b);
+    px(lx, 13, 3, 1, t.d);
+    px(lx - 1, 13, 1, 5, t.rim, 0.6);
+  }
+}
+
+/** Emissive chest insignia (tints to the signature hue and blooms via the neon FX). */
+function drawDecal(spec: CharSpec, px: Px, cx: number, top: number) {
+  const e = spec.tones.e;
+  const o = spec.tones.o;
+  const y = top + 2;
+  if (spec.decal === "cross") {
+    px(cx - 1, y, 2, 5, e);
+    px(cx - 2, y + 1, 4, 2, e);
+  } else if (spec.decal === "triangle") {
+    px(cx, y, 1, 1, e);
+    px(cx - 1, y + 1, 3, 1, e);
+    px(cx - 2, y + 2, 5, 1, e);
+    px(cx - 2, y + 3, 5, 1, e);
+  } else if (spec.decal === "ring") {
+    px(cx - 2, y, 4, 1, e);
+    px(cx - 2, y + 3, 4, 1, e);
+    px(cx - 2, y, 1, 4, e);
+    px(cx + 1, y, 1, 4, e);
+  } else if (spec.decal === "bars") {
+    px(cx - 2, y, 5, 1, e);
+    px(cx - 2, y + 2, 5, 1, e);
+    px(cx - 2, y + 4, 5, 1, e);
+  } else if (spec.decal === "skull") {
+    px(cx - 2, y, 4, 3, e);
+    px(cx - 1, y + 3, 2, 1, e);
+    px(cx - 2, y + 1, 1, 1, o);
+    px(cx + 1, y + 1, 1, 1, o); // dark eye sockets
+  }
 }
 
 /** Head + headgear for the down / up facings. */
@@ -249,6 +341,22 @@ function drawHead(
   // crest ridge
   px(cx - 1, 2, 3, 2, t.c);
   px(cx, 2, 1, 1, t.d);
+
+  // ── extra headgear that layers on the dome (front + back) ───────
+  if (spec.head === "mohawk") {
+    px(cx - 1, 0, 2, 6, t.e); // emissive crest fin running front→back
+    px(cx - 1, 1, 1, 4, t.d);
+  } else if (spec.head === "horns") {
+    px(cx - 7, 1, 1, 3, t.d);
+    px(cx - 6, 2, 1, 2, t.c); // left horn
+    px(cx + 6, 1, 1, 3, t.d);
+    px(cx + 5, 2, 1, 2, t.c); // right horn
+  } else if (spec.head === "crown") {
+    px(cx - 6, 2, 12, 1, t.d); // band
+    px(cx - 5, 0, 1, 2, t.e);
+    px(cx - 1, 0, 1, 2, t.e);
+    px(cx + 4, 0, 1, 2, t.e); // emissive spikes
+  }
 
   if (spec.head === "hood") {
     // cowl framing the face
@@ -283,6 +391,23 @@ function drawHead(
     px(cx - 4, 7, 8, 3, t.o);
     px(cx - 2, 8, 4, 1, t.e); // narrow focused optic
     px(cx - 2, 8, 1, 1, t.d);
+  } else if (spec.visor === "cross") {
+    px(cx - 4, 7, 8, 4, t.o); // housing
+    px(cx - 1, 7, 2, 4, t.e); // vertical bar
+    px(cx - 3, 8, 6, 2, t.e); // horizontal bar
+    px(cx - 1, 8, 1, 1, t.d);
+  } else if (spec.visor === "scan") {
+    px(cx - 5, 7, 10, 4, t.o);
+    px(cx - 4, 8, 1, 2, t.e);
+    px(cx - 1, 8, 1, 2, t.e);
+    px(cx + 2, 8, 1, 2, t.e); // three scanner bars
+    px(cx - 4, 8, 1, 1, t.d);
+  } else if (spec.visor === "round") {
+    px(cx - 5, 7, 10, 4, t.o);
+    px(cx - 4, 8, 2, 2, t.e);
+    px(cx + 2, 8, 2, 2, t.e); // twin round lenses
+    px(cx - 4, 8, 1, 1, t.d);
+    px(cx + 2, 8, 1, 1, t.d);
   } else {
     // band / wide
     const w = spec.visor === "wide" ? 10 : 9;
@@ -304,6 +429,13 @@ function drawProfile(
   const t = spec.tones;
   const cx = 15;
 
+  // cape trails behind (to the right, since we face left)
+  if (spec.cloak === "cape") {
+    part(cx + 2, 13, 5 + Math.max(0, bulk), 16, t.a);
+    px(cx + 3, 14, 3, 13, t.b);
+    px(cx + 2, 14, 1, 14, t.rim, 0.5);
+  }
+
   // legs — front + trailing
   part(cx - 1, 23, 4, 6, t.b);
   part(cx + 3, 23, 4, 6, t.a); // trailing leg, shadowed
@@ -317,7 +449,25 @@ function drawProfile(
   px(cx - 2, 17, 4, 6, t.c); // front-lit chest
   px(cx + tw - 4, 17, 1, 6, t.a); // back shadow
   if (spec.emblem) px(cx - 2, 18, 3, 3, t.e, 0.95);
+  if (spec.decal && spec.decal !== "none") px(cx - 2, 18, 2, 3, t.e, 0.9); // decal hint
   if (spec.strap) for (let i = 0; i < 5; i++) px(cx - 2 + i, 16 + i, 2, 1, t.d, 0.85);
+
+  // shoulder armor (the visible, leading shoulder)
+  if (spec.shoulders && spec.shoulders !== "none") {
+    part(cx - 4, 12, 4, 4, spec.shoulders === "pads" ? t.c : t.b);
+    if (spec.shoulders === "spikes") px(cx - 4, 9, 1, 4, t.d);
+    if (spec.shoulders === "heavy") {
+      part(cx - 5, 11, 5, 6, t.c);
+      px(cx - 5, 12, 1, 5, t.rim, 0.6);
+    }
+  }
+
+  // coat skirt over the legs
+  if (spec.cloak === "coat") {
+    part(cx - 3, 22, tw + 2, 8, t.a);
+    px(cx - 2, 23, tw, 6, t.b);
+    px(cx - 2, 23, 1, 6, t.rim, 0.5);
+  }
 
   // leading arm
   part(cx - 4, 16, 3, 8, t.b);
@@ -336,6 +486,19 @@ function drawProfile(
   px(cx + 2, 6, 2, 7, t.a); // back of skull shadow
   px(cx - 6, 6, 1, 6, t.rim, 0.7);
   px(cx - 1, 2, 3, 2, t.c); // crest
+
+  // extra headgear (profile)
+  if (spec.head === "mohawk") {
+    px(cx - 2, 1, 6, 1, t.e);
+    px(cx - 2, 2, 5, 1, t.d); // crest along the crown
+  } else if (spec.head === "horns") {
+    px(cx - 6, 1, 1, 3, t.d);
+    px(cx + 3, 1, 1, 3, t.d);
+  } else if (spec.head === "crown") {
+    px(cx - 5, 2, 9, 1, t.d);
+    px(cx - 4, 0, 1, 2, t.e);
+    px(cx + 1, 0, 1, 2, t.e);
+  }
 
   if (spec.head === "hood") {
     part(cx - 7, 3, 13, 9, t.a);
