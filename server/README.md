@@ -259,8 +259,9 @@ node scripts/smoke.mjs check   # log in again, assert the position persisted
 per system:
 `move`/`check` (movement + persistence), `combat`, `mp` (AOI), `zones`, `territory`,
 `meltdown`, `social`, `trade`, `quest`, `abuse` (anti-cheat), `load [N]` (concurrency),
-and `bot <name>` (a wandering player for browser demos). A few modes expect the
-harness to pre-seed D1 — e.g. `trade` wants alice/bob to hold balances, and
+`metro` ($METRO bridge), and `bot <name>` (a wandering player for browser demos). A few
+modes expect the harness to pre-seed D1 — e.g. `trade` wants alice/bob to hold balances,
+`metro` wants whale=10000 / pauper=600 credits with the metro ledger cleared, and
 `meltdown` pre-arms `world_meta.singularity` near the cap.
 
 Ops probes: `curl /health` (JSON liveness) and `curl "/stats?zone=d0"` (live per-zone
@@ -270,8 +271,9 @@ counts — players, enemies, tick, running, singularity, season).
 
 - `src/world.ts` — `WorldDO`, the authoritative per-zone simulation (Hibernatable
   WebSockets, the 20 Hz loop, combat/territory/quest/trade, supervisor alarm).
-- `src/index.ts` — Worker entry; routes `/ws`, `/stats`, `/health` to the zone DO.
-- `migrations/` — D1 schema (`0001_init` … `0005_quest`).
+- `src/index.ts` — Worker entry; routes `/ws`, `/stats`, `/health`, `/metro/*`.
+- `src/metro.ts` — $METRO custodial-bridge accounting (Phase 5; see below).
+- `migrations/` — D1 schema (`0001_init` … `0006_metro`).
 - `scripts/smoke.mjs` — headless acceptance tests (modes listed under **Run it**).
 - The deterministic sim + protocol are **imported from the client repo**
   (`../../src/net/*`, `../../src/world/*`, `../../src/game/*`) — a single source of
@@ -293,3 +295,32 @@ config. Cloudflare provides edge DDoS protection in front of the Worker; the
 per-socket flood guard (Step 7) is the in-DO complement. Bump `compatibility_date`
 to `≥ 2026-04-07` to let the runtime auto-complete WebSocket close handshakes (until
 then `webSocketClose` reciprocates `ws.close()` itself).
+
+## $METRO custodial bridge (Phase 5 · devnet)
+
+The live in-game currency stays the off-chain, server-authoritative `credits` ledger —
+you cannot run a 20 Hz authoritative loop on-chain. "$METRO as a P2E currency" is a
+**server-mediated convertibility bridge** that moves value across that boundary:
+
+- `GET  /metro/account?player=ID` — credits, rate, $METRO value, daily-cap + cooldown state.
+- `GET  /metro/quote?credits=N` — credits → $METRO at the configured rate.
+- `POST /metro/withdraw {player,wallet,credits}` — **atomically** debits credits (a
+  conditional `UPDATE … WHERE credits >= ?`, so no double-spend), records the row, then
+  settles on-chain. A failed settlement refunds the credits.
+- `POST /metro/deposit {player,wallet,txSig,metro}` — credits the off-chain balance for a
+  verified on-chain transfer, **claim-once** (`tx_sig` is a PRIMARY KEY).
+
+Authority holds: the server owns every balance and authorizes every settlement; the
+client never mints, reports a balance, or double-spends. Anti-abuse (because credits now
+carry cash value): per-player withdraw minimum, cooldown, and a rolling daily cap.
+
+`src/metro.ts` is **step 2a — the accounting**, with the actual Solana settlement behind a
+`Settlement` seam (currently `simSettlement`, a devnet stub) so the whole ledger is
+headlessly testable (`smoke.mjs metro`, 8/8). **Step 2b** swaps in real devnet transfers +
+tx verification; **2c** adds wallet-connect (Sign-In-With-Solana) + UI.
+
+**Not yet (deliberate, by the agreed constraint):** real wallet-ownership auth bound to an
+authenticated game identity (Phase 4 login is name-only — fine for devnet, a mainnet
+blocker), and **mainnet/real-value arming, which waits for counsel sign-off** (the client
+`METRO_MAINNET_ARMED` flag stays off; `$METRO` is a fixed-supply pump.fun token, so
+withdrawals are paid from a finite treasury, never minted).

@@ -17,6 +17,7 @@ import { WORLD_W, WORLD_H } from "../net/sim";
 import NetClient from "../net/NetClient";
 import NeonPipeline from "../render/NeonPipeline";
 import { QUESTLINE } from "../net/quest";
+import { setOnlinePlayer } from "../economy/session";
 import type { Customization } from "../game/customization";
 
 const SERVER_URL =
@@ -102,6 +103,7 @@ export default class OnlineScene extends Phaser.Scene {
     this.net.onWelcome = (x, y) => {
       this.me.setPosition(x, y).setVisible(true);
       this.cameras.main.startFollow(this.me, true, 0.18, 0.18);
+      setOnlinePlayer(this.net.id); // let the $METRO bridge panel address this player
     };
     this.net.connect();
 
@@ -262,7 +264,10 @@ export default class OnlineScene extends Phaser.Scene {
         }
       }
     });
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.net?.disconnect());
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.net?.disconnect();
+      setOnlinePlayer(null);
+    });
   }
 
   private openChat() {

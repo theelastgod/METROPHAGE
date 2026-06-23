@@ -856,6 +856,64 @@ async function load() {
   );
 }
 
+async function metro() {
+  // HTTP bridge endpoints (no WebSocket). Harness pre-seeds D1: whale credits=10000,
+  // pauper credits=600, and clears the metro ledger so caps/cooldowns start fresh.
+  const httpBase = WS_URL.replace(/^ws/, "http").replace(/\/ws$/, "");
+  const WALLET = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"; // valid base58 pubkey (devnet-sim accepts any)
+  const get = async (p) => (await fetch(httpBase + p)).json();
+  const post = async (p, body) =>
+    (await fetch(httpBase + p, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).json();
+
+  const a0 = await get(`/metro/account?player=whale`);
+  const start = a0.credits ?? 0;
+  const q = await get(`/metro/quote?credits=1000`);
+
+  // happy path: 1000 credits -> 10 $METRO, credits debited atomically
+  const w = await post(`/metro/withdraw`, { player: "whale", wallet: WALLET, credits: 1000 });
+  const a1 = await get(`/metro/account?player=whale`);
+
+  // anti-abuse: immediate 2nd withdraw hits the cooldown; a bad wallet is rejected
+  const wc = await post(`/metro/withdraw`, { player: "whale", wallet: WALLET, credits: 1000 });
+  const wb = await post(`/metro/withdraw`, { player: "whale", wallet: "not-a-wallet", credits: 1000 });
+
+  // pauper (600 credits, no prior withdraw -> no cooldown): 50000 is within the daily
+  // cap but over balance, so the ATOMIC debit fails -> insufficient; tiny -> below-min.
+  const wi = await post(`/metro/withdraw`, { player: "pauper", wallet: WALLET, credits: 50000 });
+  const wm = await post(`/metro/withdraw`, { player: "pauper", wallet: WALLET, credits: 100 });
+
+  // deposit: claim 5 $METRO -> +500 credits; the SAME tx can't be claimed twice
+  const txSig = "DEPOSIT_" + Date.now();
+  const d = await post(`/metro/deposit`, { player: "whale", wallet: WALLET, txSig, metro: 5 });
+  const dd = await post(`/metro/deposit`, { player: "whale", wallet: WALLET, txSig, metro: 5 });
+  const a2 = await get(`/metro/account?player=whale`);
+
+  const checks = {
+    quoteCorrect: q.ok && q.metro === 10,
+    withdrawDebited: w.ok && w.metro === 10 && a1.credits === start - 1000,
+    cooldownEnforced: wc.ok === false,
+    badWalletRejected: wb.ok === false,
+    insufficientRejected: wi.ok === false && /insufficient/.test(wi.reason || ""),
+    belowMinRejected: wm.ok === false && /minimum/.test(wm.reason || ""),
+    depositCredited: d.ok && d.credits === 500 && a2.credits === start - 1000 + 500,
+    depositClaimOnce: dd.ok === false,
+  };
+  report(
+    "METRO — custodial bridge: atomic withdraw + caps/cooldown + claim-once deposit",
+    {
+      start,
+      afterWithdraw: a1.credits,
+      afterDeposit: a2.credits,
+      withdrawMetro: w.metro,
+      depositCredits: d.credits,
+      cooldownReason: wc.reason,
+      insufficientReason: wi.reason,
+    },
+    Object.values(checks).every(Boolean),
+    checks,
+  );
+}
+
 try {
   if (mode === "check") await check();
   else if (mode === "combat") await combat();
@@ -868,6 +926,7 @@ try {
   else if (mode === "quest") await quest();
   else if (mode === "abuse") await abuse();
   else if (mode === "load") await load();
+  else if (mode === "metro") await metro();
   else if (mode === "bot") await bot();
   else await move();
 } catch (e) {

@@ -88,6 +88,11 @@ export const parseZone = (z: string | null): number => {
 export interface Env {
   WORLD: DurableObjectNamespace;
   DB: D1Database;
+  // $METRO bridge (Phase 5) — present only when the devnet rig is configured via
+  // .dev.vars / wrangler secrets. Absent → the bridge uses the devnet-sim settlement.
+  METRO_TREASURY_SECRET?: string;
+  METRO_DEVNET_MINT?: string;
+  METRO_RPC?: string;
 }
 
 interface PlayerState {

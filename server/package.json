@@ -14,5 +14,9 @@
     "@cloudflare/workers-types": "^4.20260623.1",
     "typescript": "^6.0.3",
     "wrangler": "^4.103.0"
+  },
+  "dependencies": {
+    "@solana/spl-token": "^0.4.14",
+    "@solana/web3.js": "^1.98.4"
   }
 }
