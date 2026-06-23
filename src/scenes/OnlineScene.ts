@@ -27,6 +27,7 @@ export default class OnlineScene extends Phaser.Scene {
   private net!: NetClient;
   private me!: Phaser.GameObjects.Sprite;
   private remoteSprites = new Map<string, Phaser.GameObjects.Sprite>();
+  private remoteLabels = new Map<string, Phaser.GameObjects.Text>();
   private enemySprites = new Map<number, Phaser.GameObjects.Sprite>();
   private shotSprites = new Map<number, Phaser.GameObjects.Image>();
   private pickupSprites = new Map<number, Phaser.GameObjects.Image>();
@@ -129,19 +130,33 @@ export default class OnlineScene extends Phaser.Scene {
       if (mx !== 0 || my !== 0) this.me.setFrame(faceFrame(mx, my));
     }
 
-    // remote players (interpolated by NetClient)
+    // remote players (interpolated by NetClient) — labelled, faded when dead
     for (const [id, r] of this.net.remotes) {
       let s = this.remoteSprites.get(id);
       if (!s) {
-        s = this.add.sprite(r.x, r.y, PLAYER_KEY, 0).setTint(0xff2bd6).setDepth(9);
+        s = this.add.sprite(r.x, r.y, PLAYER_KEY, 0).setTint(0xff79c6).setDepth(9);
         this.remoteSprites.set(id, s);
+        this.remoteLabels.set(
+          id,
+          this.add
+            .text(r.x, r.y - 22, id, {
+              fontFamily: "Courier New, monospace",
+              fontSize: "9px",
+              color: "#ff79c6",
+            })
+            .setOrigin(0.5)
+            .setDepth(9),
+        );
       }
-      s.setPosition(r.x, r.y);
+      s.setPosition(r.x, r.y).setVisible(!r.dead).setAlpha(r.dead ? 0.25 : 1);
+      this.remoteLabels.get(id)?.setPosition(r.x, r.y - 22).setVisible(!r.dead);
     }
     for (const [id, s] of this.remoteSprites) {
       if (!this.net.remotes.has(id)) {
         s.destroy();
         this.remoteSprites.delete(id);
+        this.remoteLabels.get(id)?.destroy();
+        this.remoteLabels.delete(id);
       }
     }
 

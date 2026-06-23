@@ -69,6 +69,7 @@ function trackState(ws, id, store) {
         store.level = me.level;
         store.tick = m.tick;
       }
+      store.players = m.players || [];
       store.enemies = m.enemies || [];
       store.shots = m.shots || [];
       store.pickups = m.pickups || [];
@@ -252,9 +253,78 @@ async function combat() {
   );
 }
 
+async function mp() {
+  const AOI = 720;
+  const a = await connect();
+  const wa = await login(a, "alice");
+  const b = await connect();
+  const wb = await login(b, "bob");
+  const sa = { x: wa.x, y: wa.y, players: [] };
+  const sb = { x: wb.x, y: wb.y, players: [] };
+  trackState(a, wa.id, sa);
+  trackState(b, wb.id, sb);
+  await sleep(500);
+  const sees = (store, who) => (store.players || []).some((p) => p.id === who);
+
+  // Phase 1 — both near spawn: each should see the other.
+  const closeMutual = sees(sa, wb.id) && sees(sb, wa.id);
+
+  // Phase 2 — drive them apart (alice down-left, bob up-right).
+  let seq = 0;
+  const t0 = Date.now();
+  while (Date.now() - t0 < 5000) {
+    seq++;
+    a.send(JSON.stringify({ t: "input", seq, mx: -1, my: 1 }));
+    b.send(JSON.stringify({ t: "input", seq, mx: 1, my: -1 }));
+    await sleep(50);
+  }
+  await sleep(400);
+  const d = Math.hypot(sa.x - sb.x, sa.y - sb.y);
+  const farMutual = sees(sa, wb.id) || sees(sb, wa.id);
+
+  const checks = {
+    mutualVisibleWhenClose: closeMutual,
+    // far → culled; clearly-close → visible; borderline → not asserted
+    aoiCulls: d > AOI * 1.05 ? !farMutual : d < AOI * 0.95 ? farMutual : true,
+    separatedEnoughToTestCull: d > AOI * 1.05, // info: did they actually get far?
+  };
+  a.close();
+  b.close();
+  await sleep(300);
+  report(
+    "MP + AOI — two players see each other; AOI culls the distant one",
+    { spawnA: [round(wa.x), round(wa.y)], finalDist: round(d), aoi: AOI, closeMutual, farMutual },
+    checks.mutualVisibleWhenClose && checks.aoiCulls,
+    checks,
+  );
+}
+
+async function bot() {
+  const name = process.argv[3] || "bot";
+  const ws = await connect();
+  const w = await login(ws, name);
+  const store = { x: w.x, y: w.y };
+  trackState(ws, w.id, store);
+  console.log(`bot '${name}' online at ${round(w.x)},${round(w.y)} — wandering (Ctrl-C to stop)`);
+  const dirs = [[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]];
+  let seq = 0;
+  let di = 0;
+  for (;;) {
+    const [mx, my] = dirs[di++ % dirs.length];
+    for (let i = 0; i < 24; i++) {
+      seq++;
+      ws.send(JSON.stringify({ t: "input", seq, mx, my }));
+      if (seq % 6 === 0) ws.send(JSON.stringify({ t: "fire", seq, aim: Math.random() * Math.PI * 2 }));
+      await sleep(50);
+    }
+  }
+}
+
 try {
   if (mode === "check") await check();
   else if (mode === "combat") await combat();
+  else if (mode === "mp") await mp();
+  else if (mode === "bot") await bot();
   else await move();
 } catch (e) {
   report(mode.toUpperCase(), { error: String(e?.message || e) }, false);

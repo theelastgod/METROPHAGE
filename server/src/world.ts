@@ -33,6 +33,7 @@ import {
   PICKUP_CORE,
   SING_PER_KILL,
   SING_MAX,
+  AOI_RADIUS,
 } from "../../src/net/sim";
 import { buildGrid, spawnPoint, isWall, type TileGrid } from "../../src/world/district";
 import { DISTRICTS } from "../../src/game/districts";
@@ -431,41 +432,15 @@ export class WorldDO {
       }
     }
 
-    // 5) broadcast authoritative snapshot
-    const players = [...this.players.values()].map((p) => ({
-      id: p.id,
-      x: round2(p.x),
-      y: round2(p.y),
-      ack: p.ack,
-      hp: Math.max(0, Math.round(p.hp)),
-      dead: p.dead,
-      credits: p.credits,
-      xp: p.xp,
-      level: p.level,
-    }));
-    const enemies = [...this.enemies.values()]
-      .filter((e) => e.hp > 0)
-      .map((e) => ({ id: e.id, x: round2(e.x), y: round2(e.y), hp: Math.round(e.hp) }));
-    const shots = this.shots.map((s) => ({ id: s.id, x: round2(s.x), y: round2(s.y), team: s.team }));
-    const pickups = [...this.pickups.values()].map((pu) => ({
-      id: pu.id,
-      x: round2(pu.x),
-      y: round2(pu.y),
-      kind: pu.kind,
-    }));
-    const snapshot = JSON.stringify({
-      t: "state",
-      tick: this.tick,
-      players,
-      enemies,
-      shots,
-      pickups,
-      sing: round2(this.singularity),
-      meltdown: this.singularity >= SING_MAX,
-    });
-    for (const ws of this.sessions.keys()) {
+    // 5) broadcast — PER-CLIENT area-of-interest: each player is only sent the
+    // entities within AOI_RADIUS of their own position (always including itself).
+    const sing = round2(this.singularity);
+    const meltdown = this.singularity >= SING_MAX;
+    for (const [ws, id] of this.sessions) {
+      const viewer = this.players.get(id);
+      if (!viewer) continue;
       try {
-        ws.send(snapshot);
+        ws.send(this.snapshotFor(viewer, sing, meltdown));
       } catch {
         /* dropped */
       }
@@ -477,6 +452,40 @@ export class WorldDO {
       clearInterval(this.timer);
       this.timer = null;
     }
+  }
+
+  /** Build the AOI-filtered snapshot a single viewer should receive. */
+  private snapshotFor(viewer: PlayerState, sing: number, meltdown: boolean): string {
+    const R2 = AOI_RADIUS * AOI_RADIUS;
+    const near = (x: number, y: number) => dist2(viewer.x, viewer.y, x, y) <= R2;
+    const players = [];
+    for (const p of this.players.values()) {
+      if (p.id !== viewer.id && !near(p.x, p.y)) continue;
+      players.push({
+        id: p.id,
+        x: round2(p.x),
+        y: round2(p.y),
+        ack: p.ack,
+        hp: Math.max(0, Math.round(p.hp)),
+        dead: p.dead,
+        credits: p.credits,
+        xp: p.xp,
+        level: p.level,
+      });
+    }
+    const enemies = [];
+    for (const e of this.enemies.values()) {
+      if (e.hp > 0 && near(e.x, e.y)) enemies.push({ id: e.id, x: round2(e.x), y: round2(e.y), hp: Math.round(e.hp) });
+    }
+    const shots = [];
+    for (const s of this.shots) {
+      if (near(s.x, s.y)) shots.push({ id: s.id, x: round2(s.x), y: round2(s.y), team: s.team });
+    }
+    const pickups = [];
+    for (const pu of this.pickups.values()) {
+      if (near(pu.x, pu.y)) pickups.push({ id: pu.id, x: round2(pu.x), y: round2(pu.y), kind: pu.kind });
+    }
+    return JSON.stringify({ t: "state", tick: this.tick, players, enemies, shots, pickups, sing, meltdown });
   }
 
   private nearestLivePlayer(x: number, y: number, range: number): PlayerState | null {

@@ -110,6 +110,11 @@ export const PICKUP_CORE = 1;
 export const SING_PER_KILL = 0.6; // every kill (any player) pushes the shared meter
 export const SING_MAX = 100;
 
+/** Area-of-interest radius — the server only sends a client the entities within
+ *  this distance of its player. Bigger than the ~960×540 view so nothing pops in
+ *  at the edge; the mechanism is what matters (it's what makes scale possible). */
+export const AOI_RADIUS = 720;
+
 /** True if the point (x,y) is inside a wall tile or out of bounds. */
 export function tileIsWall(x: number, y: number, grid: TileGrid): boolean {
   const tx = Math.floor(x / TILE);

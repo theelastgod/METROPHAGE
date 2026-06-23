@@ -68,13 +68,27 @@ Verified (`smoke.mjs combat`): server awarded XP, rolled loot drops, and raised 
 shared Singularity; browser HUD shows LV/XP/₵/HP + the shared Singularity, and the
 meter reloaded its persisted value after a restart.
 
+### Step 3a — multiplayer + area-of-interest ✅
+
+- **Multiplayer** — 2+ players share a zone and see each other move in real time
+  (remote players are interpolated + labelled, faded when dead). Each player's
+  kills push the same shared Singularity.
+- **AOI** — the server builds a **per-client snapshot**: each player is only sent
+  the players / enemies / shots / pickups within `AOI_RADIUS` of their own
+  position (always including itself). This is what makes scale possible.
+
+Verified (`smoke.mjs mp`): two clients near spawn see each other; driven 1420 px
+apart, the AOI culls them (neither appears in the other's snapshot). A `bot` mode
+(`smoke.mjs bot <name>`) runs a wandering 2nd player for the browser demo.
+
 ### What's intentionally NOT here yet
 
-Lag compensation for the hitscan/beam weapon; per-class weapons in the online path
-(it uses generic stats for now); the rest of the shared-world systems — territory /
-faction war / seasonal meltdown (Step 4); multiple players / AOI / zone handoff
-(Step 3); and the WebSocket Hibernation API + alarms (production tick model — the
-spike uses an in-memory `setInterval`, fine with a live connection).
+Zone handoff between districts — Step 3b (server is a single "world" zone via
+`idFromName(zone)`; `/ws?zone=` is already routed, so per-district DOs + handoff
+are next); lag compensation for the hitscan/beam weapon; per-class weapons in the
+online path (generic stats for now); the shared-world systems — territory / faction
+war / seasonal meltdown (Step 4); and the WebSocket Hibernation API + alarms
+(production tick model — the spike uses an in-memory `setInterval`).
 
 ## Run it
 
