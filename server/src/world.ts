@@ -1,15 +1,15 @@
-import {
-  TICK_MS,
-  MOVE_SPEED,
-  WORLD,
-  SPAWN,
-  PERSIST_EVERY_TICKS,
-  INTENT_EXPIRE_TICKS,
-  clampUnit,
-  clamp,
-  round2,
-  type ClientMsg,
-} from "./protocol";
+// Shared game model + sim (single source of truth, imported from the client repo —
+// these modules are Phaser-free and deterministic).
+import { NET_TICK_MS, type ClientMsg } from "../../src/net/protocol";
+import { stepMove, WORLD_W, WORLD_H } from "../../src/net/sim";
+import { buildGrid, spawnPoint, type TileGrid } from "../../src/world/district";
+import { DISTRICTS } from "../../src/game/districts";
+
+// Server-only tuning.
+const PERSIST_EVERY_TICKS = 40; // ~2s snapshot cadence
+const INTENT_EXPIRE_TICKS = 3; // clear intent if no fresh input in ~150ms
+const round2 = (n: number) => Math.round(n * 100) / 100;
+const clampUnit = (n: number) => (n > 1 ? 1 : n < -1 ? -1 : Number.isFinite(n) ? n : 0);
 
 export interface Env {
   WORLD: DurableObjectNamespace;
@@ -23,31 +23,40 @@ interface PlayerState {
   y: number;
   mx: number; // latest input intent on X (-1..1)
   my: number; // latest input intent on Y (-1..1)
-  lastInputTick: number; // tick of the most recent input (for intent expiry)
-  ack: number; // last processed input seq (for client reconciliation)
-  dirty: boolean; // moved since last persist
+  lastInputTick: number;
+  ack: number; // last processed input seq (drives client reconciliation)
+  dirty: boolean;
 }
 
 /**
- * WorldDO — the authoritative simulation for one zone. It owns the truth: clients
- * submit movement *intent*, the DO integrates it at a fixed tick/speed, clamps to
- * world bounds, and broadcasts snapshots. Player positions persist to D1 so state
- * survives the DO being evicted or the server restarting.
+ * WorldDO — the authoritative simulation for one zone. Source of truth: clients
+ * submit movement *intent*, the DO integrates it through the SHARED sim (the exact
+ * code the client predicts with) against the district's wall grid, then broadcasts
+ * snapshots. Positions persist to D1 so state survives eviction / a server restart.
  *
- * NOTE (Step 7 hardening): this uses an in-memory setInterval tick + non-hibernated
- * sockets — fine for the spike with a live connection. Production should move to
- * the WebSocket Hibernation API + alarms so idle zones cost nothing.
+ * Step 1 proved the loop with bounds-only movement; Step 2 swaps in the real
+ * deterministic sim + collision so the client can predict and reconcile cleanly.
+ *
+ * NOTE (Step 7 hardening): in-memory setInterval tick + non-hibernated sockets —
+ * fine for the spike with a live connection; production should use the WebSocket
+ * Hibernation API + alarms so idle zones cost nothing.
  */
 export class WorldDO {
-  private sessions = new Map<WebSocket, string>(); // ws -> playerId
+  private sessions = new Map<WebSocket, string>();
   private players = new Map<string, PlayerState>();
   private tick = 0;
   private timer: ReturnType<typeof setInterval> | null = null;
+  private grid: TileGrid;
+  private spawn: { x: number; y: number };
 
   constructor(
     _state: DurableObjectState,
     private env: Env,
-  ) {}
+  ) {
+    // One zone for the spike (DISTRICTS[0]); per-district zones land in Step 3.
+    this.grid = buildGrid(DISTRICTS[0]);
+    this.spawn = spawnPoint(this.grid, DISTRICTS[0]);
+  }
 
   async fetch(req: Request): Promise<Response> {
     if (req.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
@@ -86,9 +95,9 @@ export class WorldDO {
     const name = (rawName || "").trim().slice(0, 16) || "blank";
     const id = name.toLowerCase().replace(/[^a-z0-9_-]/g, "") || "blank";
 
-    // Durable source of truth: load the persisted position, or seed a new one.
-    let x = SPAWN.x;
-    let y = SPAWN.y;
+    // Durable source of truth: load the persisted position, or seed at the spawn.
+    let x = this.spawn.x;
+    let y = this.spawn.y;
     const row = await this.env.DB.prepare("SELECT x, y FROM players WHERE id = ?")
       .bind(id)
       .first<{ x: number; y: number }>();
@@ -107,9 +116,8 @@ export class WorldDO {
       id,
       x: round2(x),
       y: round2(y),
-      tickMs: TICK_MS,
-      speed: MOVE_SPEED,
-      world: WORLD,
+      tickMs: NET_TICK_MS,
+      world: { w: WORLD_W, h: WORLD_H },
     });
     this.ensureTick();
   }
@@ -119,8 +127,8 @@ export class WorldDO {
     if (!id) return;
     const p = this.players.get(id);
     if (!p) return;
-    // AUTHORITY: accept only intent, clamped to a unit vector. A client that lies
-    // (mx=999, or a teleport) cannot move faster or jump — it doesn't send position.
+    // AUTHORITY: accept only intent, clamped to a unit vector. A lying client
+    // (mx=999 / a teleport) cannot move faster or jump — it never sends a position.
     p.mx = clampUnit(msg.mx);
     p.my = clampUnit(msg.my);
     p.lastInputTick = this.tick;
@@ -128,25 +136,22 @@ export class WorldDO {
   }
 
   private ensureTick() {
-    if (!this.timer) this.timer = setInterval(() => this.step(), TICK_MS);
+    if (!this.timer) this.timer = setInterval(() => this.step(), NET_TICK_MS);
   }
 
   private step() {
-    const dt = TICK_MS / 1000;
     for (const p of this.players.values()) {
-      // expire stale intent so a lost "stop" packet (or a disconnect) can't slide
-      // a player forever — movement only continues while inputs keep arriving.
+      // expire stale intent so a lost "stop" packet can't slide a player forever
       if (this.tick - p.lastInputTick > INTENT_EXPIRE_TICKS) {
         p.mx = 0;
         p.my = 0;
       }
       if (p.mx !== 0 || p.my !== 0) {
-        const len = Math.hypot(p.mx, p.my) || 1; // normalize diagonals
-        p.x = clamp(p.x + (p.mx / len) * MOVE_SPEED * dt, 0, WORLD.w);
-        p.y = clamp(p.y + (p.my / len) * MOVE_SPEED * dt, 0, WORLD.h);
+        stepMove(p, { mx: p.mx, my: p.my }, this.grid, NET_TICK_MS); // mutates p.x/p.y
         p.dirty = true;
       }
     }
+
     const players = [...this.players.values()].map((p) => ({
       id: p.id,
       x: round2(p.x),

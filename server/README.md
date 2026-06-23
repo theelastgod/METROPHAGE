@@ -4,26 +4,42 @@ Cloudflare **Worker + Durable Objects + D1**. The authoritative game simulation
 lives server-side; clients send *intent* and render what the server decides. This
 is the foundation for the single-player → shared-world migration.
 
-## Status: Step 1 — architecture spike ✅
+## Status
 
-Proves the hard part before migrating any game systems:
+### Step 1 — architecture spike ✅
 
 - **Authoritative DO** (`WorldDO`) runs a fixed 20 Hz tick and is the source of
   truth for player position. Clients send movement **intent only** (`mx,my` in
-  `-1..1`) and never a position — so they cannot teleport or speed-hack. The
-  server clamps intent to a unit vector, integrates at a fixed speed, clamps to
-  world bounds, and expires stale intent (a lost "stop" packet can't slide a
-  player forever).
-- **D1 persistence** — positions are written to D1 (every ~2 s and on disconnect),
-  so state survives the DO being evicted or the server fully restarting.
-- **Acks** — each snapshot reports the last processed input seq per player, the
-  hook client-side reconciliation will use in Step 2.
+  `-1..1`) and never a position — so they cannot teleport or speed-hack.
+- **D1 persistence** — positions written every ~2 s and on disconnect, so state
+  survives the DO being evicted or the server fully restarting.
+- **Acks** — each snapshot reports the last processed input seq per player.
+
+### Step 2 — authority migration (movement) ✅
+
+The local player's movement is now **server-authoritative in the real game**, with
+**client-side prediction + reconciliation**:
+
+- **Shared deterministic sim** (`src/net/sim.ts` in the client repo, imported by
+  BOTH sides) — fixed-step movement + axis-separated tile collision against the
+  real district grid (`buildGrid`). Because client and server run the *exact same*
+  code, prediction reconciles to ~0 px error.
+- **Server** integrates movement through that sim against `buildGrid(DISTRICTS[0])`
+  and spawns at the real walkable spawn point — walls, speed and bounds enforced
+  server-side. (The worker bundles the client's pure `src/` modules directly; no
+  duplication.)
+- **Client** (`src/net/NetClient.ts` + `src/scenes/OnlineScene.ts`, reachable from
+  the Select screen's "⊕ ONLINE" button) predicts locally, then on each snapshot
+  snaps to the authoritative position and replays still-unacked inputs. A net-debug
+  HUD shows predicted vs server position and the reconciliation error (verified at
+  0.00 px in lockstep).
 
 ### What's intentionally NOT here yet
 
-Client prediction/reconciliation in the real game (Step 2), multiple players /
-AOI / zones (Step 3), and the WebSocket Hibernation API + alarms (the production
-tick model; spike uses an in-memory `setInterval`, fine with a live connection).
+Combat / loot / currency / progression / Singularity authority (next Step-2
+commits, same client-predicts / server-decides pattern), multiple players / AOI /
+zones (Step 3), and the WebSocket Hibernation API + alarms (production tick model;
+the spike uses an in-memory `setInterval`, fine with a live connection).
 
 ## Run it
 

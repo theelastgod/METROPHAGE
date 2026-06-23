@@ -189,6 +189,22 @@ export default class SelectScene extends Phaser.Scene {
     optBtn.on("pointerout", () => optBtn.setColor("#9aa3b2"));
     optBtn.on("pointerdown", () => this.options.toggle());
 
+    // ONLINE (beta) — Phase 4 shared-world client (server-authoritative movement).
+    const onlineBtn = this.add
+      .text(16, 14, "⊕ ONLINE (beta)", {
+        fontFamily: "Courier New, monospace",
+        fontSize: "12px",
+        color: "#39ff88",
+      })
+      .setInteractive({ useHandCursor: true });
+    onlineBtn.on("pointerover", () => onlineBtn.setColor("#eafdff"));
+    onlineBtn.on("pointerout", () => onlineBtn.setColor("#39ff88"));
+    onlineBtn.on("pointerdown", () => {
+      if (this.options?.isOpen) return;
+      this.cameras.main.fadeOut(250, 2, 2, 8);
+      this.cameras.main.once("camerafadeoutcomplete", () => this.scene.start("Online"));
+    });
+
     this.drawFrames();
 
     this.input.keyboard?.on("keydown", (e: KeyboardEvent) => {

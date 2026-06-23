@@ -3,7 +3,7 @@
 // work can read this grid without touching draw code.
 
 import { GRID_W, GRID_H, TILE } from "../config";
-import { DistrictDef, DISTRICTS, Rect } from "../game/districts";
+import { DISTRICTS, type DistrictDef, type Rect } from "../game/districts";
 
 // Indices into the drop-in tileset (256×64, sixteen 32×32 cells):
 // 0 floor · 2 road · 3 plaza · 4 wall (see ART_NOTES).

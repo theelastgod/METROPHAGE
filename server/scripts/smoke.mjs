@@ -82,46 +82,62 @@ async function move() {
   const store = { x: w.x, y: w.y, ack: 0, tick: 0 };
   trackState(ws, w.id, store);
   const startX = w.x;
+  const startY = w.y;
 
-  // Drive "move right" for ~2.5s. Every 10th input is a blatant speed-hack value;
-  // the server must ignore the magnitude and move at its own fixed speed.
+  // Short tour (right/down/left/up, ~0.7s each) so the player moves in whichever
+  // directions are open. Every 10th input is a blatant speed-hack value — the
+  // server must ignore the magnitude. We track the farthest the player ever gets
+  // from spawn: it must move SOMEWHERE, but never further than top-speed×time
+  // (so the cheat can't teleport/accelerate, and walls aren't tunnelled).
+  // A down-left staircase displaces the player away from spawn (and the wall to its
+  // right we already saw), so the persisted position is unambiguously "moved".
+  const dirs = [
+    [0, 1],
+    [-1, 0],
+    [0, 1],
+    [-1, 0],
+  ];
   let seq = 0;
+  let maxDist = 0;
   const t0 = Date.now();
-  while (Date.now() - t0 < 2500) {
-    seq++;
-    const mx = seq % 10 === 0 ? 999 : 1;
-    ws.send(JSON.stringify({ t: "input", seq, mx, my: 0 }));
-    await sleep(50);
+  for (const [dx, dy] of dirs) {
+    const td = Date.now();
+    while (Date.now() - td < 700) {
+      seq++;
+      const cheat = seq % 10 === 0 ? 999 : 1;
+      ws.send(JSON.stringify({ t: "input", seq, mx: dx * cheat, my: dy * cheat }));
+      await sleep(50);
+      maxDist = Math.max(maxDist, Math.hypot(store.x - startX, store.y - startY));
+    }
   }
   const activeSecs = (Date.now() - t0) / 1000;
-  await sleep(250); // let the last inputs tick through
-  const movedX = store.x - startX;
+  await sleep(250);
 
-  // Stop sending inputs; the server's intent-expiry should halt the player.
+  // Stop sending; the server's intent-expiry should halt the player.
   await sleep(400);
   const restX = store.x;
+  const restY = store.y;
   await sleep(250);
-  const settledX = store.x; // should equal restX if movement truly stopped
+  const settledMoved = Math.hypot(store.x - restX, store.y - restY);
 
-  const lo = SPEED * activeSecs * 0.5;
-  const hi = SPEED * activeSecs * 1.2;
+  const speedCap = SPEED * activeSecs * 1.1; // can't be further than top speed allows
   const checks = {
-    movedRight: movedX > 50,
-    speedServerEnforced: movedX >= lo && movedX <= hi, // cheat didn't accelerate
+    movedSomewhere: maxDist > 10,
+    speedServerEnforced: maxDist <= speedCap, // cheat (mx=999) did NOT accelerate
     inputsAcked: store.ack >= seq - 3,
-    withinBounds: settledX <= WORLD_W + 0.01 && store.y >= 0,
-    movementStoppedOnSilence: Math.abs(settledX - restX) < 0.5, // intent expired
+    withinBounds: store.x >= 0 && store.x <= WORLD_W && store.y >= 0 && store.y <= 1000,
+    movementStoppedOnSilence: settledMoved < 0.5, // intent expired -> player halts
   };
   const ok = Object.values(checks).every(Boolean);
 
-  // Record the SETTLED position; the disconnect flush will persist this same value.
-  fs.writeFileSync(STATE_FILE, JSON.stringify({ id: w.id, x: settledX, y: store.y }));
-  await sleep(250); // ensure a persist cycle lands
+  const movedNet = Math.hypot(store.x - startX, store.y - startY);
+  fs.writeFileSync(STATE_FILE, JSON.stringify({ id: w.id, x: store.x, y: store.y, movedNet }));
+  await sleep(250); // persist cycle
   ws.close();
   await sleep(300); // disconnect flush
   report(
-    "MOVE — server-authoritative movement + speed validation + intent expiry",
-    { startX, movedX: round(movedX), settledX, activeSecs: round(activeSecs), expectedBand: [round(lo), round(hi)], ack: store.ack, sentSeq: seq },
+    "MOVE — server-authoritative tour + speed validation + intent expiry",
+    { spawn: [startX, startY], maxDist: round(maxDist), settledAt: [round(store.x), round(store.y)], activeSecs: round(activeSecs), speedCap: round(speedCap), ack: store.ack, sentSeq: seq },
     ok,
     checks,
   );
@@ -135,14 +151,14 @@ async function check() {
   const ws = await connect();
   const w = await login(ws, "spike");
   ws.close();
-  const dx = Math.abs(w.x - expected.x);
+  const dx = Math.hypot(w.x - expected.x, w.y - expected.y);
   const checks = {
-    matchesPersisted: dx < 2, // came back where we left off
-    notAFreshSpawn: Math.abs(w.x - SPAWN_X) > 50, // and it's not the default spawn
+    matchesPersisted: dx < 2, // came back exactly where we left off
+    persistedAMovedPosition: (expected.movedNet ?? 0) > 10, // not a trivial fresh spawn
   };
   report(
     "CHECK — position persisted across full server restart",
-    { recordedX: expected.x, reloadedX: w.x, dx: round(dx), freshSpawnX: SPAWN_X },
+    { recorded: [expected.x, expected.y], reloaded: [round(w.x), round(w.y)], dx: round(dx), movedFromSpawn: round(expected.movedNet ?? 0) },
     Object.values(checks).every(Boolean),
     checks,
   );
