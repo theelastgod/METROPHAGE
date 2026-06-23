@@ -25,6 +25,7 @@ import {
   PORTRAIT_NPC_KEY,
   VO_MELTDOWN_KEY,
   STREETLIGHT_KEY,
+  GLOW_KEY,
 } from "../assets/manifest";
 import Player, { PlayerInput } from "../entities/Player";
 import Bullets from "../entities/Bullets";
@@ -138,6 +139,7 @@ export default class GameScene
   private agents!: Phaser.Physics.Arcade.Group;
   private minions!: Phaser.Physics.Arcade.Group;
   private neon?: NeonPipeline;
+  private playerAura?: Phaser.GameObjects.Image;
   private hud!: Hud;
   private dialogue!: DialogueBox;
 
@@ -560,6 +562,13 @@ export default class GameScene
   private spawnPlayer() {
     this.player = new Player(this, this.spawn.x, this.spawn.y, this.classDef);
     this.physics.add.collider(this.player, this.wallLayer);
+    // Overclock aura — glows behind the player as Heat climbs (set each frame).
+    this.playerAura = this.add
+      .image(this.spawn.x, this.spawn.y, GLOW_KEY)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setTint(this.classDef.color)
+      .setDepth(9)
+      .setVisible(false);
   }
 
   private setupProjectiles() {
@@ -904,6 +913,21 @@ export default class GameScene
     const tier = this.heat.tier;
     if (tier > this.prevHeatTier) this.onHeatTierUp(tier);
     this.prevHeatTier = tier;
+
+    // Overclock aura: a pulsing class-colored glow behind the player, growing with Heat.
+    if (this.playerAura) {
+      const hn = this.heat.normalized;
+      if (hn > 0.22) {
+        const pulse = 0.78 + 0.22 * Math.sin(now * 0.013);
+        this.playerAura
+          .setVisible(true)
+          .setPosition(this.player.x, this.player.y)
+          .setAlpha(hn * 0.55 * pulse)
+          .setScale((0.55 + hn * 0.5) * pulse);
+      } else {
+        this.playerAura.setVisible(false);
+      }
+    }
 
     this.player.speedMult = this.spdMult;
     this.player.tickShield(now, delta);
