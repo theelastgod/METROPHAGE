@@ -6,6 +6,7 @@ import CustomizeScene from "./scenes/CustomizeScene";
 import GameScene from "./scenes/GameScene";
 import DiveScene from "./scenes/DiveScene";
 import OnlineScene from "./scenes/OnlineScene";
+import { getMetroStatus } from "./economy/metro";
 
 // METROPHAGE — Phase 0 vertical slice entry point.
 const config: Phaser.Types.Core.GameConfig = {
@@ -35,4 +36,9 @@ const game = new Phaser.Game(config);
 // Dev-only handle for debugging/verification in the browser console.
 if (import.meta.env.DEV) {
   (window as unknown as { __game: Phaser.Game }).__game = game;
+  // Surface the $METRO gate state so it's obvious whether the on-chain layer is live.
+  const m = getMetroStatus();
+  console.info(
+    `[$METRO] ${m.enabled ? `ENABLED · ${m.cluster}${m.mainnetLive ? " · MAINNET LIVE" : ""}` : "disabled (off-chain only)"}`,
+  );
 }
