@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { COLORS, TILE } from "../config";
-import { TILESET_KEY, PLAYER_KEY, faceFrame } from "../assets/manifest";
+import { TILESET_KEY, PLAYER_KEY, COP_KEY, BULLET_KEY, faceFrame } from "../assets/manifest";
+import { PLAYER_HP } from "../net/sim";
 import { buildGrid } from "../world/district";
 import { DISTRICTS } from "../game/districts";
 import { WORLD_W, WORLD_H } from "../net/sim";
@@ -26,7 +27,11 @@ export default class OnlineScene extends Phaser.Scene {
   private net!: NetClient;
   private me!: Phaser.GameObjects.Sprite;
   private remoteSprites = new Map<string, Phaser.GameObjects.Sprite>();
+  private enemySprites = new Map<number, Phaser.GameObjects.Sprite>();
+  private shotSprites = new Map<number, Phaser.GameObjects.Image>();
   private hud!: Phaser.GameObjects.Text;
+  private hpBar!: Phaser.GameObjects.Graphics;
+  private deadText!: Phaser.GameObjects.Text;
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
   private color: number = COLORS.player;
   private callsign = "runner";
@@ -82,12 +87,25 @@ export default class OnlineScene extends Phaser.Scene {
       .text(
         this.scale.width / 2,
         this.scale.height - 12,
-        "ONLINE (beta) · WASD move · server-authoritative · ESC to exit",
+        "ONLINE (beta) · WASD move · CLICK fire · server-authoritative · ESC to exit",
         { fontFamily: "Courier New, monospace", fontSize: "11px", color: "#6b7184" },
       )
       .setOrigin(0.5, 1)
       .setScrollFactor(0)
       .setDepth(1000);
+
+    this.hpBar = this.add.graphics().setScrollFactor(0).setDepth(1000);
+    this.deadText = this.add
+      .text(this.scale.width / 2, this.scale.height / 2, "", {
+        fontFamily: "Courier New, monospace",
+        fontSize: "20px",
+        color: "#ff3b6b",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(1001)
+      .setVisible(false);
 
     this.input.keyboard!.on("keydown-ESC", () => {
       this.net.disconnect();
@@ -126,14 +144,70 @@ export default class OnlineScene extends Phaser.Scene {
       }
     }
 
+    // FIRE — send aim intent while the mouse is held; the SERVER validates rate
+    // and resolves the hit. We only render.
+    const ptr = this.input.activePointer;
+    if (this.net.connected && !this.net.dead && ptr.isDown) {
+      const wp = this.cameras.main.getWorldPoint(ptr.x, ptr.y);
+      const aim = Math.atan2(wp.y - this.net.pred.y, wp.x - this.net.pred.x);
+      this.net.fire(aim);
+      this.me.setFrame(faceFrame(Math.cos(aim), Math.sin(aim)));
+    }
+    this.me.setVisible(this.net.connected && !this.net.dead);
+
+    // enemies (server-simulated)
+    for (const [id, e] of this.net.enemies) {
+      let s = this.enemySprites.get(id);
+      if (!s) {
+        s = this.add.sprite(e.x, e.y, COP_KEY, 0).setTint(COLORS.enemy).setDepth(8);
+        this.enemySprites.set(id, s);
+      }
+      s.setPosition(e.x, e.y);
+    }
+    for (const [id, s] of this.enemySprites)
+      if (!this.net.enemies.has(id)) {
+        s.destroy();
+        this.enemySprites.delete(id);
+      }
+
+    // projectiles (server-simulated)
+    for (const [id, sh] of this.net.shots) {
+      let s = this.shotSprites.get(id);
+      if (!s) {
+        s = this.add
+          .image(sh.x, sh.y, BULLET_KEY)
+          .setDepth(9)
+          .setTint(sh.team === 0 ? COLORS.bullet : COLORS.enemy);
+        this.shotSprites.set(id, s);
+      }
+      s.setPosition(sh.x, sh.y);
+    }
+    for (const [id, s] of this.shotSprites)
+      if (!this.net.shots.has(id)) {
+        s.destroy();
+        this.shotSprites.delete(id);
+      }
+
+    // HP bar + death overlay
+    this.hpBar.clear();
+    if (this.net.connected) {
+      const bw = 180;
+      const bx = 12;
+      const by = this.scale.height - 60;
+      this.hpBar.fillStyle(0x140a1e, 0.9).fillRect(bx, by, bw, 12);
+      const hpN = Phaser.Math.Clamp(this.net.hp / PLAYER_HP, 0, 1);
+      this.hpBar.fillStyle(hpN > 0.3 ? COLORS.hp : COLORS.hpLow, 1).fillRect(bx + 1, by + 1, (bw - 2) * hpN, 10);
+    }
+    this.deadText.setVisible(this.net.dead).setText("✖ ELIMINATED — respawning…");
+
     const st = this.net.stats();
     this.hud.setText([
       st.connected ? `◢ ONLINE  ${this.callsign}  (id=${st.id})` : "connecting to server…",
-      `players online : ${st.players}`,
+      `players online : ${st.players}    enemies: ${this.net.enemies.size}`,
+      `HP ${Math.round(this.net.hp)}   ₵ ${this.net.credits}   (server-authoritative)`,
       `predicted      : ${st.predX.toFixed(1)}, ${st.predY.toFixed(1)}`,
       `server (truth) : ${st.serverX.toFixed(1)}, ${st.serverY.toFixed(1)}`,
       `reconcile error: ${st.error.toFixed(2)} px   (corrections: ${st.reconciles})`,
-      `input ack      : ${st.ack}   pending: ${st.pending}`,
     ]);
   }
 

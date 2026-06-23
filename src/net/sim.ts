@@ -53,7 +53,13 @@ export function collides(x: number, y: number, grid: TileGrid): boolean {
  * sides). Movement intent is normalised to a unit vector, integrated at the game's
  * fixed PLAYER.speed, and resolved per axis against the wall grid.
  */
-export function stepMove(s: MoveState, input: MoveInput, grid: TileGrid, dtMs: number): void {
+export function stepMove(
+  s: MoveState,
+  input: MoveInput,
+  grid: TileGrid,
+  dtMs: number,
+  speed: number = PLAYER.speed,
+): void {
   let mx = clampUnit(input.mx);
   let my = clampUnit(input.my);
   const len = Math.hypot(mx, my);
@@ -64,11 +70,62 @@ export function stepMove(s: MoveState, input: MoveInput, grid: TileGrid, dtMs: n
     return; // no intent, no move
   }
   const dt = dtMs / 1000;
-  const dist = PLAYER.speed * dt;
+  const dist = speed * dt;
 
   // Axis-separated resolution → slides along walls instead of sticking.
   const nx = clamp(s.x + mx * dist, PLAYER_RADIUS, WORLD_W - PLAYER_RADIUS);
   if (!collides(nx, s.y, grid)) s.x = nx;
   const ny = clamp(s.y + my * dist, PLAYER_RADIUS, WORLD_H - PLAYER_RADIUS);
   if (!collides(s.x, ny, grid)) s.y = ny;
+}
+
+// ── Combat constants (server-authoritative; client renders + sends fire intent) ──
+export const PLAYER_HP = 100;
+export const COP_HP = 75;
+export const PLAYER_DMG = 25;
+export const ENEMY_DMG = 10;
+export const PLAYER_FIRE_MS = 170; // min gap between player shots
+export const COP_FIRE_MS = 1100;
+export const PROJ_SPEED = 540; // player projectile px/s
+export const ENEMY_PROJ_SPEED = 300;
+export const PROJ_TTL_MS = 900;
+export const ENEMY_PROJ_TTL_MS = 1700;
+export const PROJ_HIT_RADIUS = 12; // projectile-vs-entity hit distance
+export const ENEMY_SPEED = 110; // cop chase speed px/s
+export const ENEMY_AGGRO = 300; // start chasing within this
+export const ENEMY_FIRE_RANGE = 240;
+export const RESPAWN_MS = 2600;
+
+/** True if the point (x,y) is inside a wall tile or out of bounds. */
+export function tileIsWall(x: number, y: number, grid: TileGrid): boolean {
+  const tx = Math.floor(x / TILE);
+  const ty = Math.floor(y / TILE);
+  if (tx < 0 || ty < 0 || tx >= GRID_W || ty >= GRID_H) return true;
+  const row = grid[ty];
+  return !row || isWall(row[tx]);
+}
+
+export const dist2 = (ax: number, ay: number, bx: number, by: number) => {
+  const dx = ax - bx;
+  const dy = ay - by;
+  return dx * dx + dy * dy;
+};
+
+/** Closest distance² from point P to segment AB — for swept projectile-vs-entity
+ *  hits, so a fast shot can't tunnel past a close target in one tick. */
+export function segPointDist2(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+): number {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const l2 = dx * dx + dy * dy;
+  if (l2 < 1e-6) return dist2(px, py, ax, ay);
+  let t = ((px - ax) * dx + (py - ay) * dy) / l2;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  return dist2(px, py, ax + t * dx, ay + t * dy);
 }

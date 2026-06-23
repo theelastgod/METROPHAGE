@@ -62,8 +62,13 @@ function trackState(ws, id, store) {
         store.x = me.x;
         store.y = me.y;
         store.ack = me.ack;
+        store.hp = me.hp;
+        store.dead = me.dead;
+        store.credits = me.credits;
         store.tick = m.tick;
       }
+      store.enemies = m.enemies || [];
+      store.shots = m.shots || [];
     }
   });
 }
@@ -164,8 +169,69 @@ async function check() {
   );
 }
 
+async function combat() {
+  const ws = await connect();
+  const w = await login(ws, "fighter");
+  const store = { x: w.x, y: w.y, ack: 0, hp: 100, credits: 0, enemies: [], shots: [] };
+  trackState(ws, w.id, store);
+  await sleep(250);
+
+  const nearest = () => {
+    let best = null;
+    let bd = Infinity;
+    for (const e of store.enemies) {
+      const d = Math.hypot(e.x - store.x, e.y - store.y);
+      if (d < bd) {
+        bd = d;
+        best = e;
+      }
+    }
+    return best;
+  };
+
+  const startEnemies = store.enemies.length;
+  let minEnemyHp = 999;
+  let maxCredits = 0;
+  let sawPlayerShot = false;
+  let tookDamage = false;
+  let seq = 0;
+  const t0 = Date.now();
+  // Chase the nearest cop and shoot it; the SERVER resolves every hit.
+  while (Date.now() - t0 < 6000) {
+    const e = nearest();
+    if (e) {
+      const dx = e.x - store.x;
+      const dy = e.y - store.y;
+      const d = Math.hypot(dx, dy) || 1;
+      seq++;
+      ws.send(JSON.stringify({ t: "input", seq, mx: d > 110 ? dx / d : 0, my: d > 110 ? dy / d : 0 }));
+      ws.send(JSON.stringify({ t: "fire", seq, aim: Math.atan2(dy, dx) }));
+    }
+    for (const en of store.enemies) minEnemyHp = Math.min(minEnemyHp, en.hp);
+    if (store.shots.some((s) => s.team === 0)) sawPlayerShot = true;
+    maxCredits = Math.max(maxCredits, store.credits || 0);
+    if ((store.hp ?? 100) < 100) tookDamage = true;
+    await sleep(50);
+  }
+
+  const checks = {
+    enemiesSimulated: startEnemies > 0,
+    playerShotsSpawned: sawPlayerShot,
+    serverResolvedHit: minEnemyHp < 75 || maxCredits > 0, // cop damaged, or a kill paid out
+  };
+  ws.close();
+  await sleep(300);
+  report(
+    "COMBAT — server simulates enemies + resolves hits + awards credits",
+    { startEnemies, minEnemyHp: minEnemyHp === 999 ? null : round(minEnemyHp), credits: maxCredits, tookEnemyDamage: tookDamage },
+    Object.values(checks).every(Boolean),
+    checks,
+  );
+}
+
 try {
   if (mode === "check") await check();
+  else if (mode === "combat") await combat();
   else await move();
 } catch (e) {
   report(mode.toUpperCase(), { error: String(e?.message || e) }, false);

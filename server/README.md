@@ -34,12 +34,30 @@ The local player's movement is now **server-authoritative in the real game**, wi
   HUD shows predicted vs server position and the reconciliation error (verified at
   0.00 px in lockstep).
 
+### Step 2b — server-authoritative combat ✅
+
+The server simulates **enemies and projectiles** and decides every outcome:
+
+- **Enemies** (cops) spawn at the district's cop-posts, chase the nearest player
+  through the shared movement sim, and fire on a cooldown.
+- **Fire** — the client sends only a `fire` intent (aim angle). The server enforces
+  the fire rate, spawns a projectile, integrates it, and resolves hits with
+  **swept collision** (a fast shot can't tunnel past a point-blank target).
+- The server owns **HP, damage, kills, death/respawn**, and awards **credits** on a
+  cop kill — **server-authoritative currency**, persisted to D1 (migration `0002`).
+  The client never reports a hit, a kill, damage, or a balance.
+
+Verified headless (`smoke.mjs combat`): 4 enemies simulated, player shots spawned,
+the server damaged/killed cops and paid credits, and cops damaged the player. In
+the browser: cops render and chase, shooting them awards credits, and cop fire can
+eliminate + respawn the player.
+
 ### What's intentionally NOT here yet
 
-Combat / loot / currency / progression / Singularity authority (next Step-2
-commits, same client-predicts / server-decides pattern), multiple players / AOI /
-zones (Step 3), and the WebSocket Hibernation API + alarms (production tick model;
-the spike uses an in-memory `setInterval`, fine with a live connection).
+Loot rolls, progression, and Singularity authority (next, same pattern); lag
+compensation for hitscan/beam weapons; multiple players / AOI / zones (Step 3); and
+the WebSocket Hibernation API + alarms (production tick model — the spike uses an
+in-memory `setInterval`, fine with a live connection).
 
 ## Run it
 

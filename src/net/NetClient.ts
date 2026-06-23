@@ -1,4 +1,4 @@
-import { stepMove, NET_TICK_MS, type MoveState } from "./sim";
+import { stepMove, NET_TICK_MS, PLAYER_HP, type MoveState } from "./sim";
 import type { TileGrid } from "../world/district";
 import type { ClientMsg, ServerMsg, InputCmd } from "./protocol";
 
@@ -8,6 +8,26 @@ export interface RemotePlayer {
   y: number;
   tx: number; // latest authoritative target
   ty: number;
+  hp: number;
+  dead: boolean;
+}
+
+export interface NetEnemy {
+  id: number;
+  x: number;
+  y: number;
+  tx: number;
+  ty: number;
+  hp: number;
+}
+
+export interface NetShot {
+  id: number;
+  x: number;
+  y: number;
+  tx: number;
+  ty: number;
+  team: 0 | 1;
 }
 
 export interface NetStats {
@@ -38,6 +58,11 @@ export default class NetClient {
   pred: MoveState = { x: 0, y: 0 }; // predicted local position (what we render)
   serverPos: MoveState = { x: 0, y: 0 };
   remotes = new Map<string, RemotePlayer>();
+  enemies = new Map<number, NetEnemy>();
+  shots = new Map<number, NetShot>();
+  hp = PLAYER_HP;
+  dead = false;
+  credits = 0;
   lastError = 0;
   reconciles = 0;
   lastAck = 0;
@@ -87,10 +112,18 @@ export default class NetClient {
       this.acc -= NET_TICK_MS;
       this.netTick();
     }
-    // smooth remotes toward their latest authoritative target
+    // smooth remotes / enemies toward their latest authoritative target
     for (const r of this.remotes.values()) {
       r.x += (r.tx - r.x) * 0.3;
       r.y += (r.ty - r.y) * 0.3;
+    }
+    for (const e of this.enemies.values()) {
+      e.x += (e.tx - e.x) * 0.3;
+      e.y += (e.ty - e.y) * 0.3;
+    }
+    for (const s of this.shots.values()) {
+      s.x += (s.tx - s.x) * 0.6; // shots move fast — track closely
+      s.y += (s.ty - s.y) * 0.6;
     }
   }
 
@@ -126,14 +159,58 @@ export default class NetClient {
         live.add(sp.id);
         if (sp.id === this.id) {
           this.reconcile(sp.x, sp.y, sp.ack);
+          this.hp = sp.hp;
+          this.dead = sp.dead;
+          this.credits = sp.credits;
         } else {
-          const r = this.remotes.get(sp.id) ?? { id: sp.id, x: sp.x, y: sp.y, tx: sp.x, ty: sp.y };
+          const r = this.remotes.get(sp.id) ?? {
+            id: sp.id,
+            x: sp.x,
+            y: sp.y,
+            tx: sp.x,
+            ty: sp.y,
+            hp: sp.hp,
+            dead: sp.dead,
+          };
           r.tx = sp.x;
           r.ty = sp.y;
+          r.hp = sp.hp;
+          r.dead = sp.dead;
           this.remotes.set(sp.id, r);
         }
       }
       for (const id of [...this.remotes.keys()]) if (!live.has(id)) this.remotes.delete(id);
+
+      const liveE = new Set<number>();
+      for (const e of msg.enemies) {
+        liveE.add(e.id);
+        const ne = this.enemies.get(e.id) ?? { id: e.id, x: e.x, y: e.y, tx: e.x, ty: e.y, hp: e.hp };
+        ne.tx = e.x;
+        ne.ty = e.y;
+        ne.hp = e.hp;
+        this.enemies.set(e.id, ne);
+      }
+      for (const id of [...this.enemies.keys()]) if (!liveE.has(id)) this.enemies.delete(id);
+
+      const liveS = new Set<number>();
+      for (const sh of msg.shots) {
+        liveS.add(sh.id);
+        const ns = this.shots.get(sh.id) ?? { id: sh.id, x: sh.x, y: sh.y, tx: sh.x, ty: sh.y, team: sh.team };
+        ns.tx = sh.x;
+        ns.ty = sh.y;
+        this.shots.set(sh.id, ns);
+      }
+      for (const id of [...this.shots.keys()]) if (!liveS.has(id)) this.shots.delete(id);
+    }
+  }
+
+  /** Send a fire intent (aim in radians). The server validates rate + resolves hits. */
+  fire(aim: number) {
+    if (!this.connected || this.dead) return;
+    try {
+      this.ws?.send(JSON.stringify({ t: "fire", seq: this.seq, aim } satisfies ClientMsg));
+    } catch {
+      /* socket hiccup */
     }
   }
 

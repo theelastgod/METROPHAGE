@@ -15,7 +15,30 @@ export interface InputCmd {
 // client -> server
 export type ClientMsg =
   | { t: "login"; name: string }
-  | { t: "input"; seq: number; mx: number; my: number };
+  | { t: "input"; seq: number; mx: number; my: number }
+  | { t: "fire"; seq: number; aim: number }; // aim in radians; server validates rate
+
+export interface PlayerSnap {
+  id: string;
+  x: number;
+  y: number;
+  ack: number;
+  hp: number;
+  dead: boolean;
+  credits: number;
+}
+export interface EnemySnap {
+  id: number;
+  x: number;
+  y: number;
+  hp: number;
+}
+export interface ShotSnap {
+  id: number;
+  x: number;
+  y: number;
+  team: 0 | 1; // 0 = player shot, 1 = enemy shot
+}
 
 // server -> client
 export type ServerMsg =
@@ -27,5 +50,11 @@ export type ServerMsg =
       tickMs: number;
       world: { w: number; h: number };
     }
-  | { t: "state"; tick: number; players: Array<{ id: string; x: number; y: number; ack: number }> }
+  | {
+      t: "state";
+      tick: number;
+      players: PlayerSnap[];
+      enemies: EnemySnap[];
+      shots: ShotSnap[];
+    }
   | { t: "error"; message: string };
