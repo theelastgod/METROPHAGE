@@ -1,7 +1,16 @@
 import Phaser from "phaser";
 import { COLORS, TILE } from "../config";
-import { TILESET_KEY, PLAYER_KEY, COP_KEY, BULLET_KEY, GLOW_KEY, faceFrame } from "../assets/manifest";
-import { PLAYER_HP, SING_MAX, PICKUP_CORE, xpIntoLevel } from "../net/sim";
+import { TILESET_KEY, PLAYER_KEY, COP_KEY, BULLET_KEY, GLOW_KEY, NODE_KEY, faceFrame } from "../assets/manifest";
+import {
+  PLAYER_HP,
+  SING_MAX,
+  PICKUP_CORE,
+  xpIntoLevel,
+  FACTION_COLORS,
+  FACTION_NAMES,
+  NEUTRAL,
+  factionForColor,
+} from "../net/sim";
 import { buildGrid } from "../world/district";
 import { DISTRICTS } from "../game/districts";
 import { WORLD_W, WORLD_H } from "../net/sim";
@@ -31,6 +40,9 @@ export default class OnlineScene extends Phaser.Scene {
   private enemySprites = new Map<number, Phaser.GameObjects.Sprite>();
   private shotSprites = new Map<number, Phaser.GameObjects.Image>();
   private pickupSprites = new Map<number, Phaser.GameObjects.Image>();
+  private nodeSprites = new Map<number, Phaser.GameObjects.Sprite>();
+  private nodeG!: Phaser.GameObjects.Graphics;
+  private faction = 0;
   private hud!: Phaser.GameObjects.Text;
   private hpBar!: Phaser.GameObjects.Graphics;
   private deadText!: Phaser.GameObjects.Text;
@@ -72,7 +84,9 @@ export default class OnlineScene extends Phaser.Scene {
       .setVisible(false);
 
     const url = SERVER_URL + (SERVER_URL.includes("?") ? "&" : "?") + "zone=" + this.zone;
-    this.net = new NetClient(grid, this.callsign, url);
+    this.faction = factionForColor(this.color); // your cell, from your signature colour
+    this.nodeG = this.add.graphics().setDepth(5); // node capture rings (world-space)
+    this.net = new NetClient(grid, this.callsign, url, this.faction);
     this.net.onWelcome = (x, y) => {
       this.me.setPosition(x, y).setVisible(true);
       this.cameras.main.startFollow(this.me, true, 0.18, 0.18);
@@ -249,6 +263,30 @@ export default class OnlineScene extends Phaser.Scene {
         this.pickupSprites.delete(id);
       }
 
+    // territory nodes (server-owned) — tinted by controlling faction, capture ring
+    this.nodeG.clear();
+    for (const [id, n] of this.net.nodes) {
+      let s = this.nodeSprites.get(id);
+      if (!s) {
+        s = this.add.sprite(n.x, n.y, NODE_KEY).setDepth(6);
+        this.nodeSprites.set(id, s);
+      }
+      const ownerCol = n.owner === NEUTRAL ? 0x8a8f9c : FACTION_COLORS[n.owner];
+      s.setTint(ownerCol).setPosition(n.x, n.y);
+      if (n.progress > 0.01) {
+        const col = n.by === NEUTRAL ? ownerCol : FACTION_COLORS[n.by];
+        this.nodeG.lineStyle(3, col, 0.95);
+        this.nodeG.beginPath();
+        this.nodeG.arc(n.x, n.y, 22, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Phaser.Math.Clamp(n.progress, 0, 1));
+        this.nodeG.strokePath();
+      }
+    }
+    for (const [id, s] of this.nodeSprites)
+      if (!this.net.nodes.has(id)) {
+        s.destroy();
+        this.nodeSprites.delete(id);
+      }
+
     // HP bar + death overlay
     this.hpBar.clear();
     if (this.net.connected) {
@@ -262,14 +300,17 @@ export default class OnlineScene extends Phaser.Scene {
     this.deadText.setVisible(this.net.dead).setText("✖ ELIMINATED — respawning…");
 
     const st = this.net.stats();
+    const ctrl = this.net.control === NEUTRAL ? "—" : FACTION_NAMES[this.net.control];
+    const war = FACTION_NAMES.map((nm, i) => `${nm[0]}:${this.net.factions[i]}`).join("  ");
     this.hud.setText([
       st.connected
         ? `◢ ONLINE  ${this.callsign}  ·  ${this.zone.toUpperCase()} ${DISTRICTS[this.districtIndex].name}`
         : "connecting to server…",
-      `players: ${st.players}   enemies: ${this.net.enemies.size}   loot: ${this.net.pickups.size}`,
+      `CELL ${FACTION_NAMES[this.net.faction]}   ·   DISTRICT CONTROL: ${ctrl}`,
+      `players: ${st.players}   enemies: ${this.net.enemies.size}   nodes: ${this.net.nodes.size}`,
       `LV ${this.net.level}  XP ${xpIntoLevel(this.net.xp)}/100   ₵ ${this.net.credits}   HP ${Math.round(this.net.hp)}`,
-      `SINGULARITY ${this.net.singularity.toFixed(1)} / ${SING_MAX}${this.net.meltdown ? "  ▲ MELTDOWN" : ""}  (shared, server-wide)`,
-      `reconcile error: ${st.error.toFixed(2)} px   (all outcomes server-authoritative)`,
+      `SINGULARITY ${this.net.singularity.toFixed(1)} / ${SING_MAX}${this.net.meltdown ? "  ▲ MELTDOWN" : ""}  (shared)`,
+      `FACTION WAR  ${war}  (server-wide contribution)`,
     ]);
   }
 

@@ -14,7 +14,7 @@ export interface InputCmd {
 
 // client -> server
 export type ClientMsg =
-  | { t: "login"; name: string }
+  | { t: "login"; name: string; faction?: number }
   | { t: "input"; seq: number; mx: number; my: number }
   | { t: "fire"; seq: number; aim: number }; // aim in radians; server validates rate
 
@@ -28,6 +28,7 @@ export interface PlayerSnap {
   credits: number;
   xp: number;
   level: number;
+  faction: number;
 }
 export interface EnemySnap {
   id: number;
@@ -47,6 +48,14 @@ export interface PickupSnap {
   y: number;
   kind: number; // PICKUP_CREDIT | PICKUP_CORE
 }
+export interface NodeSnap {
+  id: number;
+  x: number;
+  y: number;
+  owner: number; // faction index, or NEUTRAL (-1)
+  progress: number; // 0..1 capture progress
+  by: number; // faction currently channelling (NEUTRAL if none)
+}
 
 // server -> client
 export type ServerMsg =
@@ -57,6 +66,7 @@ export type ServerMsg =
       y: number;
       tickMs: number;
       world: { w: number; h: number };
+      faction: number;
     }
   | {
       t: "state";
@@ -65,7 +75,10 @@ export type ServerMsg =
       enemies: EnemySnap[];
       shots: ShotSnap[];
       pickups: PickupSnap[];
+      nodes: NodeSnap[];
       sing: number; // shared server-wide Singularity meter (0..SING_MAX)
       meltdown: boolean;
+      factions: number[]; // global faction contribution scores (server-wide)
+      control: number; // faction controlling THIS district (NEUTRAL if none)
     }
   | { t: "error"; message: string };

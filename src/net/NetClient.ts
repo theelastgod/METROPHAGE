@@ -68,6 +68,10 @@ export default class NetClient {
   singularity = 0;
   meltdown = false;
   pickups = new Map<number, { id: number; x: number; y: number; kind: number }>();
+  faction = 0;
+  nodes = new Map<number, { id: number; x: number; y: number; owner: number; progress: number; by: number }>();
+  factions: number[] = [0, 0, 0, 0];
+  control = -1;
   lastError = 0;
   reconciles = 0;
   lastAck = 0;
@@ -84,12 +88,14 @@ export default class NetClient {
     private grid: TileGrid,
     private name: string,
     private url: string,
+    private loginFaction = 0,
   ) {}
 
   connect() {
     const ws = new WebSocket(this.url);
     this.ws = ws;
-    ws.onopen = () => ws.send(JSON.stringify({ t: "login", name: this.name } satisfies ClientMsg));
+    ws.onopen = () =>
+      ws.send(JSON.stringify({ t: "login", name: this.name, faction: this.loginFaction } satisfies ClientMsg));
     ws.onmessage = (e) => this.onMessage(e.data);
     ws.onclose = () => (this.connected = false);
     ws.onerror = () => (this.connected = false);
@@ -153,6 +159,7 @@ export default class NetClient {
     }
     if (msg.t === "welcome") {
       this.id = msg.id;
+      this.faction = msg.faction;
       this.connected = true;
       this.pred = { x: msg.x, y: msg.y };
       this.serverPos = { x: msg.x, y: msg.y };
@@ -215,8 +222,18 @@ export default class NetClient {
         this.pickups.set(pu.id, pu);
       }
       for (const id of [...this.pickups.keys()]) if (!liveP.has(id)) this.pickups.delete(id);
+
+      const liveN = new Set<number>();
+      for (const n of msg.nodes) {
+        liveN.add(n.id);
+        this.nodes.set(n.id, n);
+      }
+      for (const id of [...this.nodes.keys()]) if (!liveN.has(id)) this.nodes.delete(id);
+
       this.singularity = msg.sing;
       this.meltdown = msg.meltdown;
+      this.factions = msg.factions;
+      this.control = msg.control;
     }
   }
 

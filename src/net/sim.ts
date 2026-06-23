@@ -115,6 +115,39 @@ export const SING_MAX = 100;
  *  at the edge; the mechanism is what matters (it's what makes scale possible). */
 export const AOI_RADIUS = 720;
 
+// ── Territory control + faction war (Step 4a) ──
+/** The four cells = the four classes. A player fights for one of them. */
+export const FACTION_NAMES = ["METROPHAGE", "K-GUERILLA", "WINTERMUTE", "SWARM"];
+export const FACTION_COLORS = [0x39ff88, 0xff2bd6, 0x00e5ff, 0xb06bff];
+export const FACTION_COUNT = 4;
+export const NEUTRAL = -1;
+export const NODE_CHANNEL_RANGE = 84; // stand within this to channel a node
+export const NODE_CAPTURE_PER_SEC = 0.5; // capture progress/sec while channeling
+export const NODE_DECAY_PER_SEC = 0.1; // progress bleeds when uncontested → loses ground
+export const FACTION_CAPTURE_SCORE = 10; // contribution awarded on a flip
+export const NODE_HOLD_SCORE_PER_SEC = 0.25; // contribution per held node, per second
+
+/** Map a signature colour to the nearest faction (so a customized look picks a cell). */
+export function factionForColor(color: number): number {
+  let best = 0;
+  let bestD = Infinity;
+  const r = (color >> 16) & 0xff;
+  const g = (color >> 8) & 0xff;
+  const b = color & 0xff;
+  for (let i = 0; i < FACTION_COLORS.length; i++) {
+    const fc = FACTION_COLORS[i];
+    const dr = r - ((fc >> 16) & 0xff);
+    const dg = g - ((fc >> 8) & 0xff);
+    const db = b - (fc & 0xff);
+    const d = dr * dr + dg * dg + db * db;
+    if (d < bestD) {
+      bestD = d;
+      best = i;
+    }
+  }
+  return best;
+}
+
 /** True if the point (x,y) is inside a wall tile or out of bounds. */
 export function tileIsWall(x: number, y: number, grid: TileGrid): boolean {
   const tx = Math.floor(x / TILE);

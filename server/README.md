@@ -98,13 +98,30 @@ Verified (`smoke.mjs zones`): two clients in d0/d1 have different spawns, don't 
 each other, and a kill in d0 raises the Singularity the d1 client reads. Browser:
 travelled d0→d1 ("THE STACKS"), spawned at the new entrance with XP/credits intact.
 
+### Step 4a — territory control + faction war ✅
+
+The shared world becomes contested. All server-authoritative:
+
+- **Territory** — each district has infection nodes the server owns. A player within
+  range channels a node toward **their faction** (the four cells = the four classes,
+  assigned from the player's signature colour). Capturing flips ownership; an enemy
+  faction (or uncontested decay, modelling the HSS) erodes a held node back toward
+  neutral. **District control** = whichever faction holds the most nodes.
+- **Faction war** — a **server-wide contribution leaderboard** per faction, fed by
+  node captures (+holds) and kills, shared across ALL zones via the same atomic D1
+  meta sync as the Singularity (generalized into `bumpMeta`/`syncMeta`).
+
+Verified (`smoke.mjs territory`): a player channelled a node, captured it for their
+faction, the faction's contribution rose (0→12), and it took district control.
+Browser HUD shows CELL / DISTRICT CONTROL / FACTION WAR (M/K/W/S) live.
+
 ### What's intentionally NOT here yet
 
-Lag compensation for the hitscan/beam weapon; per-class weapons in the online path
-(generic stats for now); the shared-world systems — territory / faction war /
-seasonal meltdown (Step 4); social — chat / parties / trading (Step 5); and the
-WebSocket Hibernation API + alarms (production tick model — the spike uses an
-in-memory `setInterval`).
+Seasonal meltdown + new-era reset — Step 4b (the Singularity hitting 100 becomes a
+server-wide event that resets into a new season); lag compensation for the
+hitscan/beam weapon; per-class weapons in the online path (generic stats for now);
+social — chat / parties / trading (Step 5); and the WebSocket Hibernation API +
+alarms (production tick model — the spike uses an in-memory `setInterval`).
 
 ## Run it
 

@@ -34,6 +34,13 @@ import {
   SING_PER_KILL,
   SING_MAX,
   AOI_RADIUS,
+  FACTION_COUNT,
+  NEUTRAL,
+  NODE_CHANNEL_RANGE,
+  NODE_CAPTURE_PER_SEC,
+  NODE_DECAY_PER_SEC,
+  FACTION_CAPTURE_SCORE,
+  NODE_HOLD_SCORE_PER_SEC,
 } from "../../src/net/sim";
 import { buildGrid, spawnPoint, isWall, type TileGrid } from "../../src/world/district";
 import { DISTRICTS } from "../../src/game/districts";
@@ -77,6 +84,7 @@ interface PlayerState {
   // progression
   xp: number;
   level: number;
+  faction: number;
 }
 
 interface Pickup {
@@ -85,6 +93,15 @@ interface Pickup {
   y: number;
   kind: number; // PICKUP_CREDIT | PICKUP_CORE
   dieTick: number;
+}
+
+interface TerritoryNode {
+  id: number;
+  x: number;
+  y: number;
+  owner: number; // faction index, or NEUTRAL
+  progress: number; // 0..1 toward the channelling faction
+  by: number; // faction currently channelling (NEUTRAL if none/contested)
 }
 
 interface Enemy {
@@ -130,9 +147,11 @@ export class WorldDO {
   private nextEnemyId = 1;
   private nextShotId = 1;
   private nextPickupId = 1;
-  private singularity = 0; // shared server-wide meter (persisted in world_meta)
-  private singDelta = 0; // unflushed local contribution to the shared meter
-  private singLoaded = false;
+  // Server-wide shared meta (D1-synced across all zones): "singularity", "f0".."f3".
+  private meta: Record<string, number> = {};
+  private metaDelta: Record<string, number> = {};
+  private metaLoaded = false;
+  private nodes: TerritoryNode[] = [];
   private zoneName = "d0";
   private districtIndex = 0;
   private zoneReady = false;
@@ -156,6 +175,14 @@ export class WorldDO {
     this.grid = buildGrid(def);
     this.spawn = spawnPoint(this.grid, def);
     this.spawnEnemies(def);
+    this.nodes = def.nodes.map((n, i) => ({
+      id: i,
+      x: n.tile[0] * TILE + TILE / 2,
+      y: n.tile[1] * TILE + TILE / 2,
+      owner: NEUTRAL,
+      progress: 0,
+      by: NEUTRAL,
+    }));
   }
 
   /** Seed a handful of cops at the district's cop-posts (walkable tiles only). */
@@ -199,28 +226,36 @@ export class WorldDO {
     } catch {
       return;
     }
-    if (msg.t === "login") return this.onLogin(ws, msg.name);
+    if (msg.t === "login") return this.onLogin(ws, msg.name, msg.faction);
     if (msg.t === "input") return this.onInput(ws, msg);
     if (msg.t === "fire") return this.onFire(ws, msg);
   }
 
-  private async loadSingularity() {
-    if (this.singLoaded) return;
-    this.singLoaded = true;
+  private async loadMeta() {
+    if (this.metaLoaded) return;
+    this.metaLoaded = true;
     try {
-      const row = await this.env.DB.prepare("SELECT v FROM world_meta WHERE k = 'singularity'").first<{
+      const { results } = await this.env.DB.prepare("SELECT k, v FROM world_meta").all<{
+        k: string;
         v: number;
       }>();
-      if (row) this.singularity = row.v;
+      for (const r of results ?? []) this.meta[r.k] = r.v;
     } catch {
       /* table may not exist before migration — defaults to 0 */
     }
   }
 
-  private async onLogin(ws: WebSocket, rawName: string) {
+  /** Add to a shared meta value: optimistic local bump + queued D1 increment. */
+  private bumpMeta(key: string, delta: number, cap = Infinity) {
+    this.meta[key] = Math.min(cap, (this.meta[key] ?? 0) + delta);
+    this.metaDelta[key] = (this.metaDelta[key] ?? 0) + delta;
+  }
+
+  private async onLogin(ws: WebSocket, rawName: string, faction?: number) {
     const name = (rawName || "").trim().slice(0, 16) || "blank";
     const id = name.toLowerCase().replace(/[^a-z0-9_-]/g, "") || "blank";
-    await this.loadSingularity();
+    const fac = Number.isInteger(faction) && faction! >= 0 && faction! < FACTION_COUNT ? faction! : 0;
+    await this.loadMeta();
 
     let x = this.spawn.x;
     let y = this.spawn.y;
@@ -260,12 +295,14 @@ export class WorldDO {
       lastFireTick: -999,
       xp,
       level: levelForXp(xp),
+      faction: fac,
     };
     this.players.set(id, p);
     this.sessions.set(ws, id);
     this.send(ws, {
       t: "welcome",
       id,
+      faction: fac,
       x: round2(x),
       y: round2(y),
       tickMs: NET_TICK_MS,
@@ -396,11 +433,11 @@ export class WorldDO {
                 killer.xp += XP_PER_KILL; // server-authoritative progression
                 killer.level = levelForXp(killer.xp);
                 killer.dirty = true;
+                this.bumpMeta("f" + killer.faction, 1); // faction contribution from combat
               }
               // shared meta: every kill (any player, ANY zone) pushes the server-wide
               // Singularity. Optimistic local bump now; flushed/synced to D1 on persist.
-              this.singularity = Math.min(SING_MAX, this.singularity + SING_PER_KILL);
-              this.singDelta += SING_PER_KILL;
+              this.bumpMeta("singularity", SING_PER_KILL, SING_MAX);
               // loot roll — server decides the drop
               if (Math.random() < LOOT_DROP_CHANCE) {
                 const kind = Math.random() < 0.25 ? PICKUP_CORE : PICKUP_CREDIT;
@@ -461,15 +498,50 @@ export class WorldDO {
       }
     }
 
+    // 4b) territory — players channel nearby nodes toward their faction; an enemy
+    // (or the HSS, modelled as uncontested decay) erodes held ground. A capture
+    // scores the faction; holding ticks contribution. Server owns all of it.
+    const CR2 = NODE_CHANNEL_RANGE * NODE_CHANNEL_RANGE;
+    const dts = NET_TICK_MS / 1000;
+    for (const node of this.nodes) {
+      let by = NEUTRAL;
+      let contested = false;
+      for (const p of this.players.values()) {
+        if (p.dead) continue;
+        if (dist2(p.x, p.y, node.x, node.y) <= CR2) {
+          if (by === NEUTRAL) by = p.faction;
+          else if (by !== p.faction) contested = true;
+        }
+      }
+      node.by = contested ? NEUTRAL : by;
+      if (node.by !== NEUTRAL && node.by === node.owner) {
+        node.progress = 1; // held
+        this.bumpMeta("f" + node.by, NODE_HOLD_SCORE_PER_SEC * dts);
+      } else if (node.owner === NEUTRAL && node.by !== NEUTRAL) {
+        node.progress = Math.min(1, node.progress + NODE_CAPTURE_PER_SEC * dts);
+        if (node.progress >= 1) {
+          node.owner = node.by;
+          this.bumpMeta("f" + node.by, FACTION_CAPTURE_SCORE);
+        }
+      } else {
+        // owned but contested by an enemy, or nobody channelling → erode the hold
+        const rate = node.by === NEUTRAL ? NODE_DECAY_PER_SEC : NODE_CAPTURE_PER_SEC;
+        node.progress = Math.max(0, node.progress - rate * dts);
+        if (node.progress <= 0) node.owner = NEUTRAL;
+      }
+    }
+
     // 5) broadcast — PER-CLIENT area-of-interest: each player is only sent the
     // entities within AOI_RADIUS of their own position (always including itself).
-    const sing = round2(this.singularity);
-    const meltdown = this.singularity >= SING_MAX;
+    const sing = round2(this.meta["singularity"] ?? 0);
+    const meltdown = sing >= SING_MAX;
+    const factions = Array.from({ length: FACTION_COUNT }, (_, i) => Math.round(this.meta["f" + i] ?? 0));
+    const control = this.districtControl();
     for (const [ws, id] of this.sessions) {
       const viewer = this.players.get(id);
       if (!viewer) continue;
       try {
-        ws.send(this.snapshotFor(viewer, sing, meltdown));
+        ws.send(this.snapshotFor(viewer, sing, meltdown, factions, control));
       } catch {
         /* dropped */
       }
@@ -484,7 +556,13 @@ export class WorldDO {
   }
 
   /** Build the AOI-filtered snapshot a single viewer should receive. */
-  private snapshotFor(viewer: PlayerState, sing: number, meltdown: boolean): string {
+  private snapshotFor(
+    viewer: PlayerState,
+    sing: number,
+    meltdown: boolean,
+    factions: number[],
+    control: number,
+  ): string {
     const R2 = AOI_RADIUS * AOI_RADIUS;
     const near = (x: number, y: number) => dist2(viewer.x, viewer.y, x, y) <= R2;
     const players = [];
@@ -500,6 +578,7 @@ export class WorldDO {
         credits: p.credits,
         xp: p.xp,
         level: p.level,
+        faction: p.faction,
       });
     }
     const enemies = [];
@@ -514,7 +593,39 @@ export class WorldDO {
     for (const pu of this.pickups.values()) {
       if (near(pu.x, pu.y)) pickups.push({ id: pu.id, x: round2(pu.x), y: round2(pu.y), kind: pu.kind });
     }
-    return JSON.stringify({ t: "state", tick: this.tick, players, enemies, shots, pickups, sing, meltdown });
+    const nodes = [];
+    for (const n of this.nodes) {
+      if (near(n.x, n.y))
+        nodes.push({ id: n.id, x: round2(n.x), y: round2(n.y), owner: n.owner, progress: round2(n.progress), by: n.by });
+    }
+    return JSON.stringify({
+      t: "state",
+      tick: this.tick,
+      players,
+      enemies,
+      shots,
+      pickups,
+      nodes,
+      sing,
+      meltdown,
+      factions,
+      control,
+    });
+  }
+
+  /** Which faction holds the most nodes in this district (NEUTRAL if none). */
+  private districtControl(): number {
+    const counts = new Array(FACTION_COUNT).fill(0);
+    let any = false;
+    for (const n of this.nodes)
+      if (n.owner !== NEUTRAL) {
+        counts[n.owner]++;
+        any = true;
+      }
+    if (!any) return NEUTRAL;
+    let best = 0;
+    for (let i = 1; i < FACTION_COUNT; i++) if (counts[i] > counts[best]) best = i;
+    return best;
   }
 
   private nearestLivePlayer(x: number, y: number, range: number): PlayerState | null {
@@ -537,26 +648,29 @@ export class WorldDO {
       p.dirty = false;
       await this.upsert(p.id, p.name, p.x, p.y, p.credits, p.xp);
     }
-    await this.persistSingularity();
+    await this.syncMeta();
   }
 
-  private async persistSingularity() {
+  /** Flush queued meta increments to D1 atomically (so every zone DO contributes to
+   *  ONE shared set of meters), then re-read the global values. */
+  private async syncMeta() {
     try {
-      // Atomic increment so every zone DO contributes to ONE shared meter, then
-      // re-read the global value (picks up other zones' contributions).
-      if (this.singDelta > 0) {
-        const d = round2(Math.min(SING_MAX, this.singDelta));
+      for (const k of Object.keys(this.metaDelta)) {
+        const d = round2(this.metaDelta[k]);
+        this.metaDelta[k] = 0;
+        if (d <= 0) continue;
+        const cap = k === "singularity" ? SING_MAX : 1e12;
         await this.env.DB.prepare(
-          "INSERT INTO world_meta (k, v) VALUES ('singularity', ?) ON CONFLICT(k) DO UPDATE SET v = MIN(?, v + ?)",
+          "INSERT INTO world_meta (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = MIN(?, v + ?)",
         )
-          .bind(d, SING_MAX, d)
+          .bind(k, d, cap, d)
           .run();
-        this.singDelta = 0;
       }
-      const row = await this.env.DB.prepare("SELECT v FROM world_meta WHERE k = 'singularity'").first<{
+      const { results } = await this.env.DB.prepare("SELECT k, v FROM world_meta").all<{
+        k: string;
         v: number;
       }>();
-      if (row) this.singularity = row.v;
+      for (const r of results ?? []) this.meta[r.k] = r.v;
     } catch {
       /* world_meta missing pre-migration */
     }
@@ -589,7 +703,7 @@ export class WorldDO {
     const p = this.players.get(id);
     if (p) {
       await this.upsert(p.id, p.name, p.x, p.y, p.credits, p.xp);
-      await this.persistSingularity();
+      await this.syncMeta();
       this.players.delete(id);
     }
   }

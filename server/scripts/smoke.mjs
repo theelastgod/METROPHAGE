@@ -37,7 +37,7 @@ function connect(url = WS_URL) {
   });
 }
 
-function login(ws, name) {
+function login(ws, name, faction) {
   return new Promise((resolve, reject) => {
     const to = setTimeout(() => reject(new Error("login timeout")), 5000);
     const onMsg = (ev) => {
@@ -49,7 +49,7 @@ function login(ws, name) {
       }
     };
     ws.addEventListener("message", onMsg);
-    ws.send(JSON.stringify({ t: "login", name }));
+    ws.send(JSON.stringify({ t: "login", name, faction }));
   });
 }
 
@@ -73,6 +73,9 @@ function trackState(ws, id, store) {
       store.enemies = m.enemies || [];
       store.shots = m.shots || [];
       store.pickups = m.pickups || [];
+      store.nodes = m.nodes || [];
+      store.factions = m.factions || [];
+      store.control = m.control ?? -1;
       store.sing = m.sing ?? 0;
       store.meltdown = !!m.meltdown;
     }
@@ -379,11 +382,77 @@ async function zones() {
   );
 }
 
+async function territory() {
+  const myFac = 2; // WINTERMUTE
+  const ws = await connect(WS_URL + "?zone=d0");
+  const w = await login(ws, "holdr", myFac);
+  const store = { x: w.x, y: w.y, nodes: [], factions: [], control: -1 };
+  trackState(ws, w.id, store);
+  await sleep(500);
+
+  const nearestNode = () => {
+    let best = null;
+    let bd = Infinity;
+    for (const n of store.nodes || []) {
+      const d = Math.hypot(n.x - store.x, n.y - store.y);
+      if (d < bd) {
+        bd = d;
+        best = n;
+      }
+    }
+    return best;
+  };
+  const startScore = (store.factions || [])[myFac] || 0;
+  const target = nearestNode();
+  if (!target) {
+    report("TERRITORY", { error: "no nodes in district" }, false);
+    ws.close();
+    return;
+  }
+
+  let captured = false;
+  let controlMine = false;
+  let seq = 0;
+  const t0 = Date.now();
+  // Walk to the node and channel it (stand inside its range, single faction).
+  while (Date.now() - t0 < 11000) {
+    const n = (store.nodes || []).find((nn) => nn.id === target.id) || target;
+    const dx = n.x - store.x;
+    const dy = n.y - store.y;
+    const d = Math.hypot(dx, dy) || 1;
+    seq++;
+    if (d > 45) ws.send(JSON.stringify({ t: "input", seq, mx: dx / d, my: dy / d }));
+    else ws.send(JSON.stringify({ t: "input", seq, mx: 0, my: 0 }));
+    const cur = (store.nodes || []).find((nn) => nn.id === target.id);
+    if (cur && cur.owner === myFac) captured = true;
+    if (store.control === myFac) controlMine = true;
+    await sleep(50);
+  }
+  await sleep(2800); // let the faction contribution sync to D1
+  const endScore = (store.factions || [])[myFac] || 0;
+
+  const checks = {
+    nodesExist: (store.nodes || []).length > 0,
+    capturedForFaction: captured,
+    factionContributionRose: endScore > startScore,
+    districtControlTaken: controlMine,
+  };
+  ws.close();
+  await sleep(300);
+  report(
+    "TERRITORY — capture a node for your faction; score + district control",
+    { nodes: (store.nodes || []).length, myFaction: myFac, score: [round(startScore), round(endScore)], captured, controlMine },
+    Object.values(checks).every(Boolean),
+    checks,
+  );
+}
+
 try {
   if (mode === "check") await check();
   else if (mode === "combat") await combat();
   else if (mode === "mp") await mp();
   else if (mode === "zones") await zones();
+  else if (mode === "territory") await territory();
   else if (mode === "bot") await bot();
   else await move();
 } catch (e) {
