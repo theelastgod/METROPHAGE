@@ -84,6 +84,9 @@ export default class NetClient {
   roster: Array<{ id: string; faction: number; level: number }> = [];
   party: string[] = [];
   chatLog: Array<{ from: string; ch: string; text: string; faction: number; sys: boolean }> = [];
+  questStep = 0;
+  questProgress = 0;
+  story: { act: string; title: string; text: string; done: boolean; at: number } | null = null;
   lastError = 0;
   reconciles = 0;
   lastAck = 0;
@@ -189,6 +192,8 @@ export default class NetClient {
           this.cores = sp.cores;
           this.xp = sp.xp;
           this.level = sp.level;
+          this.questStep = sp.questStep;
+          this.questProgress = sp.questProgress;
         } else {
           const r = this.remotes.get(sp.id) ?? {
             id: sp.id,
@@ -255,6 +260,9 @@ export default class NetClient {
       this.pushChat({ from: "", ch: "sys", text: msg.text, faction: -1, sys: true });
     } else if (msg.t === "party") {
       this.party = msg.members;
+    } else if (msg.t === "story") {
+      this.story = { act: msg.act, title: msg.title, text: msg.text, done: msg.done, at: performance.now() };
+      this.pushChat({ from: "", ch: "sys", text: `${msg.act} — ${msg.title}`, faction: -1, sys: true });
     } else if (msg.t === "trade") {
       if (msg.state === "done" || msg.state === "cancelled") {
         this.trade = null;

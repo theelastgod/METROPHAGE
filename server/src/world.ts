@@ -48,6 +48,7 @@ import {
 import { buildGrid, spawnPoint, isWall, type TileGrid } from "../../src/world/district";
 import { DISTRICTS } from "../../src/game/districts";
 import { TILE } from "../../src/config";
+import { QUESTLINE, QUEST_DONE_TEXT, type QuestObjective } from "../../src/net/quest";
 
 // Server-only tuning.
 const PERSIST_EVERY_TICKS = 40; // ~2s snapshot cadence
@@ -93,6 +94,9 @@ interface PlayerState {
   party: number; // party id, or -1
   muted: Set<string>; // player ids this player has muted (their chat is dropped)
   lastChatTick: number;
+  // questline (The Blank — per-player, server-authoritative)
+  questStep: number;
+  questProgress: number;
 }
 
 interface Pickup {
@@ -547,13 +551,25 @@ export class WorldDO {
     let credits = 0;
     let xp = 0;
     let cores = 0;
-    const row = await this.env.DB.prepare("SELECT x, y, credits, xp, zone, cores FROM players WHERE id = ?")
+    let questStep = 0;
+    const row = await this.env.DB.prepare(
+      "SELECT x, y, credits, xp, zone, cores, quest_step FROM players WHERE id = ?",
+    )
       .bind(id)
-      .first<{ x: number; y: number; credits: number; xp: number; zone: string; cores: number }>();
+      .first<{
+        x: number;
+        y: number;
+        credits: number;
+        xp: number;
+        zone: string;
+        cores: number;
+        quest_step: number;
+      }>();
     if (row) {
       credits = row.credits ?? 0;
       xp = row.xp ?? 0;
       cores = row.cores ?? 0;
+      questStep = row.quest_step ?? 0;
       // Same zone → resume exact position. Different zone → they just travelled in,
       // so spawn at this district's entrance (x,y already hold the spawn).
       if (row.zone === this.zoneName) {
@@ -561,7 +577,7 @@ export class WorldDO {
         y = row.y;
       }
     } else {
-      await this.upsert(id, name, x, y, 0, 0, 0);
+      await this.upsert(id, name, x, y, 0, 0, 0, 0);
     }
 
     const p: PlayerState = {
@@ -587,6 +603,8 @@ export class WorldDO {
       party: -1,
       muted: new Set<string>(),
       lastChatTick: -999,
+      questStep,
+      questProgress: 0,
     };
     this.players.set(id, p);
     this.sessions.set(ws, id);
@@ -599,7 +617,28 @@ export class WorldDO {
       tickMs: NET_TICK_MS,
       world: { w: WORLD_W, h: WORLD_H },
     });
+    this.sendStory(ws, p.questStep); // brief the Blank on their current beat
     this.ensureTick();
+  }
+
+  /** Send the story text for a quest step (or the completion beat). */
+  private sendStory(ws: WebSocket, step: number) {
+    const s = QUESTLINE[step];
+    if (s) this.send(ws, { t: "story", act: s.act, title: s.title, text: s.text, step, done: false });
+    else this.send(ws, { t: "story", act: "THE WAKE", title: "Recurrence", text: QUEST_DONE_TEXT, step, done: true });
+  }
+
+  /** Advance a player's questline when a shared-world action matches their objective. */
+  private questEvent(p: PlayerState, type: QuestObjective, n = 1) {
+    const s = QUESTLINE[p.questStep];
+    if (!s || s.objective !== type) return;
+    p.questProgress += n;
+    if (p.questProgress >= s.count) {
+      p.questStep += 1;
+      p.questProgress = 0;
+      p.dirty = true;
+      for (const [sock, id] of this.sessions) if (id === p.id) this.sendStory(sock, p.questStep);
+    }
   }
 
   private onInput(ws: WebSocket, msg: Extract<ClientMsg, { t: "input" }>) {
@@ -678,6 +717,8 @@ export class WorldDO {
         stepMove(p, { mx: p.mx, my: p.my }, this.grid, NET_TICK_MS);
         p.dirty = true;
       }
+      // The Convergence: surviving a meltdown (alive while it rages) advances it.
+      if (meltdown) this.questEvent(p, "meltdown");
     }
 
     // 2) enemies — chase nearest player, fire in range
@@ -740,6 +781,7 @@ export class WorldDO {
                 killer.level = levelForXp(killer.xp);
                 killer.dirty = true;
                 this.bumpMeta("f" + killer.faction, 1); // faction contribution from combat
+                this.questEvent(killer, "kill");
               }
               // shared meta: every kill (any player, ANY zone) pushes the server-wide
               // Singularity. Optimistic local bump now; flushed/synced to D1 on persist.
@@ -794,6 +836,7 @@ export class WorldDO {
             p.cores += 1; // a tradeable data core
             p.xp += 8;
             p.level = levelForXp(p.xp);
+            this.questEvent(p, "collect");
           } else {
             p.credits += 6;
           }
@@ -828,6 +871,11 @@ export class WorldDO {
         if (node.progress >= 1) {
           node.owner = node.by;
           this.bumpMeta("f" + node.by, FACTION_CAPTURE_SCORE);
+          // credit the players who channelled it (quest "capture" objective)
+          for (const pl of this.players.values()) {
+            if (!pl.dead && pl.faction === node.by && dist2(pl.x, pl.y, node.x, node.y) <= CR2)
+              this.questEvent(pl, "capture");
+          }
         }
       } else {
         // owned but contested by an enemy, or nobody channelling → erode the hold
@@ -889,6 +937,8 @@ export class WorldDO {
         xp: p.xp,
         level: p.level,
         faction: p.faction,
+        questStep: p.questStep,
+        questProgress: p.questProgress,
       });
     }
     const enemies = [];
@@ -984,7 +1034,7 @@ export class WorldDO {
     for (const p of this.players.values()) {
       if (!p.dirty) continue;
       p.dirty = false;
-      await this.upsert(p.id, p.name, p.x, p.y, p.credits, p.xp, p.cores);
+      await this.upsert(p.id, p.name, p.x, p.y, p.credits, p.xp, p.cores, p.questStep);
     }
     await this.syncMeta();
   }
@@ -1022,13 +1072,14 @@ export class WorldDO {
     credits: number,
     xp: number,
     cores: number,
+    questStep: number,
   ) {
     try {
       await this.env.DB.prepare(
-        "INSERT INTO players (id, name, x, y, zone, credits, xp, cores, updated_at) VALUES (?,?,?,?,?,?,?,?,?) " +
-          "ON CONFLICT(id) DO UPDATE SET x=excluded.x, y=excluded.y, credits=excluded.credits, xp=excluded.xp, cores=excluded.cores, updated_at=excluded.updated_at",
+        "INSERT INTO players (id, name, x, y, zone, credits, xp, cores, quest_step, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?) " +
+          "ON CONFLICT(id) DO UPDATE SET x=excluded.x, y=excluded.y, credits=excluded.credits, xp=excluded.xp, cores=excluded.cores, quest_step=excluded.quest_step, updated_at=excluded.updated_at",
       )
-        .bind(id, name, round2(x), round2(y), this.zoneName, Math.round(credits), Math.round(xp), Math.round(cores), Date.now())
+        .bind(id, name, round2(x), round2(y), this.zoneName, Math.round(credits), Math.round(xp), Math.round(cores), Math.round(questStep), Date.now())
         .run();
     } catch {
       /* D1 hiccup — next snapshot retries */
@@ -1045,7 +1096,7 @@ export class WorldDO {
       if (tr) this.endTrade(tr, "cancelled", "trade partner left");
       this.leaveParty(p);
       this.pendingInvites.delete(p.id);
-      await this.upsert(p.id, p.name, p.x, p.y, p.credits, p.xp, p.cores);
+      await this.upsert(p.id, p.name, p.x, p.y, p.credits, p.xp, p.cores, p.questStep);
       await this.syncMeta();
       this.players.delete(id);
     }

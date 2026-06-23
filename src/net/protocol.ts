@@ -51,6 +51,8 @@ export interface PlayerSnap {
   xp: number;
   level: number;
   faction: number;
+  questStep: number; // index into QUESTLINE (=== length when complete)
+  questProgress: number; // count toward the current step's objective
 }
 export interface EnemySnap {
   id: number;
@@ -108,6 +110,7 @@ export type ServerMsg =
   | { t: "chat"; from: string; faction: number; ch: string; text: string }
   | { t: "party"; members: string[] }
   | { t: "sys"; text: string }
+  | { t: "story"; act: string; title: string; text: string; step: number; done: boolean }
   | {
       t: "trade";
       state: "open" | "update" | "done" | "cancelled";

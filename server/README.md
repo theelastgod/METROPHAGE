@@ -163,13 +163,40 @@ Verified (`smoke.mjs trade`): 100₵/5◈ + 50₵/2◈ → after the swap exactl
 70₵/3◈; and offering 999999₵ you don't have resets the trade with balances intact.
 Browser shows the live SECURE TRADE panel (both offers + confirm state).
 
+### Step 6 — the questline, in the shared world ✅
+
+*The Blank* runs as a **server-authoritative** per-player arc (`src/net/quest.ts`,
+shared by client + server). Five beats across three acts — THE WAKE → THE CURRENT →
+THE CONVERGENCE — each tied to an objective the shared world already produces:
+
+| step | act | objective | driven by |
+| --- | --- | --- | --- |
+| 0 | THE WAKE | kill 2 cops | combat (Step 2b) |
+| 1 | THE WAKE | capture 1 node | territory (Step 4a) |
+| 2 | THE CURRENT | kill 6 cops | combat |
+| 3 | THE CURRENT | collect 3 cores | loot (Step 2c) |
+| 4 | THE CONVERGENCE | survive 1 meltdown | seasonal meltdown (Step 4b) |
+
+Lore made literal: every player is a Blank carrying their *own* progress through the
+*same* arc, advancing among other real Blanks — phasing as canon. The server owns the
+truth: it counts kills/captures/cores/meltdowns server-side (`questEvent`), advances
+`questStep` only when the live count is met, and pushes a `story` beat on each
+advance. `quest_step` persists in D1 (migration `0005_quest`); progress *within* a
+step re-earns on relogin. The client never reports progress — it only renders the
+tracker (`[n/count]`) and the story banner.
+
+Verified (`smoke.mjs quest`): start step 0 → kill 2 cops advances to step 1 → capture
+a node advances to step 2 → 3 story beats delivered → reconnect after restart and the
+step is still 2 (persisted). Browser shows the top-center quest tracker and the
+bottom-left story banner on each beat.
+
 ### What's intentionally NOT here yet
 
 Crews (persistent cross-session groups, vs. the in-session parties here); global
 (cross-zone) chat/presence via a hub DO; lag compensation for the hitscan/beam
-weapon; per-class weapons in the online path; the questline in the shared world
-(Step 6); anti-cheat + ops (Step 7); and the WebSocket Hibernation API + alarms
-(production tick — the spike uses an in-memory `setInterval`).
+weapon; per-class weapons in the online path; anti-cheat + ops (Step 7); and the
+WebSocket Hibernation API + alarms (production tick — the spike uses an in-memory
+`setInterval`).
 
 ## Run it
 
@@ -196,4 +223,5 @@ position-persists-across-restart.
 - `src/world.ts` — `WorldDO`, the authoritative per-zone simulation.
 - `src/index.ts` — Worker entry; routes `/ws` to the zone DO.
 - `migrations/` — D1 schema.
-- `scripts/smoke.mjs` — Step-1 acceptance test.
+- `scripts/smoke.mjs` — headless acceptance tests
+  (`move`/`check`/`combat`/`mp`/`zones`/`territory`/`meltdown`/`social`/`trade`/`quest`).

@@ -68,6 +68,8 @@ function trackState(ws, id, store) {
         store.cores = me.cores;
         store.xp = me.xp;
         store.level = me.level;
+        store.questStep = me.questStep;
+        store.questProgress = me.questProgress;
         store.tick = m.tick;
       }
       store.players = m.players || [];
@@ -630,6 +632,95 @@ async function trade() {
   );
 }
 
+async function quest() {
+  // fresh Blank — the harness clears its quest_step first so it starts at 0
+  const ws = await connect();
+  const w = await login(ws, "blank0", 0);
+  const store = { x: w.x, y: w.y, enemies: [], nodes: [], questStep: 0, questProgress: 0 };
+  trackState(ws, w.id, store);
+  const stories = [];
+  ws.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "story") stories.push(m);
+  });
+  await sleep(600);
+  const startStep = store.questStep;
+
+  // Step 1 — drop 2 cops.
+  let seq = 0;
+  let t0 = Date.now();
+  while (Date.now() - t0 < 9000 && store.questStep < 1) {
+    let best = null;
+    let bd = Infinity;
+    for (const e of store.enemies) {
+      const d = Math.hypot(e.x - store.x, e.y - store.y);
+      if (d < bd) {
+        bd = d;
+        best = e;
+      }
+    }
+    if (best) {
+      const dx = best.x - store.x;
+      const dy = best.y - store.y;
+      const d = Math.hypot(dx, dy) || 1;
+      seq++;
+      ws.send(JSON.stringify({ t: "input", seq, mx: d > 110 ? dx / d : 0, my: d > 110 ? dy / d : 0 }));
+      ws.send(JSON.stringify({ t: "fire", seq, aim: Math.atan2(dy, dx) }));
+    }
+    await sleep(50);
+  }
+  const killAdvanced = store.questStep >= 1;
+
+  // Step 2 — capture a node.
+  t0 = Date.now();
+  while (Date.now() - t0 < 14000 && store.questStep < 2) {
+    let node = null;
+    let bd = Infinity;
+    for (const nn of store.nodes) {
+      const d = Math.hypot(nn.x - store.x, nn.y - store.y);
+      if (d < bd) {
+        bd = d;
+        node = nn;
+      }
+    }
+    if (node) {
+      const dx = node.x - store.x;
+      const dy = node.y - store.y;
+      const d = Math.hypot(dx, dy);
+      seq++;
+      ws.send(JSON.stringify({ t: "input", seq, mx: d > 40 ? dx / d : 0, my: d > 40 ? dy / d : 0 }));
+    }
+    await sleep(50);
+  }
+  const captureAdvanced = store.questStep >= 2;
+  const finalStep = store.questStep;
+
+  // Persistence — reconnect; the quest step should reload.
+  ws.close();
+  await sleep(500);
+  const ws2 = await connect();
+  const w2 = await login(ws2, "blank0", 0);
+  const store2 = { questStep: -1 };
+  trackState(ws2, w2.id, store2);
+  await sleep(600);
+
+  const checks = {
+    startedAtZero: startStep === 0,
+    killAdvanced,
+    captureAdvanced,
+    gotStoryBeats: stories.length >= 2,
+    persistedStep: store2.questStep === finalStep && finalStep >= 1,
+  };
+  ws2.close();
+  await sleep(300);
+  report(
+    "QUEST — The Blank advances from shared-world actions + persists",
+    { startStep, finalStep, reloadedStep: store2.questStep, storyBeats: stories.length },
+    Object.values(checks).every(Boolean),
+    checks,
+  );
+}
+
 try {
   if (mode === "check") await check();
   else if (mode === "combat") await combat();
@@ -639,6 +730,7 @@ try {
   else if (mode === "meltdown") await meltdown();
   else if (mode === "social") await social();
   else if (mode === "trade") await trade();
+  else if (mode === "quest") await quest();
   else if (mode === "bot") await bot();
   else await move();
 } catch (e) {

@@ -16,6 +16,7 @@ import { DISTRICTS } from "../game/districts";
 import { WORLD_W, WORLD_H } from "../net/sim";
 import NetClient from "../net/NetClient";
 import NeonPipeline from "../render/NeonPipeline";
+import { QUESTLINE } from "../net/quest";
 import type { Customization } from "../game/customization";
 
 const SERVER_URL =
@@ -53,6 +54,8 @@ export default class OnlineScene extends Phaser.Scene {
   private chatInput!: Phaser.GameObjects.Text;
   private rosterText!: Phaser.GameObjects.Text;
   private tradeText!: Phaser.GameObjects.Text;
+  private questText!: Phaser.GameObjects.Text;
+  private storyPanel!: Phaser.GameObjects.Text;
   private chatOpen = false;
   private chatBuffer = "";
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
@@ -200,6 +203,30 @@ export default class OnlineScene extends Phaser.Scene {
       .setOrigin(0.5, 0)
       .setScrollFactor(0)
       .setDepth(1005)
+      .setVisible(false);
+    this.questText = this.add
+      .text(this.scale.width / 2, 8, "", {
+        fontFamily: "Courier New, monospace",
+        fontSize: "12px",
+        color: "#b06bff",
+        align: "center",
+      })
+      .setOrigin(0.5, 0)
+      .setScrollFactor(0)
+      .setDepth(1000);
+    this.storyPanel = this.add
+      .text(this.scale.width / 2, this.scale.height / 2 - 40, "", {
+        fontFamily: "Courier New, monospace",
+        fontSize: "13px",
+        color: "#eafdff",
+        align: "center",
+        backgroundColor: "#0b0716ee",
+        padding: { x: 18, y: 14 },
+        wordWrap: { width: 540 },
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(1006)
       .setVisible(false);
 
     // Unified keyboard: chat mode captures text; game mode moves / travels / exits.
@@ -495,6 +522,20 @@ export default class OnlineScene extends Phaser.Scene {
       ]);
     } else {
       this.tradeText.setVisible(false);
+    }
+
+    // questline (The Blank) — tracker + phased story beat
+    const qs = QUESTLINE[this.net.questStep];
+    this.questText.setText(
+      qs
+        ? `◈ ${qs.act} — ${qs.title}   [${this.net.questProgress}/${qs.count}]`
+        : "◈ THE BLANK — the cycle is yours",
+    );
+    const story = this.net.story;
+    if (story && performance.now() - story.at < 8000) {
+      this.storyPanel.setVisible(true).setText(`◢ ${story.act} — ${story.title} ◣\n\n${story.text}`);
+    } else {
+      this.storyPanel.setVisible(false);
     }
   }
 
