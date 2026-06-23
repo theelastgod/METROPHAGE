@@ -34,6 +34,12 @@ export const METRO_CLUSTER: MetroCluster = env.VITE_METRO_CLUSTER === "mainnet-b
 /** Real-value mainnet requires this explicit arm flag (post-counsel). 1 = armed. */
 export const METRO_MAINNET_ARMED = env.VITE_METRO_MAINNET_ARMED === "1";
 
+/** HTTP base for the server bridge endpoints (`/metro/*`), derived from the WS server URL. */
+export function metroApiBase(): string {
+  const ws = env.VITE_SERVER_URL ?? "ws://127.0.0.1:8787/ws";
+  return ws.replace(/^ws/, "http").replace(/\/ws$/, "");
+}
+
 const BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
 /** Decode a base58 string to bytes (no deps). Returns null on any invalid character. */

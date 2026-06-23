@@ -7,6 +7,8 @@ import GameScene from "./scenes/GameScene";
 import DiveScene from "./scenes/DiveScene";
 import OnlineScene from "./scenes/OnlineScene";
 import { getMetroStatus } from "./economy/metro";
+import { mountMetroPanel } from "./ui/MetroPanel";
+import { getOnlinePlayer } from "./economy/session";
 
 // METROPHAGE — Phase 0 vertical slice entry point.
 const config: Phaser.Types.Core.GameConfig = {
@@ -32,6 +34,9 @@ const config: Phaser.Types.Core.GameConfig = {
 };
 
 const game = new Phaser.Game(config);
+
+// $METRO bridge panel — dormant unless the on-chain layer is enabled (a valid CA).
+mountMetroPanel(getOnlinePlayer);
 
 // Dev-only handle for debugging/verification in the browser console.
 if (import.meta.env.DEV) {
