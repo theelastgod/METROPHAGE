@@ -1,0 +1,5 @@
+node_modules/
+.wrangler/
+.spike-state.json
+*.log
+.dev.vars
