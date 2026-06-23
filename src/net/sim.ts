@@ -109,6 +109,11 @@ export const PICKUP_CREDIT = 0;
 export const PICKUP_CORE = 1;
 export const SING_PER_KILL = 0.6; // every kill (any player) pushes the shared meter
 export const SING_MAX = 100;
+/** When the Singularity hits SING_MAX a server-wide meltdown runs for this long,
+ *  then the era resets (Singularity → 0, season++). During it the HSS goes berserk. */
+export const MELTDOWN_DURATION_MS = 8000;
+export const MELTDOWN_ENEMY_SPEED_MULT = 1.6;
+export const MELTDOWN_FIRE_FASTER = 0.5; // cop fire cooldown × this
 
 /** Area-of-interest radius — the server only sends a client the entities within
  *  this distance of its player. Bigger than the ~960×540 view so nothing pops in

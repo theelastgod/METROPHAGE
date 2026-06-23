@@ -115,13 +115,27 @@ Verified (`smoke.mjs territory`): a player channelled a node, captured it for th
 faction, the faction's contribution rose (0→12), and it took district control.
 Browser HUD shows CELL / DISTRICT CONTROL / FACTION WAR (M/K/W/S) live.
 
+### Step 4b — seasonal meltdown + new era ✅
+
+When the shared Singularity caps at 100, a **server-wide meltdown** runs for a fixed
+window (the HSS goes berserk — cops faster + firing twice as often), which every
+player experiences together. Then the world **resets into a new era**: the
+Singularity drops to 0 and the **season** increments. The reset is guarded (only the
+DO that actually zeroes the meter bumps the season), so it fires once even across
+zones. The client shows a meltdown overlay during it and a "NEW ERA — SEASON N"
+banner on the reset.
+
+Verified (`smoke.mjs meltdown`, with the meter pre-armed near max): the Singularity
+hit 100 → meltdown went active → it reset and the season incremented (1→2). Browser
+caught the "NEW ERA — SEASON 4" banner + ERA counter in the HUD.
+
 ### What's intentionally NOT here yet
 
-Seasonal meltdown + new-era reset — Step 4b (the Singularity hitting 100 becomes a
-server-wide event that resets into a new season); lag compensation for the
-hitscan/beam weapon; per-class weapons in the online path (generic stats for now);
-social — chat / parties / trading (Step 5); and the WebSocket Hibernation API +
-alarms (production tick model — the spike uses an in-memory `setInterval`).
+Lag compensation for the hitscan/beam weapon; per-class weapons in the online path
+(generic stats for now); social — chat / parties / crews / trading (Step 5); the
+questline in the shared world (Step 6); anti-cheat + ops hardening (Step 7); and the
+WebSocket Hibernation API + alarms (production tick model — the spike uses an
+in-memory `setInterval`).
 
 ## Run it
 

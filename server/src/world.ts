@@ -33,6 +33,9 @@ import {
   PICKUP_CORE,
   SING_PER_KILL,
   SING_MAX,
+  MELTDOWN_DURATION_MS,
+  MELTDOWN_ENEMY_SPEED_MULT,
+  MELTDOWN_FIRE_FASTER,
   AOI_RADIUS,
   FACTION_COUNT,
   NEUTRAL,
@@ -152,6 +155,7 @@ export class WorldDO {
   private metaDelta: Record<string, number> = {};
   private metaLoaded = false;
   private nodes: TerritoryNode[] = [];
+  private meltdownTicks = 0; // how long this DO has seen the meltdown active
   private zoneName = "d0";
   private districtIndex = 0;
   private zoneReady = false;
@@ -354,6 +358,19 @@ export class WorldDO {
   private step() {
     const dt = NET_TICK_MS / 1000;
 
+    // 0) seasonal meltdown — when the shared Singularity caps, the world melts down
+    // (HSS goes berserk) for a fixed window, then the era resets (Singularity → 0,
+    // season++). The reset is done once via a guarded D1 update (see resetEra).
+    const meltdown = (this.meta["singularity"] ?? 0) >= SING_MAX;
+    if (meltdown) {
+      if (++this.meltdownTicks >= ticks(MELTDOWN_DURATION_MS)) {
+        this.meltdownTicks = 0;
+        void this.resetEra();
+      }
+    } else {
+      this.meltdownTicks = 0;
+    }
+
     // 1) players — movement + respawn
     for (const p of this.players.values()) {
       if (p.dead) {
@@ -391,8 +408,10 @@ export class WorldDO {
       const dx = target.x - e.x;
       const dy = target.y - e.y;
       const d = Math.hypot(dx, dy) || 1;
-      stepMove(e, { mx: dx / d, my: dy / d }, this.grid, NET_TICK_MS, ENEMY_SPEED);
-      if (d <= ENEMY_FIRE_RANGE && (this.tick - e.lastFireTick) * NET_TICK_MS >= COP_FIRE_MS) {
+      const eSpeed = meltdown ? ENEMY_SPEED * MELTDOWN_ENEMY_SPEED_MULT : ENEMY_SPEED;
+      const eFireMs = meltdown ? COP_FIRE_MS * MELTDOWN_FIRE_FASTER : COP_FIRE_MS;
+      stepMove(e, { mx: dx / d, my: dy / d }, this.grid, NET_TICK_MS, eSpeed);
+      if (d <= ENEMY_FIRE_RANGE && (this.tick - e.lastFireTick) * NET_TICK_MS >= eFireMs) {
         e.lastFireTick = this.tick;
         const aim = Math.atan2(target.y - e.y, target.x - e.x);
         this.shots.push({
@@ -534,14 +553,14 @@ export class WorldDO {
     // 5) broadcast — PER-CLIENT area-of-interest: each player is only sent the
     // entities within AOI_RADIUS of their own position (always including itself).
     const sing = round2(this.meta["singularity"] ?? 0);
-    const meltdown = sing >= SING_MAX;
+    const season = Math.round(this.meta["season"] ?? 1);
     const factions = Array.from({ length: FACTION_COUNT }, (_, i) => Math.round(this.meta["f" + i] ?? 0));
     const control = this.districtControl();
     for (const [ws, id] of this.sessions) {
       const viewer = this.players.get(id);
       if (!viewer) continue;
       try {
-        ws.send(this.snapshotFor(viewer, sing, meltdown, factions, control));
+        ws.send(this.snapshotFor(viewer, sing, meltdown, season, factions, control));
       } catch {
         /* dropped */
       }
@@ -560,6 +579,7 @@ export class WorldDO {
     viewer: PlayerState,
     sing: number,
     meltdown: boolean,
+    season: number,
     factions: number[],
     control: number,
   ): string {
@@ -608,9 +628,36 @@ export class WorldDO {
       nodes,
       sing,
       meltdown,
+      season,
       factions,
       control,
     });
+  }
+
+  /** End-of-meltdown era reset. Guarded so only the DO that actually zeroes the
+   *  Singularity bumps the season — works correctly even with multiple zones. */
+  private async resetEra() {
+    this.meta["singularity"] = 0; // local immediate (stops the meltdown this tick)
+    this.metaDelta["singularity"] = 0;
+    try {
+      const r = await this.env.DB.prepare(
+        "UPDATE world_meta SET v = 0 WHERE k = 'singularity' AND v >= ?",
+      )
+        .bind(SING_MAX)
+        .run();
+      if (r.meta.changes > 0) {
+        await this.env.DB.prepare(
+          "INSERT INTO world_meta (k, v) VALUES ('season', 2) ON CONFLICT(k) DO UPDATE SET v = v + 1",
+        ).run();
+      }
+      const { results } = await this.env.DB.prepare("SELECT k, v FROM world_meta").all<{
+        k: string;
+        v: number;
+      }>();
+      for (const row of results ?? []) this.meta[row.k] = row.v;
+    } catch {
+      /* D1 hiccup — next tick retries (singularity is already 0 locally) */
+    }
   }
 
   /** Which faction holds the most nodes in this district (NEUTRAL if none). */

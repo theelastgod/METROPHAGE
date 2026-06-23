@@ -78,6 +78,7 @@ function trackState(ws, id, store) {
       store.control = m.control ?? -1;
       store.sing = m.sing ?? 0;
       store.meltdown = !!m.meltdown;
+      store.season = m.season ?? 1;
     }
   });
 }
@@ -447,12 +448,67 @@ async function territory() {
   );
 }
 
+async function meltdown() {
+  // The harness pre-sets world_meta.singularity near SING_MAX; a few kills tip it
+  // over, triggering the server-wide meltdown + era reset.
+  const ws = await connect();
+  const w = await login(ws, "ender", 0);
+  const store = { x: w.x, y: w.y, enemies: [], sing: 0, meltdown: false, season: 1 };
+  trackState(ws, w.id, store);
+  await sleep(600);
+  const startSeason = store.season;
+
+  let sawMeltdown = false;
+  let peakSing = 0;
+  let resetAfterMeltdown = false;
+  let seq = 0;
+  const t0 = Date.now();
+  while (Date.now() - t0 < 17000) {
+    let best = null;
+    let bd = Infinity;
+    for (const e of store.enemies) {
+      const d = Math.hypot(e.x - store.x, e.y - store.y);
+      if (d < bd) {
+        bd = d;
+        best = e;
+      }
+    }
+    if (best) {
+      const dx = best.x - store.x;
+      const dy = best.y - store.y;
+      const d = Math.hypot(dx, dy) || 1;
+      seq++;
+      ws.send(JSON.stringify({ t: "input", seq, mx: d > 110 ? dx / d : 0, my: d > 110 ? dy / d : 0 }));
+      ws.send(JSON.stringify({ t: "fire", seq, aim: Math.atan2(dy, dx) }));
+    }
+    peakSing = Math.max(peakSing, store.sing);
+    if (store.meltdown) sawMeltdown = true;
+    if (sawMeltdown && !store.meltdown && store.sing < 50) resetAfterMeltdown = true;
+    await sleep(50);
+  }
+
+  const checks = {
+    reachedMeltdown: sawMeltdown, // Singularity capped → meltdown went active
+    eraReset: resetAfterMeltdown, // meltdown ended and the meter reset
+    seasonIncremented: store.season > startSeason, // a new era began
+  };
+  ws.close();
+  await sleep(300);
+  report(
+    "MELTDOWN — Singularity caps → server-wide meltdown → new era",
+    { startSeason, endSeason: store.season, peakSing: round(peakSing), sawMeltdown },
+    Object.values(checks).every(Boolean),
+    checks,
+  );
+}
+
 try {
   if (mode === "check") await check();
   else if (mode === "combat") await combat();
   else if (mode === "mp") await mp();
   else if (mode === "zones") await zones();
   else if (mode === "territory") await territory();
+  else if (mode === "meltdown") await meltdown();
   else if (mode === "bot") await bot();
   else await move();
 } catch (e) {

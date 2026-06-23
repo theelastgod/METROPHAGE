@@ -78,6 +78,7 @@ export type ServerMsg =
       nodes: NodeSnap[];
       sing: number; // shared server-wide Singularity meter (0..SING_MAX)
       meltdown: boolean;
+      season: number; // current era — increments each time a meltdown resets the world
       factions: number[]; // global faction contribution scores (server-wide)
       control: number; // faction controlling THIS district (NEUTRAL if none)
     }

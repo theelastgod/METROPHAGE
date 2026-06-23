@@ -67,6 +67,7 @@ export default class NetClient {
   xp = 0;
   singularity = 0;
   meltdown = false;
+  season = 1;
   pickups = new Map<number, { id: number; x: number; y: number; kind: number }>();
   faction = 0;
   nodes = new Map<number, { id: number; x: number; y: number; owner: number; progress: number; by: number }>();
@@ -232,6 +233,7 @@ export default class NetClient {
 
       this.singularity = msg.sing;
       this.meltdown = msg.meltdown;
+      this.season = msg.season;
       this.factions = msg.factions;
       this.control = msg.control;
     }

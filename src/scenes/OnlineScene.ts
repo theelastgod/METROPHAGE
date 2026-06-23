@@ -46,6 +46,9 @@ export default class OnlineScene extends Phaser.Scene {
   private hud!: Phaser.GameObjects.Text;
   private hpBar!: Phaser.GameObjects.Graphics;
   private deadText!: Phaser.GameObjects.Text;
+  private meltdownFx!: Phaser.GameObjects.Rectangle;
+  private meltdownText!: Phaser.GameObjects.Text;
+  private lastSeason = -1;
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
   private color: number = COLORS.player;
   private callsign = "runner";
@@ -118,6 +121,24 @@ export default class OnlineScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(1000);
 
+    // server-wide meltdown FX (everyone sees it together)
+    this.meltdownFx = this.add
+      .rectangle(0, 0, this.scale.width, this.scale.height, 0xff2b3b, 0)
+      .setOrigin(0)
+      .setScrollFactor(0)
+      .setDepth(1002);
+    this.meltdownText = this.add
+      .text(this.scale.width / 2, 74, "", {
+        fontFamily: "Courier New, monospace",
+        fontSize: "20px",
+        color: "#ff3b6b",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(1003)
+      .setVisible(false);
+
     this.hpBar = this.add.graphics().setScrollFactor(0).setDepth(1000);
     this.deadText = this.add
       .text(this.scale.width / 2, this.scale.height / 2, "", {
@@ -147,6 +168,21 @@ export default class OnlineScene extends Phaser.Scene {
       }
     });
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.net?.disconnect());
+  }
+
+  /** Brief "new era" banner when a meltdown resets the world into the next season. */
+  private flashEra(season: number) {
+    const t = this.add
+      .text(this.scale.width / 2, this.scale.height / 2 - 40, `◢ NEW ERA — SEASON ${season} ◣`, {
+        fontFamily: "Courier New, monospace",
+        fontSize: "26px",
+        color: "#39ff88",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(1004);
+    this.tweens.add({ targets: t, alpha: 0, scale: 1.4, duration: 2400, onComplete: () => t.destroy() });
   }
 
   private parseZone(z?: string): number {
@@ -299,6 +335,22 @@ export default class OnlineScene extends Phaser.Scene {
     }
     this.deadText.setVisible(this.net.dead).setText("✖ ELIMINATED — respawning…");
 
+    // seasonal meltdown — a server-wide event everyone experiences together
+    if (this.net.meltdown) {
+      this.meltdownFx.setFillStyle(0xff2b3b, 0.16 + 0.12 * Math.abs(Math.sin(this.time.now * 0.012)));
+      this.meltdownText.setVisible(true).setText(`▲ SINGULARITY MELTDOWN · SEASON ${this.net.season} ▲`);
+    } else {
+      this.meltdownFx.setFillStyle(0xff2b3b, 0);
+      this.meltdownText.setVisible(false);
+    }
+    if (this.net.connected) {
+      if (this.lastSeason < 0) this.lastSeason = this.net.season;
+      else if (this.net.season > this.lastSeason) {
+        this.flashEra(this.net.season);
+        this.lastSeason = this.net.season;
+      }
+    }
+
     const st = this.net.stats();
     const ctrl = this.net.control === NEUTRAL ? "—" : FACTION_NAMES[this.net.control];
     const war = FACTION_NAMES.map((nm, i) => `${nm[0]}:${this.net.factions[i]}`).join("  ");
@@ -309,7 +361,7 @@ export default class OnlineScene extends Phaser.Scene {
       `CELL ${FACTION_NAMES[this.net.faction]}   ·   DISTRICT CONTROL: ${ctrl}`,
       `players: ${st.players}   enemies: ${this.net.enemies.size}   nodes: ${this.net.nodes.size}`,
       `LV ${this.net.level}  XP ${xpIntoLevel(this.net.xp)}/100   ₵ ${this.net.credits}   HP ${Math.round(this.net.hp)}`,
-      `SINGULARITY ${this.net.singularity.toFixed(1)} / ${SING_MAX}${this.net.meltdown ? "  ▲ MELTDOWN" : ""}  (shared)`,
+      `SINGULARITY ${this.net.singularity.toFixed(1)} / ${SING_MAX}${this.net.meltdown ? "  ▲ MELTDOWN" : ""}  (shared · ERA ${this.net.season})`,
       `FACTION WAR  ${war}  (server-wide contribution)`,
     ]);
   }
