@@ -16,6 +16,7 @@ import {
   SKIN_TONES,
   HAIR_STYLES,
   HAIR_COLORS,
+  BEARDS,
   HEAD_LABELS,
   VISOR_LABELS,
   BUILD_LABELS,
@@ -23,6 +24,7 @@ import {
   DECAL_LABELS,
   CLOAK_LABELS,
   HAIR_LABELS,
+  BEARD_LABELS,
   CALLSIGN_MAX,
   randomCallsign,
 } from "../game/customization";
@@ -57,8 +59,8 @@ export default class CustomizeScene extends Phaser.Scene {
   private rowSwatches: Phaser.GameObjects.Rectangle[] = [];
 
   private readonly panelX = 470;
-  private readonly rowTop = 120;
-  private readonly rowH = 28;
+  private readonly rowTop = 118;
+  private readonly rowH = 26;
 
   constructor() {
     super("Customize");
@@ -233,6 +235,14 @@ export default class CustomizeScene extends Phaser.Scene {
             HAIR_COLORS.findIndex((c) => c.value === this.cust.hairColor),
           );
           this.cust.hairColor = HAIR_COLORS[(i + d + HAIR_COLORS.length) % HAIR_COLORS.length].value;
+          this.bakeAndRefresh();
+        },
+      },
+      {
+        label: "BEARD",
+        value: () => BEARD_LABELS[this.cust.beard],
+        cycle: (d) => {
+          this.cust.beard = cycleIn(BEARDS, this.cust.beard, d);
           this.bakeAndRefresh();
         },
       },

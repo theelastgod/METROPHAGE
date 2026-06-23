@@ -71,7 +71,8 @@ export type Visor = "band" | "goggles" | "single" | "wide" | "cross" | "scan" | 
 export type Shoulders = "none" | "pads" | "spikes" | "heavy";
 export type Decal = "none" | "cross" | "triangle" | "ring" | "bars" | "skull";
 export type Cloak = "none" | "cape" | "coat";
-export type Hair = "none" | "short" | "long" | "spiky" | "bun" | "afro" | "ponytail";
+export type Hair = "none" | "short" | "long" | "spiky" | "bun" | "afro" | "ponytail" | "buzz" | "mohawk" | "braids";
+export type Beard = "none" | "stubble" | "mustache" | "goatee" | "full";
 
 export interface CharSpec {
   build: Build;
@@ -90,6 +91,7 @@ export interface CharSpec {
   skin?: number; // skin colour
   hair?: Hair;
   hairColor?: number;
+  beard?: Beard; // facial hair (uses the hair colour)
 }
 
 // ── Per-class player specs (ids match game/classes.ts) ──────────────────────
@@ -367,8 +369,29 @@ function drawHumanHead(facing: Facing, spec: CharSpec, px: Px, part: Part) {
   px(cx + 1, 9, 1, 1, skin.e); // catchlights
   px(cx - 1, 10, 1, 2, skin.a); // nose
   px(cx - 1, 12, 2, 1, skin.a, 0.7); // mouth
+  px(cx - 3, 8, 2, 1, hair.b); // brows
+  px(cx + 1, 8, 2, 1, hair.b);
 
+  if (spec.beard && spec.beard !== "none") drawBeard(spec, px, cx, hair);
   drawHair(facing, spec, px, hair);
+}
+
+/** Facial hair on the human face (uses the hair tones). */
+function drawBeard(spec: CharSpec, px: Px, cx: number, hair: Tones) {
+  if (spec.beard === "stubble") {
+    px(cx - 3, 12, 6, 1, hair.a, 0.5);
+    px(cx - 2, 11, 4, 1, hair.a, 0.35);
+  } else if (spec.beard === "mustache") {
+    px(cx - 2, 11, 4, 1, hair.b);
+  } else if (spec.beard === "goatee") {
+    px(cx - 2, 11, 4, 1, hair.b); // mustache
+    px(cx - 1, 12, 2, 2, hair.b); // chin tuft
+  } else if (spec.beard === "full") {
+    px(cx - 4, 11, 8, 1, hair.b);
+    px(cx - 4, 12, 8, 2, hair.b); // jaw
+    px(cx - 2, 14, 4, 1, hair.a); // chin
+    px(cx - 1, 11, 2, 1, hair.c); // lit upper lip
+  }
 }
 
 /** Hairstyle drawn on top of the head, in the hair tones. */
@@ -376,7 +399,13 @@ function drawHair(facing: Facing, spec: CharSpec, px: Px, hair: Tones) {
   if (!spec.hair || spec.hair === "none") return; // bald
   const cx = 16;
   const back = facing === "up";
-  // base cap over the crown (all styles)
+  if (spec.hair === "mohawk") {
+    px(cx - 1, 0, 2, 5, hair.b); // central crest, shaved sides
+    px(cx - 1, 0, 1, 5, hair.c);
+    px(cx, 0, 1, 1, hair.d);
+    return;
+  }
+  // base cap over the crown (all other styles)
   px(cx - 6, 1, 12, 1, hair.o);
   px(cx - 5, 1, 10, 3, hair.b);
   px(cx - 5, 2, 10, 1, hair.c);
@@ -399,6 +428,13 @@ function drawHair(facing: Facing, spec: CharSpec, px: Px, hair: Tones) {
   } else if (spec.hair === "ponytail") {
     if (back) px(cx - 1, 4, 2, 9, hair.a);
     else px(cx + 5, 4, 2, 7, hair.a);
+  } else if (spec.hair === "buzz") {
+    px(cx - 5, 1, 10, 3, hair.a, 0.85); // tight + darker — buzzed
+  } else if (spec.hair === "braids") {
+    px(cx - 7, 4, 2, 9, hair.a);
+    px(cx + 5, 4, 2, 9, hair.a); // two strands down the sides
+    px(cx - 7, 12, 2, 1, hair.b);
+    px(cx + 5, 12, 2, 1, hair.b); // ties
   }
   // "short" = just the base cap
 }
@@ -416,6 +452,16 @@ function drawHumanProfile(spec: CharSpec, px: Px, part: Part) {
   px(cx - 4, 8, 2, 2, 0x0a0b12); // eye
   px(cx - 4, 8, 1, 1, skin.e);
   px(cx - 4, 11, 2, 1, skin.a, 0.7); // mouth
+  px(cx - 5, 7, 2, 1, hair.b); // brow
+  if (spec.beard === "stubble") px(cx - 5, 11, 5, 1, hair.a, 0.5);
+  else if (spec.beard === "mustache") px(cx - 5, 10, 3, 1, hair.b);
+  else if (spec.beard === "goatee") {
+    px(cx - 5, 10, 3, 1, hair.b);
+    px(cx - 4, 11, 2, 2, hair.b);
+  } else if (spec.beard === "full") {
+    px(cx - 5, 10, 4, 3, hair.b);
+    px(cx - 4, 13, 3, 1, hair.a);
+  }
   if (spec.hair && spec.hair !== "none") {
     px(cx - 5, 1, 9, 1, hair.o);
     px(cx - 5, 1, 9, 3, hair.b);

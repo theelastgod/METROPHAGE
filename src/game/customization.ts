@@ -11,6 +11,7 @@ import {
   type Decal,
   type Cloak,
   type Hair,
+  type Beard,
   type CharSpec,
 } from "../assets/charart";
 import { bakeDrawnFrames } from "../assets/pixelart";
@@ -37,6 +38,7 @@ export interface Customization {
   skin: number; // human skin tone, or -1 = SYNTH (cyber visor, no face)
   hair: Hair;
   hairColor: number;
+  beard: Beard; // facial hair (human faces only)
   antennae: boolean;
   emblem: boolean; // glowing chest core
   strap: boolean; // bandolier
@@ -150,15 +152,37 @@ export const SKIN_TONES: ReadonlyArray<{ name: string; value: number }> = [
   { name: "BROWN", value: 0x7c4f30 },
   { name: "DEEP", value: 0x4f3220 },
 ];
-export const HAIR_STYLES: ReadonlyArray<Hair> = ["none", "short", "long", "spiky", "bun", "afro", "ponytail"];
+export const HAIR_STYLES: ReadonlyArray<Hair> = [
+  "none",
+  "buzz",
+  "short",
+  "long",
+  "spiky",
+  "mohawk",
+  "bun",
+  "afro",
+  "ponytail",
+  "braids",
+];
 export const HAIR_LABELS: Record<Hair, string> = {
   none: "BALD",
+  buzz: "BUZZED",
   short: "SHORT",
   long: "LONG",
   spiky: "SPIKED",
+  mohawk: "MOHAWK",
   bun: "TOP-KNOT",
   afro: "AFRO",
   ponytail: "PONYTAIL",
+  braids: "BRAIDS",
+};
+export const BEARDS: ReadonlyArray<Beard> = ["none", "stubble", "mustache", "goatee", "full"];
+export const BEARD_LABELS: Record<Beard, string> = {
+  none: "NONE",
+  stubble: "STUBBLE",
+  mustache: "MOUSTACHE",
+  goatee: "GOATEE",
+  full: "FULL BEARD",
 };
 export const HAIR_COLORS: ReadonlyArray<{ name: string; value: number }> = [
   { name: "BLACK", value: 0x1b1820 },
@@ -188,6 +212,7 @@ export function defaultCustomization(classId: string | undefined): Customization
     skin: spec.skin ?? -1, // SYNTH — classes default to the cyber look
     hair: spec.hair ?? "none",
     hairColor: spec.hairColor ?? 0x4a2f1c,
+    beard: spec.beard ?? "none",
     antennae: !!spec.antennae,
     emblem: !!spec.emblem,
     strap: !!spec.strap,
@@ -209,6 +234,7 @@ export function customSpec(c: Customization): CharSpec {
     skin: c.skin >= 0 ? c.skin : undefined, // SYNTH → cyber visor (no human face)
     hair: c.hair,
     hairColor: c.hairColor,
+    beard: c.beard,
     // Bake in FINAL colours: the gear takes the signature colour, so skin/hair keep
     // their own. The sprite is then rendered with a neutral (white) tint.
     tones: tonesFromColor(c.color),
@@ -239,6 +265,7 @@ export function customizationToLook(c: Customization): PlayerLook {
     skin: c.skin,
     hair: c.hair,
     hairColor: c.hairColor,
+    beard: c.beard,
     antennae: c.antennae,
     emblem: c.emblem,
     strap: c.strap,
@@ -261,6 +288,7 @@ export function lookKey(look: PlayerLook | undefined): string {
     c.skin,
     c.hair,
     c.hairColor,
+    c.beard,
     `${c.antennae ? 1 : 0}${c.emblem ? 1 : 0}${c.strap ? 1 : 0}`,
   ].join("_");
 }
@@ -294,6 +322,7 @@ export function sanitizeCustomization(
     skin: typeof raw.skin === "number" ? raw.skin : d.skin,
     hair: pick(raw.hair, HAIR_STYLES, d.hair),
     hairColor: typeof raw.hairColor === "number" ? raw.hairColor : d.hairColor,
+    beard: pick(raw.beard, BEARDS, d.beard),
     antennae: typeof raw.antennae === "boolean" ? raw.antennae : d.antennae,
     emblem: typeof raw.emblem === "boolean" ? raw.emblem : d.emblem,
     strap: typeof raw.strap === "boolean" ? raw.strap : d.strap,
