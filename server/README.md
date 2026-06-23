@@ -81,14 +81,30 @@ Verified (`smoke.mjs mp`): two clients near spawn see each other; driven 1420 px
 apart, the AOI culls them (neither appears in the other's snapshot). A `bot` mode
 (`smoke.mjs bot <name>`) runs a wandering 2nd player for the browser demo.
 
+### Step 3b — zones + handoff ✅
+
+- **One Durable Object per district.** The Worker routes `/ws?zone=dN` to
+  `idFromName("dN")`; the DO reads the same `?zone=` and binds itself to that
+  district (grid, spawn, cops). Players in different zones are in different DOs and
+  can't see each other.
+- **Handoff** — the client travels with keys `1‥N`; it reconnects to the new zone's
+  DO and spawns at that district's entrance. Credits / XP / level carry across
+  (D1 is the shared identity store; the player's current zone is tracked too).
+- **Singularity is shared across ALL zones** — each DO flushes its kill
+  contribution to one `world_meta` row with an atomic increment and re-reads the
+  global value, so the meter is genuinely server-wide.
+
+Verified (`smoke.mjs zones`): two clients in d0/d1 have different spawns, don't see
+each other, and a kill in d0 raises the Singularity the d1 client reads. Browser:
+travelled d0→d1 ("THE STACKS"), spawned at the new entrance with XP/credits intact.
+
 ### What's intentionally NOT here yet
 
-Zone handoff between districts — Step 3b (server is a single "world" zone via
-`idFromName(zone)`; `/ws?zone=` is already routed, so per-district DOs + handoff
-are next); lag compensation for the hitscan/beam weapon; per-class weapons in the
-online path (generic stats for now); the shared-world systems — territory / faction
-war / seasonal meltdown (Step 4); and the WebSocket Hibernation API + alarms
-(production tick model — the spike uses an in-memory `setInterval`).
+Lag compensation for the hitscan/beam weapon; per-class weapons in the online path
+(generic stats for now); the shared-world systems — territory / faction war /
+seasonal meltdown (Step 4); social — chat / parties / trading (Step 5); and the
+WebSocket Hibernation API + alarms (production tick model — the spike uses an
+in-memory `setInterval`).
 
 ## Run it
 

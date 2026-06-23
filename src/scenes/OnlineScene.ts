@@ -37,20 +37,27 @@ export default class OnlineScene extends Phaser.Scene {
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
   private color: number = COLORS.player;
   private callsign = "runner";
+  private zone = "d0";
+  private districtIndex = 0;
 
   constructor() {
     super("Online");
   }
 
-  create() {
+  create(data?: { zone?: string }) {
     const cust = this.registry.get("customization") as Customization | undefined;
     this.callsign = (cust?.callsign || "runner").toLowerCase();
     this.color = cust?.color ?? COLORS.player;
 
+    // Zone = which district this client is in. Travel hands off to another DO.
+    this.districtIndex = this.parseZone(data?.zone);
+    this.zone = "d" + this.districtIndex;
+    const def = DISTRICTS[this.districtIndex];
+
     this.cameras.main.setBackgroundColor(COLORS.bgVoid);
 
     // Real world — same grid + tileset the server simulates against.
-    const grid = buildGrid(DISTRICTS[0]);
+    const grid = buildGrid(def);
     const map = this.make.tilemap({ data: grid, tileWidth: TILE, tileHeight: TILE });
     const tileset = map.addTilesetImage(TILESET_KEY, TILESET_KEY, TILE, TILE)!;
     map.createLayer(0, tileset, 0, 0)!;
@@ -64,7 +71,8 @@ export default class OnlineScene extends Phaser.Scene {
       .setDepth(10)
       .setVisible(false);
 
-    this.net = new NetClient(grid, this.callsign, SERVER_URL);
+    const url = SERVER_URL + (SERVER_URL.includes("?") ? "&" : "?") + "zone=" + this.zone;
+    this.net = new NetClient(grid, this.callsign, url);
     this.net.onWelcome = (x, y) => {
       this.me.setPosition(x, y).setVisible(true);
       this.cameras.main.startFollow(this.me, true, 0.18, 0.18);
@@ -89,7 +97,7 @@ export default class OnlineScene extends Phaser.Scene {
       .text(
         this.scale.width / 2,
         this.scale.height - 12,
-        "ONLINE (beta) · WASD move · CLICK fire · server-authoritative · ESC to exit",
+        `ONLINE (beta) · WASD move · CLICK fire · [1-${DISTRICTS.length}] travel district · ESC exit`,
         { fontFamily: "Courier New, monospace", fontSize: "11px", color: "#6b7184" },
       )
       .setOrigin(0.5, 1)
@@ -113,7 +121,24 @@ export default class OnlineScene extends Phaser.Scene {
       this.net.disconnect();
       this.scene.start("Select");
     });
+    // Travel between districts — zone handoff (reconnect to another DO).
+    this.input.keyboard!.on("keydown", (e: KeyboardEvent) => {
+      const k = parseInt(e.key, 10);
+      if (k >= 1 && k <= DISTRICTS.length) {
+        const z = "d" + (k - 1);
+        if (z !== this.zone) {
+          this.net.disconnect();
+          this.scene.restart({ zone: z });
+        }
+      }
+    });
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.net?.disconnect());
+  }
+
+  private parseZone(z?: string): number {
+    const m = z ? /^d(\d+)$/.exec(z) : null;
+    const n = m ? parseInt(m[1], 10) : 0;
+    return n >= 0 && n < DISTRICTS.length ? n : 0;
   }
 
   update(_t: number, dt: number) {
@@ -238,7 +263,9 @@ export default class OnlineScene extends Phaser.Scene {
 
     const st = this.net.stats();
     this.hud.setText([
-      st.connected ? `◢ ONLINE  ${this.callsign}  (id=${st.id})` : "connecting to server…",
+      st.connected
+        ? `◢ ONLINE  ${this.callsign}  ·  ${this.zone.toUpperCase()} ${DISTRICTS[this.districtIndex].name}`
+        : "connecting to server…",
       `players: ${st.players}   enemies: ${this.net.enemies.size}   loot: ${this.net.pickups.size}`,
       `LV ${this.net.level}  XP ${xpIntoLevel(this.net.xp)}/100   ₵ ${this.net.credits}   HP ${Math.round(this.net.hp)}`,
       `SINGULARITY ${this.net.singularity.toFixed(1)} / ${SING_MAX}${this.net.meltdown ? "  ▲ MELTDOWN" : ""}  (shared, server-wide)`,

@@ -22,9 +22,9 @@ const mode = process.argv[2] || "move";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const round = (n) => Math.round(n * 100) / 100;
 
-function connect() {
+function connect(url = WS_URL) {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(WS_URL);
+    const ws = new WebSocket(url);
     const to = setTimeout(() => reject(new Error("connect timeout")), 5000);
     ws.onopen = () => {
       clearTimeout(to);
@@ -320,10 +320,70 @@ async function bot() {
   }
 }
 
+async function zones() {
+  const base = WS_URL;
+  const a = await connect(base + "?zone=d0");
+  const wa = await login(a, "ax");
+  const b = await connect(base + "?zone=d1");
+  const wb = await login(b, "bx");
+  const sa = { x: wa.x, y: wa.y, players: [], enemies: [], sing: 0 };
+  const sb = { x: wb.x, y: wb.y, players: [], enemies: [], sing: 0 };
+  trackState(a, wa.id, sa);
+  trackState(b, wb.id, sb);
+  await sleep(600);
+
+  const aSeesB = (sa.players || []).some((p) => p.id === wb.id);
+  const bSeesA = (sb.players || []).some((p) => p.id === wa.id);
+  const differentSpawns = Math.hypot(wa.x - wb.x, wa.y - wb.y) > 1;
+  const startSingB = sb.sing ?? 0;
+
+  // 'a' farms cops in d0; the shared meter should rise for 'b' in d1 (via D1 sync).
+  let seq = 0;
+  const t0 = Date.now();
+  while (Date.now() - t0 < 6000) {
+    let best = null;
+    let bd = Infinity;
+    for (const e of sa.enemies || []) {
+      const d = Math.hypot(e.x - sa.x, e.y - sa.y);
+      if (d < bd) {
+        bd = d;
+        best = e;
+      }
+    }
+    if (best) {
+      const dx = best.x - sa.x;
+      const dy = best.y - sa.y;
+      const d = Math.hypot(dx, dy) || 1;
+      seq++;
+      a.send(JSON.stringify({ t: "input", seq, mx: d > 110 ? dx / d : 0, my: d > 110 ? dy / d : 0 }));
+      a.send(JSON.stringify({ t: "fire", seq, aim: Math.atan2(dy, dx) }));
+    }
+    await sleep(50);
+  }
+  await sleep(3000); // let D1 sync the shared meter into zone d1
+  const endSingB = sb.sing ?? 0;
+
+  const checks = {
+    zonesIsolated: !aSeesB && !bSeesA, // different DOs → can't see each other
+    differentSpawns, // each district has its own spawn point
+    sharedSingularityAcrossZones: endSingB > startSingB, // d0 kills raised d1's meter
+  };
+  a.close();
+  b.close();
+  await sleep(300);
+  report(
+    "ZONES — per-district DOs: cross-zone isolation + shared Singularity",
+    { aSpawn: [round(wa.x), round(wa.y)], bSpawn: [round(wb.x), round(wb.y)], aSeesB, bSeesA, singB: [round(startSingB), round(endSingB)] },
+    Object.values(checks).every(Boolean),
+    checks,
+  );
+}
+
 try {
   if (mode === "check") await check();
   else if (mode === "combat") await combat();
   else if (mode === "mp") await mp();
+  else if (mode === "zones") await zones();
   else if (mode === "bot") await bot();
   else await move();
 } catch (e) {

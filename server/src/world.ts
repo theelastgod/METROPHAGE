@@ -45,6 +45,12 @@ const INTENT_EXPIRE_TICKS = 3;
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const clampUnit = (n: number) => (n > 1 ? 1 : n < -1 ? -1 : Number.isFinite(n) ? n : 0);
 const ticks = (ms: number) => Math.ceil(ms / NET_TICK_MS);
+/** Map a "dN" zone string to a valid district index. */
+export const parseZone = (z: string | null): number => {
+  const m = z ? /^d(\d+)$/.exec(z) : null;
+  const n = m ? parseInt(m[1], 10) : 0;
+  return n >= 0 && n < DISTRICTS.length ? n : 0;
+};
 
 export interface Env {
   WORLD: DurableObjectNamespace;
@@ -125,20 +131,36 @@ export class WorldDO {
   private nextShotId = 1;
   private nextPickupId = 1;
   private singularity = 0; // shared server-wide meter (persisted in world_meta)
+  private singDelta = 0; // unflushed local contribution to the shared meter
   private singLoaded = false;
+  private zoneName = "d0";
+  private districtIndex = 0;
+  private zoneReady = false;
 
   constructor(
     _state: DurableObjectState,
     private env: Env,
   ) {
+    // The real zone (district) is bound on the first connection from ?zone=.
     this.grid = buildGrid(DISTRICTS[0]);
     this.spawn = spawnPoint(this.grid, DISTRICTS[0]);
-    this.spawnEnemies();
+  }
+
+  /** A DO instance handles exactly one zone — bind it to its district on first hit. */
+  private initZone(zone: string | null) {
+    if (this.zoneReady) return;
+    this.zoneReady = true;
+    this.districtIndex = parseZone(zone);
+    this.zoneName = "d" + this.districtIndex;
+    const def = DISTRICTS[this.districtIndex];
+    this.grid = buildGrid(def);
+    this.spawn = spawnPoint(this.grid, def);
+    this.spawnEnemies(def);
   }
 
   /** Seed a handful of cops at the district's cop-posts (walkable tiles only). */
-  private spawnEnemies() {
-    for (const [tx, ty] of DISTRICTS[0].copPosts) {
+  private spawnEnemies(def: (typeof DISTRICTS)[number]) {
+    for (const [tx, ty] of def.copPosts) {
       if (isWall(this.grid[ty]?.[tx])) continue;
       const x = tx * TILE + TILE / 2;
       const y = ty * TILE + TILE / 2;
@@ -148,6 +170,7 @@ export class WorldDO {
   }
 
   async fetch(req: Request): Promise<Response> {
+    this.initZone(new URL(req.url).searchParams.get("zone"));
     if (req.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
       return new Response("expected websocket", { status: 426 });
     }
@@ -203,14 +226,18 @@ export class WorldDO {
     let y = this.spawn.y;
     let credits = 0;
     let xp = 0;
-    const row = await this.env.DB.prepare("SELECT x, y, credits, xp FROM players WHERE id = ?")
+    const row = await this.env.DB.prepare("SELECT x, y, credits, xp, zone FROM players WHERE id = ?")
       .bind(id)
-      .first<{ x: number; y: number; credits: number; xp: number }>();
+      .first<{ x: number; y: number; credits: number; xp: number; zone: string }>();
     if (row) {
-      x = row.x;
-      y = row.y;
       credits = row.credits ?? 0;
       xp = row.xp ?? 0;
+      // Same zone → resume exact position. Different zone → they just travelled in,
+      // so spawn at this district's entrance (x,y already hold the spawn).
+      if (row.zone === this.zoneName) {
+        x = row.x;
+        y = row.y;
+      }
     } else {
       await this.upsert(id, name, x, y, 0, 0);
     }
@@ -370,8 +397,10 @@ export class WorldDO {
                 killer.level = levelForXp(killer.xp);
                 killer.dirty = true;
               }
-              // shared meta: every kill (any player) pushes the server-wide Singularity
+              // shared meta: every kill (any player, ANY zone) pushes the server-wide
+              // Singularity. Optimistic local bump now; flushed/synced to D1 on persist.
               this.singularity = Math.min(SING_MAX, this.singularity + SING_PER_KILL);
+              this.singDelta += SING_PER_KILL;
               // loot roll — server decides the drop
               if (Math.random() < LOOT_DROP_CHANCE) {
                 const kind = Math.random() < 0.25 ? PICKUP_CORE : PICKUP_CREDIT;
@@ -513,11 +542,21 @@ export class WorldDO {
 
   private async persistSingularity() {
     try {
-      await this.env.DB.prepare(
-        "INSERT INTO world_meta (k, v) VALUES ('singularity', ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
-      )
-        .bind(round2(this.singularity))
-        .run();
+      // Atomic increment so every zone DO contributes to ONE shared meter, then
+      // re-read the global value (picks up other zones' contributions).
+      if (this.singDelta > 0) {
+        const d = round2(Math.min(SING_MAX, this.singDelta));
+        await this.env.DB.prepare(
+          "INSERT INTO world_meta (k, v) VALUES ('singularity', ?) ON CONFLICT(k) DO UPDATE SET v = MIN(?, v + ?)",
+        )
+          .bind(d, SING_MAX, d)
+          .run();
+        this.singDelta = 0;
+      }
+      const row = await this.env.DB.prepare("SELECT v FROM world_meta WHERE k = 'singularity'").first<{
+        v: number;
+      }>();
+      if (row) this.singularity = row.v;
     } catch {
       /* world_meta missing pre-migration */
     }
@@ -536,7 +575,7 @@ export class WorldDO {
         "INSERT INTO players (id, name, x, y, zone, credits, xp, updated_at) VALUES (?,?,?,?,?,?,?,?) " +
           "ON CONFLICT(id) DO UPDATE SET x=excluded.x, y=excluded.y, credits=excluded.credits, xp=excluded.xp, updated_at=excluded.updated_at",
       )
-        .bind(id, name, round2(x), round2(y), "world", Math.round(credits), Math.round(xp), Date.now())
+        .bind(id, name, round2(x), round2(y), this.zoneName, Math.round(credits), Math.round(xp), Date.now())
         .run();
     } catch {
       /* D1 hiccup — next snapshot retries */
