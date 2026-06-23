@@ -49,6 +49,11 @@ export default class OnlineScene extends Phaser.Scene {
   private meltdownFx!: Phaser.GameObjects.Rectangle;
   private meltdownText!: Phaser.GameObjects.Text;
   private lastSeason = -1;
+  private chatLogText!: Phaser.GameObjects.Text;
+  private chatInput!: Phaser.GameObjects.Text;
+  private rosterText!: Phaser.GameObjects.Text;
+  private chatOpen = false;
+  private chatBuffer = "";
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
   private color: number = COLORS.player;
   private callsign = "runner";
@@ -114,7 +119,7 @@ export default class OnlineScene extends Phaser.Scene {
       .text(
         this.scale.width / 2,
         this.scale.height - 12,
-        `ONLINE (beta) · WASD move · CLICK fire · [1-${DISTRICTS.length}] travel district · ESC exit`,
+        `WASD move · CLICK fire · ENTER chat (/w /p /party /join /mute) · [1-${DISTRICTS.length}] travel · ESC exit`,
         { fontFamily: "Courier New, monospace", fontSize: "11px", color: "#6b7184" },
       )
       .setOrigin(0.5, 1)
@@ -152,22 +157,100 @@ export default class OnlineScene extends Phaser.Scene {
       .setDepth(1001)
       .setVisible(false);
 
-    this.input.keyboard!.on("keydown-ESC", () => {
-      this.net.disconnect();
-      this.scene.start("Select");
-    });
-    // Travel between districts — zone handoff (reconnect to another DO).
+    // chat log (bottom-left), input line, roster panel (top-right)
+    this.chatLogText = this.add
+      .text(12, this.scale.height - 70, "", {
+        fontFamily: "Courier New, monospace",
+        fontSize: "11px",
+        color: "#cdd6e6",
+        lineSpacing: 2,
+      })
+      .setOrigin(0, 1)
+      .setScrollFactor(0)
+      .setDepth(1000);
+    this.chatInput = this.add
+      .text(12, this.scale.height - 38, "", {
+        fontFamily: "Courier New, monospace",
+        fontSize: "12px",
+        color: "#f7ff3c",
+      })
+      .setScrollFactor(0)
+      .setDepth(1001)
+      .setVisible(false);
+    this.rosterText = this.add
+      .text(this.scale.width - 12, 98, "", {
+        fontFamily: "Courier New, monospace",
+        fontSize: "10px",
+        color: "#9aa3b2",
+        align: "right",
+      })
+      .setOrigin(1, 0)
+      .setScrollFactor(0)
+      .setDepth(1000);
+
+    // Unified keyboard: chat mode captures text; game mode moves / travels / exits.
     this.input.keyboard!.on("keydown", (e: KeyboardEvent) => {
-      const k = parseInt(e.key, 10);
-      if (k >= 1 && k <= DISTRICTS.length) {
-        const z = "d" + (k - 1);
-        if (z !== this.zone) {
-          this.net.disconnect();
-          this.scene.restart({ zone: z });
+      if (this.chatOpen) {
+        if (e.key === "Enter") {
+          this.submitChat();
+          this.closeChat();
+        } else if (e.key === "Escape") {
+          this.closeChat();
+        } else if (e.key === "Backspace") {
+          this.chatBuffer = this.chatBuffer.slice(0, -1);
+          this.renderChatInput();
+        } else if (e.key.length === 1 && this.chatBuffer.length < 200) {
+          this.chatBuffer += e.key;
+          this.renderChatInput();
+        }
+        return;
+      }
+      if (e.key === "Enter" || e.key === "t" || e.key === "T") {
+        this.openChat();
+      } else if (e.key === "Escape") {
+        this.net.disconnect();
+        this.scene.start("Select");
+      } else {
+        const k = parseInt(e.key, 10);
+        if (k >= 1 && k <= DISTRICTS.length) {
+          const z = "d" + (k - 1);
+          if (z !== this.zone) {
+            this.net.disconnect();
+            this.scene.restart({ zone: z });
+          }
         }
       }
     });
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.net?.disconnect());
+  }
+
+  private openChat() {
+    this.chatOpen = true;
+    this.chatBuffer = "";
+    this.chatInput.setVisible(true);
+    this.renderChatInput();
+  }
+  private closeChat() {
+    this.chatOpen = false;
+    this.chatInput.setVisible(false);
+  }
+  private renderChatInput() {
+    this.chatInput.setText("> " + this.chatBuffer + "_");
+  }
+  /** Parse a chat line — plain text is zone chat; /commands drive whisper/party/mute. */
+  private submitChat() {
+    const s = this.chatBuffer.trim();
+    if (!s) return;
+    if (s.startsWith("/w ")) {
+      const r = s.slice(3);
+      const i = r.indexOf(" ");
+      if (i > 0) this.net.sendChat("whisper", r.slice(0, i), r.slice(i + 1));
+    } else if (s.startsWith("/p ")) this.net.sendChat("party", undefined, s.slice(3));
+    else if (s.startsWith("/party ")) this.net.sendParty("invite", s.slice(7).trim());
+    else if (s === "/join") this.net.sendParty("accept");
+    else if (s === "/leave") this.net.sendParty("leave");
+    else if (s.startsWith("/mute ")) this.net.sendMute(s.slice(6).trim());
+    else this.net.sendChat("zone", undefined, s);
   }
 
   /** Brief "new era" banner when a meltdown resets the world into the next season. */
@@ -194,7 +277,7 @@ export default class OnlineScene extends Phaser.Scene {
   update(_t: number, dt: number) {
     if (!this.net) return;
     const k = this.keys;
-    const dn = (key?: Phaser.Input.Keyboard.Key) => (key?.isDown ? 1 : 0);
+    const dn = (key?: Phaser.Input.Keyboard.Key) => (!this.chatOpen && key?.isDown ? 1 : 0);
     const mx = Math.sign(dn(k.D) + dn(k.RIGHT) - dn(k.A) - dn(k.LEFT));
     const my = Math.sign(dn(k.S) + dn(k.DOWN) - dn(k.W) - dn(k.UP));
     this.net.setIntent(mx, my);
@@ -238,7 +321,7 @@ export default class OnlineScene extends Phaser.Scene {
     // FIRE — send aim intent while the mouse is held; the SERVER validates rate
     // and resolves the hit. We only render.
     const ptr = this.input.activePointer;
-    if (this.net.connected && !this.net.dead && ptr.isDown) {
+    if (this.net.connected && !this.net.dead && !this.chatOpen && ptr.isDown) {
       const wp = this.cameras.main.getWorldPoint(ptr.x, ptr.y);
       const aim = Math.atan2(wp.y - this.net.pred.y, wp.x - this.net.pred.x);
       this.net.fire(aim);
@@ -363,6 +446,21 @@ export default class OnlineScene extends Phaser.Scene {
       `LV ${this.net.level}  XP ${xpIntoLevel(this.net.xp)}/100   ₵ ${this.net.credits}   HP ${Math.round(this.net.hp)}`,
       `SINGULARITY ${this.net.singularity.toFixed(1)} / ${SING_MAX}${this.net.meltdown ? "  ▲ MELTDOWN" : ""}  (shared · ERA ${this.net.season})`,
       `FACTION WAR  ${war}  (server-wide contribution)`,
+    ]);
+
+    // chat log (recent) + presence roster
+    this.chatLogText.setText(
+      this.net.chatLog.slice(-7).map((c) => {
+        if (c.sys) return "» " + c.text;
+        const tag = c.ch === "whisper" ? "[w] " : c.ch === "party" ? "[p] " : "";
+        return `${tag}${c.from}: ${c.text}`;
+      }),
+    );
+    this.rosterText.setText([
+      `◢ ONLINE (${this.net.roster.length})`,
+      ...this.net.roster
+        .slice(0, 12)
+        .map((r) => `${this.net.party.includes(r.id) ? "◆" : "·"} ${r.id} L${r.level}`),
     ]);
   }
 

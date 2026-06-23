@@ -129,13 +129,29 @@ Verified (`smoke.mjs meltdown`, with the meter pre-armed near max): the Singular
 hit 100 → meltdown went active → it reset and the season incremented (1→2). Browser
 caught the "NEW ERA — SEASON 4" banner + ERA counter in the HUD.
 
+### Step 5a — chat / presence / parties ✅
+
+Server-mediated social, within a zone:
+
+- **Chat** — `zone` (everyone in the DO), `party` (party members), and `whisper`
+  (a single player). Rate-limited (~3/s) + length-capped server-side; recipients can
+  **mute** a player (their messages are dropped server-side).
+- **Presence** — every snapshot carries a roster of everyone in the zone (id /
+  faction / level); the client shows an ONLINE panel.
+- **Parties** — `/party <name>` invite → `/join` accept → `/leave`; party membership
+  is broadcast to members and cleaned up on disconnect.
+
+Client: press ENTER to chat; plain text is zone chat, `/w /p /party /join /mute` are
+commands. Verified (`smoke.mjs social`): two clients exchanged zone + whisper + party
+chat, formed a party, and saw each other in the roster.
+
 ### What's intentionally NOT here yet
 
-Lag compensation for the hitscan/beam weapon; per-class weapons in the online path
-(generic stats for now); social — chat / parties / crews / trading (Step 5); the
-questline in the shared world (Step 6); anti-cheat + ops hardening (Step 7); and the
-WebSocket Hibernation API + alarms (production tick model — the spike uses an
-in-memory `setInterval`).
+Secure server-mediated trading — Step 5b (atomic, both-confirm, dupe-proof); crews
+(persistent cross-session groups, vs. the in-session parties here); global (cross-
+zone) chat/presence via a hub DO; lag compensation for the hitscan/beam weapon;
+per-class weapons in the online path; the questline in the shared world (Step 6);
+anti-cheat + ops (Step 7); and the WebSocket Hibernation API + alarms.
 
 ## Run it
 

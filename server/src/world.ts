@@ -88,6 +88,10 @@ interface PlayerState {
   xp: number;
   level: number;
   faction: number;
+  // social
+  party: number; // party id, or -1
+  muted: Set<string>; // player ids this player has muted (their chat is dropped)
+  lastChatTick: number;
 }
 
 interface Pickup {
@@ -155,6 +159,8 @@ export class WorldDO {
   private metaDelta: Record<string, number> = {};
   private metaLoaded = false;
   private nodes: TerritoryNode[] = [];
+  private parties = new Map<number, Set<string>>(); // partyId -> member ids
+  private nextPartyId = 1;
   private meltdownTicks = 0; // how long this DO has seen the meltdown active
   private zoneName = "d0";
   private districtIndex = 0;
@@ -233,6 +239,133 @@ export class WorldDO {
     if (msg.t === "login") return this.onLogin(ws, msg.name, msg.faction);
     if (msg.t === "input") return this.onInput(ws, msg);
     if (msg.t === "fire") return this.onFire(ws, msg);
+    if (msg.t === "chat") return this.onChat(ws, msg);
+    if (msg.t === "party") return this.onParty(ws, msg);
+    if (msg.t === "mute") return this.onMute(ws, msg);
+  }
+
+  // ── social: chat / parties / mute ───────────────────────────────────
+  private pendingInvites = new Map<string, number>(); // invitee id -> party id
+
+  /** Send a message to all of a player's sockets (skipping if they muted `fromId`). */
+  private sendTo(playerId: string, msg: unknown, fromId?: string) {
+    for (const [sock, id] of this.sessions) {
+      if (id !== playerId) continue;
+      if (fromId) {
+        const r = this.players.get(id);
+        if (r?.muted.has(fromId)) continue;
+      }
+      try {
+        sock.send(JSON.stringify(msg));
+      } catch {
+        /* dropped */
+      }
+    }
+  }
+
+  private onChat(ws: WebSocket, msg: Extract<ClientMsg, { t: "chat" }>) {
+    const p = this.playerFor(ws);
+    if (!p) return;
+    const text = (msg.text || "").slice(0, 200).trim();
+    if (!text) return;
+    if ((this.tick - p.lastChatTick) * NET_TICK_MS < 300) return; // rate-limit ~3/s
+    p.lastChatTick = this.tick;
+    const out = { t: "chat", from: p.name, faction: p.faction, ch: msg.ch, text };
+    if (msg.ch === "whisper") {
+      const to = (msg.to || "").toLowerCase();
+      if (!this.players.has(to)) {
+        this.send(ws, { t: "sys", text: `no such player: ${msg.to}` });
+        return;
+      }
+      this.sendTo(to, out, p.id);
+      this.send(ws, { ...out, from: `you → ${msg.to}` }); // echo to sender
+    } else if (msg.ch === "party") {
+      if (p.party < 0) {
+        this.send(ws, { t: "sys", text: "you're not in a party" });
+        return;
+      }
+      for (const mid of this.parties.get(p.party) ?? []) this.sendTo(mid, out, p.id);
+    } else {
+      // zone — everyone in this DO, respecting mutes
+      for (const [sock, id] of this.sessions) {
+        if (this.players.get(id)?.muted.has(p.id)) continue;
+        try {
+          sock.send(JSON.stringify(out));
+        } catch {
+          /* dropped */
+        }
+      }
+    }
+  }
+
+  private onParty(ws: WebSocket, msg: Extract<ClientMsg, { t: "party" }>) {
+    const p = this.playerFor(ws);
+    if (!p) return;
+    if (msg.action === "invite") {
+      const to = (msg.to || "").toLowerCase();
+      const target = this.players.get(to);
+      if (!target || target.id === p.id) {
+        this.send(ws, { t: "sys", text: "can't invite that player" });
+        return;
+      }
+      if (p.party < 0) {
+        const pid = this.nextPartyId++;
+        this.parties.set(pid, new Set([p.id]));
+        p.party = pid;
+      }
+      this.pendingInvites.set(target.id, p.party);
+      this.sendTo(target.id, { t: "sys", text: `${p.name} invited you to a party — type /join` });
+      this.send(ws, { t: "sys", text: `invited ${target.name}` });
+    } else if (msg.action === "accept") {
+      const pid = this.pendingInvites.get(p.id);
+      if (pid == null || !this.parties.has(pid)) {
+        this.send(ws, { t: "sys", text: "no pending party invite" });
+        return;
+      }
+      this.leaveParty(p);
+      this.parties.get(pid)!.add(p.id);
+      p.party = pid;
+      this.pendingInvites.delete(p.id);
+      this.broadcastParty(pid);
+    } else {
+      this.leaveParty(p);
+      this.send(ws, { t: "party", members: [] });
+    }
+  }
+
+  private onMute(ws: WebSocket, msg: Extract<ClientMsg, { t: "mute" }>) {
+    const p = this.playerFor(ws);
+    if (!p) return;
+    const to = (msg.to || "").toLowerCase();
+    if (to && to !== p.id) {
+      p.muted.add(to);
+      this.send(ws, { t: "sys", text: `muted ${msg.to}` });
+    }
+  }
+
+  private leaveParty(p: PlayerState) {
+    if (p.party < 0) return;
+    const pid = p.party;
+    p.party = -1;
+    const set = this.parties.get(pid);
+    if (!set) return;
+    set.delete(p.id);
+    if (set.size <= 1) {
+      for (const m of set) {
+        const mp = this.players.get(m);
+        if (mp) mp.party = -1;
+      }
+      this.parties.delete(pid);
+    } else {
+      this.broadcastParty(pid);
+    }
+  }
+
+  private broadcastParty(pid: number) {
+    const set = this.parties.get(pid);
+    if (!set) return;
+    const members = [...set];
+    for (const mid of members) this.sendTo(mid, { t: "party", members });
   }
 
   private async loadMeta() {
@@ -300,6 +433,9 @@ export class WorldDO {
       xp,
       level: levelForXp(xp),
       faction: fac,
+      party: -1,
+      muted: new Set<string>(),
+      lastChatTick: -999,
     };
     this.players.set(id, p);
     this.sessions.set(ws, id);
@@ -556,11 +692,12 @@ export class WorldDO {
     const season = Math.round(this.meta["season"] ?? 1);
     const factions = Array.from({ length: FACTION_COUNT }, (_, i) => Math.round(this.meta["f" + i] ?? 0));
     const control = this.districtControl();
+    const roster = [...this.players.values()].map((p) => ({ id: p.id, faction: p.faction, level: p.level }));
     for (const [ws, id] of this.sessions) {
       const viewer = this.players.get(id);
       if (!viewer) continue;
       try {
-        ws.send(this.snapshotFor(viewer, sing, meltdown, season, factions, control));
+        ws.send(this.snapshotFor(viewer, sing, meltdown, season, factions, control, roster));
       } catch {
         /* dropped */
       }
@@ -582,6 +719,7 @@ export class WorldDO {
     season: number,
     factions: number[],
     control: number,
+    roster: Array<{ id: string; faction: number; level: number }>,
   ): string {
     const R2 = AOI_RADIUS * AOI_RADIUS;
     const near = (x: number, y: number) => dist2(viewer.x, viewer.y, x, y) <= R2;
@@ -631,6 +769,7 @@ export class WorldDO {
       season,
       factions,
       control,
+      roster,
     });
   }
 
@@ -749,6 +888,8 @@ export class WorldDO {
     if (!id) return;
     const p = this.players.get(id);
     if (p) {
+      this.leaveParty(p);
+      this.pendingInvites.delete(p.id);
       await this.upsert(p.id, p.name, p.x, p.y, p.credits, p.xp);
       await this.syncMeta();
       this.players.delete(id);

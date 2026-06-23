@@ -73,6 +73,9 @@ export default class NetClient {
   nodes = new Map<number, { id: number; x: number; y: number; owner: number; progress: number; by: number }>();
   factions: number[] = [0, 0, 0, 0];
   control = -1;
+  roster: Array<{ id: string; faction: number; level: number }> = [];
+  party: string[] = [];
+  chatLog: Array<{ from: string; ch: string; text: string; faction: number; sys: boolean }> = [];
   lastError = 0;
   reconciles = 0;
   lastAck = 0;
@@ -236,6 +239,35 @@ export default class NetClient {
       this.season = msg.season;
       this.factions = msg.factions;
       this.control = msg.control;
+      this.roster = msg.roster;
+    } else if (msg.t === "chat") {
+      this.pushChat({ from: msg.from, ch: msg.ch, text: msg.text, faction: msg.faction, sys: false });
+    } else if (msg.t === "sys") {
+      this.pushChat({ from: "", ch: "sys", text: msg.text, faction: -1, sys: true });
+    } else if (msg.t === "party") {
+      this.party = msg.members;
+    }
+  }
+
+  private pushChat(line: { from: string; ch: string; text: string; faction: number; sys: boolean }) {
+    this.chatLog.push(line);
+    if (this.chatLog.length > 40) this.chatLog.shift();
+  }
+
+  sendChat(ch: "zone" | "party" | "whisper", to: string | undefined, text: string) {
+    this.sendMsg({ t: "chat", ch, to, text });
+  }
+  sendParty(action: "invite" | "accept" | "leave", to?: string) {
+    this.sendMsg({ t: "party", action, to });
+  }
+  sendMute(to: string) {
+    this.sendMsg({ t: "mute", to });
+  }
+  private sendMsg(m: ClientMsg) {
+    try {
+      this.ws?.send(JSON.stringify(m));
+    } catch {
+      /* socket hiccup */
     }
   }
 

@@ -76,6 +76,7 @@ function trackState(ws, id, store) {
       store.nodes = m.nodes || [];
       store.factions = m.factions || [];
       store.control = m.control ?? -1;
+      store.roster = m.roster || [];
       store.sing = m.sing ?? 0;
       store.meltdown = !!m.meltdown;
       store.season = m.season ?? 1;
@@ -502,6 +503,63 @@ async function meltdown() {
   );
 }
 
+async function social() {
+  const a = await connect();
+  const wa = await login(a, "alice", 0);
+  const b = await connect();
+  const wb = await login(b, "bob", 1);
+  const sa = { roster: [] };
+  const sb = { roster: [] };
+  trackState(a, wa.id, sa);
+  trackState(b, wb.id, sb);
+  const bChat = [];
+  const aParty = [];
+  const bParty = [];
+  b.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "chat") bChat.push(m);
+    if (m.t === "party") bParty.push(m.members);
+  });
+  a.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "party") aParty.push(m.members);
+  });
+  await sleep(600);
+
+  a.send(JSON.stringify({ t: "chat", ch: "zone", text: "hello zone" }));
+  await sleep(450);
+  const zoneChat = bChat.some((c) => c.ch === "zone" && c.text === "hello zone" && c.from === "alice");
+
+  a.send(JSON.stringify({ t: "chat", ch: "whisper", to: "bob", text: "psst" }));
+  await sleep(450);
+  const whisper = bChat.some((c) => c.ch === "whisper" && c.text === "psst");
+
+  a.send(JSON.stringify({ t: "party", action: "invite", to: "bob" }));
+  await sleep(450);
+  b.send(JSON.stringify({ t: "party", action: "accept" }));
+  await sleep(550);
+  const inParty =
+    aParty.some((m) => m.includes("alice") && m.includes("bob")) ||
+    bParty.some((m) => m.includes("alice") && m.includes("bob"));
+
+  a.send(JSON.stringify({ t: "chat", ch: "party", text: "team up" }));
+  await sleep(450);
+  const partyChat = bChat.some((c) => c.ch === "party" && c.text === "team up");
+
+  const presence = (sa.roster || []).some((r) => r.id === "alice") && (sa.roster || []).some((r) => r.id === "bob");
+
+  const checks = { zoneChat, whisper, party: inParty, partyChat, presence };
+  a.close();
+  b.close();
+  await sleep(300);
+  report(
+    "SOCIAL — chat (zone/whisper/party) + party invite/accept + presence roster",
+    { zoneChat, whisper, inParty, partyChat, rosterCount: (sa.roster || []).length },
+    Object.values(checks).every(Boolean),
+    checks,
+  );
+}
+
 try {
   if (mode === "check") await check();
   else if (mode === "combat") await combat();
@@ -509,6 +567,7 @@ try {
   else if (mode === "zones") await zones();
   else if (mode === "territory") await territory();
   else if (mode === "meltdown") await meltdown();
+  else if (mode === "social") await social();
   else if (mode === "bot") await bot();
   else await move();
 } catch (e) {

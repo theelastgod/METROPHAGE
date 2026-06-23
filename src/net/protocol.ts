@@ -16,7 +16,16 @@ export interface InputCmd {
 export type ClientMsg =
   | { t: "login"; name: string; faction?: number }
   | { t: "input"; seq: number; mx: number; my: number }
-  | { t: "fire"; seq: number; aim: number }; // aim in radians; server validates rate
+  | { t: "fire"; seq: number; aim: number } // aim in radians; server validates rate
+  | { t: "chat"; ch: "zone" | "party" | "whisper"; to?: string; text: string }
+  | { t: "party"; action: "invite" | "accept" | "leave"; to?: string }
+  | { t: "mute"; to: string };
+
+export interface RosterEntry {
+  id: string;
+  faction: number;
+  level: number;
+}
 
 export interface PlayerSnap {
   id: string;
@@ -81,5 +90,9 @@ export type ServerMsg =
       season: number; // current era — increments each time a meltdown resets the world
       factions: number[]; // global faction contribution scores (server-wide)
       control: number; // faction controlling THIS district (NEUTRAL if none)
+      roster: RosterEntry[]; // presence — everyone in this zone
     }
+  | { t: "chat"; from: string; faction: number; ch: string; text: string }
+  | { t: "party"; members: string[] }
+  | { t: "sys"; text: string }
   | { t: "error"; message: string };
