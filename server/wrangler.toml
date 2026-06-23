@@ -1,0 +1,22 @@
+name = "metrophage-server"
+main = "src/index.ts"
+compatibility_date = "2025-06-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Authoritative per-zone simulation lives in a Durable Object.
+[[durable_objects.bindings]]
+name = "WORLD"
+class_name = "WorldDO"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["WorldDO"]
+
+# Durable source of truth. database_id is a placeholder for local dev — `wrangler
+# dev` / `d1 migrations apply --local` use a local SQLite file under .wrangler/state
+# and ignore it. A real id gets filled in at deploy time (Step 7).
+[[d1_databases]]
+binding = "DB"
+database_name = "metrophage"
+database_id = "local-placeholder-0000-0000-000000000000"
+migrations_dir = "migrations"

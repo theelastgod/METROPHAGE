@@ -5,6 +5,7 @@ import SelectScene from "./scenes/SelectScene";
 import CustomizeScene from "./scenes/CustomizeScene";
 import GameScene from "./scenes/GameScene";
 import DiveScene from "./scenes/DiveScene";
+import OnlineScene from "./scenes/OnlineScene";
 
 // METROPHAGE — Phase 0 vertical slice entry point.
 const config: Phaser.Types.Core.GameConfig = {
@@ -26,7 +27,7 @@ const config: Phaser.Types.Core.GameConfig = {
       debug: false,
     },
   },
-  scene: [BootScene, SelectScene, CustomizeScene, GameScene, DiveScene],
+  scene: [BootScene, SelectScene, CustomizeScene, GameScene, DiveScene, OnlineScene],
 };
 
 const game = new Phaser.Game(config);
