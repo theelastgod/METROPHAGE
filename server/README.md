@@ -145,13 +145,31 @@ Client: press ENTER to chat; plain text is zone chat, `/w /p /party /join /mute`
 commands. Verified (`smoke.mjs social`): two clients exchanged zone + whisper + party
 chat, formed a party, and saw each other in the roster.
 
+### Step 5b — secure server-mediated trading ✅
+
+Two players swap credits + **cores** (a tradeable item dropped by cops) through a
+strictly server-mediated trade. The security properties:
+
+- **Both must confirm** before anything moves.
+- **Changing an offer voids both confirmations** (no sneaking a change in after the
+  partner confirms).
+- **Dupe-proof / atomic** — at execution the server re-validates against *live*
+  balances (not the offered amounts) and applies the swap all-or-nothing. If either
+  side can't cover its offer, the trade resets with no change.
+- **Server-owned balances** — the client only sends offer amounts and confirm/cancel;
+  it never reports a balance or moves an item itself.
+
+Verified (`smoke.mjs trade`): 100₵/5◈ + 50₵/2◈ → after the swap exactly 80₵/4◈ +
+70₵/3◈; and offering 999999₵ you don't have resets the trade with balances intact.
+Browser shows the live SECURE TRADE panel (both offers + confirm state).
+
 ### What's intentionally NOT here yet
 
-Secure server-mediated trading — Step 5b (atomic, both-confirm, dupe-proof); crews
-(persistent cross-session groups, vs. the in-session parties here); global (cross-
-zone) chat/presence via a hub DO; lag compensation for the hitscan/beam weapon;
-per-class weapons in the online path; the questline in the shared world (Step 6);
-anti-cheat + ops (Step 7); and the WebSocket Hibernation API + alarms.
+Crews (persistent cross-session groups, vs. the in-session parties here); global
+(cross-zone) chat/presence via a hub DO; lag compensation for the hitscan/beam
+weapon; per-class weapons in the online path; the questline in the shared world
+(Step 6); anti-cheat + ops (Step 7); and the WebSocket Hibernation API + alarms
+(production tick — the spike uses an in-memory `setInterval`).
 
 ## Run it
 

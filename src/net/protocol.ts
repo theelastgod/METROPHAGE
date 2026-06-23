@@ -19,7 +19,19 @@ export type ClientMsg =
   | { t: "fire"; seq: number; aim: number } // aim in radians; server validates rate
   | { t: "chat"; ch: "zone" | "party" | "whisper"; to?: string; text: string }
   | { t: "party"; action: "invite" | "accept" | "leave"; to?: string }
-  | { t: "mute"; to: string };
+  | { t: "mute"; to: string }
+  | {
+      t: "trade";
+      action: "request" | "accept" | "offer" | "confirm" | "cancel";
+      to?: string;
+      credits?: number;
+      cores?: number;
+    };
+
+export interface TradeOffer {
+  credits: number;
+  cores: number;
+}
 
 export interface RosterEntry {
   id: string;
@@ -35,6 +47,7 @@ export interface PlayerSnap {
   hp: number;
   dead: boolean;
   credits: number;
+  cores: number;
   xp: number;
   level: number;
   faction: number;
@@ -95,4 +108,14 @@ export type ServerMsg =
   | { t: "chat"; from: string; faction: number; ch: string; text: string }
   | { t: "party"; members: string[] }
   | { t: "sys"; text: string }
+  | {
+      t: "trade";
+      state: "open" | "update" | "done" | "cancelled";
+      with?: string;
+      youOffer?: TradeOffer;
+      theyOffer?: TradeOffer;
+      youConfirm?: boolean;
+      theyConfirm?: boolean;
+      text?: string;
+    }
   | { t: "error"; message: string };

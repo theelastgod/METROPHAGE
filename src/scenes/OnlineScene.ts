@@ -52,6 +52,7 @@ export default class OnlineScene extends Phaser.Scene {
   private chatLogText!: Phaser.GameObjects.Text;
   private chatInput!: Phaser.GameObjects.Text;
   private rosterText!: Phaser.GameObjects.Text;
+  private tradeText!: Phaser.GameObjects.Text;
   private chatOpen = false;
   private chatBuffer = "";
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
@@ -119,7 +120,7 @@ export default class OnlineScene extends Phaser.Scene {
       .text(
         this.scale.width / 2,
         this.scale.height - 12,
-        `WASD move · CLICK fire · ENTER chat (/w /p /party /join /mute) · [1-${DISTRICTS.length}] travel · ESC exit`,
+        `WASD · CLICK fire · ENTER chat (/w /party /trade <name> /offer /confirm) · [1-${DISTRICTS.length}] travel · ESC`,
         { fontFamily: "Courier New, monospace", fontSize: "11px", color: "#6b7184" },
       )
       .setOrigin(0.5, 1)
@@ -187,6 +188,19 @@ export default class OnlineScene extends Phaser.Scene {
       .setOrigin(1, 0)
       .setScrollFactor(0)
       .setDepth(1000);
+    this.tradeText = this.add
+      .text(this.scale.width / 2, this.scale.height / 2 - 70, "", {
+        fontFamily: "Courier New, monospace",
+        fontSize: "13px",
+        color: "#f7ff3c",
+        align: "center",
+        backgroundColor: "#0b0716cc",
+        padding: { x: 14, y: 10 },
+      })
+      .setOrigin(0.5, 0)
+      .setScrollFactor(0)
+      .setDepth(1005)
+      .setVisible(false);
 
     // Unified keyboard: chat mode captures text; game mode moves / travels / exits.
     this.input.keyboard!.on("keydown", (e: KeyboardEvent) => {
@@ -250,6 +264,13 @@ export default class OnlineScene extends Phaser.Scene {
     else if (s === "/join") this.net.sendParty("accept");
     else if (s === "/leave") this.net.sendParty("leave");
     else if (s.startsWith("/mute ")) this.net.sendMute(s.slice(6).trim());
+    else if (s.startsWith("/trade ")) this.net.tradeRequest(s.slice(7).trim());
+    else if (s === "/taccept") this.net.tradeAccept();
+    else if (s.startsWith("/offer ")) {
+      const parts = s.slice(7).trim().split(/\s+/);
+      this.net.tradeOffer(parseInt(parts[0], 10) || 0, parseInt(parts[1], 10) || 0);
+    } else if (s === "/confirm") this.net.tradeConfirm();
+    else if (s === "/tcancel") this.net.tradeCancel();
     else this.net.sendChat("zone", undefined, s);
   }
 
@@ -443,7 +464,7 @@ export default class OnlineScene extends Phaser.Scene {
         : "connecting to server…",
       `CELL ${FACTION_NAMES[this.net.faction]}   ·   DISTRICT CONTROL: ${ctrl}`,
       `players: ${st.players}   enemies: ${this.net.enemies.size}   nodes: ${this.net.nodes.size}`,
-      `LV ${this.net.level}  XP ${xpIntoLevel(this.net.xp)}/100   ₵ ${this.net.credits}   HP ${Math.round(this.net.hp)}`,
+      `LV ${this.net.level}  XP ${xpIntoLevel(this.net.xp)}/100   ₵ ${this.net.credits}  ◈ ${this.net.cores}   HP ${Math.round(this.net.hp)}`,
       `SINGULARITY ${this.net.singularity.toFixed(1)} / ${SING_MAX}${this.net.meltdown ? "  ▲ MELTDOWN" : ""}  (shared · ERA ${this.net.season})`,
       `FACTION WAR  ${war}  (server-wide contribution)`,
     ]);
@@ -462,6 +483,19 @@ export default class OnlineScene extends Phaser.Scene {
         .slice(0, 12)
         .map((r) => `${this.net.party.includes(r.id) ? "◆" : "·"} ${r.id} L${r.level}`),
     ]);
+
+    // secure trade panel
+    const tr = this.net.trade;
+    if (tr) {
+      this.tradeText.setVisible(true).setText([
+        `◢ SECURE TRADE — ${tr.with}`,
+        `you offer:  ₵${tr.youOffer.credits}  ◈${tr.youOffer.cores}   ${tr.youConfirm ? "✓ CONFIRMED" : ""}`,
+        `they offer: ₵${tr.theyOffer.credits}  ◈${tr.theyOffer.cores}   ${tr.theyConfirm ? "✓ CONFIRMED" : ""}`,
+        `/offer <credits> <cores>  ·  /confirm  ·  /tcancel`,
+      ]);
+    } else {
+      this.tradeText.setVisible(false);
+    }
   }
 
   private applyNeon() {

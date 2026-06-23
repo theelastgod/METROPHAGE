@@ -65,6 +65,7 @@ function trackState(ws, id, store) {
         store.hp = me.hp;
         store.dead = me.dead;
         store.credits = me.credits;
+        store.cores = me.cores;
         store.xp = me.xp;
         store.level = me.level;
         store.tick = m.tick;
@@ -310,6 +311,14 @@ async function bot() {
   const w = await login(ws, name);
   const store = { x: w.x, y: w.y };
   trackState(ws, w.id, store);
+  // demo helper: auto-accept trade requests + counter-offer (so the panel opens)
+  ws.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "sys" && /wants to trade/.test(m.text || "")) {
+      ws.send(JSON.stringify({ t: "trade", action: "accept" }));
+      setTimeout(() => ws.send(JSON.stringify({ t: "trade", action: "offer", credits: 3, cores: 1 })), 250);
+    }
+  });
   console.log(`bot '${name}' online at ${round(w.x)},${round(w.y)} — wandering (Ctrl-C to stop)`);
   const dirs = [[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]];
   let seq = 0;
@@ -560,6 +569,67 @@ async function social() {
   );
 }
 
+async function trade() {
+  // (harness pre-sets D1: alice credits=100 cores=5, bob credits=50 cores=2)
+  const a = await connect();
+  const wa = await login(a, "alice", 0);
+  const b = await connect();
+  const wb = await login(b, "bob", 1);
+  const sa = { credits: 0, cores: 0 };
+  const sb = { credits: 0, cores: 0 };
+  trackState(a, wa.id, sa);
+  trackState(b, wb.id, sb);
+  await sleep(700);
+  const start = { aC: sa.credits, aK: sa.cores, bC: sb.credits, bK: sb.cores };
+
+  const T = (ws, action, extra = {}) => ws.send(JSON.stringify({ t: "trade", action, ...extra }));
+
+  // happy path: alice gives 30₵ +2◈, bob gives 10₵ +1◈; both confirm → atomic swap
+  T(a, "request", { to: "bob" });
+  await sleep(300);
+  T(b, "accept");
+  await sleep(250);
+  T(a, "offer", { credits: 30, cores: 2 });
+  T(b, "offer", { credits: 10, cores: 1 });
+  await sleep(300);
+  T(a, "confirm");
+  T(b, "confirm");
+  await sleep(800);
+  const atomicSwap =
+    sa.credits === start.aC - 30 + 10 &&
+    sa.cores === start.aK - 2 + 1 &&
+    sb.credits === start.bC - 10 + 30 &&
+    sb.cores === start.bK - 1 + 2;
+
+  // dupe-proof: alice tries to give more credits than she now has → reset, no change
+  const before = { aC: sa.credits, bC: sb.credits, aK: sa.cores, bK: sb.cores };
+  T(a, "request", { to: "bob" });
+  await sleep(250);
+  T(b, "accept");
+  await sleep(250);
+  T(a, "offer", { credits: 999999, cores: 0 });
+  T(b, "offer", { credits: 0, cores: 0 });
+  await sleep(300);
+  T(a, "confirm");
+  T(b, "confirm");
+  await sleep(800);
+  const dupeProof =
+    sa.credits === before.aC && sb.credits === before.bC && sa.cores === before.aK && sb.cores === before.bK;
+  T(a, "cancel");
+  await sleep(200);
+
+  const checks = { atomicSwap, dupeProof };
+  a.close();
+  b.close();
+  await sleep(300);
+  report(
+    "TRADE — atomic both-confirm swap; dupe-proof on insufficient balance",
+    { start, afterSwap: { aC: sa.credits, aK: sa.cores, bC: sb.credits, bK: sb.cores }, atomicSwap, dupeProof },
+    Object.values(checks).every(Boolean),
+    checks,
+  );
+}
+
 try {
   if (mode === "check") await check();
   else if (mode === "combat") await combat();
@@ -568,6 +638,7 @@ try {
   else if (mode === "territory") await territory();
   else if (mode === "meltdown") await meltdown();
   else if (mode === "social") await social();
+  else if (mode === "trade") await trade();
   else if (mode === "bot") await bot();
   else await move();
 } catch (e) {

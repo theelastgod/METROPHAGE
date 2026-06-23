@@ -82,6 +82,7 @@ interface PlayerState {
   dead: boolean;
   respawnTick: number;
   credits: number;
+  cores: number;
   aim: number;
   lastFireTick: number;
   // progression
@@ -109,6 +110,20 @@ interface TerritoryNode {
   owner: number; // faction index, or NEUTRAL
   progress: number; // 0..1 toward the channelling faction
   by: number; // faction currently channelling (NEUTRAL if none/contested)
+}
+
+interface TradeOfferS {
+  credits: number;
+  cores: number;
+}
+interface TradeSession {
+  id: number;
+  a: string; // player id (initiator)
+  b: string; // player id (other)
+  offerA: TradeOfferS;
+  offerB: TradeOfferS;
+  confirmA: boolean;
+  confirmB: boolean;
 }
 
 interface Enemy {
@@ -161,6 +176,9 @@ export class WorldDO {
   private nodes: TerritoryNode[] = [];
   private parties = new Map<number, Set<string>>(); // partyId -> member ids
   private nextPartyId = 1;
+  private trades = new Map<number, TradeSession>();
+  private playerTrade = new Map<string, number>(); // player id -> trade id
+  private nextTradeId = 1;
   private meltdownTicks = 0; // how long this DO has seen the meltdown active
   private zoneName = "d0";
   private districtIndex = 0;
@@ -242,6 +260,7 @@ export class WorldDO {
     if (msg.t === "chat") return this.onChat(ws, msg);
     if (msg.t === "party") return this.onParty(ws, msg);
     if (msg.t === "mute") return this.onMute(ws, msg);
+    if (msg.t === "trade") return this.onTrade(ws, msg);
   }
 
   // ── social: chat / parties / mute ───────────────────────────────────
@@ -368,6 +387,135 @@ export class WorldDO {
     for (const mid of members) this.sendTo(mid, { t: "party", members });
   }
 
+  // ── secure server-mediated trading ──────────────────────────────────
+  // Properties: both must confirm; changing an offer resets BOTH confirms;
+  // execution re-validates LIVE balances (dupe-proof) and swaps all-or-nothing.
+  // Balances are server-owned — the client never reports what it has or moves items.
+  private tradeOf(p: PlayerState): TradeSession | undefined {
+    const id = this.playerTrade.get(p.id);
+    return id != null ? this.trades.get(id) : undefined;
+  }
+
+  private onTrade(ws: WebSocket, msg: Extract<ClientMsg, { t: "trade" }>) {
+    const p = this.playerFor(ws);
+    if (!p) return;
+    if (msg.action === "request") {
+      const to = (msg.to || "").toLowerCase();
+      const target = this.players.get(to);
+      if (!target || target.id === p.id) {
+        this.send(ws, { t: "sys", text: "can't trade that player" });
+        return;
+      }
+      if (this.playerTrade.has(p.id) || this.playerTrade.has(target.id)) {
+        this.send(ws, { t: "sys", text: "a trade is already in progress" });
+        return;
+      }
+      const id = this.nextTradeId++;
+      this.trades.set(id, {
+        id,
+        a: p.id,
+        b: target.id,
+        offerA: { credits: 0, cores: 0 },
+        offerB: { credits: 0, cores: 0 },
+        confirmA: false,
+        confirmB: false,
+      });
+      this.playerTrade.set(p.id, id);
+      this.playerTrade.set(target.id, id);
+      this.sendTo(target.id, { t: "sys", text: `${p.name} wants to trade — type /taccept` });
+      this.send(ws, { t: "sys", text: `trade requested with ${target.name}` });
+      return;
+    }
+    const tr = this.tradeOf(p);
+    if (!tr) {
+      if (msg.action !== "cancel") this.send(ws, { t: "sys", text: "no active trade" });
+      return;
+    }
+    const isA = p.id === tr.a;
+    if (msg.action === "accept") {
+      this.pushTrade(tr);
+    } else if (msg.action === "offer") {
+      const credits = Math.max(0, Math.floor(msg.credits ?? 0));
+      const cores = Math.max(0, Math.floor(msg.cores ?? 0));
+      if (isA) tr.offerA = { credits, cores };
+      else tr.offerB = { credits, cores };
+      tr.confirmA = false; // any change voids both confirmations
+      tr.confirmB = false;
+      this.pushTrade(tr);
+    } else if (msg.action === "confirm") {
+      if (isA) tr.confirmA = true;
+      else tr.confirmB = true;
+      if (tr.confirmA && tr.confirmB) this.executeTrade(tr);
+      else this.pushTrade(tr);
+    } else if (msg.action === "cancel") {
+      this.endTrade(tr, "cancelled", "trade cancelled");
+    }
+  }
+
+  private pushTrade(tr: TradeSession) {
+    const a = this.players.get(tr.a);
+    const b = this.players.get(tr.b);
+    if (a)
+      this.sendTo(tr.a, {
+        t: "trade",
+        state: "update",
+        with: b?.name ?? tr.b,
+        youOffer: tr.offerA,
+        theyOffer: tr.offerB,
+        youConfirm: tr.confirmA,
+        theyConfirm: tr.confirmB,
+      });
+    if (b)
+      this.sendTo(tr.b, {
+        t: "trade",
+        state: "update",
+        with: a?.name ?? tr.a,
+        youOffer: tr.offerB,
+        theyOffer: tr.offerA,
+        youConfirm: tr.confirmB,
+        theyConfirm: tr.confirmA,
+      });
+  }
+
+  private endTrade(tr: TradeSession, state: "done" | "cancelled", text: string) {
+    this.sendTo(tr.a, { t: "trade", state, text });
+    this.sendTo(tr.b, { t: "trade", state, text });
+    this.trades.delete(tr.id);
+    this.playerTrade.delete(tr.a);
+    this.playerTrade.delete(tr.b);
+  }
+
+  private executeTrade(tr: TradeSession) {
+    const a = this.players.get(tr.a);
+    const b = this.players.get(tr.b);
+    if (!a || !b) {
+      this.endTrade(tr, "cancelled", "trade partner left");
+      return;
+    }
+    // DUPE-PROOF: validate against LIVE balances at execution time, not the offer.
+    if (
+      a.credits < tr.offerA.credits ||
+      a.cores < tr.offerA.cores ||
+      b.credits < tr.offerB.credits ||
+      b.cores < tr.offerB.cores
+    ) {
+      tr.confirmA = false;
+      tr.confirmB = false;
+      this.sendTo(tr.a, { t: "sys", text: "trade reset — insufficient balance" });
+      this.sendTo(tr.b, { t: "sys", text: "trade reset — insufficient balance" });
+      this.pushTrade(tr);
+      return;
+    }
+    // all-or-nothing swap
+    a.credits += tr.offerB.credits - tr.offerA.credits;
+    a.cores += tr.offerB.cores - tr.offerA.cores;
+    b.credits += tr.offerA.credits - tr.offerB.credits;
+    b.cores += tr.offerA.cores - tr.offerB.cores;
+    a.dirty = true;
+    b.dirty = true;
+    this.endTrade(tr, "done", "trade complete");
+  }
+
   private async loadMeta() {
     if (this.metaLoaded) return;
     this.metaLoaded = true;
@@ -398,12 +546,14 @@ export class WorldDO {
     let y = this.spawn.y;
     let credits = 0;
     let xp = 0;
-    const row = await this.env.DB.prepare("SELECT x, y, credits, xp, zone FROM players WHERE id = ?")
+    let cores = 0;
+    const row = await this.env.DB.prepare("SELECT x, y, credits, xp, zone, cores FROM players WHERE id = ?")
       .bind(id)
-      .first<{ x: number; y: number; credits: number; xp: number; zone: string }>();
+      .first<{ x: number; y: number; credits: number; xp: number; zone: string; cores: number }>();
     if (row) {
       credits = row.credits ?? 0;
       xp = row.xp ?? 0;
+      cores = row.cores ?? 0;
       // Same zone → resume exact position. Different zone → they just travelled in,
       // so spawn at this district's entrance (x,y already hold the spawn).
       if (row.zone === this.zoneName) {
@@ -411,7 +561,7 @@ export class WorldDO {
         y = row.y;
       }
     } else {
-      await this.upsert(id, name, x, y, 0, 0);
+      await this.upsert(id, name, x, y, 0, 0, 0);
     }
 
     const p: PlayerState = {
@@ -428,6 +578,7 @@ export class WorldDO {
       dead: false,
       respawnTick: 0,
       credits,
+      cores,
       aim: 0,
       lastFireTick: -999,
       xp,
@@ -640,7 +791,7 @@ export class WorldDO {
         if (p.dead) continue;
         if (dist2(p.x, p.y, pu.x, pu.y) <= PR2) {
           if (pu.kind === PICKUP_CORE) {
-            p.credits += 30;
+            p.cores += 1; // a tradeable data core
             p.xp += 8;
             p.level = levelForXp(p.xp);
           } else {
@@ -734,6 +885,7 @@ export class WorldDO {
         hp: Math.max(0, Math.round(p.hp)),
         dead: p.dead,
         credits: p.credits,
+        cores: p.cores,
         xp: p.xp,
         level: p.level,
         faction: p.faction,
@@ -832,7 +984,7 @@ export class WorldDO {
     for (const p of this.players.values()) {
       if (!p.dirty) continue;
       p.dirty = false;
-      await this.upsert(p.id, p.name, p.x, p.y, p.credits, p.xp);
+      await this.upsert(p.id, p.name, p.x, p.y, p.credits, p.xp, p.cores);
     }
     await this.syncMeta();
   }
@@ -869,13 +1021,14 @@ export class WorldDO {
     y: number,
     credits: number,
     xp: number,
+    cores: number,
   ) {
     try {
       await this.env.DB.prepare(
-        "INSERT INTO players (id, name, x, y, zone, credits, xp, updated_at) VALUES (?,?,?,?,?,?,?,?) " +
-          "ON CONFLICT(id) DO UPDATE SET x=excluded.x, y=excluded.y, credits=excluded.credits, xp=excluded.xp, updated_at=excluded.updated_at",
+        "INSERT INTO players (id, name, x, y, zone, credits, xp, cores, updated_at) VALUES (?,?,?,?,?,?,?,?,?) " +
+          "ON CONFLICT(id) DO UPDATE SET x=excluded.x, y=excluded.y, credits=excluded.credits, xp=excluded.xp, cores=excluded.cores, updated_at=excluded.updated_at",
       )
-        .bind(id, name, round2(x), round2(y), this.zoneName, Math.round(credits), Math.round(xp), Date.now())
+        .bind(id, name, round2(x), round2(y), this.zoneName, Math.round(credits), Math.round(xp), Math.round(cores), Date.now())
         .run();
     } catch {
       /* D1 hiccup — next snapshot retries */
@@ -888,9 +1041,11 @@ export class WorldDO {
     if (!id) return;
     const p = this.players.get(id);
     if (p) {
+      const tr = this.tradeOf(p);
+      if (tr) this.endTrade(tr, "cancelled", "trade partner left");
       this.leaveParty(p);
       this.pendingInvites.delete(p.id);
-      await this.upsert(p.id, p.name, p.x, p.y, p.credits, p.xp);
+      await this.upsert(p.id, p.name, p.x, p.y, p.credits, p.xp, p.cores);
       await this.syncMeta();
       this.players.delete(id);
     }

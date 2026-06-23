@@ -63,6 +63,14 @@ export default class NetClient {
   hp = PLAYER_HP;
   dead = false;
   credits = 0;
+  cores = 0;
+  trade: null | {
+    with: string;
+    youOffer: { credits: number; cores: number };
+    theyOffer: { credits: number; cores: number };
+    youConfirm: boolean;
+    theyConfirm: boolean;
+  } = null;
   level = 1;
   xp = 0;
   singularity = 0;
@@ -178,6 +186,7 @@ export default class NetClient {
           this.hp = sp.hp;
           this.dead = sp.dead;
           this.credits = sp.credits;
+          this.cores = sp.cores;
           this.xp = sp.xp;
           this.level = sp.level;
         } else {
@@ -246,7 +255,37 @@ export default class NetClient {
       this.pushChat({ from: "", ch: "sys", text: msg.text, faction: -1, sys: true });
     } else if (msg.t === "party") {
       this.party = msg.members;
+    } else if (msg.t === "trade") {
+      if (msg.state === "done" || msg.state === "cancelled") {
+        this.trade = null;
+        this.pushChat({ from: "", ch: "sys", text: "trade: " + (msg.text ?? msg.state), faction: -1, sys: true });
+      } else {
+        this.trade = {
+          with: msg.with ?? "",
+          youOffer: msg.youOffer ?? { credits: 0, cores: 0 },
+          theyOffer: msg.theyOffer ?? { credits: 0, cores: 0 },
+          youConfirm: !!msg.youConfirm,
+          theyConfirm: !!msg.theyConfirm,
+        };
+        if (msg.text) this.pushChat({ from: "", ch: "sys", text: "trade: " + msg.text, faction: -1, sys: true });
+      }
     }
+  }
+
+  tradeRequest(to: string) {
+    this.sendMsg({ t: "trade", action: "request", to });
+  }
+  tradeAccept() {
+    this.sendMsg({ t: "trade", action: "accept" });
+  }
+  tradeOffer(credits: number, cores: number) {
+    this.sendMsg({ t: "trade", action: "offer", credits, cores });
+  }
+  tradeConfirm() {
+    this.sendMsg({ t: "trade", action: "confirm" });
+  }
+  tradeCancel() {
+    this.sendMsg({ t: "trade", action: "cancel" });
   }
 
   private pushChat(line: { from: string; ch: string; text: string; faction: number; sys: boolean }) {
