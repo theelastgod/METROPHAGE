@@ -1,8 +1,13 @@
 # METROPHAGE server — Phase 4 (online / server-authoritative)
 
 Cloudflare **Worker + Durable Objects + D1**. The authoritative game simulation
-lives server-side; clients send *intent* and render what the server decides. This
-is the foundation for the single-player → shared-world migration.
+lives server-side; clients send *intent* and render what the server decides.
+
+**Phase 4 is complete** — all seven steps below, built incrementally with a runnable,
+verified commit at each one: a single-player browser game is now a server-authoritative
+shared world (movement, combat, loot, currency, progression, territory, a shared
+Singularity + seasonal meltdown, chat/parties, secure trading, a per-player questline),
+hardened with anti-cheat + a hibernatable production lifecycle.
 
 ## Status
 
@@ -190,13 +195,51 @@ a node advances to step 2 → 3 story beats delivered → reconnect after restar
 step is still 2 (persisted). Browser shows the top-center quest tracker and the
 bottom-left story banner on each beat.
 
+### Step 7 — anti-cheat + ops hardening ✅
+
+The production lifecycle + abuse resistance pass.
+
+**Hibernatable WebSockets + a durable supervisor alarm.** Sockets are now accepted
+via the **Hibernation API** (`state.acceptWebSocket` + `webSocketMessage/Close/Error`
+handlers) and each carries a `serializeAttachment({id,name,faction})`, so they
+survive DO eviction. The constructor's `blockConcurrencyWhile` re-binds the zone
+(persisted to storage) and **rehydrates** every still-open socket's player from D1
+before processing any event. A self-rescheduling **alarm** (`SUPERVISOR_ALARM_MS`)
+is the lifecycle backstop: it resumes the sim if the isolate was recycled
+mid-session (alarms survive eviction; the spike's `setInterval` did not) and
+heartbeat-persists, then lapses when a zone empties so the DO hibernates cleanly.
+The 20 Hz loop itself stays an in-memory interval *while a zone is hot* — that is
+deliberate: a real-time authoritative sim must run continuously, and continuous
+duration is cheaper and more precise than 20 alarms/second. The alarm makes that
+loop **supervised + durable** rather than fire-and-forget.
+
+**Anti-cheat.** A per-socket flood guard drops messages past a soft cap (~400/s)
+and closes the socket on a real flood (~1200/s), with oversized payloads rejected
+outright (`MAX_MSG_BYTES`) and a `console.warn` on every trip. This is defense in
+depth: movement was already flood-immune (intent is integrated **once per server
+tick**, never per message, so spamming inputs cannot speed-hack) and the fire rate
+was already server-enforced — the guard stops raw volume from exhausting CPU/bandwidth.
+
+**Ops.** `/health` returns JSON; `/stats?zone=dN` returns a live per-zone probe
+(players, enemies, shots, tick, running, singularity, meltdown, season) for monitoring.
+
+Verified headless: `smoke.mjs abuse` (an 8× input flood travels no farther than
+wall-clock allows; malformed/oversized/unknown messages are survived; a 200-message
+burst gets the offending socket force-closed while a well-behaved socket is
+untouched) and `smoke.mjs load 20` (20 concurrent players: none dropped, the server
+keeps broadcasting to every one). All Step 1–6 smoke modes still pass, including
+position-persists-across-restart through the new close/login path. (Local
+`wrangler dev` does not actually evict DOs, so the rehydration *wake* path is
+correct-by-construction + exercised by the cold-start constructor on every restart,
+rather than directly forced.)
+
 ### What's intentionally NOT here yet
 
 Crews (persistent cross-session groups, vs. the in-session parties here); global
 (cross-zone) chat/presence via a hub DO; lag compensation for the hitscan/beam
-weapon; per-class weapons in the online path; anti-cheat + ops (Step 7); and the
-WebSocket Hibernation API + alarms (production tick — the spike uses an in-memory
-`setInterval`).
+weapon; per-class weapons in the online path; and story-critical questline beats as
+true instanced/phased rooms (Step 6 phases progress per-player, but every beat
+resolves in the shared city). These are post-Phase-4 polish.
 
 ## Run it
 
@@ -212,16 +255,41 @@ node scripts/smoke.mjs move    # log in, move under server validation, record po
 node scripts/smoke.mjs check   # log in again, assert the position persisted
 ```
 
-`smoke.mjs` is a headless WebSocket client (Node's built-in `WebSocket`). It
-asserts: server-moved-on-intent, speed is server-enforced (a `mx=999` cheat does
-not accelerate), bounds clamp, intent expiry on silence, and
-position-persists-across-restart.
+`smoke.mjs` is a headless WebSocket client (Node's built-in `WebSocket`) with a mode
+per system:
+`move`/`check` (movement + persistence), `combat`, `mp` (AOI), `zones`, `territory`,
+`meltdown`, `social`, `trade`, `quest`, `abuse` (anti-cheat), `load [N]` (concurrency),
+and `bot <name>` (a wandering player for browser demos). A few modes expect the
+harness to pre-seed D1 — e.g. `trade` wants alice/bob to hold balances, and
+`meltdown` pre-arms `world_meta.singularity` near the cap.
+
+Ops probes: `curl /health` (JSON liveness) and `curl "/stats?zone=d0"` (live per-zone
+counts — players, enemies, tick, running, singularity, season).
 
 ## Layout
 
-- `src/protocol.ts` — message shapes + simulation constants (tick, speed, world).
-- `src/world.ts` — `WorldDO`, the authoritative per-zone simulation.
-- `src/index.ts` — Worker entry; routes `/ws` to the zone DO.
-- `migrations/` — D1 schema.
-- `scripts/smoke.mjs` — headless acceptance tests
-  (`move`/`check`/`combat`/`mp`/`zones`/`territory`/`meltdown`/`social`/`trade`/`quest`).
+- `src/world.ts` — `WorldDO`, the authoritative per-zone simulation (Hibernatable
+  WebSockets, the 20 Hz loop, combat/territory/quest/trade, supervisor alarm).
+- `src/index.ts` — Worker entry; routes `/ws`, `/stats`, `/health` to the zone DO.
+- `migrations/` — D1 schema (`0001_init` … `0005_quest`).
+- `scripts/smoke.mjs` — headless acceptance tests (modes listed under **Run it**).
+- The deterministic sim + protocol are **imported from the client repo**
+  (`../../src/net/*`, `../../src/world/*`, `../../src/game/*`) — a single source of
+  truth, not duplicated server-side.
+
+## Deploy
+
+Local dev uses a SQLite file under `.wrangler/state` and the placeholder
+`database_id` in `wrangler.toml`. To deploy for real:
+
+```bash
+npx wrangler d1 create metrophage          # paste the returned database_id into wrangler.toml
+npx wrangler d1 migrations apply metrophage # apply schema to the remote D1
+npx wrangler deploy                         # publish the Worker + WorldDO
+```
+
+The DO migration (`[[migrations]] tag = "v1"`) and the Hibernation API need no extra
+config. Cloudflare provides edge DDoS protection in front of the Worker; the
+per-socket flood guard (Step 7) is the in-DO complement. Bump `compatibility_date`
+to `≥ 2026-04-07` to let the runtime auto-complete WebSocket close handshakes (until
+then `webSocketClose` reciprocates `ws.close()` itself).

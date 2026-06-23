@@ -53,9 +53,31 @@ import { QUESTLINE, QUEST_DONE_TEXT, type QuestObjective } from "../../src/net/q
 // Server-only tuning.
 const PERSIST_EVERY_TICKS = 40; // ~2s snapshot cadence
 const INTENT_EXPIRE_TICKS = 3;
+// Step 7 (ops): a durable "supervisor" alarm. It is NOT the game tick — a 20Hz
+// real-time loop runs hot as an in-memory interval (cheaper + more precise than
+// 20 alarms/s). The alarm is the lifecycle backstop: it resumes the sim if the
+// isolate was recycled mid-session (alarms survive eviction; setInterval does
+// not) and heartbeat-persists, so the loop is supervised + durable, not
+// fire-and-forget.
+const SUPERVISOR_ALARM_MS = 10_000;
+// Step 7 (anti-cheat): per-socket flood guard. Legit play is ~1 input/tick plus
+// the odd fire/chat, so even a 144fps client holding fire stays well under these.
+// Movement is already flood-immune (intent is integrated once per server tick, not
+// per message) and fire is already server-rate-limited — this only stops a socket
+// from exhausting CPU/bandwidth with raw message volume.
+const MAX_MSG_BYTES = 4096; // reject oversized payloads outright
+const MSG_SOFT_PER_TICK = 20; // ~400/s — silently drop beyond this
+const MSG_KILL_PER_TICK = 60; // ~1200/s — close the socket on a real flood
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const clampUnit = (n: number) => (n > 1 ? 1 : n < -1 ? -1 : Number.isFinite(n) ? n : 0);
 const ticks = (ms: number) => Math.ceil(ms / NET_TICK_MS);
+
+/** Per-connection state stored on the WebSocket so it survives DO hibernation. */
+interface SessionAttach {
+  id: string;
+  name: string;
+  faction: number;
+}
 /** Map a "dN" zone string to a valid district index. */
 export const parseZone = (z: string | null): number => {
   const m = z ? /^d(\d+)$/.exec(z) : null;
@@ -187,14 +209,31 @@ export class WorldDO {
   private zoneName = "d0";
   private districtIndex = 0;
   private zoneReady = false;
+  private msgRate = new Map<WebSocket, { tick: number; n: number }>(); // per-socket flood guard
 
   constructor(
-    _state: DurableObjectState,
+    private state: DurableObjectState,
     private env: Env,
   ) {
     // The real zone (district) is bound on the first connection from ?zone=.
     this.grid = buildGrid(DISTRICTS[0]);
     this.spawn = spawnPoint(this.grid, DISTRICTS[0]);
+    // Hibernation wake / isolate restart: before processing ANY event, rebind the
+    // zone and rehydrate any WebSockets the runtime kept open while we were evicted.
+    // Durable state (pos/credits/xp/cores/quest) reloads from D1; transient combat
+    // state (in-flight shots, live HP) resets — acceptable on a rare eviction.
+    state.blockConcurrencyWhile(async () => {
+      const z = await state.storage.get<number>("zone");
+      if (typeof z === "number") this.initZone("d" + z);
+      for (const ws of state.getWebSockets()) {
+        const att = ws.deserializeAttachment() as SessionAttach | null;
+        if (att) await this.resumeSession(ws, att);
+      }
+      if (this.sessions.size > 0) {
+        this.ensureTick();
+        await this.ensureSupervisor();
+      }
+    });
   }
 
   /** A DO instance handles exactly one zone — bind it to its district on first hit. */
@@ -203,6 +242,7 @@ export class WorldDO {
     this.zoneReady = true;
     this.districtIndex = parseZone(zone);
     this.zoneName = "d" + this.districtIndex;
+    void this.state.storage.put("zone", this.districtIndex); // so a wake re-binds the right district
     const def = DISTRICTS[this.districtIndex];
     this.grid = buildGrid(def);
     this.spawn = spawnPoint(this.grid, def);
@@ -229,18 +269,72 @@ export class WorldDO {
   }
 
   async fetch(req: Request): Promise<Response> {
-    this.initZone(new URL(req.url).searchParams.get("zone"));
+    const url = new URL(req.url);
+    this.initZone(url.searchParams.get("zone"));
+    // Ops: a lightweight per-zone metrics probe (no upgrade) for monitoring.
+    if (url.pathname === "/stats") {
+      return new Response(JSON.stringify(this.getStats()), {
+        headers: { "content-type": "application/json" },
+      });
+    }
     if (req.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
       return new Response("expected websocket", { status: 426 });
     }
     const pair = new WebSocketPair();
     const client = pair[0];
     const server = pair[1];
-    server.accept();
-    server.addEventListener("message", (ev) => void this.onMessage(server, ev));
-    server.addEventListener("close", () => void this.onClose(server));
-    server.addEventListener("error", () => void this.onClose(server));
+    // Hibernation API: the runtime owns the socket, so it survives DO eviction and
+    // delivers events via the webSocket* handlers below (not addEventListener).
+    this.state.acceptWebSocket(server);
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  // ── Hibernatable WebSocket event handlers (called by the runtime, even after a
+  // hibernation wake — they replace the in-closure addEventListener of the spike) ──
+  async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer) {
+    const raw = typeof message === "string" ? message : "";
+    if (!raw || raw.length > MAX_MSG_BYTES) return; // ignore binary / oversized
+    if (!this.rateOk(ws)) return; // anti-flood (may close the socket)
+    await this.handle(ws, raw);
+  }
+
+  async webSocketClose(ws: WebSocket, code: number, reason: string) {
+    this.msgRate.delete(ws);
+    await this.onClose(ws);
+    // compatibility_date < 2026-04-07: we must reciprocate the close handshake,
+    // else the client sees a 1006 abnormal closure.
+    try {
+      ws.close(code, reason);
+    } catch {
+      /* already closed */
+    }
+  }
+
+  async webSocketError(ws: WebSocket) {
+    this.msgRate.delete(ws);
+    await this.onClose(ws);
+  }
+
+  /** Per-socket flood guard: drop beyond the soft cap, close on an egregious flood. */
+  private rateOk(ws: WebSocket): boolean {
+    const r = this.msgRate.get(ws);
+    if (!r || r.tick !== this.tick) {
+      this.msgRate.set(ws, { tick: this.tick, n: 1 });
+      return true;
+    }
+    r.n++;
+    if (r.n > MSG_KILL_PER_TICK) {
+      console.warn(`[${this.zoneName}] flood from ${this.sessions.get(ws) ?? "?"} (${r.n}/tick) — closing`);
+      try {
+        ws.close(1008, "rate limit");
+      } catch {
+        /* gone */
+      }
+      this.msgRate.delete(ws);
+      void this.onClose(ws);
+      return false;
+    }
+    return r.n <= MSG_SOFT_PER_TICK;
   }
 
   private send(ws: WebSocket, msg: unknown) {
@@ -251,10 +345,10 @@ export class WorldDO {
     }
   }
 
-  private async onMessage(ws: WebSocket, ev: MessageEvent) {
+  private async handle(ws: WebSocket, raw: string) {
     let msg: ClientMsg;
     try {
-      msg = JSON.parse(typeof ev.data === "string" ? ev.data : "{}") as ClientMsg;
+      msg = JSON.parse(raw) as ClientMsg;
     } catch {
       return;
     }
@@ -544,8 +638,30 @@ export class WorldDO {
     const name = (rawName || "").trim().slice(0, 16) || "blank";
     const id = name.toLowerCase().replace(/[^a-z0-9_-]/g, "") || "blank";
     const fac = Number.isInteger(faction) && faction! >= 0 && faction! < FACTION_COUNT ? faction! : 0;
-    await this.loadMeta();
+    const p = this.players.get(id) ?? (await this.loadPlayer(id, name, fac));
+    p.faction = fac;
+    this.players.set(id, p);
+    this.sessions.set(ws, id);
+    // Persist identity on the socket so a hibernation wake can re-attach it (above).
+    ws.serializeAttachment({ id, name, faction: fac } satisfies SessionAttach);
+    this.send(ws, {
+      t: "welcome",
+      id,
+      faction: fac,
+      x: round2(p.x),
+      y: round2(p.y),
+      tickMs: NET_TICK_MS,
+      world: { w: WORLD_W, h: WORLD_H },
+    });
+    this.sendStory(ws, p.questStep); // brief the Blank on their current beat
+    this.ensureTick();
+    await this.ensureSupervisor();
+  }
 
+  /** Build a player's runtime state, loading durable fields (pos/credits/xp/cores/
+   *  quest) from D1. Shared by fresh login and hibernation-wake rehydration. */
+  private async loadPlayer(id: string, name: string, fac: number): Promise<PlayerState> {
+    await this.loadMeta();
     let x = this.spawn.x;
     let y = this.spawn.y;
     let credits = 0;
@@ -579,8 +695,7 @@ export class WorldDO {
     } else {
       await this.upsert(id, name, x, y, 0, 0, 0, 0);
     }
-
-    const p: PlayerState = {
+    return {
       id,
       name,
       x,
@@ -606,19 +721,15 @@ export class WorldDO {
       questStep,
       questProgress: 0,
     };
-    this.players.set(id, p);
-    this.sessions.set(ws, id);
-    this.send(ws, {
-      t: "welcome",
-      id,
-      faction: fac,
-      x: round2(x),
-      y: round2(y),
-      tickMs: NET_TICK_MS,
-      world: { w: WORLD_W, h: WORLD_H },
-    });
-    this.sendStory(ws, p.questStep); // brief the Blank on their current beat
-    this.ensureTick();
+  }
+
+  /** Re-attach a hibernated socket to its player after an eviction wake (no welcome —
+   *  the client never disconnected, it just resumes receiving snapshots). */
+  private async resumeSession(ws: WebSocket, att: SessionAttach) {
+    this.sessions.set(ws, att.id);
+    if (!this.players.has(att.id)) {
+      this.players.set(att.id, await this.loadPlayer(att.id, att.name, att.faction));
+    }
   }
 
   /** Send the story text for a quest step (or the completion beat). */
@@ -679,6 +790,47 @@ export class WorldDO {
 
   private ensureTick() {
     if (!this.timer) this.timer = setInterval(() => this.step(), NET_TICK_MS);
+  }
+
+  /** Arm the durable supervisor alarm (idempotent — one outstanding alarm at a time). */
+  private async ensureSupervisor() {
+    if ((await this.state.storage.getAlarm()) === null) {
+      await this.state.storage.setAlarm(Date.now() + SUPERVISOR_ALARM_MS);
+    }
+  }
+
+  /**
+   * Durable supervisor. Fires on schedule and, crucially, after an eviction (alarms
+   * survive isolate recycling — the in-memory setInterval does not). On each fire,
+   * while the zone still has players: resume the sim loop if the isolate was recycled,
+   * heartbeat-persist, and re-arm. When the zone has emptied, let the alarm lapse so
+   * the DO can hibernate/evict cleanly.
+   */
+  async alarm() {
+    if (this.sessions.size > 0) {
+      this.ensureTick();
+      await this.persistDirty();
+      await this.state.storage.setAlarm(Date.now() + SUPERVISOR_ALARM_MS);
+    }
+  }
+
+  /** Ops snapshot for the /stats probe — cheap, no entity bodies. */
+  private getStats() {
+    let liveEnemies = 0;
+    for (const e of this.enemies.values()) if (e.hp > 0) liveEnemies++;
+    return {
+      zone: this.zoneName,
+      players: this.sessions.size,
+      enemies: liveEnemies,
+      shots: this.shots.length,
+      pickups: this.pickups.size,
+      nodes: this.nodes.length,
+      tick: this.tick,
+      running: this.timer !== null,
+      singularity: round2(this.meta["singularity"] ?? 0),
+      meltdown: (this.meta["singularity"] ?? 0) >= SING_MAX,
+      season: Math.round(this.meta["season"] ?? 1),
+    };
   }
 
   private step() {

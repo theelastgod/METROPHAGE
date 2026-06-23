@@ -12,7 +12,17 @@ export default {
     const url = new URL(req.url);
 
     if (url.pathname === "/health") {
-      return new Response("ok", { status: 200, headers: { "content-type": "text/plain" } });
+      return new Response(JSON.stringify({ ok: true, ts: Date.now() }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    // Ops: forward a per-zone metrics probe to that zone's DO.
+    if (url.pathname === "/stats") {
+      const zone = "d" + parseZone(url.searchParams.get("zone"));
+      const stub = env.WORLD.get(env.WORLD.idFromName(zone));
+      return stub.fetch(new Request(`https://world/stats?zone=${zone}`));
     }
 
     if (url.pathname === "/ws") {

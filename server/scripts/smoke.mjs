@@ -721,6 +721,141 @@ async function quest() {
   );
 }
 
+async function abuse() {
+  const ws = await connect();
+  const w = await login(ws, "abuser", 0);
+  const store = { x: w.x, y: w.y, tick: 0 };
+  trackState(ws, w.id, store);
+  await sleep(300);
+
+  // 1) SPEED-HACK IMMUNITY — hold DOWN while spamming 8× the legit message rate.
+  //    The server integrates movement intent ONCE per tick (not per message), so
+  //    the flood can't travel 8× farther; displacement stays within what wall-clock
+  //    time allows (a per-message bug would overshoot the cap massively).
+  const sx = store.x;
+  const sy = store.y;
+  let seq = 0;
+  const t0 = Date.now();
+  while (Date.now() - t0 < 800) {
+    for (let i = 0; i < 8; i++) ws.send(JSON.stringify({ t: "input", seq: ++seq, mx: 0, my: 1 }));
+    await sleep(50);
+  }
+  const activeSecs = (Date.now() - t0) / 1000;
+  await sleep(300); // intent expiry halts the player
+  const moved = Math.hypot(store.x - sx, store.y - sy);
+  const speedCap = SPEED * activeSecs * 1.3;
+  const floodNoSpeedup = moved > 5 && moved <= speedCap;
+
+  // 2) RESILIENCE — malformed JSON, an oversized payload (> MAX_MSG_BYTES), and an
+  //    unknown message type must neither crash the server nor drop our socket.
+  const tickBefore = store.tick;
+  ws.send("{not valid json");
+  ws.send(JSON.stringify({ t: "chat", ch: "zone", text: "x".repeat(5000) }));
+  ws.send(JSON.stringify({ t: "bogus", evil: true }));
+  await sleep(450);
+  const survivesGarbage = ws.readyState === 1 && store.tick > tickBefore;
+
+  // 3) FLOOD KILL — a genuine message flood trips the per-socket guard and the
+  //    server closes that socket (protecting CPU/bandwidth), without touching others.
+  const k = await connect();
+  await login(k, "flooder", 0);
+  let killed = false;
+  k.addEventListener("close", () => (killed = true));
+  for (let i = 0; i < 200; i++) k.send(JSON.stringify({ t: "input", seq: i, mx: 0, my: 0 }));
+  await sleep(1300);
+  const floodSocketClosed = killed && ws.readyState === 1; // flooder gone, we're fine
+
+  const checks = { floodNoSpeedup, survivesGarbage, floodSocketClosed };
+  ws.close();
+  try {
+    k.close();
+  } catch {
+    /* already closed by the server */
+  }
+  await sleep(300);
+  report(
+    "ABUSE — flood can't speed-hack; garbage survived; real floods get the socket closed",
+    { moved: round(moved), speedCap: round(speedCap), activeSecs: round(activeSecs), survivesGarbage, floodSocketClosed },
+    Object.values(checks).every(Boolean),
+    checks,
+  );
+}
+
+async function load() {
+  const N = parseInt(process.argv[3] || "20", 10);
+  const DUR = 4000;
+  const bots = [];
+  for (let i = 0; i < N; i++) {
+    const ws = await connect();
+    const w = await login(ws, "load" + i, i % 4);
+    const s = { id: w.id, snaps: 0, closed: false, lastTick: 0 };
+    ws.addEventListener("message", (ev) => {
+      const m = JSON.parse(ev.data);
+      if (m.t === "state") {
+        s.snaps++;
+        s.lastTick = m.tick;
+      }
+    });
+    ws.addEventListener("close", () => (s.closed = true));
+    bots.push({ ws, s });
+  }
+  const connected = bots.filter((b) => !b.s.closed).length;
+
+  // Everyone moves + fires for a few seconds; the server must keep ticking for all.
+  const dirs = [[1, 0], [0, 1], [-1, 0], [0, -1], [1, 1], [-1, -1]];
+  const t0 = Date.now();
+  let frame = 0;
+  while (Date.now() - t0 < DUR) {
+    const [mx, my] = dirs[frame % dirs.length];
+    for (const b of bots) {
+      if (b.s.closed) continue;
+      b.ws.send(JSON.stringify({ t: "input", seq: frame, mx, my }));
+      if (frame % 4 === 0) b.ws.send(JSON.stringify({ t: "fire", seq: frame, aim: Math.random() * Math.PI * 2 }));
+    }
+    frame++;
+    await sleep(50);
+  }
+  const durSecs = (Date.now() - t0) / 1000;
+
+  const snaps = bots.map((b) => b.s.snaps);
+  const minSnaps = Math.min(...snaps);
+  const totalSnaps = snaps.reduce((a, c) => a + c, 0);
+  const stillOpen = bots.filter((b) => !b.s.closed).length;
+  const expectedPerBot = (durSecs * 1000) / 50; // ~20Hz ideal
+
+  const checks = {
+    allConnected: connected === N,
+    noneDropped: stillOpen === N,
+    // The loop kept broadcasting to EVERY bot at a playable rate. (Floor is 0.35×
+    // the 20Hz ideal: in a single-box local run the Node client + workerd + D1 all
+    // share one CPU, so effective rate is well below what isolated infra delivers.)
+    serverKeptTicking: minSnaps >= expectedPerBot * 0.35,
+  };
+  for (const b of bots) {
+    try {
+      b.ws.close();
+    } catch {
+      /* ignore */
+    }
+  }
+  await sleep(400);
+  report(
+    `LOAD — ${N} concurrent players; server stays up + keeps broadcasting`,
+    {
+      players: N,
+      durSecs: round(durSecs),
+      stillOpen,
+      minSnaps,
+      avgSnaps: round(totalSnaps / N),
+      idealPerBot: round(expectedPerBot),
+      minHz: round(minSnaps / durSecs),
+      snapshotsPerSec: round(totalSnaps / durSecs),
+    },
+    Object.values(checks).every(Boolean),
+    checks,
+  );
+}
+
 try {
   if (mode === "check") await check();
   else if (mode === "combat") await combat();
@@ -731,6 +866,8 @@ try {
   else if (mode === "social") await social();
   else if (mode === "trade") await trade();
   else if (mode === "quest") await quest();
+  else if (mode === "abuse") await abuse();
+  else if (mode === "load") await load();
   else if (mode === "bot") await bot();
   else await move();
 } catch (e) {
