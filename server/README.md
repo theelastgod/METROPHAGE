@@ -52,12 +52,29 @@ the server damaged/killed cops and paid credits, and cops damaged the player. In
 the browser: cops render and chase, shooting them awards credits, and cop fire can
 eliminate + respawn the player.
 
+### Step 2c — loot / progression / shared Singularity ✅
+
+All server-authoritative, all persisted to D1 (migration `0003`):
+
+- **Loot** — a cop kill rolls a drop (credit cache / data core) at the corpse;
+  walking over it grants it. The server decides the roll and the grant.
+- **Progression** — a kill awards XP; level is derived (`1 + floor(xp/100)`); XP
+  persists per player. The client only renders LV / XP.
+- **Singularity** — a single **server-wide** meter that *every* player's kills push,
+  broadcast in every snapshot and persisted in a `world_meta` row. It survives a
+  restart (reloads its value) — the seed of the shared meta that Step 4 expands.
+
+Verified (`smoke.mjs combat`): server awarded XP, rolled loot drops, and raised the
+shared Singularity; browser HUD shows LV/XP/₵/HP + the shared Singularity, and the
+meter reloaded its persisted value after a restart.
+
 ### What's intentionally NOT here yet
 
-Loot rolls, progression, and Singularity authority (next, same pattern); lag
-compensation for hitscan/beam weapons; multiple players / AOI / zones (Step 3); and
-the WebSocket Hibernation API + alarms (production tick model — the spike uses an
-in-memory `setInterval`, fine with a live connection).
+Lag compensation for the hitscan/beam weapon; per-class weapons in the online path
+(it uses generic stats for now); the rest of the shared-world systems — territory /
+faction war / seasonal meltdown (Step 4); multiple players / AOI / zone handoff
+(Step 3); and the WebSocket Hibernation API + alarms (production tick model — the
+spike uses an in-memory `setInterval`, fine with a live connection).
 
 ## Run it
 

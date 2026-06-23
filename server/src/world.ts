@@ -23,6 +23,16 @@ import {
   ENEMY_AGGRO,
   ENEMY_FIRE_RANGE,
   RESPAWN_MS,
+  XP_PER_KILL,
+  levelForXp,
+  CREDITS_PER_KILL,
+  LOOT_DROP_CHANCE,
+  PICKUP_RADIUS,
+  PICKUP_TTL_MS,
+  PICKUP_CREDIT,
+  PICKUP_CORE,
+  SING_PER_KILL,
+  SING_MAX,
 } from "../../src/net/sim";
 import { buildGrid, spawnPoint, isWall, type TileGrid } from "../../src/world/district";
 import { DISTRICTS } from "../../src/game/districts";
@@ -57,6 +67,17 @@ interface PlayerState {
   credits: number;
   aim: number;
   lastFireTick: number;
+  // progression
+  xp: number;
+  level: number;
+}
+
+interface Pickup {
+  id: number;
+  x: number;
+  y: number;
+  kind: number; // PICKUP_CREDIT | PICKUP_CORE
+  dieTick: number;
 }
 
 interface Enemy {
@@ -98,8 +119,12 @@ export class WorldDO {
   private timer: ReturnType<typeof setInterval> | null = null;
   private grid: TileGrid;
   private spawn: { x: number; y: number };
+  private pickups = new Map<number, Pickup>();
   private nextEnemyId = 1;
   private nextShotId = 1;
+  private nextPickupId = 1;
+  private singularity = 0; // shared server-wide meter (persisted in world_meta)
+  private singLoaded = false;
 
   constructor(
     _state: DurableObjectState,
@@ -155,22 +180,38 @@ export class WorldDO {
     if (msg.t === "fire") return this.onFire(ws, msg);
   }
 
+  private async loadSingularity() {
+    if (this.singLoaded) return;
+    this.singLoaded = true;
+    try {
+      const row = await this.env.DB.prepare("SELECT v FROM world_meta WHERE k = 'singularity'").first<{
+        v: number;
+      }>();
+      if (row) this.singularity = row.v;
+    } catch {
+      /* table may not exist before migration — defaults to 0 */
+    }
+  }
+
   private async onLogin(ws: WebSocket, rawName: string) {
     const name = (rawName || "").trim().slice(0, 16) || "blank";
     const id = name.toLowerCase().replace(/[^a-z0-9_-]/g, "") || "blank";
+    await this.loadSingularity();
 
     let x = this.spawn.x;
     let y = this.spawn.y;
     let credits = 0;
-    const row = await this.env.DB.prepare("SELECT x, y, credits FROM players WHERE id = ?")
+    let xp = 0;
+    const row = await this.env.DB.prepare("SELECT x, y, credits, xp FROM players WHERE id = ?")
       .bind(id)
-      .first<{ x: number; y: number; credits: number }>();
+      .first<{ x: number; y: number; credits: number; xp: number }>();
     if (row) {
       x = row.x;
       y = row.y;
       credits = row.credits ?? 0;
+      xp = row.xp ?? 0;
     } else {
-      await this.upsert(id, name, x, y, 0);
+      await this.upsert(id, name, x, y, 0, 0);
     }
 
     const p: PlayerState = {
@@ -189,6 +230,8 @@ export class WorldDO {
       credits,
       aim: 0,
       lastFireTick: -999,
+      xp,
+      level: levelForXp(xp),
     };
     this.players.set(id, p);
     this.sessions.set(ws, id);
@@ -321,8 +364,24 @@ export class WorldDO {
               e.respawnTick = this.tick + ticks(4000);
               const killer = this.players.get(s.owner);
               if (killer) {
-                killer.credits += 12; // server-authoritative currency
+                killer.credits += CREDITS_PER_KILL; // server-authoritative currency
+                killer.xp += XP_PER_KILL; // server-authoritative progression
+                killer.level = levelForXp(killer.xp);
                 killer.dirty = true;
+              }
+              // shared meta: every kill (any player) pushes the server-wide Singularity
+              this.singularity = Math.min(SING_MAX, this.singularity + SING_PER_KILL);
+              // loot roll — server decides the drop
+              if (Math.random() < LOOT_DROP_CHANCE) {
+                const kind = Math.random() < 0.25 ? PICKUP_CORE : PICKUP_CREDIT;
+                const pid = this.nextPickupId++;
+                this.pickups.set(pid, {
+                  id: pid,
+                  x: e.x,
+                  y: e.y,
+                  kind,
+                  dieTick: this.tick + ticks(PICKUP_TTL_MS),
+                });
               }
             }
             break;
@@ -348,7 +407,31 @@ export class WorldDO {
     }
     this.shots = alive;
 
-    // 4) broadcast authoritative snapshot
+    // 4) pickups — collected by walkover, expire on TTL (server decides the grant)
+    const PR2 = PICKUP_RADIUS * PICKUP_RADIUS;
+    for (const [pid, pu] of this.pickups) {
+      if (this.tick >= pu.dieTick) {
+        this.pickups.delete(pid);
+        continue;
+      }
+      for (const p of this.players.values()) {
+        if (p.dead) continue;
+        if (dist2(p.x, p.y, pu.x, pu.y) <= PR2) {
+          if (pu.kind === PICKUP_CORE) {
+            p.credits += 30;
+            p.xp += 8;
+            p.level = levelForXp(p.xp);
+          } else {
+            p.credits += 6;
+          }
+          p.dirty = true;
+          this.pickups.delete(pid);
+          break;
+        }
+      }
+    }
+
+    // 5) broadcast authoritative snapshot
     const players = [...this.players.values()].map((p) => ({
       id: p.id,
       x: round2(p.x),
@@ -357,12 +440,29 @@ export class WorldDO {
       hp: Math.max(0, Math.round(p.hp)),
       dead: p.dead,
       credits: p.credits,
+      xp: p.xp,
+      level: p.level,
     }));
     const enemies = [...this.enemies.values()]
       .filter((e) => e.hp > 0)
       .map((e) => ({ id: e.id, x: round2(e.x), y: round2(e.y), hp: Math.round(e.hp) }));
     const shots = this.shots.map((s) => ({ id: s.id, x: round2(s.x), y: round2(s.y), team: s.team }));
-    const snapshot = JSON.stringify({ t: "state", tick: this.tick, players, enemies, shots });
+    const pickups = [...this.pickups.values()].map((pu) => ({
+      id: pu.id,
+      x: round2(pu.x),
+      y: round2(pu.y),
+      kind: pu.kind,
+    }));
+    const snapshot = JSON.stringify({
+      t: "state",
+      tick: this.tick,
+      players,
+      enemies,
+      shots,
+      pickups,
+      sing: round2(this.singularity),
+      meltdown: this.singularity >= SING_MAX,
+    });
     for (const ws of this.sessions.keys()) {
       try {
         ws.send(snapshot);
@@ -397,17 +497,37 @@ export class WorldDO {
     for (const p of this.players.values()) {
       if (!p.dirty) continue;
       p.dirty = false;
-      await this.upsert(p.id, p.name, p.x, p.y, p.credits);
+      await this.upsert(p.id, p.name, p.x, p.y, p.credits, p.xp);
+    }
+    await this.persistSingularity();
+  }
+
+  private async persistSingularity() {
+    try {
+      await this.env.DB.prepare(
+        "INSERT INTO world_meta (k, v) VALUES ('singularity', ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+      )
+        .bind(round2(this.singularity))
+        .run();
+    } catch {
+      /* world_meta missing pre-migration */
     }
   }
 
-  private async upsert(id: string, name: string, x: number, y: number, credits: number) {
+  private async upsert(
+    id: string,
+    name: string,
+    x: number,
+    y: number,
+    credits: number,
+    xp: number,
+  ) {
     try {
       await this.env.DB.prepare(
-        "INSERT INTO players (id, name, x, y, zone, credits, updated_at) VALUES (?,?,?,?,?,?,?) " +
-          "ON CONFLICT(id) DO UPDATE SET x=excluded.x, y=excluded.y, credits=excluded.credits, updated_at=excluded.updated_at",
+        "INSERT INTO players (id, name, x, y, zone, credits, xp, updated_at) VALUES (?,?,?,?,?,?,?,?) " +
+          "ON CONFLICT(id) DO UPDATE SET x=excluded.x, y=excluded.y, credits=excluded.credits, xp=excluded.xp, updated_at=excluded.updated_at",
       )
-        .bind(id, name, round2(x), round2(y), "world", Math.round(credits), Date.now())
+        .bind(id, name, round2(x), round2(y), "world", Math.round(credits), Math.round(xp), Date.now())
         .run();
     } catch {
       /* D1 hiccup — next snapshot retries */
@@ -420,7 +540,8 @@ export class WorldDO {
     if (!id) return;
     const p = this.players.get(id);
     if (p) {
-      await this.upsert(p.id, p.name, p.x, p.y, p.credits);
+      await this.upsert(p.id, p.name, p.x, p.y, p.credits, p.xp);
+      await this.persistSingularity();
       this.players.delete(id);
     }
   }

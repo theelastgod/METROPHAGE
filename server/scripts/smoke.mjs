@@ -65,10 +65,15 @@ function trackState(ws, id, store) {
         store.hp = me.hp;
         store.dead = me.dead;
         store.credits = me.credits;
+        store.xp = me.xp;
+        store.level = me.level;
         store.tick = m.tick;
       }
       store.enemies = m.enemies || [];
       store.shots = m.shots || [];
+      store.pickups = m.pickups || [];
+      store.sing = m.sing ?? 0;
+      store.meltdown = !!m.meltdown;
     }
   });
 }
@@ -190,14 +195,18 @@ async function combat() {
   };
 
   const startEnemies = store.enemies.length;
+  const startSing = store.sing ?? 0;
   let minEnemyHp = 999;
   let maxCredits = 0;
+  let maxXp = 0;
+  let maxSing = startSing;
   let sawPlayerShot = false;
+  let sawPickup = false;
   let tookDamage = false;
   let seq = 0;
   const t0 = Date.now();
-  // Chase the nearest cop and shoot it; the SERVER resolves every hit.
-  while (Date.now() - t0 < 6000) {
+  // Chase the nearest cop and shoot it; the SERVER resolves every hit + payout.
+  while (Date.now() - t0 < 7000) {
     const e = nearest();
     if (e) {
       const dx = e.x - store.x;
@@ -209,21 +218,35 @@ async function combat() {
     }
     for (const en of store.enemies) minEnemyHp = Math.min(minEnemyHp, en.hp);
     if (store.shots.some((s) => s.team === 0)) sawPlayerShot = true;
+    if ((store.pickups || []).length > 0) sawPickup = true;
     maxCredits = Math.max(maxCredits, store.credits || 0);
+    maxXp = Math.max(maxXp, store.xp || 0);
+    maxSing = Math.max(maxSing, store.sing || 0);
     if ((store.hp ?? 100) < 100) tookDamage = true;
     await sleep(50);
   }
 
   const checks = {
     enemiesSimulated: startEnemies > 0,
-    playerShotsSpawned: sawPlayerShot,
     serverResolvedHit: minEnemyHp < 75 || maxCredits > 0, // cop damaged, or a kill paid out
+    progressionGained: maxXp > 0, // server awarded XP
+    lootDropped: sawPickup, // server rolled a loot drop
+    singularityRose: maxSing > startSing, // shared server-wide meter pushed by kills
   };
   ws.close();
   await sleep(300);
   report(
-    "COMBAT — server simulates enemies + resolves hits + awards credits",
-    { startEnemies, minEnemyHp: minEnemyHp === 999 ? null : round(minEnemyHp), credits: maxCredits, tookEnemyDamage: tookDamage },
+    "COMBAT — server resolves hits + awards credits/XP + loot + shared Singularity",
+    {
+      startEnemies,
+      minEnemyHp: minEnemyHp === 999 ? null : round(minEnemyHp),
+      credits: maxCredits,
+      xp: maxXp,
+      level: store.level ?? 1,
+      singularity: round(maxSing),
+      sawPlayerShot,
+      tookEnemyDamage: tookDamage,
+    },
     Object.values(checks).every(Boolean),
     checks,
   );

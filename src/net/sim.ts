@@ -96,6 +96,20 @@ export const ENEMY_AGGRO = 300; // start chasing within this
 export const ENEMY_FIRE_RANGE = 240;
 export const RESPAWN_MS = 2600;
 
+// ── Progression / loot / shared meta (all server-authoritative) ──
+export const XP_PER_KILL = 14;
+export const levelForXp = (xp: number) => 1 + Math.floor(xp / 100);
+export const xpIntoLevel = (xp: number) => xp % 100; // 0..99 toward the next level
+export const CREDITS_PER_KILL = 12;
+export const LOOT_DROP_CHANCE = 0.55; // chance a cop drops a pickup
+export const PICKUP_RADIUS = 18; // walk within this to collect
+export const PICKUP_TTL_MS = 15000;
+/** Pickup kinds: 0 = credit cache, 1 = data core (rarer, worth more + bonus XP). */
+export const PICKUP_CREDIT = 0;
+export const PICKUP_CORE = 1;
+export const SING_PER_KILL = 0.6; // every kill (any player) pushes the shared meter
+export const SING_MAX = 100;
+
 /** True if the point (x,y) is inside a wall tile or out of bounds. */
 export function tileIsWall(x: number, y: number, grid: TileGrid): boolean {
   const tx = Math.floor(x / TILE);

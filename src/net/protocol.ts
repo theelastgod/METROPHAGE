@@ -26,6 +26,8 @@ export interface PlayerSnap {
   hp: number;
   dead: boolean;
   credits: number;
+  xp: number;
+  level: number;
 }
 export interface EnemySnap {
   id: number;
@@ -38,6 +40,12 @@ export interface ShotSnap {
   x: number;
   y: number;
   team: 0 | 1; // 0 = player shot, 1 = enemy shot
+}
+export interface PickupSnap {
+  id: number;
+  x: number;
+  y: number;
+  kind: number; // PICKUP_CREDIT | PICKUP_CORE
 }
 
 // server -> client
@@ -56,5 +64,8 @@ export type ServerMsg =
       players: PlayerSnap[];
       enemies: EnemySnap[];
       shots: ShotSnap[];
+      pickups: PickupSnap[];
+      sing: number; // shared server-wide Singularity meter (0..SING_MAX)
+      meltdown: boolean;
     }
   | { t: "error"; message: string };

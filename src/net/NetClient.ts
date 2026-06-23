@@ -63,6 +63,11 @@ export default class NetClient {
   hp = PLAYER_HP;
   dead = false;
   credits = 0;
+  level = 1;
+  xp = 0;
+  singularity = 0;
+  meltdown = false;
+  pickups = new Map<number, { id: number; x: number; y: number; kind: number }>();
   lastError = 0;
   reconciles = 0;
   lastAck = 0;
@@ -162,6 +167,8 @@ export default class NetClient {
           this.hp = sp.hp;
           this.dead = sp.dead;
           this.credits = sp.credits;
+          this.xp = sp.xp;
+          this.level = sp.level;
         } else {
           const r = this.remotes.get(sp.id) ?? {
             id: sp.id,
@@ -201,6 +208,15 @@ export default class NetClient {
         this.shots.set(sh.id, ns);
       }
       for (const id of [...this.shots.keys()]) if (!liveS.has(id)) this.shots.delete(id);
+
+      const liveP = new Set<number>();
+      for (const pu of msg.pickups) {
+        liveP.add(pu.id);
+        this.pickups.set(pu.id, pu);
+      }
+      for (const id of [...this.pickups.keys()]) if (!liveP.has(id)) this.pickups.delete(id);
+      this.singularity = msg.sing;
+      this.meltdown = msg.meltdown;
     }
   }
 

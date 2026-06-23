@@ -1,7 +1,7 @@
 import Phaser from "phaser";
 import { COLORS, TILE } from "../config";
-import { TILESET_KEY, PLAYER_KEY, COP_KEY, BULLET_KEY, faceFrame } from "../assets/manifest";
-import { PLAYER_HP } from "../net/sim";
+import { TILESET_KEY, PLAYER_KEY, COP_KEY, BULLET_KEY, GLOW_KEY, faceFrame } from "../assets/manifest";
+import { PLAYER_HP, SING_MAX, PICKUP_CORE, xpIntoLevel } from "../net/sim";
 import { buildGrid } from "../world/district";
 import { DISTRICTS } from "../game/districts";
 import { WORLD_W, WORLD_H } from "../net/sim";
@@ -29,6 +29,7 @@ export default class OnlineScene extends Phaser.Scene {
   private remoteSprites = new Map<string, Phaser.GameObjects.Sprite>();
   private enemySprites = new Map<number, Phaser.GameObjects.Sprite>();
   private shotSprites = new Map<number, Phaser.GameObjects.Image>();
+  private pickupSprites = new Map<number, Phaser.GameObjects.Image>();
   private hud!: Phaser.GameObjects.Text;
   private hpBar!: Phaser.GameObjects.Graphics;
   private deadText!: Phaser.GameObjects.Text;
@@ -188,6 +189,26 @@ export default class OnlineScene extends Phaser.Scene {
         this.shotSprites.delete(id);
       }
 
+    // pickups (server-spawned loot — glow, pulsing)
+    for (const [id, pu] of this.net.pickups) {
+      let s = this.pickupSprites.get(id);
+      if (!s) {
+        const col = pu.kind === PICKUP_CORE ? COLORS.neonCyan : COLORS.neonYellow;
+        s = this.add
+          .image(pu.x, pu.y, GLOW_KEY)
+          .setBlendMode(Phaser.BlendModes.ADD)
+          .setTint(col)
+          .setDepth(7);
+        this.pickupSprites.set(id, s);
+      }
+      s.setScale(0.5 + 0.08 * Math.sin(this.time.now * 0.006 + id));
+    }
+    for (const [id, s] of this.pickupSprites)
+      if (!this.net.pickups.has(id)) {
+        s.destroy();
+        this.pickupSprites.delete(id);
+      }
+
     // HP bar + death overlay
     this.hpBar.clear();
     if (this.net.connected) {
@@ -203,11 +224,10 @@ export default class OnlineScene extends Phaser.Scene {
     const st = this.net.stats();
     this.hud.setText([
       st.connected ? `◢ ONLINE  ${this.callsign}  (id=${st.id})` : "connecting to server…",
-      `players online : ${st.players}    enemies: ${this.net.enemies.size}`,
-      `HP ${Math.round(this.net.hp)}   ₵ ${this.net.credits}   (server-authoritative)`,
-      `predicted      : ${st.predX.toFixed(1)}, ${st.predY.toFixed(1)}`,
-      `server (truth) : ${st.serverX.toFixed(1)}, ${st.serverY.toFixed(1)}`,
-      `reconcile error: ${st.error.toFixed(2)} px   (corrections: ${st.reconciles})`,
+      `players: ${st.players}   enemies: ${this.net.enemies.size}   loot: ${this.net.pickups.size}`,
+      `LV ${this.net.level}  XP ${xpIntoLevel(this.net.xp)}/100   ₵ ${this.net.credits}   HP ${Math.round(this.net.hp)}`,
+      `SINGULARITY ${this.net.singularity.toFixed(1)} / ${SING_MAX}${this.net.meltdown ? "  ▲ MELTDOWN" : ""}  (shared, server-wide)`,
+      `reconcile error: ${st.error.toFixed(2)} px   (all outcomes server-authoritative)`,
     ]);
   }
 
