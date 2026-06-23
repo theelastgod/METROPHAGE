@@ -81,6 +81,35 @@ export function bakeSprite(
   register(scene, key, canvas);
 }
 
+/**
+ * Bake N equal-size frames from a per-frame draw callback into one horizontal
+ * spritesheet (like bakeFrames, but the pixels are drawn procedurally instead of
+ * authored as a char map — used for the detailed 32px characters). `draw` gets the
+ * context already translated so (0,0) is the frame's top-left.
+ */
+export function bakeDrawnFrames(
+  scene: Phaser.Scene,
+  key: string,
+  count: number,
+  fw: number,
+  fh: number,
+  draw: (ctx: CanvasRenderingContext2D, frame: number) => void,
+) {
+  const { canvas, ctx } = newCanvas(fw * count, fh);
+  for (let f = 0; f < count; f++) {
+    ctx.save();
+    ctx.translate(f * fw, 0);
+    ctx.beginPath();
+    ctx.rect(0, 0, fw, fh);
+    ctx.clip();
+    draw(ctx, f);
+    ctx.restore();
+  }
+  const tex = register(scene, key, canvas);
+  if (tex && count > 1) for (let f = 0; f < count; f++) tex.add(f, 0, f * fw, 0, fw, fh);
+  return tex;
+}
+
 /** Bake from a raw draw callback (for gradient/radial FX where pixels aren't authored). */
 export function bakeCanvas(
   scene: Phaser.Scene,

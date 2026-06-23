@@ -12,11 +12,13 @@ export const WORLD_H = GRID_H * TILE;
 
 /**
  * Logical render size. The canvas scales to fit the window (Phaser.Scale.FIT).
- * Kept small (and the camera at zoom 1) for a close "field view" feel via upscale,
- * AND so scroll-fixed UI isn't displaced by camera zoom.
+ * The camera stays at zoom 1 (scroll-fixed UI would be displaced by camera zoom),
+ * so this resolution IS the fidelity ceiling for the post-FX, text, and emissive
+ * glows. Bumped 720×405 → 960×540 (+78% pixels) for a sharper neon-noir image; the
+ * UI is anchored to these constants / `scale.width`, so it re-layouts cleanly.
  */
-export const VIEW_W = 720;
-export const VIEW_H = 405;
+export const VIEW_W = 960;
+export const VIEW_H = 540;
 
 /** Player tuning. */
 export const PLAYER = {

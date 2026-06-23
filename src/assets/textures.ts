@@ -24,16 +24,19 @@ import {
   UI_FRAME_KEY,
   UI_GUN_KEY,
 } from "./manifest";
-import { bakeFrames, bakeCanvas, bakeSprite, mirror } from "./pixelart";
+import { bakeCanvas, bakeDrawnFrames } from "./pixelart";
+import { playerKeyFor } from "./manifest";
 import {
-  PLAYER_FRAMES,
-  PLAYER_PAL,
-  COP_FRAMES,
-  COP_PAL,
-  BOSS_FRAMES,
-  BOSS_PAL,
-  NPC_FRAMES,
-  NPC_PAL,
+  CHAR,
+  AGENT_W,
+  AGENT_H,
+  drawCharacter,
+  drawAgent,
+  PLAYER_SPECS,
+  PLAYER_IDS,
+  COP_SPEC,
+  BOSS_SPEC,
+  NPC_SPEC,
 } from "./charart";
 
 /**
@@ -43,11 +46,13 @@ import {
  */
 function makeTileset(scene: Phaser.Scene) {
   bakeCanvas(scene, TILESET_KEY, 256, 64, (ctx) => {
-    const px = (x: number, y: number, w: number, h: number, color: number) => {
+    const px = (x: number, y: number, w: number, h: number, color: number, a = 1) => {
+      ctx.globalAlpha = a;
       ctx.fillStyle = "#" + (color & 0xffffff).toString(16).padStart(6, "0");
       ctx.fillRect(x, y, w, h);
+      ctx.globalAlpha = 1;
     };
-    // deterministic 0..1 hash so grime/windows are stable, not random per build
+    // deterministic 0..1 hash so grime/detail is stable, not random per build
     const h = (x: number, y: number) => {
       const v = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
       return v - Math.floor(v);
@@ -55,75 +60,114 @@ function makeTileset(scene: Phaser.Scene) {
     const cellX = (i: number) => (i % 8) * 32;
     const cellY = (i: number) => Math.floor(i / 8) * 32;
 
-    // floor / plaza share a grid-ground recipe (base + edge grid + grime)
-    const ground = (i: number, base: number, grid: number, lo: number, hi: number) => {
+    // Tech-floor ground: base + a recessed inner panel + dim edge seams (so tiles
+    // grid up) + corner rivets + faint grime. Clean — the play space should read.
+    const ground = (
+      i: number,
+      base: number,
+      panel: number,
+      seam: number,
+      rivet: number,
+    ) => {
       const ox = cellX(i);
       const oy = cellY(i);
       px(ox, oy, 32, 32, base);
-      for (let x = 0; x < 32; x++) {
-        px(ox + x, oy, 1, 1, grid); // top edge
-        px(ox, oy + x, 1, 1, grid); // left edge
-      }
-      for (let y = 0; y < 32; y++)
-        for (let x = 0; x < 32; x++) {
-          const n = h(ox + x, oy + y);
-          if (n > 0.94) px(ox + x, oy + y, 1, 1, hi);
-          else if (n < 0.05) px(ox + x, oy + y, 1, 1, lo);
+      px(ox + 2, oy + 2, 28, 28, panel); // inset panel
+      px(ox + 2, oy + 2, 28, 1, seam, 0.5); // panel top sheen
+      // edge seams (top + left) so adjacent tiles meet on a continuous grid
+      px(ox, oy, 32, 1, seam, 0.55);
+      px(ox, oy, 1, 32, seam, 0.55);
+      // corner rivets
+      for (const [dx, dy] of [[4, 4], [27, 4], [4, 27], [27, 27]])
+        px(ox + dx, oy + dy, 1, 1, rivet, 0.7);
+      // sparse grime specks (low, not noisy)
+      for (let y = 4; y < 30; y++)
+        for (let x = 4; x < 30; x++) {
+          const n = h(ox + x * 1.7, oy + y * 1.3);
+          if (n > 0.972) px(ox + x, oy + y, 1, 1, base, 1); // dark fleck
         }
     };
 
-    // 0 — floor: dark asphalt, dim cyan grid
-    ground(0, 0x0a0e1a, 0x16304a, 0x070a14, 0x141d30);
+    // 0 — floor: dark asphalt, dim cyan seams
+    ground(0, 0x0a0e1a, 0x0c111e, 0x1d3a55, 0x2a4d6a);
 
-    // 2 — road: darker, no grid, faint centre lane dashes (orange)
+    // 2 — road: darkest, bright dashed centre lane + side curbs + cracks
     const rx = cellX(2);
     const ry = cellY(2);
-    px(rx, ry, 32, 32, 0x080a12);
-    for (let y = 0; y < 32; y++)
-      for (let x = 0; x < 32; x++)
-        if (h(rx + x, ry + y) > 0.95) px(rx + x, ry + y, 1, 1, 0x12161f);
-    px(rx + 15, ry + 4, 2, 8, 0x8a5a1e); // dash (dim; bloom lifts it)
-    px(rx + 15, ry + 20, 2, 8, 0x8a5a1e);
+    px(rx, ry, 32, 32, 0x07090f);
+    px(rx + 1, ry + 1, 30, 30, 0x080b12);
+    px(rx, ry, 2, 32, 0x10141e); // left curb
+    px(rx + 30, ry, 2, 32, 0x10141e); // right curb
+    px(rx + 1, ry, 1, 32, 0x223047, 0.6); // curb edge light
+    px(rx + 14, ry + 3, 3, 9, 0xc8902e); // centre dashes (bright; bloom lifts)
+    px(rx + 14, ry + 20, 3, 9, 0xc8902e);
+    px(rx + 15, ry + 3, 1, 9, 0xffd66a, 0.6); // dash hot core
+    for (let k = 0; k < 6; k++) {
+      const cxk = 4 + ((h(rx + k, ry) * 24) | 0);
+      const cyk = 4 + ((h(rx, ry + k) * 24) | 0);
+      px(rx + cxk, ry + cyk, 2, 1, 0x12161f); // hairline cracks
+    }
 
-    // 3 — plaza: warmer ground, magenta grid + a centre diamond inlay
-    ground(3, 0x120a1e, 0x3a1a4a, 0x0c0716, 0x1e1230);
+    // 3 — plaza: warmer ground, magenta seams + a glowing centre diamond inlay
+    ground(3, 0x130a20, 0x160c26, 0x4a2060, 0x6a2e84);
     const pxo = cellX(3);
     const pyo = cellY(3);
     const dia = [
-      [16, 11],
-      [15, 12], [16, 12], [17, 12],
-      [14, 13], [18, 13],
+      [16, 10],
+      [15, 11], [16, 11], [17, 11],
+      [14, 12], [18, 12],
+      [13, 13], [19, 13],
       [13, 14], [19, 14],
       [14, 15], [18, 15],
       [15, 16], [16, 16], [17, 16],
       [16, 17],
     ];
-    for (const [x, y] of dia) px(pxo + x, pyo + y, 1, 1, 0x5a2a6a);
+    for (const [x, y] of dia) px(pxo + x, pyo + y, 1, 1, 0x7a3a92);
+    px(pxo + 15, pyo + 13, 2, 2, 0xb060c8); // hot centre
+    px(pxo + 15, pyo + 13, 1, 1, 0xff2bd6, 0.8);
 
-    // 4 — wall: a building-floor slab — lit top ledge, windows, shadow base.
+    // 4 — wall: a building ROOFTOP seen top-down — a dark slab (darker than the
+    // street so buildings read as solid mass), lit parapet on the top/left edges,
+    // deep shadow on the bottom/right, sparse rooftop tech + one dim skylight.
     const wx = cellX(4);
     const wy = cellY(4);
-    px(wx, wy, 32, 32, 0x141826); // base
-    px(wx, wy, 32, 3, 0x222a40); // lit top ledge
-    px(wx, wy + 2, 32, 1, 0x33405e); // ledge highlight
-    px(wx, wy + 30, 32, 2, 0x0a0c16); // shadow base
+    px(wx, wy, 32, 32, 0x0b0f18); // dark roof base
+    // panelized roof texture (subtle, tiles into a mass)
     for (let y = 0; y < 32; y++)
-      for (let x = 0; x < 32; x++)
-        if (h(wx + x * 3, wy + y) > 0.93) px(wx + x, wy + y, 1, 1, 0x1c2236); // texture
-    // windows (emissive), two rows
-    for (let r = 0; r < 2; r++)
-      for (let c = 0; c < 3; c++) {
-        const on = h(wx + c * 7, wy + r * 11) > 0.4;
-        const col = on ? (h(c, r) > 0.7 ? 0xff2bd6 : 0x29e7ff) : 0x0e1424;
-        px(wx + 5 + c * 8, wy + 8 + r * 11, 3, 4, col);
+      for (let x = 0; x < 32; x++) {
+        const n = h(wx + x * 2.1, wy + y * 1.9);
+        if (n > 0.93) px(wx + x, wy + y, 1, 1, 0x121726);
+        else if (n < 0.06) px(wx + x, wy + y, 1, 1, 0x080b12);
       }
+    px(wx + 8, wy, 1, 32, 0x0d1320, 0.7); // roof panel seams
+    px(wx + 22, wy, 1, 32, 0x0d1320, 0.7);
+    px(wx, wy + 16, 32, 1, 0x0d1320, 0.7);
+    // parapet: lit on top + left (sky glow), shadow on bottom + right (depth)
+    px(wx, wy, 32, 2, 0x2a3450);
+    px(wx, wy, 32, 1, 0x3c4a6e);
+    px(wx, wy, 2, 32, 0x232c44);
+    px(wx, wy, 1, 32, 0x33405e);
+    px(wx, wy + 30, 32, 2, 0x050709);
+    px(wx + 30, wy, 2, 32, 0x070a10);
+    // rooftop tech: an AC/vent box (shaded) + a vent grille + a dim skylight
+    px(wx + 6, wy + 7, 8, 6, 0x161d2e); // unit body
+    px(wx + 6, wy + 7, 8, 1, 0x26314c); // unit lit top
+    px(wx + 6, wy + 12, 8, 1, 0x05080e); // unit shadow
+    for (let g = 0; g < 3; g++) px(wx + 7 + g * 2, wy + 8, 1, 4, 0x0a0e18); // grille
+    px(wx + 19, wy + 19, 7, 6, 0x10182a); // skylight frame
+    px(wx + 20, wy + 20, 5, 4, 0x1c3a4a); // glass
+    px(wx + 20, wy + 20, 5, 1, 0x29708e, 0.8); // dim skylight glow (not blinding)
+    px(wx + 24, wy + 5, 1, 1, 0xff5a6e, 0.9); // tiny rooftop beacon
   });
 }
 
-/** Player: a top-down cyberian, grayscale so the class tint recolors it. 4 frames. */
+/** Player sprites — a detailed grayscale cyberian per class (tinted in-scene),
+ *  plus a default key. 4 facings (down/left/right/up) each, 32×32. */
 function makePlayer(scene: Phaser.Scene) {
-  const [down, left, , up] = PLAYER_FRAMES;
-  bakeFrames(scene, PLAYER_KEY, [down!, left!, mirror(left!), up!], PLAYER_PAL, 2);
+  const bake = (key: string, id: string) =>
+    bakeDrawnFrames(scene, key, 4, CHAR, CHAR, (ctx, f) => drawCharacter(ctx, f, PLAYER_SPECS[id]));
+  bake(PLAYER_KEY, "wintermute"); // default / fallback
+  for (const id of PLAYER_IDS) bake(playerKeyFor(id), id);
 }
 
 /** Projectile: a hot white bolt with a soft glow (tinted to the class per shot). */
@@ -140,16 +184,14 @@ function makeBullet(scene: Phaser.Scene) {
   });
 }
 
-/** Turing Cop: grayscale armored trooper, tinted per tier. 4 frames. */
+/** Turing Cop: grayscale armored trooper, tinted per tier. 4 frames, 32×32. */
 function makeCop(scene: Phaser.Scene) {
-  const [down, left, , up] = COP_FRAMES;
-  bakeFrames(scene, COP_KEY, [down!, left!, mirror(left!), up!], COP_PAL, 2);
+  bakeDrawnFrames(scene, COP_KEY, 4, CHAR, CHAR, (ctx, f) => drawCharacter(ctx, f, COP_SPEC));
 }
 
-/** District boss: grayscale hulking sentinel, tinted per boss. 4 frames. */
+/** District boss: grayscale hulking sentinel, tinted per boss. 4 frames, 32×32. */
 function makeBoss(scene: Phaser.Scene) {
-  const [down, left, , up] = BOSS_FRAMES;
-  bakeFrames(scene, BOSS_KEY, [down!, left!, mirror(left!), up!], BOSS_PAL, 2);
+  bakeDrawnFrames(scene, BOSS_KEY, 4, CHAR, CHAR, (ctx, f) => drawCharacter(ctx, f, BOSS_SPEC));
 }
 
 /** A city node — a glowing data-obelisk on a pedestal. Same shape, two states. */
@@ -166,43 +208,64 @@ function drawTerminal(
     ctx.fillRect(x, y, w, h);
     ctx.globalAlpha = 1;
   };
-  // soft glow halo
-  const grad = ctx.createRadialGradient(24, 22, 2, 24, 22, 22);
-  grad.addColorStop(0, hex(accent));
-  grad.addColorStop(1, "rgba(0,0,0,0)");
-  ctx.globalAlpha = corrupted ? 0.4 : 0.26;
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, 48, 48);
-  ctx.globalAlpha = 1;
+  // soft glow halo — a wide ambient wash + a tighter bright core glow
+  const halo = (r: number, a: number) => {
+    const grad = ctx.createRadialGradient(24, 22, 1, 24, 22, r);
+    grad.addColorStop(0, hex(accent));
+    grad.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.globalAlpha = a;
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 48, 48);
+    ctx.globalAlpha = 1;
+  };
+  halo(23, corrupted ? 0.36 : 0.24);
+  halo(11, corrupted ? 0.5 : 0.34);
 
-  // pedestal base
-  px(13, 38, 22, 6, 0x0e1120);
-  px(15, 36, 18, 3, 0x1c2236);
-  px(15, 36, 18, 1, 0x2c3450);
-  px(11, 43, 26, 2, 0x080a14);
+  // pedestal — a 3-tier plinth with lit top edges, dark underside, side cabling
+  px(11, 43, 26, 3, 0x070912); // ground shadow
+  px(12, 40, 24, 4, 0x0c1020); // lower tier
+  px(14, 37, 20, 4, 0x141a2c); // upper tier
+  px(14, 37, 20, 1, 0x2c3450); // lit tier edge
+  px(15, 38, 18, 1, 0x39455f, 0.7);
+  px(13, 41, 1, 3, accent, 0.5); // conduit glow L
+  px(34, 41, 1, 3, accent, 0.5); // conduit glow R
 
-  // obelisk body
-  px(16, 8, 16, 30, 0x141a2c); // base metal
-  px(16, 8, 2, 30, 0x222a44); // left edge light
-  px(30, 8, 2, 30, 0x0d1120); // right edge shadow
-  // screen panel
-  px(19, 12, 10, 20, 0x0a0e1c);
-  for (let i = 0; i < 4; i++) px(20, 14 + i * 4, 8, 1, accent, 0.7); // scanlines
-  px(22, 19, 4, 6, bright); // bright core
-  px(23, 20, 2, 4, 0xffffff, 0.9);
+  // obelisk body — faceted: lit left bevel, dark right, panelled face
+  px(16, 6, 16, 32, 0x101626); // base metal
+  px(16, 6, 3, 32, 0x232c48); // left edge light
+  px(18, 6, 1, 32, 0x33405e, 0.8); // bevel highlight
+  px(29, 6, 3, 32, 0x0b0f1c); // right edge shadow
+  px(16, 6, 16, 1, 0x2c3450); // top lip
+  for (let i = 0; i < 5; i++) px(19, 11 + i * 5, 10, 1, 0x0a0e1a, 0.6); // rivet seams
 
-  // top emitter + tip
-  px(22, 3, 4, 6, 0x1c2236);
-  px(23, 1, 2, 3, bright);
+  // recessed screen with scanlines, a pulsing core glyph + reflection sheen
+  px(19, 11, 10, 22, 0x070b16);
+  px(19, 11, 10, 1, 0x050810);
+  for (let i = 0; i < 5; i++) px(20, 13 + i * 4, 8, 1, accent, 0.65); // scanlines
+  px(22, 18, 4, 7, bright); // bright core
+  px(23, 17, 2, 9, bright, 0.85);
+  px(23, 19, 2, 3, 0xffffff, 0.95); // hot centre
+  px(20, 12, 2, 8, 0xffffff, 0.16); // diagonal glass sheen
+  px(21, 13, 1, 6, 0xffffff, 0.12);
+
+  // top emitter — dish, bright tip, faint beam
+  px(20, 4, 8, 2, 0x1c2236);
+  px(22, 1, 4, 4, 0x222a44);
+  px(23, 0, 2, 3, bright);
+  px(23, 0, 1, 6, bright, 0.4); // beam wisp
 
   if (corrupted) {
-    // glitch corruption — displaced pixels + cracks
-    px(17, 16, 3, 1, bright, 0.9);
-    px(28, 23, 4, 1, bright, 0.9);
-    px(20, 28, 6, 1, accent, 0.8);
-    px(18, 22, 1, 6, bright, 0.7);
-    px(29, 14, 1, 5, accent, 0.7);
-    px(24, 9, 1, 3, bright);
+    // contagion glitch — displaced shards, cracks, drifting energy bits
+    px(16, 15, 4, 1, bright, 0.95);
+    px(28, 22, 5, 1, bright, 0.95);
+    px(19, 27, 7, 1, accent, 0.85);
+    px(17, 20, 1, 7, bright, 0.7);
+    px(30, 13, 1, 6, accent, 0.7);
+    px(24, 7, 1, 4, bright);
+    px(13, 18, 2, 2, bright, 0.8); // floating bits
+    px(34, 25, 2, 2, accent, 0.7);
+    px(11, 30, 1, 1, bright, 0.9);
+    px(37, 16, 1, 1, bright, 0.8);
   }
 }
 
@@ -213,10 +276,9 @@ function makeNodeInfected(scene: Phaser.Scene) {
   bakeCanvas(scene, NODE_INFECTED_KEY, 48, 48, (ctx) => drawTerminal(ctx, 0x1f8f4a, 0x39ff88, true));
 }
 
-/** Friendly NPC (the FIXER contact): lime civilian w/ a yellow antenna. 4 frames. */
+/** Friendly NPC (the FIXER contact): lime civilian w/ a yellow optic. 4 frames, 32×32. */
 function makeNpc(scene: Phaser.Scene) {
-  const [down, left, , up] = NPC_FRAMES;
-  bakeFrames(scene, NPC_KEY, [down!, left!, mirror(left!), up!], NPC_PAL, 2);
+  bakeDrawnFrames(scene, NPC_KEY, 4, CHAR, CHAR, (ctx, f) => drawCharacter(ctx, f, NPC_SPEC));
 }
 
 /** Soft additive glow disc (white — tinted per use: muzzle, gate, light). */
@@ -351,21 +413,7 @@ function makeUiGun(scene: Phaser.Scene) {
 
 /** Ambient citizen: a small grayscale civilian, tinted per-instance by the crowd. */
 function makeAgent(scene: Phaser.Scene) {
-  const map = [
-    "..oooo..",
-    ".obbbbo.",
-    ".obccbo.",
-    ".obddbo.",
-    ".obccbo.",
-    "obbccbbo",
-    "obccccbo",
-    "obccccbo",
-    "obbccbbo",
-    ".obbbbo.",
-    ".ob..bo.",
-    ".oo..oo.",
-  ];
-  bakeSprite(scene, AGENT_KEY, map, PLAYER_PAL, 2);
+  bakeDrawnFrames(scene, AGENT_KEY, 1, AGENT_W, AGENT_H, (ctx) => drawAgent(ctx));
 }
 
 /** Player dialogue portrait: a detailed neon cyberian bust against the city. */
@@ -428,6 +476,22 @@ function makePortraitPlayer(scene: Phaser.Scene) {
     px(67, 31, 2, 9, 0x8a1a6a);
     px(40, 54, 16, 2, 0x0d1120);
     px(41, 52, 14, 1, 0x222a44);
+
+    // ── detail pass: rim light, visor gloss, HUD reticle, atmosphere ──
+    px(28, 17, 1, 48, 0x4ad6ff, 0.5); // cyan rim down the lit helmet edge
+    px(29, 16, 1, 4, 0x9af0ff, 0.6);
+    px(45, 7, 6, 2, 0x29e7ff, 0.5); // crest glow
+    px(45, 38, 11, 1, 0x9af0ff, 0.4); // visor gloss
+    px(57, 39, 3, 3, 0xffffff, 0.75); // bright glint
+    px(46, 41, 3, 1, 0xeafdff, 0.6); // tiny HUD reticle in the visor
+    px(47, 40, 1, 3, 0xeafdff, 0.6);
+    px(19, 78, 2, 12, 0x29e7ff, 0.4); // shoulder rim accents
+    px(75, 78, 2, 12, 0xff2bd6, 0.32);
+    const haze = ctx.createLinearGradient(0, 0, 0, 46); // volumetric top haze
+    haze.addColorStop(0, "rgba(41,231,255,0.10)");
+    haze.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = haze;
+    ctx.fillRect(0, 0, 96, 46);
   });
 }
 
@@ -479,6 +543,21 @@ function makePortraitNpc(scene: Phaser.Scene) {
     px(47, 51, 3, 5, 0x4a3a20);
     px(52, 51, 3, 5, 0x4a3a20);
     px(45, 58, 6, 2, 0xf7a23c, 0.55); // vent glow
+
+    // ── detail pass: amber rim, optic bloom, hood folds, atmosphere ──
+    px(24, 13, 1, 54, 0xf7a23c, 0.42); // warm rim down the lit hood edge
+    px(25, 12, 1, 4, 0xffd27a, 0.5);
+    px(40, 8, 16, 1, 0x2c2418, 0.9); // hood crown fold
+    px(34, 33, 13, 9, 0xf7a23c, 0.12); // soft optic bloom halo
+    px(38, 36, 2, 2, 0xffffff, 0.95); // hot optic catchlight
+    px(36, 35, 9, 1, 0xffd27a, 0.6);
+    px(37, 47, 22, 1, 0x4a3a20, 0.7); // rebreather top highlight
+    px(17, 78, 2, 14, 0xf7a23c, 0.3); // coat shoulder rim
+    const nhaze = ctx.createLinearGradient(0, 0, 0, 46);
+    nhaze.addColorStop(0, "rgba(247,162,60,0.10)");
+    nhaze.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = nhaze;
+    ctx.fillRect(0, 0, 96, 46);
   });
   // The dialogue requests frame 0 (the striker sheet was multi-frame).
   const tex = scene.textures.get(PORTRAIT_NPC_KEY);

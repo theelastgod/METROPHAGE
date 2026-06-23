@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { PLAYER, COLORS, SHIELD } from "../config";
-import { PLAYER_KEY, faceFrame } from "../assets/manifest";
+import { PLAYER_KEY, playerKeyFor, faceFrame } from "../assets/manifest";
 import { ClassDef } from "../game/classes";
 
 /** Per-frame input snapshot, decoupled from the raw key/pointer objects. */
@@ -44,14 +44,28 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
   private dashVy = 0;
   private lastGhostAt = 0;
 
-  constructor(scene: Phaser.Scene, x: number, y: number, classDef: ClassDef) {
-    super(scene, x, y, PLAYER_KEY);
+  constructor(
+    scene: Phaser.Scene,
+    x: number,
+    y: number,
+    classDef: ClassDef,
+    opts?: { textureKey?: string; color?: number },
+  ) {
+    // Prefer a custom sprite, then the per-class sprite, then the default.
+    const fallback = playerKeyFor(classDef.id);
+    const key =
+      opts?.textureKey && scene.textures.exists(opts.textureKey)
+        ? opts.textureKey
+        : scene.textures.exists(fallback)
+          ? fallback
+          : PLAYER_KEY;
+    super(scene, x, y, key);
     this.classDef = classDef;
     this.maxHp = classDef.maxHp;
     this.hp = classDef.maxHp;
     scene.add.existing(this);
     scene.physics.add.existing(this);
-    this.setTint(classDef.color);
+    this.setTint(opts?.color ?? classDef.color);
     this.setCollideWorldBounds(true);
     this.setDepth(10);
     (this.body as Phaser.Physics.Arcade.Body).setCircle(9, 7, 9);

@@ -19,6 +19,8 @@ export interface AssetEntry {
 
 export const TILESET_KEY = "tileset";
 export const PLAYER_KEY = "player";
+/** Per-class player sprite key (distinct silhouette per class). */
+export const playerKeyFor = (id: string) => "player_" + id;
 export const BULLET_KEY = "bullet";
 export const COP_KEY = "cop";
 export const BOSS_KEY = "boss";

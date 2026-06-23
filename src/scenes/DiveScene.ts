@@ -3,6 +3,7 @@ import { TILE, COLORS, BULLET, ENEMY_BULLET } from "../config";
 import { getClass, ClassDef, PrimaryDef } from "../game/classes";
 import { ENEMY_TIERS, EnemyHost } from "../game/enemies";
 import { DiveDef, DiveResult } from "../game/dives";
+import { PLAYER_CUSTOM_KEY } from "../game/customization";
 import { TILESET_KEY, GLOW_KEY } from "../assets/manifest";
 import Player, { PlayerInput } from "../entities/Player";
 import Bullets from "../entities/Bullets";
@@ -22,6 +23,7 @@ interface DiveData {
   level: number;
   dive: DiveDef;
   cycleMult: number;
+  color?: number; // player's signature tint (from customization)
 }
 
 /**
@@ -33,6 +35,7 @@ interface DiveData {
  */
 export default class DiveScene extends Phaser.Scene implements EnemyHost {
   private classDef!: ClassDef;
+  private playerColor!: number; // signature tint carried from the district run
   private dive!: DiveDef;
   private cycleMult = 1;
 
@@ -70,6 +73,7 @@ export default class DiveScene extends Phaser.Scene implements EnemyHost {
 
   create(data: DiveData) {
     this.classDef = getClass(data.classId);
+    this.playerColor = data.color ?? this.classDef.color;
     this.dive = data.dive;
     this.cycleMult = data.cycleMult ?? 1;
     this.synth = this.registry.get("synth") as Synth | undefined;
@@ -126,7 +130,10 @@ export default class DiveScene extends Phaser.Scene implements EnemyHost {
   }
 
   private spawnPlayer() {
-    this.player = new Player(this, 14 * TILE, (AH - 3) * TILE, this.classDef);
+    this.player = new Player(this, 14 * TILE, (AH - 3) * TILE, this.classDef, {
+      textureKey: PLAYER_CUSTOM_KEY,
+      color: this.playerColor,
+    });
     this.physics.add.collider(this.player, this.wallLayer);
   }
 
@@ -137,7 +144,7 @@ export default class DiveScene extends Phaser.Scene implements EnemyHost {
       lifetimeMs: prim.kind === "beam" ? 200 : prim.lifetimeMs,
       radius: BULLET.radius,
       maxActive: 96,
-      tint: this.classDef.color,
+      tint: this.playerColor,
       damage: prim.kind === "beam" ? prim.damage : prim.damage,
     });
     this.enemyBullets = new Bullets(this, {
@@ -410,14 +417,14 @@ export default class DiveScene extends Phaser.Scene implements EnemyHost {
       if (!cop.active || cop.isDead) return;
       if (this.pointSegDist(cop.x, cop.y, px, py, ex, ey) <= prim.halfWidth + 10) {
         this.damageCop(cop, prim.damage * 1.5, 3);
-        this.spark(cop.x, cop.y, this.classDef.color, 1.2);
+        this.spark(cop.x, cop.y, this.playerColor, 1.2);
       }
     });
     if (this.coreUnlocked && this.pointSegDist(this.core.x, this.core.y, px, py, ex, ey) <= prim.halfWidth + 16) {
       this.damageCore(prim.damage * 1.5);
     }
     const g = this.add.graphics().setDepth(11);
-    g.lineStyle(4, this.classDef.color, 0.85).lineBetween(px, py, ex, ey);
+    g.lineStyle(4, this.playerColor, 0.85).lineBetween(px, py, ex, ey);
     g.lineStyle(1.5, 0xffffff, 0.9).lineBetween(px, py, ex, ey);
     this.tweens.add({ targets: g, alpha: 0, duration: 130, onComplete: () => g.destroy() });
   }

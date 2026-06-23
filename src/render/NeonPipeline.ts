@@ -21,6 +21,12 @@ varying vec2 outTexCoord;
 
 float rand(vec2 c) { return fract(sin(dot(c, vec2(12.9898, 78.233))) * 43758.5453); }
 
+// Bright-pass a sample: keep only the emissive (neon) energy above a soft knee.
+vec3 brightPass(vec3 s) {
+  float bright = max(s.r, max(s.g, s.b));
+  return s * smoothstep(0.45, 0.95, bright);
+}
+
 void main() {
   vec2 uv = outTexCoord;
 
@@ -46,27 +52,46 @@ void main() {
     float b = texture2D(uMainSampler, uv + dir * ca).b;
     col = vec3(r, g, b);
 
-    // cheap bloom: bright-pass 3x3 with heat-scaled spread (the costliest op)
-    vec2 px = (1.0 / uResolution) * (1.5 + uHeat * 4.0 + uGlitch * 3.0);
-    vec3 bloom = vec3(0.0);
-    for (int i = -1; i <= 1; i++) {
-      for (int j = -1; j <= 1; j++) {
-        vec3 s = texture2D(uMainSampler, uv + vec2(float(i), float(j)) * px).rgb;
-        float bright = max(s.r, max(s.g, s.b));
-        bloom += s * smoothstep(0.55, 1.0, bright);
-      }
-    }
-    bloom /= 9.0;
-    col += bloom * (0.7 + uHeat * 1.6 + uGlitch * 1.5);
+    // Two-ring gaussian bloom: a tight inner ring (4 diagonals) for a crisp halo
+    // plus a wide outer ring (8 dirs) for soft neon spill. Heat/glitch widen it.
+    // Richer + softer than the old 3x3 bright-pass, still ~13 taps.
+    float spread = 1.6 + uHeat * 4.2 + uGlitch * 3.5;
+    vec2 inr = (1.0 / uResolution) * spread;
+    vec2 out2 = inr * 1.85;
+    vec3 bloom = brightPass(col) * 0.9; // center
+    // inner ring (×4, diagonals) — weighted heavier
+    bloom += brightPass(texture2D(uMainSampler, uv + vec2( inr.x,  inr.y)).rgb) * 0.62;
+    bloom += brightPass(texture2D(uMainSampler, uv + vec2(-inr.x,  inr.y)).rgb) * 0.62;
+    bloom += brightPass(texture2D(uMainSampler, uv + vec2( inr.x, -inr.y)).rgb) * 0.62;
+    bloom += brightPass(texture2D(uMainSampler, uv + vec2(-inr.x, -inr.y)).rgb) * 0.62;
+    // outer ring (×8) — softer, wider spill
+    bloom += brightPass(texture2D(uMainSampler, uv + vec2( out2.x, 0.0)).rgb) * 0.32;
+    bloom += brightPass(texture2D(uMainSampler, uv + vec2(-out2.x, 0.0)).rgb) * 0.32;
+    bloom += brightPass(texture2D(uMainSampler, uv + vec2(0.0,  out2.y)).rgb) * 0.32;
+    bloom += brightPass(texture2D(uMainSampler, uv + vec2(0.0, -out2.y)).rgb) * 0.32;
+    bloom += brightPass(texture2D(uMainSampler, uv + vec2( out2.x,  out2.y)).rgb) * 0.22;
+    bloom += brightPass(texture2D(uMainSampler, uv + vec2(-out2.x,  out2.y)).rgb) * 0.22;
+    bloom += brightPass(texture2D(uMainSampler, uv + vec2( out2.x, -out2.y)).rgb) * 0.22;
+    bloom += brightPass(texture2D(uMainSampler, uv + vec2(-out2.x, -out2.y)).rgb) * 0.22;
+    bloom /= 4.7; // normalize by total weight
+    col += bloom * (0.95 + uHeat * 1.7 + uGlitch * 1.6);
   }
 
   // saturation lift with heat
   float l = dot(col, vec3(0.299, 0.587, 0.114));
-  col = mix(vec3(l), col, 1.0 + uHeat * 0.7 + uGlitch * 0.6);
+  col = mix(vec3(l), col, 1.05 + uHeat * 0.7 + uGlitch * 0.6);
 
-  // scanlines (subtle, stronger with heat)
-  float scan = 0.93 + 0.07 * sin(uv.y * uResolution.y * 1.4 + uTime * 3.0);
-  col *= mix(1.0, scan, 0.3 + uHeat * 0.3);
+  // fine scanlines + a slow rolling brightness band (CRT feel), stronger with heat
+  float scan = 0.92 + 0.08 * sin(uv.y * uResolution.y * 1.6 + uTime * 3.0);
+  col *= mix(1.0, scan, 0.26 + uHeat * 0.3);
+  float roll = 0.985 + 0.015 * sin(uv.y * 5.0 - uTime * 1.4);
+  col *= roll;
+
+  // animated film grain — very cheap, keeps flat darks from banding (eased off
+  // under reduce-flashing via the capped uHeat the host already passes). Kept low
+  // at base so pure-black areas stay clean; ramps with heat for a hotter signal.
+  float grain = rand(uv * uResolution * 0.5 + fract(uTime)) - 0.5;
+  col += grain * (0.010 + uHeat * 0.03) * smoothstep(0.02, 0.5, l);
 
   // glitch static
   if (uGlitch > 0.001) {
@@ -74,8 +99,8 @@ void main() {
     col += (nz - 0.5) * 0.18 * uGlitch;
   }
 
-  // vignette
-  col *= 1.0 - dist * dist * (0.22 + uHeat * 0.28);
+  // vignette (slightly deeper for noir framing)
+  col *= 1.0 - dist * dist * (0.26 + uHeat * 0.28);
 
   // district accent wash — a subtle hue signature per district (fades under heat
   // so the screen still "whites out" hot, and is overridden by meltdown glitch)

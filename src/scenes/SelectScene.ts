@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { VIEW_W, VIEW_H, COLORS } from "../config";
-import { PLAYER_KEY } from "../assets/manifest";
+import { playerKeyFor } from "../assets/manifest";
 import { CLASSES, getClass } from "../game/classes";
 import { loadSave } from "../systems/Save";
 import OptionsPanel from "../ui/OptionsPanel";
@@ -79,11 +79,14 @@ export default class SelectScene extends Phaser.Scene {
     const save = loadSave();
     if (save) {
       const c = getClass(save.progress.classId);
+      const who = save.customization?.callsign
+        ? `${save.customization.callsign} · ${c.name}`
+        : c.name;
       const cont = this.add
         .text(
           VIEW_W / 2,
           82,
-          `▶ CONTINUE — ${c.name}  Lv ${save.progress.level}   (or pick a class for a NEW run)`,
+          `▶ CONTINUE — ${who}  Lv ${save.progress.level}   (or pick a class for a NEW run)`,
           { fontFamily: "Courier New, monospace", fontSize: "12px", color: "#39ff88" },
         )
         .setOrigin(0.5)
@@ -109,7 +112,7 @@ export default class SelectScene extends Phaser.Scene {
       this.cardRects.push({ x, y: cardY, w: cardW, h: cardH });
       const cx = x + cardW / 2;
 
-      this.add.image(cx, cardY + 52, PLAYER_KEY, 0).setScale(2.4).setTint(c.color);
+      this.add.image(cx, cardY + 52, playerKeyFor(c.id), 0).setScale(2.4).setTint(c.color);
       this.add
         .text(cx, cardY + 96, c.name, {
           fontFamily: "Courier New, monospace",
@@ -239,7 +242,9 @@ export default class SelectScene extends Phaser.Scene {
 
   private select(i: number) {
     if (this.options?.isOpen) return;
-    this.registry.set("classId", CLASSES[i].id); // a class card = a fresh run
-    this.startGame(false);
+    // a class card = a fresh run → customize the cyberian before deploying
+    this.registry.set("classId", CLASSES[i].id);
+    this.cameras.main.fadeOut(300, 2, 2, 8);
+    this.cameras.main.once("camerafadeoutcomplete", () => this.scene.start("Customize"));
   }
 }

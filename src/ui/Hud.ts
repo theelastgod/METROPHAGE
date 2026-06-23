@@ -26,6 +26,7 @@ export interface HudState {
   contract: string;
   quest: string;
   consumables: string;
+  callsign: string;
 }
 
 const hex = (c: number) => "#" + c.toString(16).padStart(6, "0");
@@ -47,6 +48,7 @@ export default class Hud {
   private contractText: Phaser.GameObjects.Text;
   private questText: Phaser.GameObjects.Text;
   private consumeText: Phaser.GameObjects.Text;
+  private callsignText: Phaser.GameObjects.Text;
 
   private readonly px = 14;
   private readonly py = 14;
@@ -81,6 +83,18 @@ export default class Hud {
         fontFamily: "Courier New, monospace",
         fontSize: "11px",
         color: "#00e5ff",
+        align: "right",
+      })
+      .setOrigin(1, 0)
+      .setScrollFactor(0)
+      .setDepth(1001);
+    // Player callsign — top-right corner of the screen.
+    this.callsignText = scene.add
+      .text(scene.scale.width - 12, 10, "", {
+        fontFamily: "Courier New, monospace",
+        fontSize: "13px",
+        color: "#eafdff",
+        fontStyle: "bold",
         align: "right",
       })
       .setOrigin(1, 0)
@@ -177,6 +191,7 @@ export default class Hud {
           : "",
     );
 
+    this.callsignText.setText(s.callsign ? `▸ ${s.callsign}` : "").setColor(hex(s.classColor));
     this.metaText.setText(`LV ${s.level}   ₵ ${s.credits}`);
     this.contractText.setText(s.contract ? `◢ ${s.contract}` : "");
     this.questText.setText(s.quest ? `◆ ${s.quest}` : "");

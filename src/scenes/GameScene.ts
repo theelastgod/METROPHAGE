@@ -44,6 +44,12 @@ import Inventory from "../systems/Inventory";
 import Contracts from "../systems/Contracts";
 import Vendor from "../systems/Vendor";
 import { loadSave, writeSave } from "../systems/Save";
+import {
+  Customization,
+  sanitizeCustomization,
+  bakeCustomPlayer,
+  PLAYER_CUSTOM_KEY,
+} from "../game/customization";
 import { CONSUMABLES, CONSUMABLE_KEYS } from "../game/consumables";
 import { ModBag, ZERO_MODS, addMods } from "../game/stats";
 import { rollItem } from "../game/items";
@@ -83,6 +89,8 @@ export default class GameScene
   implements AbilityHost, EnemyHost, WorldEventHost
 {
   private classDef!: ClassDef;
+  private customization!: Customization; // player look (colour + silhouette)
+  private playerColor!: number; // signature tint (from customization), drives player visuals
   private district!: DistrictDef;
   private districtIndex = 0;
   private cycleMult = 1; // NG+ difficulty scalar (1 + cycle * step)
@@ -140,6 +148,8 @@ export default class GameScene
   private minions!: Phaser.Physics.Arcade.Group;
   private neon?: NeonPipeline;
   private playerAura?: Phaser.GameObjects.Image;
+  private playerLight?: Phaser.GameObjects.Image; // soft ground pool that follows the hero
+  private nodeLights: Phaser.GameObjects.Image[] = []; // per-node light pools (recolored by state)
   private hud!: Hud;
   private dialogue!: DialogueBox;
 
@@ -201,6 +211,7 @@ export default class GameScene
       this.quests = new Quests(save.quests);
       this.inventory.load(save.inventory);
       this.contracts = new Contracts(save.contracts);
+      this.customization = sanitizeCustomization(save.customization, this.classDef.id);
     } else {
       this.classDef = getClass(this.registry.get("classId") as string | undefined);
       this.progression = new Progression(this.classDef.id);
@@ -208,7 +219,14 @@ export default class GameScene
       this.memory = new Memory();
       this.quests = new Quests();
       this.contracts = new Contracts();
+      this.customization = sanitizeCustomization(
+        this.registry.get("customization") as Partial<Customization> | undefined,
+        this.classDef.id,
+      );
     }
+    // Bake the player's custom sprite (grayscale, tinted to playerColor in-scene).
+    this.playerColor = this.customization.color;
+    bakeCustomPlayer(this, this.customization);
     this.contracts.refresh(this.progression.level);
     this.vendor = new Vendor(this.progression.level);
 
@@ -258,6 +276,7 @@ export default class GameScene
       this.collectPickup(pk as Pickup),
     );
     this.createDecor();
+    this.createLighting();
     this.setupCamera();
     this.setupPostFX();
     this.setupInput();
@@ -321,6 +340,7 @@ export default class GameScene
       quests: this.quests.toData(),
       inventory: this.inventory.toData(),
       contracts: this.contracts.toData(),
+      customization: this.customization,
     });
   }
 
@@ -485,11 +505,75 @@ export default class GameScene
     ];
     for (const [tx, ty] of spots) {
       if (this.grid[ty]?.[tx] === undefined || isWall(this.grid[ty][tx])) continue;
+      const wx = tx * TILE + TILE / 2;
       this.add
-        .image(tx * TILE + TILE / 2, ty * TILE + TILE, STREETLIGHT_KEY)
+        .image(wx, ty * TILE + TILE, STREETLIGHT_KEY)
         .setOrigin(0.5, 1)
         .setDepth(6)
         .setTint(this.district.accent);
+      // a warm ground pool cast by the lamp (sits on the floor, under the actors)
+      this.addLightPool(wx, ty * TILE + TILE - 10, this.district.accent, 2.6, 0.34);
+    }
+  }
+
+  /** Add one additive light pool on the floor (depth 2: above the ambient shadow,
+   *  below the actors at 6+). `scale` multiplies the 64px glow texture. */
+  private addLightPool(x: number, y: number, color: number, scale: number, alpha: number) {
+    return this.add
+      .image(x, y, GLOW_KEY)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setTint(color)
+      .setScale(scale)
+      .setAlpha(alpha)
+      .setDepth(2);
+  }
+
+  /**
+   * Neon-noir lighting. A soft ambient shadow is laid over the streets + buildings
+   * (depth 1 — below every actor at depth 6+, so characters/enemies stay fully
+   * readable), then additive light pools (depth 2) are cast on the floor by the
+   * player, the infection nodes, the terminals, the dive gate and the spawn. The
+   * world reads as pools of neon in the dark instead of a flatly-lit grid; the
+   * post-FX bloom then spreads each pool. Static (no flashing) — safe with reduce-
+   * flashing. The player's pool follows + brightens with Heat in updateLighting().
+   */
+  private createLighting() {
+    this.add
+      .rectangle(0, 0, this.scale.width, this.scale.height, 0x05060f, 0.5)
+      .setOrigin(0)
+      .setScrollFactor(0)
+      .setDepth(1);
+
+    this.nodeLights = this.territory.nodes.map((n) =>
+      this.addLightPool(n.x, n.y, n.infected ? COLORS.nodeInfected : COLORS.node, 2.3, 0.5),
+    );
+    this.addLightPool(this.terminal.x, this.terminal.y, 0x29e7ff, 1.9, 0.4);
+    this.addLightPool(this.vendorTerminal.x, this.vendorTerminal.y, 0xf7ff3c, 1.9, 0.4);
+    this.addLightPool(this.diveTerminal.x, this.diveTerminal.y, 0x29e7ff, 1.9, 0.42);
+    this.addLightPool(this.spawn.x, this.spawn.y, this.district.accent, 2.8, 0.28);
+    this.playerLight = this.addLightPool(
+      this.player.x,
+      this.player.y,
+      this.playerColor,
+      2.1,
+      0.5,
+    );
+  }
+
+  /** Per-frame: the hero's pool follows + swells with Heat; node pools recolor. */
+  private updateLighting() {
+    if (this.playerLight) {
+      const h = this.heat.normalized;
+      this.playerLight
+        .setPosition(this.player.x, this.player.y)
+        .setAlpha(0.45 + h * 0.35)
+        .setScale(2.0 + h * 0.7);
+    }
+    const nodes = this.territory.nodes;
+    for (let i = 0; i < this.nodeLights.length; i++) {
+      const n = nodes[i];
+      const L = this.nodeLights[i];
+      if (n && L) L.setTint(n.infected ? COLORS.nodeInfected : COLORS.node);
     }
   }
 
@@ -560,13 +644,16 @@ export default class GameScene
   }
 
   private spawnPlayer() {
-    this.player = new Player(this, this.spawn.x, this.spawn.y, this.classDef);
+    this.player = new Player(this, this.spawn.x, this.spawn.y, this.classDef, {
+      textureKey: PLAYER_CUSTOM_KEY,
+      color: this.playerColor,
+    });
     this.physics.add.collider(this.player, this.wallLayer);
     // Overclock aura — glows behind the player as Heat climbs (set each frame).
     this.playerAura = this.add
       .image(this.spawn.x, this.spawn.y, GLOW_KEY)
       .setBlendMode(Phaser.BlendModes.ADD)
-      .setTint(this.classDef.color)
+      .setTint(this.playerColor)
       .setDepth(9)
       .setVisible(false);
   }
@@ -575,14 +662,14 @@ export default class GameScene
     // The player projectile pool is configured from the chosen class primary.
     const prim = this.classDef.primary;
     if (prim.kind === "beam") {
-      this.bullets = new Bullets(this, { tint: this.classDef.color }); // unused by beam
+      this.bullets = new Bullets(this, { tint: this.playerColor }); // unused by beam
     } else {
       this.bullets = new Bullets(this, {
         speed: prim.speed,
         lifetimeMs: prim.lifetimeMs,
         radius: BULLET.radius,
         maxActive: 96,
-        tint: this.classDef.color,
+        tint: this.playerColor,
         damage: prim.damage,
       });
     }
@@ -808,7 +895,8 @@ export default class GameScene
       overclock: this.heat.buffActive,
       contagion: this.city.contagion,
       contagionNorm: this.city.normalized,
-      classColor: this.classDef.color,
+      classColor: this.playerColor,
+      callsign: this.customization.callsign,
       abilityName: this.classDef.ability.name,
       abilityReady: now >= this.player.nextAbilityAt,
       ultName: this.classDef.ultimate.name,
@@ -970,6 +1058,7 @@ export default class GameScene
     // TERRITORY: channel nodes by proximity; infected nodes spread contagion to
     // their neighbours. Holding every node secures the district and lights the gate.
     this.territory.update(this.player, delta * (1 + this.mods.infectPct));
+    this.updateLighting();
     if (this.territory.secured && !this.districtSecured) {
       this.districtSecured = true;
       this.onDistrictSecured();
@@ -1160,6 +1249,7 @@ export default class GameScene
       level: this.progression.level,
       dive,
       cycleMult: this.cycleMult,
+      color: this.playerColor,
     });
   }
 
@@ -1680,13 +1770,13 @@ export default class GameScene
       const cop = go as TuringCop;
       if (!cop.active || cop.isDead) return;
       if (this.pointSegDist(cop.x, cop.y, px, py, ex, ey) <= prim.halfWidth + 10) {
-        this.spark(cop.x, cop.y, this.classDef.color, 1.4);
+        this.spark(cop.x, cop.y, this.playerColor, 1.4);
         this.damageCop(cop, dmg, true, BEAM_SHIELD_MULT); // WINTERMUTE shreds shields
       }
     });
 
     const g = this.add.graphics().setDepth(11);
-    g.lineStyle(4, this.classDef.color, 0.85).lineBetween(px, py, ex, ey);
+    g.lineStyle(4, this.playerColor, 0.85).lineBetween(px, py, ex, ey);
     g.lineStyle(1.5, 0xffffff, 0.9).lineBetween(px, py, ex, ey);
     this.tweens.add({
       targets: g,

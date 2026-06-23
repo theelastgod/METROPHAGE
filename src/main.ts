@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { VIEW_W, VIEW_H, COLORS } from "./config";
 import BootScene from "./scenes/BootScene";
 import SelectScene from "./scenes/SelectScene";
+import CustomizeScene from "./scenes/CustomizeScene";
 import GameScene from "./scenes/GameScene";
 import DiveScene from "./scenes/DiveScene";
 
@@ -25,7 +26,7 @@ const config: Phaser.Types.Core.GameConfig = {
       debug: false,
     },
   },
-  scene: [BootScene, SelectScene, GameScene, DiveScene],
+  scene: [BootScene, SelectScene, CustomizeScene, GameScene, DiveScene],
 };
 
 const game = new Phaser.Game(config);
