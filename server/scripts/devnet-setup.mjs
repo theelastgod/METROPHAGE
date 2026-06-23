@@ -74,6 +74,28 @@ async function main() {
   console.log(`treasury: ${treasury.publicKey.toBase58()}`);
   console.log(`test wallet: ${wallet.publicKey.toBase58()}`);
 
+  // Persist the keypairs IMMEDIATELY so a stable address can be funded even if the
+  // airdrop below is rate-limited — reruns then reuse these keys.
+  const persist = (extra = {}) =>
+    fs.writeFileSync(
+      STATE,
+      JSON.stringify(
+        {
+          rpc: RPC,
+          decimals: DECIMALS,
+          mint: state.mint ?? null,
+          treasuryPubkey: treasury.publicKey.toBase58(),
+          treasurySecret: b58(treasury),
+          walletPubkey: wallet.publicKey.toBase58(),
+          walletSecret: b58(wallet),
+          ...extra,
+        },
+        null,
+        2,
+      ),
+    );
+  persist();
+
   console.log("funding (devnet SOL)...");
   await ensureSol(conn, treasury, 1, "treasury");
   await ensureSol(conn, wallet, 0.5, "wallet");
@@ -99,16 +121,7 @@ async function main() {
     console.log(`  treasury ATA: ${ata.address.toBase58()} funded with ${SUPPLY} tokens`);
   }
 
-  const out = {
-    rpc: RPC,
-    mint,
-    decimals: DECIMALS,
-    treasuryPubkey: treasury.publicKey.toBase58(),
-    treasurySecret: b58(treasury),
-    walletPubkey: wallet.publicKey.toBase58(),
-    walletSecret: b58(wallet),
-  };
-  fs.writeFileSync(STATE, JSON.stringify(out, null, 2));
+  persist({ mint });
   console.log(`\nwrote ${STATE.pathname}`);
   console.log("\n--- .dev.vars (wrangler local secrets) ---");
   console.log(`METRO_DEVNET_MINT=${mint}`);
