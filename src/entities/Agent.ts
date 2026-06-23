@@ -16,6 +16,7 @@ export default class Agent extends Phaser.Physics.Arcade.Sprite {
   private target: Phaser.Math.Vector2;
   private fsm: AgentState = AgentState.Idle;
   private nextStateAt = 0;
+  private bobPhase = Math.random() * 7;
 
   constructor(scene: Phaser.Scene, x: number, y: number, tint: number) {
     super(scene, x, y, AGENT_KEY);
@@ -31,6 +32,11 @@ export default class Agent extends Phaser.Physics.Arcade.Sprite {
   }
 
   step(now: number) {
+    // Upright breathing / walking bob (tiny squash, body unaffected).
+    const moving = this.fsm === AgentState.Wander;
+    const s = Math.sin(now * (moving ? 0.018 : 0.005) + this.bobPhase);
+    this.setScale(1 - s * (moving ? 0.05 : 0.02), 1 + s * (moving ? 0.09 : 0.04));
+
     if (this.fsm === AgentState.Idle) {
       this.setVelocity(0, 0);
       if (now >= this.nextStateAt) this.enterWander(now);
@@ -45,7 +51,6 @@ export default class Agent extends Phaser.Physics.Arcade.Sprite {
     }
     const a = Phaser.Math.Angle.Between(this.x, this.y, this.target.x, this.target.y);
     this.setVelocity(Math.cos(a) * AGENT.speed, Math.sin(a) * AGENT.speed);
-    this.setRotation(a + Math.PI / 2);
   }
 
   private enterIdle(now: number) {

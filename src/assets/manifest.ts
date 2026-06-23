@@ -21,6 +21,7 @@ export const TILESET_KEY = "tileset";
 export const PLAYER_KEY = "player";
 export const BULLET_KEY = "bullet";
 export const COP_KEY = "cop";
+export const BOSS_KEY = "boss";
 export const NPC_KEY = "npc";
 export const AGENT_KEY = "agent";
 
@@ -49,6 +50,7 @@ export const ASSETS: Record<string, AssetEntry[]> = {
   sprites: [
     { key: PLAYER_KEY, file: null, ...CHAR }, // code-authored pixel art (charart.ts)
     { key: COP_KEY, file: null, ...CHAR }, // code-authored pixel art (charart.ts)
+    { key: BOSS_KEY, file: null, ...CHAR }, // code-authored hulking sentinel
     { key: NPC_KEY, file: null, ...CHAR }, // code-authored pixel art (charart.ts)
     { key: BULLET_KEY, file: null }, // procedural (no bullet art in pack)
     { key: AGENT_KEY, file: null }, // procedural light figure (tinted crowd)

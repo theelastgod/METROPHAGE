@@ -28,10 +28,13 @@ export default class Npc {
       .setVisible(false);
     this.prompt.setShadow(0, 0, "#9dff3c", 6, true, true);
 
+    // Gentle breathing so the contact reads as a living figure, not a prop.
+    this.sprite.setOrigin(0.5, 0.62);
     scene.tweens.add({
       targets: this.sprite,
-      y: y - 3,
-      duration: 1100,
+      scaleY: 1.06,
+      scaleX: 0.97,
+      duration: 1300,
       yoyo: true,
       repeat: -1,
       ease: "Sine.inOut",

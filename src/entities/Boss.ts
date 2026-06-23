@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { COP_KEY, faceFrame } from "../assets/manifest";
+import { BOSS_KEY, faceFrame } from "../assets/manifest";
 import { EnemyHost } from "../game/enemies";
 import { BossDef } from "../game/bosses";
 import { juiceShake } from "../systems/juice";
@@ -35,7 +35,7 @@ export default class Boss extends Phaser.Physics.Arcade.Sprite {
     hp: number,
     summon: (x: number, y: number, tier: string) => void,
   ) {
-    super(scene, x, y, COP_KEY);
+    super(scene, x, y, BOSS_KEY);
     this.def = def;
     this.maxHp = hp;
     this.hp = hp;

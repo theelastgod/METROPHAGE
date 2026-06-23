@@ -208,3 +208,68 @@ const NPC_LEFT = [
 ];
 
 export const NPC_FRAMES = [NPC_DOWN, NPC_LEFT, null, NPC_UP];
+
+// ── District boss — a hulking armored sentinel, grayscale (tinted per boss:
+// SENTINEL blue / OVERMIND red). Wider + heavier than the trooper, with a big
+// glowing optic band and shoulder housings. Same 16×16 frame as the cop so the
+// Boss entity's body math is unchanged; it's scaled up in-scene.
+export const BOSS_PAL = PLAYER_PAL;
+
+const BOSS_DOWN = [
+  "................",
+  ".oooooooooooo...",
+  ".obbbbbbbbbbo...",
+  ".obccccccccbo...",
+  ".obeeeeeeeebo...",
+  ".obeeeeeeeebo...",
+  ".obbccccccbbo...",
+  "obbbcddddcbbbo..",
+  "obaccddddccabo..",
+  "obaccddddccabo..",
+  "obbccddddccbbo..",
+  ".obccccccccbo...",
+  ".obbo.oo.obbo...",
+  ".obbo.oo.obbo...",
+  ".ooo.....ooo....",
+  "................",
+];
+
+const BOSS_UP = [
+  "................",
+  ".oooooooooooo...",
+  ".obbbbbbbbbbo...",
+  ".obbccccccbbo...",
+  ".obbcaaaacbbo...",
+  ".obbcaaaacbbo...",
+  ".obbccccccbbo...",
+  "obbbcddddcbbbo..",
+  "obaccddddccabo..",
+  "obaccddddccabo..",
+  "obbccddddccbbo..",
+  ".obccccccccbo...",
+  ".obbo.oo.obbo...",
+  ".obbo.oo.obbo...",
+  ".ooo.....ooo....",
+  "................",
+];
+
+const BOSS_LEFT = [
+  "................",
+  ".ooooooooo......",
+  ".obbbbbbbo......",
+  ".obccccccbo.....",
+  ".obeeeeccbo.....",
+  ".obeeeeccbo.....",
+  ".obbccccbo......",
+  "obbbcdddcbbbo...",
+  "obaccdddccabo...",
+  "obaccdddccabo...",
+  "obbccdddccbbo...",
+  ".obcccccccbo....",
+  ".obboo.obbo.....",
+  ".obboo.obbo.....",
+  ".ooo...ooo......",
+  "................",
+];
+
+export const BOSS_FRAMES = [BOSS_DOWN, BOSS_LEFT, null, BOSS_UP];

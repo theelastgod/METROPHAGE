@@ -39,6 +39,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
   private dashReadyAt = 0;
   private invulnUntil = 0;
   private nextFireAt = 0;
+  private firedAt = -1e9; // for the fire-recoil squash
   private dashVx = 0;
   private dashVy = 0;
   private lastGhostAt = 0;
@@ -108,6 +109,20 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
 
     // i-frame flicker.
     this.setAlpha(this.invulnerable ? 0.55 : 1);
+
+    // Breathing / step bob + fire recoil — visual squash only (kept tiny so the
+    // physics body is effectively unchanged).
+    const moving = (this.body as Phaser.Physics.Arcade.Body).velocity.lengthSq() > 900;
+    const s = Math.sin(now * (moving ? 0.02 : 0.006));
+    let sx = 1 - s * (moving ? 0.05 : 0.02);
+    let sy = 1 + s * (moving ? 0.1 : 0.045);
+    const since = now - this.firedAt;
+    if (since < 130) {
+      const k = 1 - since / 130;
+      sx -= 0.13 * k;
+      sy += 0.11 * k;
+    }
+    this.setScale(sx, sy);
   }
 
   /** Update max HP from skills/gear; keep current HP within the new cap. */
@@ -132,6 +147,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     const now = this.scene.time.now;
     if (now < this.nextFireAt) return null;
     this.nextFireAt = now + this.classDef.primary.fireRateMs;
+    this.firedAt = now; // trigger the recoil squash
     return Phaser.Math.Angle.Between(this.x, this.y, input.aimX, input.aimY);
   }
 

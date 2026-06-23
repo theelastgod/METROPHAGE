@@ -10,6 +10,7 @@ import {
   PLAYER_KEY,
   BULLET_KEY,
   COP_KEY,
+  BOSS_KEY,
   NODE_KEY,
   NODE_INFECTED_KEY,
   NPC_KEY,
@@ -29,6 +30,8 @@ import {
   PLAYER_PAL,
   COP_FRAMES,
   COP_PAL,
+  BOSS_FRAMES,
+  BOSS_PAL,
   NPC_FRAMES,
   NPC_PAL,
 } from "./charart";
@@ -141,6 +144,12 @@ function makeBullet(scene: Phaser.Scene) {
 function makeCop(scene: Phaser.Scene) {
   const [down, left, , up] = COP_FRAMES;
   bakeFrames(scene, COP_KEY, [down!, left!, mirror(left!), up!], COP_PAL, 2);
+}
+
+/** District boss: grayscale hulking sentinel, tinted per boss. 4 frames. */
+function makeBoss(scene: Phaser.Scene) {
+  const [down, left, , up] = BOSS_FRAMES;
+  bakeFrames(scene, BOSS_KEY, [down!, left!, mirror(left!), up!], BOSS_PAL, 2);
 }
 
 /** A city node — a glowing data-obelisk on a pedestal. Same shape, two states. */
@@ -486,6 +495,7 @@ export function generatePlaceholders(scene: Phaser.Scene) {
   if (need(PLAYER_KEY)) makePlayer(scene);
   if (need(BULLET_KEY)) makeBullet(scene);
   if (need(COP_KEY)) makeCop(scene);
+  if (need(BOSS_KEY)) makeBoss(scene);
   if (need(NODE_KEY)) makeNode(scene);
   if (need(NODE_INFECTED_KEY)) makeNodeInfected(scene);
   if (need(NPC_KEY)) makeNpc(scene);
