@@ -1,7 +1,24 @@
 import { WorldDO, parseZone, type Env } from "./world";
-import { getAccount, quote, withdraw, deposit, simSettlement } from "./metro";
+import { getAccount, quote, withdraw, deposit, simSettlement, type Settlement } from "./metro";
 
 export { WorldDO };
+
+/**
+ * Choose the bridge settlement. With the devnet treasury configured (.dev.vars), use
+ * real Solana — dynamically imported so @solana/web3.js never loads on the game's hot
+ * path. Otherwise the devnet-sim settlement (the accounting still works end-to-end).
+ */
+async function pickSettlement(env: Env): Promise<Settlement> {
+  if (env.METRO_TREASURY_SECRET && env.METRO_DEVNET_MINT) {
+    const { makeSolanaSettlement } = await import("./solana");
+    return makeSolanaSettlement({
+      rpc: env.METRO_RPC || "https://api.devnet.solana.com",
+      mint: env.METRO_DEVNET_MINT,
+      treasurySecretB64: env.METRO_TREASURY_SECRET,
+    });
+  }
+  return simSettlement;
+}
 
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -12,7 +29,7 @@ const json = (body: unknown, status = 200): Response =>
  * is the devnet sim for now (step 2a); step 2b selects a real settlement when armed.
  */
 async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> {
-  const settlement = simSettlement;
+  const settlement = await pickSettlement(env);
   try {
     if (url.pathname === "/metro/account" && req.method === "GET")
       return json(await getAccount(env.DB, url.searchParams.get("player") ?? ""));
