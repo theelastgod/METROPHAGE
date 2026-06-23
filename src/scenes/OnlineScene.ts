@@ -18,7 +18,15 @@ import NetClient from "../net/NetClient";
 import NeonPipeline from "../render/NeonPipeline";
 import { QUESTLINE } from "../net/quest";
 import { setOnlinePlayer } from "../economy/session";
-import type { Customization } from "../game/customization";
+import {
+  sanitizeCustomization,
+  customizationToLook,
+  bakeCustomPlayer,
+  bakeRemoteLook,
+  lookKey,
+  PLAYER_CUSTOM_KEY,
+  type Customization,
+} from "../game/customization";
 
 const SERVER_URL =
   (import.meta.env as Record<string, string | undefined>).VITE_SERVER_URL ??
@@ -70,9 +78,10 @@ export default class OnlineScene extends Phaser.Scene {
   }
 
   create(data?: { zone?: string }) {
-    const cust = this.registry.get("customization") as Customization | undefined;
-    this.callsign = (cust?.callsign || "runner").toLowerCase();
-    this.color = cust?.color ?? COLORS.player;
+    const rawCust = this.registry.get("customization") as Customization | undefined;
+    const cust = sanitizeCustomization(rawCust, this.registry.get("classId") as string | undefined);
+    this.callsign = (rawCust?.callsign || "runner").toLowerCase();
+    this.color = cust.color;
 
     // Zone = which district this client is in. Travel hands off to another DO.
     this.districtIndex = this.parseZone(data?.zone);
@@ -89,17 +98,20 @@ export default class OnlineScene extends Phaser.Scene {
     this.cameras.main.setBounds(0, 0, WORLD_W, WORLD_H);
     this.applyNeon();
 
-    // Local player — positioned from prediction (no Phaser physics here).
+    // Local player — your full customization (build/head/visor/shoulders/decal/cloak/
+    // accessories), baked and tinted by your signature colour, the same as singleplayer.
+    bakeCustomPlayer(this, cust);
     this.me = this.add
-      .sprite(WORLD_W / 2, WORLD_H / 2, PLAYER_KEY, 0)
-      .setTint(this.color)
+      .sprite(WORLD_W / 2, WORLD_H / 2, PLAYER_CUSTOM_KEY, 0)
+      .setTint(0xffffff) // baked in final colours — render untinted
       .setDepth(10)
       .setVisible(false);
 
     const url = SERVER_URL + (SERVER_URL.includes("?") ? "&" : "?") + "zone=" + this.zone;
     this.faction = factionForColor(this.color); // your cell, from your signature colour
     this.nodeG = this.add.graphics().setDepth(5); // node capture rings (world-space)
-    this.net = new NetClient(grid, this.callsign, url, this.faction);
+    // Send your look so every other player renders your customization (not a generic body).
+    this.net = new NetClient(grid, this.callsign, url, this.faction, customizationToLook(cust));
     this.net.onWelcome = (x, y) => {
       this.me.setPosition(x, y).setVisible(true);
       this.cameras.main.startFollow(this.me, true, 0.18, 0.18);
@@ -341,24 +353,31 @@ export default class OnlineScene extends Phaser.Scene {
       if (mx !== 0 || my !== 0) this.me.setFrame(faceFrame(mx, my));
     }
 
-    // remote players (interpolated by NetClient) — labelled, faded when dead
+    // remote players (interpolated by NetClient) — each rendered with ITS OWN
+    // customization (baked from the look the server relays; colour as a tint).
     for (const [id, r] of this.net.remotes) {
       let s = this.remoteSprites.get(id);
       if (!s) {
-        s = this.add.sprite(r.x, r.y, PLAYER_KEY, 0).setTint(0xff79c6).setDepth(9);
+        s = this.add.sprite(r.x, r.y, PLAYER_KEY, 0).setDepth(9);
         this.remoteSprites.set(id, s);
         this.remoteLabels.set(
           id,
           this.add
-            .text(r.x, r.y - 22, id, {
-              fontFamily: "Courier New, monospace",
-              fontSize: "9px",
-              color: "#ff79c6",
-            })
+            .text(r.x, r.y - 22, id, { fontFamily: "Courier New, monospace", fontSize: "9px", color: "#ff79c6" })
             .setOrigin(0.5)
             .setDepth(9),
         );
       }
+      // swap to the remote's baked look-texture when it first arrives / changes (cached by shape)
+      const key = r.look ? lookKey(r.look) : PLAYER_KEY;
+      if (s.getData("lk") !== key) {
+        if (r.look) bakeRemoteLook(this, key, r.look);
+        s.setTexture(key, 0);
+        s.setData("lk", key);
+        const col = r.look ? r.look.color : 0xff79c6;
+        this.remoteLabels.get(id)?.setColor("#" + (col & 0xffffff).toString(16).padStart(6, "0"));
+      }
+      s.setTint(r.look ? 0xffffff : 0xff79c6); // look is baked in colour; only the fallback tints
       s.setPosition(r.x, r.y).setVisible(!r.dead).setAlpha(r.dead ? 0.25 : 1);
       this.remoteLabels.get(id)?.setPosition(r.x, r.y - 22).setVisible(!r.dead);
     }

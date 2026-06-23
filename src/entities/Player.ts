@@ -43,6 +43,9 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
   private dashVx = 0;
   private dashVy = 0;
   private lastGhostAt = 0;
+  /** Neutral tint the sprite returns to after a flash. The custom sprite is baked in
+   *  its FINAL colours, so this is white (identity) — flashes restore the baked look. */
+  private baseTint = 0xffffff;
 
   constructor(
     scene: Phaser.Scene,
@@ -65,7 +68,8 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this.hp = classDef.maxHp;
     scene.add.existing(this);
     scene.physics.add.existing(this);
-    this.setTint(opts?.color ?? classDef.color);
+    this.baseTint = opts?.color ?? 0xffffff;
+    this.setTint(this.baseTint);
     this.setCollideWorldBounds(true);
     this.setDepth(10);
     (this.body as Phaser.Physics.Arcade.Body).setCircle(9, 7, 9);
@@ -194,7 +198,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     if (rem > 0) this.hp = Math.max(0, this.hp - rem);
     this.invulnUntil = this.scene.time.now + PLAYER.hitIframeMs;
     this.setTint(COLORS.hurt);
-    this.scene.time.delayedCall(90, () => this.setTint(this.classDef.color));
+    this.scene.time.delayedCall(90, () => this.setTint(this.baseTint));
     return this.hp <= 0;
   }
 
@@ -203,7 +207,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this.shield = this.maxShield;
     this.setPosition(x, y);
     this.setVelocity(0, 0);
-    this.setTint(this.classDef.color);
+    this.setTint(this.baseTint);
     this.invulnUntil = this.scene.time.now + 1200; // brief grace on respawn
   }
 
@@ -212,7 +216,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
       .image(this.x, this.y, this.texture.key, this.frame.name)
       .setDepth(9)
       .setAlpha(0.4)
-      .setTint(this.classDef.color);
+      .setTint(this.baseTint);
     this.scene.tweens.add({
       targets: ghost,
       alpha: 0,

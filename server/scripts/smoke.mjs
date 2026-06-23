@@ -914,6 +914,62 @@ async function metro() {
   );
 }
 
+async function look() {
+  // A logs in with a distinctive look; B (nearby, same spawn → within AOI) must
+  // receive A's appearance in its state snapshot so it can render A's customization.
+  const A_LOOK = {
+    color: 0xff2bd6,
+    build: "bulky",
+    head: "crown",
+    visor: "scan",
+    shoulders: "spikes",
+    decal: "skull",
+    cloak: "cape",
+    antennae: true,
+    emblem: true,
+    strap: true,
+  };
+  const a = await connect();
+  const wa = await new Promise((resolve, reject) => {
+    const to = setTimeout(() => reject(new Error("login timeout")), 5000);
+    const onMsg = (ev) => {
+      const m = JSON.parse(ev.data);
+      if (m.t === "welcome") {
+        clearTimeout(to);
+        a.removeEventListener("message", onMsg);
+        resolve(m);
+      }
+    };
+    a.addEventListener("message", onMsg);
+    a.send(JSON.stringify({ t: "login", name: "looker", faction: 2, look: A_LOOK }));
+  });
+  const b = await connect();
+  const wb = await login(b, "viewer", 0);
+  const sb = { players: [] };
+  trackState(b, wb.id, sb);
+  await sleep(700);
+
+  const seen = (sb.players || []).find((p) => p.id === wa.id);
+  const checks = {
+    relayedLook: !!seen && !!seen.look,
+    matchesAppearance:
+      !!seen?.look &&
+      seen.look.head === "crown" &&
+      seen.look.visor === "scan" &&
+      seen.look.cloak === "cape" &&
+      seen.look.color === 0xff2bd6,
+  };
+  a.close();
+  b.close();
+  await sleep(300);
+  report(
+    "LOOK — server relays a player's appearance to other clients",
+    { sawLook: seen?.look ?? null },
+    Object.values(checks).every(Boolean),
+    checks,
+  );
+}
+
 try {
   if (mode === "check") await check();
   else if (mode === "combat") await combat();
@@ -927,6 +983,7 @@ try {
   else if (mode === "abuse") await abuse();
   else if (mode === "load") await load();
   else if (mode === "metro") await metro();
+  else if (mode === "look") await look();
   else if (mode === "bot") await bot();
   else await move();
 } catch (e) {

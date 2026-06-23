@@ -1,16 +1,22 @@
 import Phaser from "phaser";
 import {
   CHAR,
-  GRAY,
   drawCharacter,
+  tonesFromColor,
   PLAYER_SPECS,
   type Build,
   type Head,
   type Visor,
+  type Shoulders,
+  type Decal,
+  type Cloak,
+  type Hair,
+  type Beard,
   type CharSpec,
 } from "../assets/charart";
 import { bakeDrawnFrames } from "../assets/pixelart";
 import { getClass } from "./classes";
+import type { PlayerLook } from "../net/protocol";
 
 // METROPHAGE — player character customization. After picking a class (cyberian),
 // the player tunes a look: signature colour + silhouette (build / headgear / optic
@@ -26,6 +32,13 @@ export interface Customization {
   build: Build;
   head: Head;
   visor: Visor; // optic style
+  shoulders: Shoulders; // shoulder armor
+  decal: Decal; // emissive chest insignia
+  cloak: Cloak; // cape / coat
+  skin: number; // human skin tone, or -1 = SYNTH (cyber visor, no face)
+  hair: Hair;
+  hairColor: number;
+  beard: Beard; // facial hair (human faces only)
   antennae: boolean;
   emblem: boolean; // glowing chest core
   strap: boolean; // bandolier
@@ -67,11 +80,22 @@ export const CUSTOM_COLORS: ReadonlyArray<{ name: string; value: number }> = [
   { name: "ICE", value: 0x8fe9ff },
   { name: "LIME", value: 0x9dff3c },
   { name: "ROSE", value: 0xff79c6 },
+  { name: "ORANGE", value: 0xff7a18 },
+  { name: "TEAL", value: 0x2cf5c8 },
+  { name: "AZURE", value: 0x4d8cff },
+  { name: "CRIMSON", value: 0xd6193f },
+  { name: "BUBBLEGUM", value: 0xff5fa2 },
+  { name: "TOXIC", value: 0xc6ff3c },
+  { name: "ULTRA", value: 0xc04bff },
+  { name: "BONE", value: 0xeae6ff },
 ];
 
-export const CUSTOM_BUILDS: ReadonlyArray<Build> = ["slim", "normal", "bulky"];
-export const CUSTOM_HEADS: ReadonlyArray<Head> = ["helmet", "hood", "cap", "drone"];
-export const CUSTOM_VISORS: ReadonlyArray<Visor> = ["band", "goggles", "single", "wide"];
+export const CUSTOM_BUILDS: ReadonlyArray<Build> = ["slim", "normal", "bulky", "huge"];
+export const CUSTOM_HEADS: ReadonlyArray<Head> = ["helmet", "hood", "cap", "drone", "mohawk", "horns", "crown"];
+export const CUSTOM_VISORS: ReadonlyArray<Visor> = ["band", "goggles", "single", "wide", "cross", "scan", "round"];
+export const CUSTOM_SHOULDERS: ReadonlyArray<Shoulders> = ["none", "pads", "spikes", "heavy"];
+export const CUSTOM_DECALS: ReadonlyArray<Decal> = ["none", "cross", "triangle", "ring", "bars", "skull"];
+export const CUSTOM_CLOAKS: ReadonlyArray<Cloak> = ["none", "cape", "coat"];
 
 /** Human-readable labels for the silhouette options. */
 export const HEAD_LABELS: Record<Head, string> = {
@@ -79,12 +103,18 @@ export const HEAD_LABELS: Record<Head, string> = {
   hood: "HOOD",
   cap: "CAP",
   drone: "DRONE",
+  mohawk: "CREST",
+  horns: "HORNS",
+  crown: "CROWN",
 };
 export const VISOR_LABELS: Record<Visor, string> = {
   band: "VISOR BAND",
   goggles: "GOGGLES",
   single: "MONO-OPTIC",
   wide: "WIDE SLIT",
+  cross: "CROSS-OPTIC",
+  scan: "SCANNER",
+  round: "TWIN LENS",
 };
 export const BUILD_LABELS: Record<Build, string> = {
   slim: "SLIM",
@@ -92,6 +122,79 @@ export const BUILD_LABELS: Record<Build, string> = {
   bulky: "HEAVY",
   huge: "TITAN",
 };
+export const SHOULDERS_LABELS: Record<Shoulders, string> = {
+  none: "NONE",
+  pads: "PADS",
+  spikes: "SPIKES",
+  heavy: "PAULDRONS",
+};
+export const DECAL_LABELS: Record<Decal, string> = {
+  none: "NONE",
+  cross: "CROSS",
+  triangle: "DELTA",
+  ring: "RING",
+  bars: "BARS",
+  skull: "SKULL",
+};
+export const CLOAK_LABELS: Record<Cloak, string> = {
+  none: "NONE",
+  cape: "CAPE",
+  coat: "LONGCOAT",
+};
+
+/** Skin tones. SYNTH (-1) = no human face — keeps the cyber visor/headgear look. */
+export const SKIN_TONES: ReadonlyArray<{ name: string; value: number }> = [
+  { name: "SYNTH", value: -1 },
+  { name: "PORCELAIN", value: 0xf3d2b8 },
+  { name: "FAIR", value: 0xe6b58c },
+  { name: "TAN", value: 0xc98a5e },
+  { name: "OLIVE", value: 0xa9794a },
+  { name: "BROWN", value: 0x7c4f30 },
+  { name: "DEEP", value: 0x4f3220 },
+];
+export const HAIR_STYLES: ReadonlyArray<Hair> = [
+  "none",
+  "buzz",
+  "short",
+  "long",
+  "spiky",
+  "mohawk",
+  "bun",
+  "afro",
+  "ponytail",
+  "braids",
+];
+export const HAIR_LABELS: Record<Hair, string> = {
+  none: "BALD",
+  buzz: "BUZZED",
+  short: "SHORT",
+  long: "LONG",
+  spiky: "SPIKED",
+  mohawk: "MOHAWK",
+  bun: "TOP-KNOT",
+  afro: "AFRO",
+  ponytail: "PONYTAIL",
+  braids: "BRAIDS",
+};
+export const BEARDS: ReadonlyArray<Beard> = ["none", "stubble", "mustache", "goatee", "full"];
+export const BEARD_LABELS: Record<Beard, string> = {
+  none: "NONE",
+  stubble: "STUBBLE",
+  mustache: "MOUSTACHE",
+  goatee: "GOATEE",
+  full: "FULL BEARD",
+};
+export const HAIR_COLORS: ReadonlyArray<{ name: string; value: number }> = [
+  { name: "BLACK", value: 0x1b1820 },
+  { name: "BROWN", value: 0x4a2f1c },
+  { name: "CHESTNUT", value: 0x7a4a24 },
+  { name: "BLONDE", value: 0xe6c878 },
+  { name: "AUBURN", value: 0x9c3b22 },
+  { name: "SILVER", value: 0xc7cdd8 },
+  { name: "WHITE", value: 0xeef0f5 },
+  { name: "CYAN", value: 0x35e6ff },
+  { name: "PINK", value: 0xff5fb0 },
+];
 
 /** A customization seeded from the chosen class's default look + signature colour. */
 export function defaultCustomization(classId: string | undefined): Customization {
@@ -103,6 +206,13 @@ export function defaultCustomization(classId: string | undefined): Customization
     build: spec.build === "huge" ? "bulky" : spec.build,
     head: spec.head,
     visor: spec.visor,
+    shoulders: spec.shoulders ?? "none",
+    decal: spec.decal ?? "none",
+    cloak: spec.cloak ?? "none",
+    skin: spec.skin ?? -1, // SYNTH — classes default to the cyber look
+    hair: spec.hair ?? "none",
+    hairColor: spec.hairColor ?? 0x4a2f1c,
+    beard: spec.beard ?? "none",
     antennae: !!spec.antennae,
     emblem: !!spec.emblem,
     strap: !!spec.strap,
@@ -115,10 +225,19 @@ export function customSpec(c: Customization): CharSpec {
     build: c.build,
     head: c.head,
     visor: c.visor,
+    shoulders: c.shoulders,
+    decal: c.decal,
+    cloak: c.cloak,
     antennae: c.antennae,
     emblem: c.emblem,
     strap: c.strap,
-    tones: GRAY,
+    skin: c.skin >= 0 ? c.skin : undefined, // SYNTH → cyber visor (no human face)
+    hair: c.hair,
+    hairColor: c.hairColor,
+    beard: c.beard,
+    // Bake in FINAL colours: the gear takes the signature colour, so skin/hair keep
+    // their own. The sprite is then rendered with a neutral (white) tint.
+    tones: tonesFromColor(c.color),
   };
 }
 
@@ -131,6 +250,54 @@ export function bakeCustomPlayer(scene: Phaser.Scene, c: Customization) {
   bakeDrawnFrames(scene, PLAYER_CUSTOM_KEY, 4, CHAR, CHAR, (ctx, f) =>
     drawCharacter(ctx, f, customSpec(c)),
   );
+}
+
+/** Extract the wire appearance (no callsign) from a customization, for multiplayer. */
+export function customizationToLook(c: Customization): PlayerLook {
+  return {
+    color: c.color,
+    build: c.build,
+    head: c.head,
+    visor: c.visor,
+    shoulders: c.shoulders,
+    decal: c.decal,
+    cloak: c.cloak,
+    skin: c.skin,
+    hair: c.hair,
+    hairColor: c.hairColor,
+    beard: c.beard,
+    antennae: c.antennae,
+    emblem: c.emblem,
+    strap: c.strap,
+  };
+}
+
+/** Stable texture-cache key for a look. Colour + skin + hair are BAKED in now, so they
+ *  are part of the key (the sprite is rendered with a neutral tint, not recoloured). */
+export function lookKey(look: PlayerLook | undefined): string {
+  const c = sanitizeCustomization(look as unknown as Partial<Customization>, undefined);
+  return [
+    "rl",
+    c.color,
+    c.build,
+    c.head,
+    c.visor,
+    c.shoulders,
+    c.decal,
+    c.cloak,
+    c.skin,
+    c.hair,
+    c.hairColor,
+    c.beard,
+    `${c.antennae ? 1 : 0}${c.emblem ? 1 : 0}${c.strap ? 1 : 0}`,
+  ].join("_");
+}
+
+/** Bake a remote player's sprite (grayscale, 4 facings) under `key` from a look (cached). */
+export function bakeRemoteLook(scene: Phaser.Scene, key: string, look: PlayerLook | undefined): void {
+  if (scene.textures.exists(key)) return;
+  const c = sanitizeCustomization(look as unknown as Partial<Customization>, undefined);
+  bakeDrawnFrames(scene, key, 4, CHAR, CHAR, (ctx, f) => drawCharacter(ctx, f, customSpec(c)));
 }
 
 /** Repair a possibly-stale/partial saved customization against the valid options. */
@@ -149,6 +316,13 @@ export function sanitizeCustomization(
     build: pick(raw.build, CUSTOM_BUILDS, d.build),
     head: pick(raw.head, CUSTOM_HEADS, d.head),
     visor: pick(raw.visor, CUSTOM_VISORS, d.visor),
+    shoulders: pick(raw.shoulders, CUSTOM_SHOULDERS, d.shoulders),
+    decal: pick(raw.decal, CUSTOM_DECALS, d.decal),
+    cloak: pick(raw.cloak, CUSTOM_CLOAKS, d.cloak),
+    skin: typeof raw.skin === "number" ? raw.skin : d.skin,
+    hair: pick(raw.hair, HAIR_STYLES, d.hair),
+    hairColor: typeof raw.hairColor === "number" ? raw.hairColor : d.hairColor,
+    beard: pick(raw.beard, BEARDS, d.beard),
     antennae: typeof raw.antennae === "boolean" ? raw.antennae : d.antennae,
     emblem: typeof raw.emblem === "boolean" ? raw.emblem : d.emblem,
     strap: typeof raw.strap === "boolean" ? raw.strap : d.strap,

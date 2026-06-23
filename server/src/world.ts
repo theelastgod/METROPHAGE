@@ -1,6 +1,6 @@
 // Shared game model + sim (single source of truth, imported from the client repo —
 // these modules are Phaser-free and deterministic).
-import { NET_TICK_MS, type ClientMsg } from "../../src/net/protocol";
+import { NET_TICK_MS, type ClientMsg, type PlayerLook } from "../../src/net/protocol";
 import {
   stepMove,
   tileIsWall,
@@ -77,6 +77,7 @@ interface SessionAttach {
   id: string;
   name: string;
   faction: number;
+  look?: PlayerLook; // appearance, so it survives a hibernation wake
 }
 /** Map a "dN" zone string to a valid district index. */
 export const parseZone = (z: string | null): number => {
@@ -124,6 +125,8 @@ interface PlayerState {
   // questline (The Blank — per-player, server-authoritative)
   questStep: number;
   questProgress: number;
+  // appearance (relayed to other clients so they render this player's customization)
+  look?: PlayerLook;
 }
 
 interface Pickup {
@@ -357,7 +360,7 @@ export class WorldDO {
     } catch {
       return;
     }
-    if (msg.t === "login") return this.onLogin(ws, msg.name, msg.faction);
+    if (msg.t === "login") return this.onLogin(ws, msg.name, msg.faction, msg.look);
     if (msg.t === "input") return this.onInput(ws, msg);
     if (msg.t === "fire") return this.onFire(ws, msg);
     if (msg.t === "chat") return this.onChat(ws, msg);
@@ -639,16 +642,17 @@ export class WorldDO {
     this.metaDelta[key] = (this.metaDelta[key] ?? 0) + delta;
   }
 
-  private async onLogin(ws: WebSocket, rawName: string, faction?: number) {
+  private async onLogin(ws: WebSocket, rawName: string, faction?: number, look?: PlayerLook) {
     const name = (rawName || "").trim().slice(0, 16) || "blank";
     const id = name.toLowerCase().replace(/[^a-z0-9_-]/g, "") || "blank";
     const fac = Number.isInteger(faction) && faction! >= 0 && faction! < FACTION_COUNT ? faction! : 0;
     const p = this.players.get(id) ?? (await this.loadPlayer(id, name, fac));
     p.faction = fac;
+    if (look) p.look = look; // appearance, relayed to others (client re-sanitizes before baking)
     this.players.set(id, p);
     this.sessions.set(ws, id);
-    // Persist identity on the socket so a hibernation wake can re-attach it (above).
-    ws.serializeAttachment({ id, name, faction: fac } satisfies SessionAttach);
+    // Persist identity + look on the socket so a hibernation wake can re-attach it (above).
+    ws.serializeAttachment({ id, name, faction: fac, look: p.look } satisfies SessionAttach);
     this.send(ws, {
       t: "welcome",
       id,
@@ -733,7 +737,9 @@ export class WorldDO {
   private async resumeSession(ws: WebSocket, att: SessionAttach) {
     this.sessions.set(ws, att.id);
     if (!this.players.has(att.id)) {
-      this.players.set(att.id, await this.loadPlayer(att.id, att.name, att.faction));
+      const p = await this.loadPlayer(att.id, att.name, att.faction);
+      p.look = att.look; // restore appearance from the socket attachment
+      this.players.set(att.id, p);
     }
   }
 
@@ -1096,6 +1102,7 @@ export class WorldDO {
         faction: p.faction,
         questStep: p.questStep,
         questProgress: p.questProgress,
+        look: p.look,
       });
     }
     const enemies = [];
