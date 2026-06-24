@@ -20,6 +20,8 @@ export interface WeaponDef {
   metro: number; // Black-Market price in $METRO
   /** Exotic = never drops randomly (Black-Market only); a clear cut above the rest. */
   exotic?: boolean;
+  /** Subway-only: a unique reward found in THE UNDERLINE; never in the store or drop pool. */
+  subwayOnly?: boolean;
 }
 
 export const WEAPONS: WeaponDef[] = [
@@ -160,16 +162,23 @@ export const WEAPONS: WeaponDef[] = [
     tint: 0xeafdff,
     primary: { kind: "beam", fireRateMs: 240, damage: 38, range: 540, halfWidth: 13 },
   },
+  // ── UNIQUE — pulled from the dark under the city; THE UNDERLINE's hoard. ──
+  {
+    id: "thirdrail", name: "THE THIRD RAIL", klass: "ARC", tier: "exotic", exotic: true, subwayOnly: true, metro: 0,
+    desc: "A live transit rail, weaponised. Forks lethal current through everything close.",
+    tint: 0x6bdcff,
+    primary: { kind: "beam", fireRateMs: 150, damage: 26, range: 320, halfWidth: 18 },
+  },
 ];
 
-/** Standard drop pool — exotics are excluded (they're Black-Market only). */
-export const WEAPON_IDS = WEAPONS.filter((w) => !w.exotic).map((w) => w.id);
+/** Standard drop pool — exotics + subway uniques are excluded. */
+export const WEAPON_IDS = WEAPONS.filter((w) => !w.exotic && !w.subwayOnly).map((w) => w.id);
 
-/** The premium exotics (Black-Market only). */
-export const EXOTIC_WEAPONS = WEAPONS.filter((w) => w.exotic);
+/** The premium exotics (Black-Market only; subway uniques excluded). */
+export const EXOTIC_WEAPONS = WEAPONS.filter((w) => w.exotic && !w.subwayOnly);
 
-/** The full weapon catalogue the Black Market sells, cheapest first. */
-export const WEAPON_STORE = [...WEAPONS].sort((a, b) => a.metro - b.metro);
+/** The full weapon catalogue the Black Market sells, cheapest first (no subway uniques). */
+export const WEAPON_STORE = WEAPONS.filter((w) => !w.subwayOnly).sort((a, b) => a.metro - b.metro);
 
 export function getWeapon(id: string | undefined): WeaponDef | undefined {
   return id ? WEAPONS.find((w) => w.id === id) : undefined;

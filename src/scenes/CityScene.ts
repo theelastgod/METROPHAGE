@@ -723,7 +723,10 @@ export default class CityScene extends Phaser.Scene {
       }
       if (this.time.now >= this.enterCooldownUntil) {
         const b = this.doors.get(tx + "," + ty);
-        if (b?.door) this.enterInterior(b);
+        if (b?.door) {
+          if (b.kind === "subway") this.launchSubway(b);
+          else this.enterInterior(b);
+        }
       }
     } else if (this.exitTile && tx === this.exitTile[0] && ty === this.exitTile[1]) {
       this.leaveInterior();
@@ -735,6 +738,14 @@ export default class CityScene extends Phaser.Scene {
     const payload: CityEnter = { interior: { kind: b.kind, returnTile: b.door!, bldgId: b.id } };
     this.cameras.main.fadeOut(220, 2, 2, 8);
     this.cameras.main.once("camerafadeoutcomplete", () => this.scene.restart(payload));
+  }
+
+  /** The subway descends into THE UNDERLINE — an instanced combat dungeon. */
+  private launchSubway(b: CityBuilding) {
+    this.transitioning = true;
+    const back: [number, number] | undefined = b.door ? [b.door[0], b.door[1] + 1] : undefined;
+    this.cameras.main.fadeOut(260, 2, 2, 8);
+    this.cameras.main.once("camerafadeoutcomplete", () => this.scene.start("Subway", { returnTile: back }));
   }
 
   /** Put the right people in the room: the building's named residents (quest-givers /
