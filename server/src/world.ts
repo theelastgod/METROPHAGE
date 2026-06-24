@@ -242,16 +242,23 @@ interface EnemyArch {
   fireMs: number;
   dmg: number;
   projSpeed: number;
+  loot: { chance: number; boost: number }; // drop chance + rarity boost — the loot table
 }
 const ENEMY_ARCHES: EnemyArch[] = [
   // 0 PATROL — baseline (imported constants, identical to the pre-archetype behavior)
-  { hp: COP_HP, speed: ENEMY_SPEED, fireRange: ENEMY_FIRE_RANGE, fireMs: COP_FIRE_MS, dmg: ENEMY_DMG, projSpeed: ENEMY_PROJ_SPEED },
-  // 1 WASP — fragile, fast, short-range, rapid weak shots
-  { hp: 30, speed: 168, fireRange: 180, fireMs: 620, dmg: 5, projSpeed: 360 },
-  // 2 LANCER — sturdy, slow, long-range, heavy aimed shots
-  { hp: 60, speed: 88, fireRange: 430, fireMs: 1850, dmg: 24, projSpeed: 520 },
+  { hp: COP_HP, speed: ENEMY_SPEED, fireRange: ENEMY_FIRE_RANGE, fireMs: COP_FIRE_MS, dmg: ENEMY_DMG, projSpeed: ENEMY_PROJ_SPEED, loot: { chance: 0.5, boost: 0 } },
+  // 1 WASP — fragile, fast, short-range, rapid weak shots; little loot
+  { hp: 30, speed: 168, fireRange: 180, fireMs: 620, dmg: 5, projSpeed: 360, loot: { chance: 0.35, boost: 0 } },
+  // 2 LANCER — sturdy, slow, long-range, heavy aimed shots; decent loot
+  { hp: 60, speed: 88, fireRange: 430, fireMs: 1850, dmg: 24, projSpeed: 520, loot: { chance: 0.55, boost: 0.35 } },
   // 3 HOUND — fast rusher, gets point-blank then hammers
-  { hp: 80, speed: 200, fireRange: 95, fireMs: 1000, dmg: 16, projSpeed: 300 },
+  { hp: 80, speed: 200, fireRange: 95, fireMs: 1000, dmg: 16, projSpeed: 300, loot: { chance: 0.5, boost: 0.2 } },
+  // 4 ENFORCER — heavy riot tank: slow, very durable, heavy shots; reliably good loot
+  { hp: 200, speed: 72, fireRange: 260, fireMs: 1300, dmg: 26, projSpeed: 320, loot: { chance: 0.85, boost: 1.2 } },
+  // 5 SNIPER — extreme range, slow heavy aimed shots, fragile
+  { hp: 55, speed: 70, fireRange: 540, fireMs: 2400, dmg: 40, projSpeed: 560, loot: { chance: 0.7, boost: 1.0 } },
+  // 6 WRAITH — fast elite skirmisher: rushes + harries; the best grunt loot
+  { hp: 130, speed: 220, fireRange: 150, fireMs: 700, dmg: 14, projSpeed: 360, loot: { chance: 0.8, boost: 1.6 } },
 ];
 
 /** World bosses: tough, named HSS commanders (real surveillance corps). One per zone,
@@ -389,7 +396,11 @@ export class WorldDO {
   private spawnEnemies(def: (typeof DISTRICTS)[number]) {
     // Rotation patterns by threat tier — tougher districts skew toward lancers/hounds.
     const pattern =
-      this.districtIndex <= 0 ? [0, 1, 0, 1, 2] : this.districtIndex === 1 ? [0, 1, 2, 3, 1, 0] : [2, 3, 1, 2, 0, 3, 1];
+      this.districtIndex <= 0
+        ? [0, 4, 1, 2, 0, 1] // early: a heavy ENFORCER joins the grunts
+        : this.districtIndex === 1
+          ? [0, 1, 2, 3, 5, 4, 1] // mid: SNIPER + ENFORCER
+          : [2, 3, 4, 5, 6, 2, 0, 6]; // deep: the full bestiary incl. WRAITH elites
     let i = 0;
     for (const [tx, ty] of def.copPosts) {
       if (isWall(this.grid[ty]?.[tx])) continue;
@@ -1257,6 +1268,7 @@ export class WorldDO {
             consumed = true;
             if (e.hp <= 0) {
               const isBoss = !!e.boss;
+              const arch = ENEMY_ARCHES[e.kind] ?? ENEMY_ARCHES[0];
               // A boss reforms slowly (so others can find + fight it); a grunt fast.
               e.respawnTick = this.tick + ticks(isBoss ? BOSS_RESPAWN_MS : 4000);
               const killer = owner;
@@ -1270,8 +1282,8 @@ export class WorldDO {
                 this.questEvent(killer, "kill");
                 // item loot — a boss ALWAYS drops, rarity-boosted; a grunt rolls the chance.
                 // Pushed (FIFO-capped) to the killer's client only.
-                if (isBoss || Math.random() < LOOT_DROP_CHANCE) {
-                  killer.inventory.push(rollItem(killer.level, isBoss ? 2.5 : 0));
+                if (isBoss || Math.random() < arch.loot.chance) {
+                  killer.inventory.push(rollItem(killer.level, isBoss ? 2.5 : arch.loot.boost));
                   if (killer.inventory.length > INVENTORY_CAP) killer.inventory.shift();
                   this.sendTo(killer.id, { t: "inv", items: killer.inventory });
                 }

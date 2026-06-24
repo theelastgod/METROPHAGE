@@ -661,6 +661,44 @@ async function shop() {
   );
 }
 
+async function bestiary() {
+  const WW = 1280, WH = 960;
+  const ws = await connect();
+  const store = { x: 0, y: 0, enemies: [] };
+  const w = await login(ws, "zoologist");
+  store.x = w.x;
+  store.y = w.y;
+  trackState(ws, w.id, store);
+  await sleep(300);
+  const seen = new Set();
+  const collect = () => {
+    for (const e of store.enemies) if (!e.boss) seen.add(e.kind);
+  };
+  // tour the corners + centre, collecting the enemy archetypes seen in AOI along the way
+  const waypoints = [[120, 120], [WW - 120, 120], [WW - 120, WH - 120], [120, WH - 120], [WW / 2, WH / 2]];
+  let seq = 0;
+  for (const [tx, ty] of waypoints) {
+    const t0 = Date.now();
+    while (Date.now() - t0 < 6000) {
+      collect();
+      const dx = tx - store.x, dy = ty - store.y, d = Math.hypot(dx, dy) || 1;
+      if (d < 50) break;
+      seq++;
+      ws.send(JSON.stringify({ t: "input", seq, mx: dx / d, my: dy / d }));
+      await sleep(60);
+    }
+  }
+  collect();
+  ws.close();
+  await sleep(200);
+  const kinds = [...seen].sort((a, b) => a - b);
+  const checks = {
+    multipleArchetypes: kinds.length >= 3, // varied bestiary, not just patrols
+    newArchetypePresent: kinds.some((k) => k >= 4), // an ENFORCER/SNIPER/WRAITH is in the mix
+  };
+  report("BESTIARY — varied HSS archetypes populate the zone", { kindsSeen: kinds }, Object.values(checks).every(Boolean), checks);
+}
+
 async function mp() {
   const AOI = 720;
   const a = await connect();
@@ -1379,6 +1417,7 @@ try {
   else if (mode === "boss") await boss();
   else if (mode === "equip") await equip();
   else if (mode === "shop") await shop();
+  else if (mode === "bestiary") await bestiary();
   else if (mode === "mp") await mp();
   else if (mode === "zones") await zones();
   else if (mode === "territory") await territory();

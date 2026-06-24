@@ -44,7 +44,8 @@ const SERVER_URL =
   "ws://127.0.0.1:8787/ws";
 
 /** HSS archetype tints (index = enemy kind), matching the singleplayer reads. */
-const ENEMY_KIND_TINT = [0xff3b6b, 0x39ffd0, 0xffe06a, 0xff5ad0];
+// 0 patrol · 1 wasp · 2 lancer · 3 hound · 4 enforcer · 5 sniper · 6 wraith
+const ENEMY_KIND_TINT = [0xff3b6b, 0x39ffd0, 0xffe06a, 0xff5ad0, 0xff8a3c, 0x4d8cff, 0xb06bff];
 
 /** Emote wheel — first four float over your avatar; the rest drop a world ping marker. */
 const EMOTES: Array<{ text: string; ping: boolean }> = [
@@ -827,7 +828,7 @@ export default class OnlineScene extends Phaser.Scene {
   private maybeEnemyBark(x: number, y: number, kind: number) {
     const now = this.time.now;
     if (now < this.nextEnemyBarkAt || Math.random() > 0.4) return;
-    const ids = ["patrol", "wasp", "lancer", "hound"];
+    const ids = ["patrol", "wasp", "lancer", "hound", "patrol", "lancer", "hound"]; // 4-6 reuse pools
     const pool = ENEMY_BARKS[ids[kind] ?? "patrol"];
     if (!pool?.length) return;
     this.nextEnemyBarkAt = now + 2200;
