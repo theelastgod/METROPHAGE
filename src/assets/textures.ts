@@ -509,14 +509,23 @@ function makeCrate(scene: Phaser.Scene) {
       ctx.fillRect(x, y, w, h);
       ctx.globalAlpha = 1;
     };
-    px(6, 7, 20, 19, 0x161c30);
-    px(6, 7, 20, 2, 0x2a3450); // top edge
-    px(6, 7, 2, 19, 0x222a44); // left edge
+    px(6, 7, 20, 19, 0x161c30); // body
+    px(7, 8, 18, 17, 0x1b2236); // inner panel
+    px(6, 7, 20, 2, 0x2a3450); // top edge (lit)
+    px(7, 8, 17, 1, 0x3a455f, 0.7); // top inner highlight
+    px(6, 7, 2, 19, 0x222a44); // left edge (lit)
     px(24, 7, 2, 19, 0x0d1120); // right shadow
-    px(6, 24, 20, 2, 0x0a0c16); // bottom
-    px(6, 15, 20, 2, 0xf7ff3c, 0.85); // glowing lid seam
-    px(15, 7, 2, 19, 0x29e7ff, 0.6); // vertical seam
-    [[8, 10], [22, 10], [8, 21], [22, 21]].forEach(([x, y]) => px(x, y, 2, 2, 0x39ff88));
+    px(6, 24, 20, 2, 0x0a0c16); // bottom shadow
+    for (let sx = 8; sx < 24; sx += 4) px(sx, 11, 2, 2, 0xf7ff3c, 0.5); // hazard stripes
+    px(6, 15, 20, 2, 0xf7ff3c, 0.9); // glowing lid seam
+    px(14, 14, 4, 4, 0x0d1120); // latch housing
+    px(15, 15, 2, 2, 0x29e7ff); // latch light
+    px(15, 7, 2, 8, 0x29e7ff, 0.5); // vertical seam (upper)
+    px(15, 17, 2, 8, 0x29e7ff, 0.5); // vertical seam (lower)
+    [[8, 10], [22, 10], [8, 21], [22, 21]].forEach(([x, y]) => {
+      px(x, y, 2, 2, 0x39ff88); // corner bolt
+      px(x, y, 1, 1, 0xeafdff, 0.6); // bolt glint
+    });
   });
 }
 
@@ -528,19 +537,26 @@ function makeStreetlight(scene: Phaser.Scene) {
       ctx.fillRect(x, y, w, h);
     };
     // lamp glow (white -> accent when tinted)
-    const grad = ctx.createRadialGradient(16, 8, 1, 16, 8, 13);
-    grad.addColorStop(0, "rgba(255,255,255,0.85)");
+    const grad = ctx.createRadialGradient(16, 8, 1, 16, 8, 14);
+    grad.addColorStop(0, "rgba(255,255,255,0.9)");
+    grad.addColorStop(0.5, "rgba(255,255,255,0.35)");
     grad.addColorStop(1, "rgba(255,255,255,0)");
     ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, 32, 22);
-    // pole + base
+    ctx.fillRect(0, 0, 32, 24);
+    // pole + base (lit left, shadow right)
     px(15, 11, 2, 35, 0x39415a);
-    px(15, 11, 1, 35, 0x586488);
-    px(12, 45, 8, 2, 0x222a3c);
-    // lamp housing (bright)
-    px(11, 4, 10, 6, 0xffffff);
-    px(12, 3, 8, 2, 0xffffff);
-    px(13, 10, 6, 2, 0xe0e8ff);
+    px(15, 11, 1, 35, 0x586488); // highlight
+    px(16, 11, 1, 35, 0x222a3c); // shadow side
+    px(11, 45, 10, 2, 0x222a3c); // base plate
+    px(12, 44, 8, 1, 0x39415a); // base lip
+    // lamp fixture — defined housing + brackets + hot bulb
+    px(10, 5, 12, 5, 0x2a3142); // housing
+    px(10, 5, 12, 1, 0x4a5470); // housing top lit
+    px(11, 4, 10, 1, 0x5a6488); // cap
+    px(9, 7, 1, 3, 0x39415a); // left bracket
+    px(22, 7, 1, 3, 0x39415a); // right bracket
+    px(12, 9, 8, 2, 0xffffff); // bright bulb
+    px(13, 10, 6, 1, 0xeafdff); // hot bulb core
   });
 }
 
