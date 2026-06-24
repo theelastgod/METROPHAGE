@@ -1,7 +1,7 @@
 import Phaser from "phaser";
 import { TILE, COLORS } from "../config";
 import { TILESET_KEY } from "../assets/manifest";
-import { TILE_WALL } from "../world/district";
+import { COLLIDING_TILES } from "../world/district";
 import { buildCity, type CityMap } from "../world/city";
 import Player from "../entities/Player";
 import NeonPipeline from "../render/NeonPipeline";
@@ -43,7 +43,7 @@ export default class CityScene extends Phaser.Scene {
     const map = this.make.tilemap({ data: this.cityMap.grid, tileWidth: TILE, tileHeight: TILE });
     const tileset = map.addTilesetImage(TILESET_KEY, TILESET_KEY, TILE, TILE)!;
     this.wallLayer = map.createLayer(0, tileset, 0, 0)!;
-    this.wallLayer.setCollision(TILE_WALL);
+    this.wallLayer.setCollision(COLLIDING_TILES);
 
     this.cameras.main.setBackgroundColor(COLORS.bgVoid);
     this.physics.world.setBounds(0, 0, worldW, worldH);

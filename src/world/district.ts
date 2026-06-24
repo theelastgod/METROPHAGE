@@ -5,12 +5,37 @@
 import { GRID_W, GRID_H, TILE } from "../config";
 import { DISTRICTS, type DistrictDef, type Rect } from "../game/districts";
 
-// Indices into the drop-in tileset (256×64, sixteen 32×32 cells):
-// 0 floor · 2 road · 3 plaza · 4 wall (see ART_NOTES).
-export const TILE_FLOOR = 0; // floor, walkable
-export const TILE_WALL = 4; // wall/building, collides
-export const TILE_PLAZA = 3; // open plaza, walkable
-export const TILE_LANE = 2; // road, walkable
+// Indices into the code-authored tileset (textures.ts; 256×128, 32 cells of 32×32).
+// Walkable ground 0–3,5,10–14; building/blocking tiles 4,6–9,15 (see isWall).
+export const TILE_FLOOR = 0; // concrete, walkable (the default play surface)
+export const TILE_SIDEWALK = 1; // paved walkway (borders buildings)
+export const TILE_LANE = 2; // road / asphalt, walkable
+export const TILE_PLAZA = 3; // neon plaza, walkable
+export const TILE_WALL = 4; // DOWNTOWN building, collides
+export const TILE_GRASS = 5; // park / green, walkable
+export const TILE_WATER = 6; // canal — blocks movement
+export const TILE_WALL_IND = 7; // INDUSTRIAL building
+export const TILE_WALL_RES = 8; // RESIDENTIAL building
+export const TILE_WALL_CORP = 9; // CORPORATE glass tower
+export const TILE_MARKET = 10; // market ground, walkable
+export const TILE_GRATE = 11; // industrial grating floor, walkable
+export const TILE_CROSSWALK = 12; // road crossing, walkable
+export const TILE_NEON = 13; // neon-strip floor (nightlife), walkable
+export const TILE_DIRT = 14; // wasteland / slum ground, walkable
+export const TILE_WALL_SLUM = 15; // shanty building
+
+/** Tiles that block movement (buildings + water). */
+const WALL_TILES = new Set<number>([
+  TILE_WALL,
+  TILE_WATER,
+  TILE_WALL_IND,
+  TILE_WALL_RES,
+  TILE_WALL_CORP,
+  TILE_WALL_SLUM,
+]);
+
+/** Every building/blocking tile index — scenes pass this to setCollision(). */
+export const COLLIDING_TILES: number[] = [...WALL_TILES];
 
 export type TileGrid = number[][];
 
@@ -85,7 +110,7 @@ export function buildGrid(def: DistrictDef = DISTRICTS[0]): TileGrid {
 }
 
 export function isWall(tile: number): boolean {
-  return tile === TILE_WALL;
+  return WALL_TILES.has(tile);
 }
 
 /** Player start in world (pixel) coordinates, at tile center, from the district def. */
