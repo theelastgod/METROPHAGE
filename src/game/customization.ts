@@ -34,6 +34,7 @@ export interface Customization {
   decal: Decal; // emissive chest insignia
   cloak: Cloak; // cape / coat
   skin: number; // human skin tone, or -1 = SYNTH (cyber visor, no face)
+  sex: "f" | "m"; // human body type (proportions); ignored for SYNTH
   hair: Hair;
   hairColor: number;
   beard: Beard; // facial hair (human faces only)
@@ -88,6 +89,8 @@ export const CUSTOM_COLORS: ReadonlyArray<{ name: string; value: number }> = [
   { name: "BONE", value: 0xeae6ff },
 ];
 
+export const CUSTOM_SEXES: ReadonlyArray<"f" | "m"> = ["f", "m"];
+export const SEX_LABELS: Record<"f" | "m", string> = { f: "FEMALE", m: "MALE" };
 export const CUSTOM_BUILDS: ReadonlyArray<Build> = ["slim", "normal", "bulky", "huge"];
 export const CUSTOM_HEADS: ReadonlyArray<Head> = ["helmet", "hood", "cap", "drone", "mohawk", "horns", "crown"];
 export const CUSTOM_VISORS: ReadonlyArray<Visor> = ["band", "goggles", "single", "wide", "cross", "scan", "round"];
@@ -207,8 +210,9 @@ export function defaultCustomization(classId: string | undefined): Customization
     shoulders: spec.shoulders ?? "none",
     decal: spec.decal ?? "none",
     cloak: spec.cloak ?? "none",
-    skin: spec.skin ?? -1, // SYNTH — classes default to the cyber look
-    hair: spec.hair ?? "none",
+    skin: spec.skin ?? 0xc98a5e, // human by default (classes carry a human skin tone)
+    sex: spec.sex ?? "m",
+    hair: spec.hair ?? "short",
     hairColor: spec.hairColor ?? 0x4a2f1c,
     beard: spec.beard ?? "none",
     antennae: !!spec.antennae,
@@ -230,6 +234,7 @@ export function customSpec(c: Customization): CharSpec {
     emblem: c.emblem,
     strap: c.strap,
     skin: c.skin >= 0 ? c.skin : undefined, // SYNTH → cyber visor (no human face)
+    sex: c.sex,
     hair: c.hair,
     hairColor: c.hairColor,
     beard: c.beard,
@@ -259,6 +264,7 @@ export function customizationToLook(c: Customization): PlayerLook {
     decal: c.decal,
     cloak: c.cloak,
     skin: c.skin,
+    sex: c.sex,
     hair: c.hair,
     hairColor: c.hairColor,
     beard: c.beard,
@@ -282,6 +288,7 @@ export function lookKey(look: PlayerLook | undefined): string {
     c.decal,
     c.cloak,
     c.skin,
+    c.sex,
     c.hair,
     c.hairColor,
     c.beard,
@@ -316,6 +323,7 @@ export function sanitizeCustomization(
     decal: pick(raw.decal, CUSTOM_DECALS, d.decal),
     cloak: pick(raw.cloak, CUSTOM_CLOAKS, d.cloak),
     skin: typeof raw.skin === "number" ? raw.skin : d.skin,
+    sex: raw.sex === "f" || raw.sex === "m" ? raw.sex : d.sex,
     hair: pick(raw.hair, HAIR_STYLES, d.hair),
     hairColor: typeof raw.hairColor === "number" ? raw.hairColor : d.hairColor,
     beard: pick(raw.beard, BEARDS, d.beard),

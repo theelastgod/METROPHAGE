@@ -103,18 +103,23 @@ export interface CharSpec {
   hair?: Hair;
   hairColor?: number;
   beard?: Beard; // facial hair (uses the hair colour)
+  sex?: "f" | "m"; // human body proportions (female = slimmer torso + bust; male = broader shoulders)
 }
 
 // ── Per-class player specs (ids match game/classes.ts) ──────────────────────
+// The playable cyberians are HUMANS by default (skin + hair, not a cyber visor). Each
+// class gets a distinct default human look (a mix of women + men); a player can still
+// switch to SYNTH in the customizer for the chrome look. head/visor are kept so that
+// switching to SYNTH restores the class's cyber silhouette.
 export const PLAYER_SPECS: Record<string, CharSpec> = {
-  // sleek cyber-operative, visor band
-  wintermute: { build: "normal", head: "helmet", visor: "band", tones: GRAY },
-  // hazmat infector — hooded, twin goggle lenses, glowing chest emblem
-  metrophage: { build: "bulky", head: "hood", visor: "goggles", emblem: true, tones: GRAY },
-  // street militant — capped brim, diagonal bandolier
-  "k-guerilla": { build: "normal", head: "cap", visor: "band", strap: true, tones: GRAY },
-  // drone-host — slim, twin antennae, single focused optic
-  swarm: { build: "slim", head: "drone", visor: "single", antennae: true, tones: GRAY },
+  // wintermute — a cool ICE operative
+  wintermute: { build: "normal", head: "helmet", visor: "band", tones: GRAY, sex: "f", skin: 0xe6b58c, hair: "long", hairColor: 0x1b1820 },
+  // metrophage — a hazmat infector
+  metrophage: { build: "bulky", head: "hood", visor: "goggles", emblem: true, tones: GRAY, sex: "m", skin: 0xc98a5e, hair: "buzz", beard: "stubble", hairColor: 0x1b1820 },
+  // k-guerilla — a street militant
+  "k-guerilla": { build: "normal", head: "cap", visor: "band", strap: true, tones: GRAY, sex: "m", skin: 0x7c4f30, hair: "short", hairColor: 0x1b1820 },
+  // swarm — a drone-host
+  swarm: { build: "slim", head: "drone", visor: "single", antennae: true, tones: GRAY, sex: "f", skin: 0xa9794a, hair: "ponytail", hairColor: 0x1b1820 },
 };
 export const PLAYER_IDS = Object.keys(PLAYER_SPECS);
 
@@ -215,6 +220,7 @@ function drawPose(ctx: CanvasRenderingContext2D, facing: Facing, spec: CharSpec,
   // bulk widens the torso/shoulders
   const bulk = spec.build === "huge" ? 4 : spec.build === "bulky" ? 2 : spec.build === "slim" ? -2 : 0;
   const cx = 16;
+  const fem = spec.sex === "f"; // a slimmer torso + bust; men get broader shoulders
 
   // ── ground shadow ───────────────────────────────────────────────
   px(cx - 7, 28, 14, 2, 0x000000, 0.26);
@@ -256,9 +262,13 @@ function drawPose(ctx: CanvasRenderingContext2D, facing: Facing, spec: CharSpec,
   px(cx - 1, 23, 2, 5, t.o); // dark gap so the legs read as two
 
   // ── torso + shoulders — chest plating, rim light, belt ──
-  const tw = 14 + bulk; // torso width
+  const tw = 14 + bulk - (fem ? 2 : 0); // torso width (women slimmer)
   const tx = cx - tw / 2;
   part(tx - 1, 12, tw + 2, 5, t.b); // shoulder yoke
+  if (spec.sex === "m") {
+    px(tx - 2, 13, 1, 3, t.b); // broader male shoulders
+    px(tx + tw + 1, 13, 1, 3, t.b);
+  }
   px(tx, 13, tw, 1, t.c); // lit shoulder top
   px(tx, 14, tw, 1, t.d, 0.6); // shoulder highlight
   px(tx + 1, 13, 1, 1, t.d); // yoke rivet L
@@ -275,6 +285,12 @@ function drawPose(ctx: CanvasRenderingContext2D, facing: Facing, spec: CharSpec,
     px(tx + 1, 22, tw - 2, 1, t.a); // lower-belly shadow
     px(tx, 23, tw, 1, t.o, 0.55); // belt line
     px(cx - 2, 22, 4, 2, t.c, 0.7); // belt buckle (lit)
+    if (fem) {
+      px(cx - 4, 18, 2, 1, t.d, 0.6); // bust highlights
+      px(cx + 2, 18, 2, 1, t.d, 0.6);
+      px(tx, 21, 1, 2, t.a, 0.6); // waist taper
+      px(tx + tw - 1, 21, 1, 2, t.a, 0.6);
+    }
   } else {
     px(tx + 1, 17, tw - 2, 6, t.a); // back is shadowed
     px(tx + 1, 16, tw - 2, 1, t.c); // nape light
@@ -669,11 +685,12 @@ function drawProfile(
   px(cx - sw, 24, 1, 4, t.c);
 
   // torso (narrower in profile), facing left
-  const tw = 9 + Math.max(0, bulk);
+  const tw = 9 + Math.max(0, bulk) - (spec.sex === "f" ? 1 : 0);
   part(cx - 3, 13, tw, 4, t.b); // shoulder
   px(cx - 3, 14, tw, 1, t.c);
   part(cx - 3, 16, tw, 8, t.b);
   px(cx - 2, 17, 4, 6, t.c); // front-lit chest
+  if (spec.sex === "f") px(cx - 4, 18, 1, 2, t.d, 0.6); // bust
   px(cx + tw - 4, 17, 1, 6, t.a); // back shadow
   if (spec.emblem) px(cx - 2, 18, 3, 3, t.e, 0.95);
   if (spec.decal && spec.decal !== "none") px(cx - 2, 18, 2, 3, t.e, 0.9); // decal hint

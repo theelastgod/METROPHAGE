@@ -24,6 +24,7 @@ export interface PlayerLook {
   decal: string;
   cloak: string;
   skin: number; // -1 = SYNTH (cyber), else a human skin tone
+  sex: string; // "f" | "m" — human body type
   hair: string;
   hairColor: number;
   beard: string;

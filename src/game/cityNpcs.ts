@@ -15,6 +15,7 @@ function look(p: Partial<PlayerLook>): PlayerLook {
     decal: "none",
     cloak: "none",
     skin: -1,
+    sex: "m",
     hair: "none",
     hairColor: 0x4a2f1c,
     beard: "none",

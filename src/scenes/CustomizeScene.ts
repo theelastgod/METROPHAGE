@@ -13,6 +13,8 @@ import {
   CUSTOM_SHOULDERS,
   CUSTOM_DECALS,
   CUSTOM_CLOAKS,
+  CUSTOM_SEXES,
+  SEX_LABELS,
   SKIN_TONES,
   HAIR_STYLES,
   HAIR_COLORS,
@@ -201,6 +203,14 @@ export default class CustomizeScene extends Phaser.Scene {
         value: () => DECAL_LABELS[this.cust.decal],
         cycle: (d) => {
           this.cust.decal = cycleIn(CUSTOM_DECALS, this.cust.decal, d);
+          this.bakeAndRefresh();
+        },
+      },
+      {
+        label: "SEX",
+        value: () => SEX_LABELS[this.cust.sex],
+        cycle: (d) => {
+          this.cust.sex = cycleIn(CUSTOM_SEXES, this.cust.sex, d);
           this.bakeAndRefresh();
         },
       },
