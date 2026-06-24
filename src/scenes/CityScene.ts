@@ -8,6 +8,9 @@ import CityNpc from "../entities/CityNpc";
 import DialogueBox from "../ui/DialogueBox";
 import { KEY_NPCS, CITIZENS } from "../game/cityNpcs";
 import { CityQuests, type TalkResult } from "../game/cityQuests";
+import { loadSave, writeSave } from "../systems/Save";
+import Inventory from "../systems/Inventory";
+import { rollItem } from "../game/items";
 import NeonPipeline from "../render/NeonPipeline";
 import Atmosphere from "../render/Atmosphere";
 import { getClass } from "../game/classes";
@@ -256,17 +259,41 @@ export default class CityScene extends Phaser.Scene {
         }
       });
     } else if (res.kind === "reward") {
+      const gear = this.grantQuestGear(res.loot, res.lootBoost);
       this.dialogue.show(
         res.lines.map((text) => ({ speaker: res.speaker, text, portrait })),
         () => {
           this.refreshWallet();
           this.renderJournal();
-          this.toast(`${res.questName} complete    +${res.xp} XP    +${res.credits}c`);
+          const gearMsg = gear.length ? `    +${gear.length} GEAR` : "";
+          this.toast(`${res.questName} complete    +${res.xp} XP    +${res.credits}c${gearMsg}`);
+          if (gear.length) this.toast(`◈ ${gear.join(", ")} → bag`);
         },
       );
     } else {
       this.dialogue.show(res.lines.map((text) => ({ speaker: res.speaker, text, portrait })));
     }
+  }
+
+  /** Roll quest gear into the shared save so it's waiting in the bag in the next district.
+   *  No-op if there's no combat character yet (gear would have nowhere to live). */
+  private grantQuestGear(loot: number, lootBoost: number): string[] {
+    if (loot <= 0) return [];
+    const save = loadSave();
+    if (!save) return [];
+    const inv = new Inventory();
+    inv.load(save.inventory);
+    const level = save.progress?.level ?? 1;
+    const names: string[] = [];
+    for (let i = 0; i < loot; i++) {
+      const item = rollItem(level, lootBoost);
+      if (inv.add(item)) names.push(item.name);
+    }
+    if (names.length) {
+      save.inventory = inv.toData();
+      writeSave(save);
+    }
+    return names;
   }
 
   update(_time: number, delta: number) {

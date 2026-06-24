@@ -25,7 +25,7 @@ export interface CityQuestDef {
   accepted: string[]; // giver's reply on accept
   stages: QStage[];
   complete: string[]; // giver's reply when you turn it in
-  reward: { xp: number; credits: number };
+  reward: { xp: number; credits: number; loot?: number; lootBoost?: number }; // loot = gear rolled into the save
   requires?: string; // only offered once this quest id is done (chains the hub line)
 }
 
@@ -48,8 +48,8 @@ export const CITY_QUESTS: CityQuestDef[] = [
         reminder: ["Still missing cores. Check the side-streets — they glow green."],
       },
     ],
-    complete: ["All three. You're solid, runner. Spend it somewhere loud."],
-    reward: { xp: 220, credits: 180 },
+    complete: ["All three. You're solid, runner. Spend it somewhere loud — and take this, you'll want it out there."],
+    reward: { xp: 220, credits: 180, loot: 1, lootBoost: 1 },
   },
   {
     id: "clinic_debt",
@@ -72,8 +72,8 @@ export const CITY_QUESTS: CityQuestDef[] = [
         reminder: ["Marek's east, in the slums. Don't keep him waiting."],
       },
     ],
-    complete: ["He took it? Good. The proud ones are the ones you lose. Here — you earned this."],
-    reward: { xp: 180, credits: 140 },
+    complete: ["He took it? Good. The proud ones are the ones you lose. Here — you earned this. Salvaged it off a cop; should fit you."],
+    reward: { xp: 180, credits: 140, loot: 1, lootBoost: 1 },
   },
   {
     id: "word_street",
@@ -105,8 +105,8 @@ export const CITY_QUESTS: CityQuestDef[] = [
         reminder: ["Three mouths: Juno, Sable, Kessler. I'm waiting."],
       },
     ],
-    complete: ["…the core, offsite. That's worth real money. Pleasure doing business."],
-    reward: { xp: 260, credits: 220 },
+    complete: ["…the core, offsite. That's worth real money. Pleasure doing business — and a little something extra, off the books."],
+    reward: { xp: 260, credits: 220, loot: 1, lootBoost: 1.1 },
   },
 
   // ── Hub questline: "the people who stay" — a gated arc, a grounded human
@@ -142,8 +142,8 @@ export const CITY_QUESTS: CityQuestDef[] = [
         reminder: ["JUNO and SABLE. Before dark. The cops don't knock."],
       },
     ],
-    complete: ["Both of them off the street. Good. The cycle takes enough without the cops helping. Here."],
-    reward: { xp: 240, credits: 200 },
+    complete: ["Both of them off the street. Good. The cycle takes enough without the cops helping. Here — corp-grade, took it off a curfew van."],
+    reward: { xp: 240, credits: 200, loot: 1, lootBoost: 1.2 },
   },
   {
     id: "the_quiet_one",
@@ -169,8 +169,8 @@ export const CITY_QUESTS: CityQuestDef[] = [
         reminder: ["GHOST keeps to the edges of the plaza. Go gently."],
       },
     ],
-    complete: ["So they're real, and they're not alone. …Thank you. I'll keep their cup full and my ledger quiet."],
-    reward: { xp: 220, credits: 180 },
+    complete: ["So they're real, and they're not alone. …Thank you. I'll keep their cup full and my ledger quiet. Take this from the stall — no charge, no record."],
+    reward: { xp: 220, credits: 180, loot: 1, lootBoost: 1.2 },
   },
   {
     id: "furniture",
@@ -195,8 +195,8 @@ export const CITY_QUESTS: CityQuestDef[] = [
         reminder: ["OLD MAREK's east, in the slums. He's expecting GHOST's word."],
       },
     ],
-    complete: ["He got it. Then the network holds another cycle. Loud or quiet, runner — you did right by us. Take this. You'll need it more than I will."],
-    reward: { xp: 300, credits: 260 },
+    complete: ["He got it. Then the network holds another cycle. Loud or quiet, runner — you did right by us. Take these. You'll need them more than I will."],
+    reward: { xp: 300, credits: 260, loot: 2, lootBoost: 1.4 },
   },
 ];
 
@@ -216,7 +216,7 @@ interface QState {
 export type TalkResult =
   | { kind: "lines"; speaker: string; lines: string[] }
   | { kind: "offer"; speaker: string; questId: string; name: string; lines: string[] }
-  | { kind: "reward"; speaker: string; lines: string[]; questName: string; xp: number; credits: number };
+  | { kind: "reward"; speaker: string; lines: string[]; questName: string; xp: number; credits: number; loot: number; lootBoost: number };
 
 /** Quest state machine for the city. Self-contained (no GameScene coupling). */
 export class CityQuests {
@@ -296,7 +296,7 @@ export class CityQuests {
         s.status = "done";
         this.xp += def.reward.xp;
         this.credits += def.reward.credits;
-        return { kind: "reward", speaker: npcName, lines: def.complete, questName: def.name, xp: def.reward.xp, credits: def.reward.credits };
+        return { kind: "reward", speaker: npcName, lines: def.complete, questName: def.name, xp: def.reward.xp, credits: def.reward.credits, loot: def.reward.loot ?? 0, lootBoost: def.reward.lootBoost ?? 1 };
       }
       if (s.status === "active") {
         const stage = def.stages[s.stage];
