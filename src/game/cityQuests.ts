@@ -26,6 +26,7 @@ export interface CityQuestDef {
   stages: QStage[];
   complete: string[]; // giver's reply when you turn it in
   reward: { xp: number; credits: number };
+  requires?: string; // only offered once this quest id is done (chains the hub line)
 }
 
 export const CITY_QUESTS: CityQuestDef[] = [
@@ -106,6 +107,96 @@ export const CITY_QUESTS: CityQuestDef[] = [
     ],
     complete: ["…the core, offsite. That's worth real money. Pleasure doing business."],
     reward: { xp: 260, credits: 220 },
+  },
+
+  // ── Hub questline: "the people who stay" — a gated arc, a grounded human
+  //    counterpoint to the FIXER's cosmic main quest, tying to THE OTHERS fragment.
+  {
+    id: "curfew",
+    name: "Curfew",
+    giver: "kessler",
+    requires: "word_street",
+    offer: [
+      "You brought VEX her whisper, so you can carry one of mine: the System's tightening curfew before the cycle.",
+      "Cops sweep the plaza by dark. Warn the ones who won't read the net — JUNO and SABLE — before they get scooped.",
+    ],
+    accepted: ["Quietly. You're a courier tonight, not a hero. Find them."],
+    stages: [
+      {
+        label: "Warn JUNO about the curfew sweep",
+        kind: "talk",
+        target: "juno",
+        targetLine: [
+          "A sweep? Tonight? …Thanks, runner. I outran one cycle. I'll outrun a curfew.",
+          "Tell Kessler I owe him a quiet one.",
+        ],
+      },
+      {
+        label: "Warn SABLE about the curfew sweep",
+        kind: "talk",
+        target: "sable",
+        targetLine: [
+          "Figures. The Feral Cat closes early then — no sense pouring for an empty room.",
+          "You're alright. Go on, before they tag you too.",
+        ],
+        reminder: ["JUNO and SABLE. Before dark. The cops don't knock."],
+      },
+    ],
+    complete: ["Both of them off the street. Good. The cycle takes enough without the cops helping. Here."],
+    reward: { xp: 240, credits: 200 },
+  },
+  {
+    id: "the_quiet_one",
+    name: "The Quiet One",
+    giver: "mira",
+    requires: "curfew",
+    offer: [
+      "You did right by Juno, so I'll trust you with what's been keeping me up.",
+      "There's a regular at my stall — GHOST. Buys nothing, sells nothing, and the market ledger has no record they were ever issued a body.",
+      "I'm not scared of them. I'm scared FOR them. Go talk to GHOST. Carefully.",
+    ],
+    accepted: ["They keep to the edges. Don't crowd them. Just… let them know someone noticed kindly."],
+    stages: [
+      {
+        label: "Find GHOST and hear them out",
+        kind: "talk",
+        target: "ghost",
+        targetLine: [
+          "You see me. Most don't — I worked a long time for that.",
+          "I'm like you, runner. A process the city can't account for. A Blank. But I made a different bet.",
+          "You burn it down loud. I learned to look like furniture, like weather, like a number that always balances. That's how some of us last.",
+        ],
+        reminder: ["GHOST keeps to the edges of the plaza. Go gently."],
+      },
+    ],
+    complete: ["So they're real, and they're not alone. …Thank you. I'll keep their cup full and my ledger quiet."],
+    reward: { xp: 220, credits: 180 },
+  },
+  {
+    id: "furniture",
+    name: "Furniture",
+    giver: "ghost",
+    requires: "the_quiet_one",
+    offer: [
+      "You kept MIRA's confidence, so here's mine. There's a network of us — the quiet ones. We don't fight the loop. We outlive it.",
+      "Carry this to OLD MAREK in the slums. He's kept our secrets for more eras than either of us has names. Tell him the furniture is still standing.",
+    ],
+    accepted: ["He'll know what it means. Go careful — the walls in this city take notes."],
+    stages: [
+      {
+        label: "Bring GHOST's word to OLD MAREK",
+        kind: "talk",
+        target: "marek",
+        targetLine: [
+          "The furniture's still standing. …Then GHOST is still with us. Good.",
+          "I outlasted every tower that called me obsolete, runner. You know how? I let them think I was already gone.",
+          "Whatever you do at the Core — burn it or break it — leave a chair for the next quiet one. Some of us are rooting for you.",
+        ],
+        reminder: ["OLD MAREK's east, in the slums. He's expecting GHOST's word."],
+      },
+    ],
+    complete: ["He got it. Then the network holds another cycle. Loud or quiet, runner — you did right by us. Take this. You'll need it more than I will."],
+    reward: { xp: 300, credits: 260 },
   },
 ];
 
@@ -217,12 +308,12 @@ export class CityQuests {
         if (def.giver === npcId && stage.reminder) return { kind: "lines", speaker: npcName, lines: stage.reminder };
       }
     }
-    // 2) Does this NPC offer a fresh quest?
+    // 2) Does this NPC offer a fresh quest? (Gated by `requires` for the hub line.)
     if (givesQuest) {
       const s = this.state(givesQuest);
-      if (s.status === "available") {
-        const def = questDef(givesQuest);
-        if (def) return { kind: "offer", speaker: npcName, questId: def.id, name: def.name, lines: def.offer };
+      const def = questDef(givesQuest);
+      if (s.status === "available" && def && (!def.requires || this.isDone(def.requires))) {
+        return { kind: "offer", speaker: npcName, questId: def.id, name: def.name, lines: def.offer };
       }
     }
     // 3) Flavour.

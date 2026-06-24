@@ -81,18 +81,21 @@ export const CITIZENS: CityNpcDef[] = [
   {
     id: "kessler",
     name: "KESSLER",
+    quest: "curfew",
     look: look({ color: 0x4d8cff, skin: 0xf3d2b8, hair: "buzz", hairColor: 0x4a2f1c, beard: "goatee", cloak: "coat" }),
     lines: ["Corp says the towers are safe. Corp lies.", "Keep your callsign off the open net."],
   },
   {
     id: "mira",
     name: "MIRA",
+    quest: "the_quiet_one",
     look: look({ color: 0xc6ff3c, skin: 0xa9794a, hair: "braids", hairColor: 0x1b1820 }),
     lines: ["Market's hot today — watch your credits.", "Everything you need, someone's already selling."],
   },
   {
     id: "ghost",
     name: "GHOST",
+    quest: "furniture",
     look: look({ color: 0xb06bff, visor: "single", antennae: true, build: "slim" }),
     lines: ["…", "I wasn't here. You didn't see me."],
   },
