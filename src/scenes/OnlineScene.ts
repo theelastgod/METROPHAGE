@@ -37,6 +37,18 @@ const SERVER_URL =
 /** HSS archetype tints (index = enemy kind), matching the singleplayer reads. */
 const ENEMY_KIND_TINT = [0xff3b6b, 0x39ffd0, 0xffe06a, 0xff5ad0];
 
+/** Emote wheel — first four float over your avatar; the rest drop a world ping marker. */
+const EMOTES: Array<{ text: string; ping: boolean }> = [
+  { text: "GG", ping: false },
+  { text: "NICE", ping: false },
+  { text: "HELP!", ping: false },
+  { text: "?!", ping: false },
+  { text: "▶ RALLY", ping: true },
+  { text: "ON ME", ping: true },
+  { text: "FALL BACK", ping: true },
+  { text: "ENEMY", ping: true },
+];
+
 /**
  * Step 2 — the online game client. Renders the real district + player, but the
  * local player's movement is SERVER-AUTHORITATIVE: the client predicts with the
@@ -79,6 +91,9 @@ export default class OnlineScene extends Phaser.Scene {
   private districtIndex = 0;
   private meDir = new Phaser.Math.Vector2(0, 1); // last facing for the local avatar
   private nextEnemyBarkAt = 0; // throttle for online HSS barks
+  private emoteWheelOpen = false;
+  private wheelObjs: Phaser.GameObjects.GameObject[] = [];
+  private lastEmoteShownAt = 0; // newest relayed emote already rendered
 
   constructor() {
     super("Online");
@@ -89,6 +104,9 @@ export default class OnlineScene extends Phaser.Scene {
     const cust = sanitizeCustomization(rawCust, this.registry.get("classId") as string | undefined);
     this.callsign = (rawCust?.callsign || "runner").toLowerCase();
     this.color = cust.color;
+    this.emoteWheelOpen = false; // reset transient UI across scene.restart (travel)
+    this.wheelObjs = [];
+    this.lastEmoteShownAt = 0;
 
     // Zone = which district this client is in. Travel hands off to another DO.
     this.districtIndex = this.parseZone(data?.zone);
@@ -144,7 +162,7 @@ export default class OnlineScene extends Phaser.Scene {
       .text(
         this.scale.width / 2,
         this.scale.height - 12,
-        `WASD · CLICK fire · ENTER chat (/w /party /trade <name> /offer /confirm) · [1-${DISTRICTS.length}] travel · ESC`,
+        `WASD · CLICK fire · V emote · ENTER chat (/w /party /trade <name> /offer /confirm) · [1-${DISTRICTS.length}] travel · ESC`,
         { fontFamily: "Courier New, monospace", fontSize: "11px", color: "#6b7184" },
       )
       .setOrigin(0.5, 1)
@@ -267,6 +285,14 @@ export default class OnlineScene extends Phaser.Scene {
         }
         return;
       }
+      if (this.emoteWheelOpen) {
+        if (e.key === "Escape" || e.key === "v" || e.key === "V") this.closeWheel();
+        return;
+      }
+      if (e.key === "v" || e.key === "V") {
+        this.openWheel();
+        return;
+      }
       if (e.key === "Enter" || e.key === "t" || e.key === "T") {
         this.openChat();
       } else if (e.key === "Escape") {
@@ -354,6 +380,7 @@ export default class OnlineScene extends Phaser.Scene {
     const my = Math.sign(dn(k.S) + dn(k.DOWN) - dn(k.W) - dn(k.UP));
     this.net.setIntent(mx, my);
     this.net.update(dt);
+    this.processEmotes();
 
     if (this.net.connected) {
       this.me.setPosition(this.net.pred.x, this.net.pred.y);
@@ -405,7 +432,7 @@ export default class OnlineScene extends Phaser.Scene {
     // FIRE — send aim intent while the mouse is held; the SERVER validates rate
     // and resolves the hit. We only render.
     const ptr = this.input.activePointer;
-    if (this.net.connected && !this.net.dead && !this.chatOpen && ptr.isDown) {
+    if (this.net.connected && !this.net.dead && !this.chatOpen && !this.emoteWheelOpen && ptr.isDown) {
       const wp = this.cameras.main.getWorldPoint(ptr.x, ptr.y);
       const aim = Math.atan2(wp.y - this.net.pred.y, wp.x - this.net.pred.x);
       this.net.fire(aim);
@@ -607,6 +634,90 @@ export default class OnlineScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(11);
     this.tweens.add({ targets: t, y: y - 42, alpha: 0, duration: 1200, onComplete: () => t.destroy() });
+  }
+
+  // ── emote / ping wheel ──────────────────────────────────────────────
+  private openWheel() {
+    if (this.emoteWheelOpen) return;
+    this.emoteWheelOpen = true;
+    const cx = this.scale.width / 2;
+    const cy = this.scale.height / 2;
+    const bg = this.add
+      .circle(cx, cy, 94, 0x0b0716, 0.62)
+      .setStrokeStyle(2, 0x29e7ff, 0.5)
+      .setScrollFactor(0)
+      .setDepth(1500);
+    this.wheelObjs.push(bg);
+    this.wheelObjs.push(
+      this.add
+        .text(cx, cy, "EMOTE\nV / ESC", { fontFamily: "Courier New, monospace", fontSize: "9px", color: "#6b7184", align: "center" })
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setDepth(1501),
+    );
+    EMOTES.forEach((em, i) => {
+      const a = (i / EMOTES.length) * Math.PI * 2 - Math.PI / 2;
+      const t = this.add
+        .text(cx + Math.cos(a) * 72, cy + Math.sin(a) * 72, em.text, {
+          fontFamily: "Courier New, monospace",
+          fontSize: "12px",
+          color: em.ping ? "#f7ff3c" : "#9af0ff",
+          fontStyle: "bold",
+          align: "center",
+        })
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setDepth(1501)
+        .setInteractive({ useHandCursor: true });
+      t.on("pointerover", () => t.setScale(1.25));
+      t.on("pointerout", () => t.setScale(1));
+      t.on("pointerdown", () => this.pickEmote(i));
+      this.wheelObjs.push(t);
+    });
+  }
+
+  private closeWheel() {
+    this.emoteWheelOpen = false;
+    this.wheelObjs.forEach((o) => o.destroy());
+    this.wheelObjs = [];
+  }
+
+  private pickEmote(i: number) {
+    const em = EMOTES[i];
+    if (this.net.connected) this.net.sendEmote(i, em.ping, this.net.pred.x, this.net.pred.y);
+    this.closeWheel();
+  }
+
+  /** Render newly-relayed emotes/pings — floats over the sender, or a world ping marker. */
+  private processEmotes() {
+    let newest = this.lastEmoteShownAt;
+    for (const e of this.net.emotes) {
+      if (e.at <= this.lastEmoteShownAt) continue;
+      this.spawnEmoteVisual(e.kind, e.ping, e.x, e.y);
+      if (e.at > newest) newest = e.at;
+    }
+    this.lastEmoteShownAt = newest;
+  }
+
+  private spawnEmoteVisual(kind: number, ping: boolean, x: number, y: number) {
+    const def = EMOTES[kind] ?? EMOTES[0];
+    if (ping) {
+      const ring = this.add.circle(x, y, 16, 0xf7ff3c, 0.12).setStrokeStyle(2, 0xf7ff3c, 0.9).setDepth(7);
+      this.tweens.add({ targets: ring, scale: { from: 0.4, to: 1.5 }, alpha: { from: 0.9, to: 0 }, duration: 850, repeat: 3 });
+      const txt = this.add
+        .text(x, y - 26, def.text, { fontFamily: "Courier New, monospace", fontSize: "12px", color: "#f7ff3c", fontStyle: "bold" })
+        .setOrigin(0.5)
+        .setDepth(1002);
+      txt.setShadow(0, 0, "#0a0e1a", 4, true, true);
+      this.tweens.add({ targets: txt, alpha: 0, delay: 3200, duration: 800, onComplete: () => { txt.destroy(); ring.destroy(); } });
+    } else {
+      const txt = this.add
+        .text(x, y - 22, def.text, { fontFamily: "Courier New, monospace", fontSize: "13px", color: "#9af0ff", fontStyle: "bold" })
+        .setOrigin(0.5)
+        .setDepth(1002);
+      txt.setShadow(0, 0, "#0a0e1a", 4, true, true);
+      this.tweens.add({ targets: txt, y: y - 50, alpha: { from: 1, to: 0 }, duration: 1700, onComplete: () => txt.destroy() });
+    }
   }
 
   private applyNeon() {

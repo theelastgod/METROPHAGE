@@ -40,6 +40,7 @@ export type ClientMsg =
   | { t: "chat"; ch: "zone" | "party" | "whisper"; to?: string; text: string }
   | { t: "party"; action: "invite" | "accept" | "leave"; to?: string }
   | { t: "mute"; to: string }
+  | { t: "emote"; kind: number; ping: boolean; x: number; y: number } // emote (above avatar) or world ping
   | {
       t: "trade";
       action: "request" | "accept" | "offer" | "confirm" | "cancel";
@@ -132,6 +133,7 @@ export type ServerMsg =
   | { t: "chat"; from: string; faction: number; ch: string; text: string }
   | { t: "party"; members: string[] }
   | { t: "sys"; text: string }
+  | { t: "emote"; from: string; kind: number; ping: boolean; x: number; y: number } // relayed emote/ping
   | { t: "story"; act: string; title: string; text: string; step: number; done: boolean }
   | {
       t: "trade";

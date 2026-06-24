@@ -86,6 +86,8 @@ export default class NetClient {
   roster: Array<{ id: string; faction: number; level: number }> = [];
   party: string[] = [];
   chatLog: Array<{ from: string; ch: string; text: string; faction: number; sys: boolean }> = [];
+  /** Recent emotes/pings relayed by the server (rendered + aged out by the scene). */
+  emotes: Array<{ from: string; kind: number; ping: boolean; x: number; y: number; at: number }> = [];
   questStep = 0;
   questProgress = 0;
   story: { act: string; title: string; text: string; done: boolean; at: number } | null = null;
@@ -265,6 +267,9 @@ export default class NetClient {
       this.pushChat({ from: msg.from, ch: msg.ch, text: msg.text, faction: msg.faction, sys: false });
     } else if (msg.t === "sys") {
       this.pushChat({ from: "", ch: "sys", text: msg.text, faction: -1, sys: true });
+    } else if (msg.t === "emote") {
+      this.emotes.push({ from: msg.from, kind: msg.kind, ping: msg.ping, x: msg.x, y: msg.y, at: performance.now() });
+      if (this.emotes.length > 30) this.emotes.shift();
     } else if (msg.t === "party") {
       this.party = msg.members;
     } else if (msg.t === "story") {
@@ -316,6 +321,10 @@ export default class NetClient {
   }
   sendMute(to: string) {
     this.sendMsg({ t: "mute", to });
+  }
+  /** Send an emote (anchored to you) or a world ping (carries the aim point). */
+  sendEmote(kind: number, ping: boolean, x: number, y: number) {
+    this.sendMsg({ t: "emote", kind, ping, x, y });
   }
   private sendMsg(m: ClientMsg) {
     try {

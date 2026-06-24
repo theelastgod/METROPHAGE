@@ -122,6 +122,7 @@ interface PlayerState {
   party: number; // party id, or -1
   muted: Set<string>; // player ids this player has muted (their chat is dropped)
   lastChatTick: number;
+  lastEmoteTick: number;
   // questline (The Blank — per-player, server-authoritative)
   questStep: number;
   questProgress: number;
@@ -399,7 +400,26 @@ export class WorldDO {
     if (msg.t === "chat") return this.onChat(ws, msg);
     if (msg.t === "party") return this.onParty(ws, msg);
     if (msg.t === "mute") return this.onMute(ws, msg);
+    if (msg.t === "emote") return this.onEmote(ws, msg);
     if (msg.t === "trade") return this.onTrade(ws, msg);
+  }
+
+  /** Emote (anchored to the sender) / world ping — relayed to everyone within AOI. */
+  private onEmote(ws: WebSocket, msg: Extract<ClientMsg, { t: "emote" }>) {
+    const p = this.playerFor(ws);
+    if (!p) return;
+    if ((this.tick - p.lastEmoteTick) * NET_TICK_MS < 700) return; // rate-limit ~1.4/s
+    p.lastEmoteTick = this.tick;
+    const ping = !!msg.ping;
+    const x = ping ? msg.x : p.x; // a ping carries a world point; an emote anchors to the sender
+    const y = ping ? msg.y : p.y;
+    const out = { t: "emote", from: p.id, kind: msg.kind | 0, ping, x: round2(x), y: round2(y) };
+    const r2 = AOI_RADIUS * AOI_RADIUS;
+    for (const other of this.players.values()) {
+      const dx = other.x - x;
+      const dy = other.y - y;
+      if (dx * dx + dy * dy <= r2) this.sendTo(other.id, out); // includes the sender (sees own ping)
+    }
   }
 
   // ── social: chat / parties / mute ───────────────────────────────────
@@ -760,6 +780,7 @@ export class WorldDO {
       party: -1,
       muted: new Set<string>(),
       lastChatTick: -999,
+      lastEmoteTick: -999,
       questStep,
       questProgress: 0,
     };
