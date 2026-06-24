@@ -63,6 +63,17 @@ function parseInventory(raw: string | null | undefined): Item[] {
     return [];
   }
 }
+
+/** Defensive JSON → PlayerLook parse for the persisted look column. */
+function parseLook(raw: string | null | undefined): PlayerLook | undefined {
+  if (!raw) return undefined;
+  try {
+    const v = JSON.parse(raw);
+    return v && typeof v === "object" ? (v as PlayerLook) : undefined;
+  } catch {
+    return undefined;
+  }
+}
 import { TILE } from "../../src/config";
 import { QUESTLINE, QUEST_DONE_TEXT, type QuestObjective } from "../../src/net/quest";
 
@@ -719,7 +730,12 @@ export class WorldDO {
     const fac = Number.isInteger(faction) && faction! >= 0 && faction! < FACTION_COUNT ? faction! : 0;
     const p = this.players.get(id) ?? (await this.loadPlayer(id, name, fac));
     p.faction = fac;
-    if (look) p.look = look; // appearance, relayed to others (client re-sanitizes before baking)
+    // Appearance: a client-supplied look wins + is persisted; otherwise keep the one
+    // loaded from D1 (so traits survive relogin even if the client has no local save).
+    if (look) {
+      p.look = look;
+      p.dirty = true;
+    }
     this.players.set(id, p);
     this.sessions.set(ws, id);
     // Persist identity + look on the socket so a hibernation wake can re-attach it (above).
@@ -750,8 +766,9 @@ export class WorldDO {
     let cores = 0;
     let questStep = 0;
     let inventory: Item[] = [];
+    let look: PlayerLook | undefined;
     const row = await this.env.DB.prepare(
-      "SELECT x, y, credits, xp, zone, cores, quest_step, inventory FROM players WHERE id = ?",
+      "SELECT x, y, credits, xp, zone, cores, quest_step, inventory, look FROM players WHERE id = ?",
     )
       .bind(id)
       .first<{
@@ -763,6 +780,7 @@ export class WorldDO {
         cores: number;
         quest_step: number;
         inventory: string;
+        look: string | null;
       }>();
     if (row) {
       credits = row.credits ?? 0;
@@ -770,6 +788,7 @@ export class WorldDO {
       cores = row.cores ?? 0;
       questStep = row.quest_step ?? 0;
       inventory = parseInventory(row.inventory);
+      look = parseLook(row.look);
       // Same zone → resume exact position. Different zone → they just travelled in,
       // so spawn at this district's entrance (x,y already hold the spawn).
       if (row.zone === this.zoneName) {
@@ -777,7 +796,7 @@ export class WorldDO {
         y = row.y;
       }
     } else {
-      await this.upsert(id, name, x, y, 0, 0, 0, 0, []);
+      await this.upsert(id, name, x, y, 0, 0, 0, 0, [], undefined);
     }
     return {
       id,
@@ -807,6 +826,7 @@ export class WorldDO {
       lastEmoteTick: -999,
       questStep,
       questProgress: 0,
+      look,
     };
   }
 
@@ -816,7 +836,7 @@ export class WorldDO {
     this.sessions.set(ws, att.id);
     if (!this.players.has(att.id)) {
       const p = await this.loadPlayer(att.id, att.name, att.faction);
-      p.look = att.look; // restore appearance from the socket attachment
+      if (att.look) p.look = att.look; // restore appearance from the socket attachment
       this.players.set(att.id, p);
     }
   }
@@ -1342,7 +1362,7 @@ export class WorldDO {
     for (const p of this.players.values()) {
       if (!p.dirty) continue;
       p.dirty = false;
-      await this.upsert(p.id, p.name, p.x, p.y, p.credits, p.xp, p.cores, p.questStep, p.inventory);
+      await this.upsert(p.id, p.name, p.x, p.y, p.credits, p.xp, p.cores, p.questStep, p.inventory, p.look);
     }
     await this.syncMeta();
   }
@@ -1382,13 +1402,14 @@ export class WorldDO {
     cores: number,
     questStep: number,
     inventory: Item[],
+    look: PlayerLook | undefined,
   ) {
     try {
       await this.env.DB.prepare(
-        "INSERT INTO players (id, name, x, y, zone, credits, xp, cores, quest_step, inventory, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) " +
-          "ON CONFLICT(id) DO UPDATE SET x=excluded.x, y=excluded.y, credits=excluded.credits, xp=excluded.xp, cores=excluded.cores, quest_step=excluded.quest_step, inventory=excluded.inventory, updated_at=excluded.updated_at",
+        "INSERT INTO players (id, name, x, y, zone, credits, xp, cores, quest_step, inventory, look, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) " +
+          "ON CONFLICT(id) DO UPDATE SET x=excluded.x, y=excluded.y, credits=excluded.credits, xp=excluded.xp, cores=excluded.cores, quest_step=excluded.quest_step, inventory=excluded.inventory, look=excluded.look, updated_at=excluded.updated_at",
       )
-        .bind(id, name, round2(x), round2(y), this.zoneName, Math.round(credits), Math.round(xp), Math.round(cores), Math.round(questStep), JSON.stringify(inventory.slice(0, INVENTORY_CAP)), Date.now())
+        .bind(id, name, round2(x), round2(y), this.zoneName, Math.round(credits), Math.round(xp), Math.round(cores), Math.round(questStep), JSON.stringify(inventory.slice(0, INVENTORY_CAP)), look ? JSON.stringify(look) : null, Date.now())
         .run();
     } catch {
       /* D1 hiccup — next snapshot retries */
@@ -1405,7 +1426,7 @@ export class WorldDO {
       if (tr) this.endTrade(tr, "cancelled", "trade partner left");
       this.leaveParty(p);
       this.pendingInvites.delete(p.id);
-      await this.upsert(p.id, p.name, p.x, p.y, p.credits, p.xp, p.cores, p.questStep, p.inventory);
+      await this.upsert(p.id, p.name, p.x, p.y, p.credits, p.xp, p.cores, p.questStep, p.inventory, p.look);
       await this.syncMeta();
       this.players.delete(id);
     }

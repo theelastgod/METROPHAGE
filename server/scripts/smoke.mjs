@@ -341,6 +341,61 @@ async function inventory() {
   );
 }
 
+async function lookpersist() {
+  const name = "look_" + Math.random().toString(36).slice(2, 8); // fresh player
+  const L = {
+    color: 0x39ff88, build: "bulky", head: "crown", visor: "scan", shoulders: "spikes",
+    decal: "skull", cloak: "cape", skin: -1, sex: "m", hair: "buzz", hairColor: 0x101010,
+    beard: "none", antennae: true, emblem: true, strap: false,
+  };
+  const loginWith = (ws, nm, look) =>
+    new Promise((resolve, reject) => {
+      const to = setTimeout(() => reject(new Error("login timeout")), 5000);
+      const onMsg = (ev) => {
+        const m = JSON.parse(ev.data);
+        if (m.t === "welcome") {
+          clearTimeout(to);
+          ws.removeEventListener("message", onMsg);
+          resolve(m);
+        }
+      };
+      ws.addEventListener("message", onMsg);
+      ws.send(JSON.stringify({ t: "login", name: nm, faction: 0, ...(look ? { look } : {}) }));
+    });
+
+  // Phase 1: A logs in WITH a look, then disconnects (server persists on close).
+  const a1 = await connect();
+  const wa = await loginWith(a1, name, L);
+  await sleep(400);
+  a1.close();
+  await sleep(800); // persist + evict from memory
+
+  // Phase 2: A reconnects WITHOUT a look; a nearby viewer must still see A's persisted look.
+  const a2 = await connect();
+  await loginWith(a2, name, null); // no look field → the server must reload it from D1
+  const b = await connect();
+  const wb = await login(b, "viewer2", 0);
+  const sb = { players: [] };
+  trackState(b, wb.id, sb);
+  await sleep(800);
+
+  const seen = (sb.players || []).find((p) => p.id === wa.id);
+  const checks = {
+    persistedLook: !!seen && !!seen.look, // the reloaded player still has an appearance
+    matchesAfterRelogin:
+      !!seen?.look && seen.look.head === "crown" && seen.look.cloak === "cape" && seen.look.color === 0x39ff88,
+  };
+  a2.close();
+  b.close();
+  await sleep(300);
+  report(
+    "LOOK PERSIST — appearance survives relogin without the client resending it",
+    { sawLook: seen?.look ? `${seen.look.head}/${seen.look.cloak}/${seen.look.color.toString(16)}` : null },
+    Object.values(checks).every(Boolean),
+    checks,
+  );
+}
+
 async function mp() {
   const AOI = 720;
   const a = await connect();
@@ -1054,6 +1109,7 @@ try {
   if (mode === "check") await check();
   else if (mode === "combat") await combat();
   else if (mode === "inventory") await inventory();
+  else if (mode === "lookpersist") await lookpersist();
   else if (mode === "mp") await mp();
   else if (mode === "zones") await zones();
   else if (mode === "territory") await territory();
