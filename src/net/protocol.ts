@@ -148,6 +148,8 @@ export type ServerMsg =
       factions: number[]; // global faction contribution scores (server-wide)
       control: number; // faction controlling THIS district (NEUTRAL if none)
       roster: RosterEntry[]; // presence — everyone in this zone
+      // zone-wide world-boss status (not AOI-culled) so any player can locate it:
+      boss?: { name: string; x: number; y: number; hp: number; hpMax: number; alive: boolean; respawnSec: number };
     }
   | { t: "chat"; from: string; faction: number; ch: string; text: string }
   | { t: "party"; members: string[] }

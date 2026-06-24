@@ -1350,6 +1350,25 @@ export class WorldDO {
       if (near(n.x, n.y))
         nodes.push({ id: n.id, x: round2(n.x), y: round2(n.y), owner: n.owner, progress: round2(n.progress), by: n.by });
     }
+    // Zone-wide boss status (NOT AOI-culled) so every player can locate it + see its
+    // respawn countdown — the "find" half of find-and-fight.
+    let boss:
+      | { name: string; x: number; y: number; hp: number; hpMax: number; alive: boolean; respawnSec: number }
+      | undefined;
+    for (const e of this.enemies.values()) {
+      if (!e.boss) continue;
+      const alive = e.hp > 0;
+      boss = {
+        name: e.name ?? "BOSS",
+        x: round2(alive ? e.x : e.ox), // where it is now; its lair while reforming
+        y: round2(alive ? e.y : e.oy),
+        hp: Math.max(0, Math.round(e.hp)),
+        hpMax: Math.round(e.maxHp),
+        alive,
+        respawnSec: alive ? 0 : Math.max(0, Math.ceil(((e.respawnTick - this.tick) * NET_TICK_MS) / 1000)),
+      };
+      break;
+    }
     return JSON.stringify({
       t: "state",
       tick: this.tick,
@@ -1364,6 +1383,7 @@ export class WorldDO {
       factions,
       control,
       roster,
+      boss,
     });
   }
 

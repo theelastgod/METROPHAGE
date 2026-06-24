@@ -3,7 +3,7 @@ import { installUiCamera } from "../render/cameras";
 import { shadeWalls } from "../render/wallShade";
 import Atmosphere from "../render/Atmosphere";
 import OnlineInventory from "../ui/OnlineInventory";
-import { COLORS, TILE } from "../config";
+import { COLORS, TILE, VIEW_W, VIEW_H } from "../config";
 import { TILESET_KEY, PLAYER_KEY, COP_KEY, BULLET_KEY, GLOW_KEY, NODE_KEY } from "../assets/manifest";
 import { driveChar } from "../assets/anim";
 import {
@@ -74,6 +74,8 @@ export default class OnlineScene extends Phaser.Scene {
   private remoteLabels = new Map<string, Phaser.GameObjects.Text>();
   private enemySprites = new Map<number, Phaser.GameObjects.Sprite>();
   private bossOverlays = new Map<number, { name: Phaser.GameObjects.Text; bar: Phaser.GameObjects.Graphics }>();
+  private bossBanner!: Phaser.GameObjects.Text; // zone boss status (alive / reform countdown)
+  private bossArrow!: Phaser.GameObjects.Text; // screen-edge pointer toward an off-screen boss
   private shotSprites = new Map<number, Phaser.GameObjects.Image>();
   private pickupSprites = new Map<number, Phaser.GameObjects.Image>();
   private nodeSprites = new Map<number, Phaser.GameObjects.Sprite>();
@@ -179,6 +181,27 @@ export default class OnlineScene extends Phaser.Scene {
     };
     this.inv = new OnlineInventory(this);
     this.net.onInventory = () => this.inv.setItems(this.net.inventory);
+    // World-boss locator: a status banner + a screen-edge arrow toward an off-screen boss.
+    this.bossBanner = this.add
+      .text(VIEW_W / 2, 46, "", {
+        fontFamily: "Courier New, monospace",
+        fontSize: "13px",
+        color: "#39ff88",
+        fontStyle: "bold",
+        align: "center",
+      })
+      .setOrigin(0.5, 0)
+      .setScrollFactor(0)
+      .setDepth(1002)
+      .setVisible(false);
+    this.bossBanner.setShadow(0, 0, "#02030a", 4, true, true);
+    this.bossArrow = this.add
+      .text(0, 0, "➤", { fontFamily: "Arial, sans-serif", fontSize: "30px", color: "#39ff88", fontStyle: "bold" })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(1002)
+      .setVisible(false);
+    this.bossArrow.setShadow(0, 0, "#02030a", 6, true, true);
     void this.signInThenConnect();
 
     this.keys = this.input.keyboard!.addKeys("W,A,S,D,UP,DOWN,LEFT,RIGHT") as Record<
@@ -464,6 +487,7 @@ export default class OnlineScene extends Phaser.Scene {
     this.processEmotes();
     // Drift fog + flicker the holo-signage; the shared singularity swells the haze.
     this.atmosphere?.update(this.time.now, dt, Phaser.Math.Clamp(this.net.singularity / SING_MAX, 0, 1));
+    this.updateBossLocator();
 
     if (this.net.connected) {
       this.me.setPosition(this.net.pred.x, this.net.pred.y);
@@ -750,6 +774,36 @@ export default class OnlineScene extends Phaser.Scene {
     o.bar.clear();
     o.bar.fillStyle(0x140a1e, 0.9).fillRect(e.x - w / 2, e.y - 46, w, 6);
     o.bar.fillStyle(e.tint ?? COLORS.enemy, 1).fillRect(e.x - w / 2 + 1, e.y - 45, (w - 2) * hpn, 4);
+  }
+
+  /** Boss locator: a status banner + a screen-edge arrow pointing toward the zone boss,
+   *  so players can find it from across the map (or watch its respawn countdown). */
+  private updateBossLocator() {
+    const b = this.net.boss;
+    if (!b) {
+      this.bossBanner.setVisible(false);
+      this.bossArrow.setVisible(false);
+      return;
+    }
+    this.bossBanner.setVisible(true);
+    if (!b.alive) {
+      this.bossBanner.setText(`◆ ${b.name} — reforms in ${b.respawnSec}s`).setColor("#9aa3b2");
+      this.bossArrow.setVisible(false);
+      return;
+    }
+    const dx = b.x - this.me.x;
+    const dy = b.y - this.me.y;
+    this.bossBanner.setText(`◆ ${b.name} — ALIVE · ${Math.round(Math.hypot(dx, dy) / 8)}m`).setColor("#39ff88");
+    const zoom = this.cameras.main.zoom || 1;
+    if (Math.abs(dx) < VIEW_W / 2 / zoom - 48 && Math.abs(dy) < VIEW_H / 2 / zoom - 48) {
+      this.bossArrow.setVisible(false); // on-screen — the boss + its overlay are already visible
+      return;
+    }
+    const ang = Math.atan2(dy, dx);
+    const cx = VIEW_W / 2;
+    const cy = VIEW_H / 2;
+    const t = Math.min((cx - 70) / (Math.abs(Math.cos(ang)) || 1e-6), (cy - 96) / (Math.abs(Math.sin(ang)) || 1e-6));
+    this.bossArrow.setVisible(true).setPosition(cx + Math.cos(ang) * t, cy + Math.sin(ang) * t).setRotation(ang);
   }
 
   private maybeEnemyBark(x: number, y: number, kind: number) {

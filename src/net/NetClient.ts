@@ -89,6 +89,8 @@ export default class NetClient {
   factions: number[] = [0, 0, 0, 0];
   control = -1;
   roster: Array<{ id: string; faction: number; level: number }> = [];
+  /** Zone world-boss status (location + respawn countdown), for the locator UI. */
+  boss: { name: string; x: number; y: number; hp: number; hpMax: number; alive: boolean; respawnSec: number } | null = null;
   party: string[] = [];
   chatLog: Array<{ from: string; ch: string; text: string; faction: number; sys: boolean }> = [];
   /** Recent emotes/pings relayed by the server (rendered + aged out by the scene). */
@@ -285,6 +287,7 @@ export default class NetClient {
       this.factions = msg.factions;
       this.control = msg.control;
       this.roster = msg.roster;
+      this.boss = msg.boss ?? null;
     } else if (msg.t === "chat") {
       this.pushChat({ from: msg.from, ch: msg.ch, text: msg.text, faction: msg.faction, sys: false });
     } else if (msg.t === "sys") {
