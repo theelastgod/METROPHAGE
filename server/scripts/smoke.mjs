@@ -261,6 +261,86 @@ async function combat() {
   );
 }
 
+async function inventory() {
+  const name = "inv_" + Math.random().toString(36).slice(2, 8); // fresh player, no prior loot
+  // Phase 1: log in, kill cops until the server rolls gear into our inventory.
+  const ws = await connect();
+  const store = { x: 0, y: 0, enemies: [], shots: [], inventory: [] };
+  ws.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "inv") store.inventory = m.items;
+  });
+  const w = await login(ws, name);
+  store.x = w.x;
+  store.y = w.y;
+  trackState(ws, w.id, store);
+  await sleep(250);
+
+  const nearest = () => {
+    let best = null;
+    let bd = Infinity;
+    for (const e of store.enemies) {
+      const d = Math.hypot(e.x - store.x, e.y - store.y);
+      if (d < bd) {
+        bd = d;
+        best = e;
+      }
+    }
+    return best;
+  };
+
+  let seq = 0;
+  const t0 = Date.now();
+  while (Date.now() - t0 < 12000 && store.inventory.length < 2) {
+    const e = nearest();
+    if (e) {
+      const dx = e.x - store.x;
+      const dy = e.y - store.y;
+      const d = Math.hypot(dx, dy) || 1;
+      seq++;
+      ws.send(JSON.stringify({ t: "input", seq, mx: d > 110 ? dx / d : 0, my: d > 110 ? dy / d : 0 }));
+      ws.send(JSON.stringify({ t: "fire", seq, aim: Math.atan2(dy, dx) }));
+    }
+    await sleep(50);
+  }
+  const held = store.inventory.slice();
+  ws.close();
+  await sleep(800); // let the server persist on close + evict from memory
+
+  // Phase 2: reconnect as the SAME player — the inventory must reload from D1.
+  const ws2 = await connect();
+  const store2 = { inventory: [] };
+  ws2.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "inv") store2.inventory = m.items;
+  });
+  await login(ws2, name);
+  await sleep(400); // catch the hydration inv message
+  const reloaded = store2.inventory.slice();
+  ws2.close();
+
+  const sameIds =
+    held.length > 0 &&
+    held.length === reloaded.length &&
+    held.every((it, i) => reloaded[i] && reloaded[i].id === it.id);
+  const validShape = held.every((it) => it && it.id && it.name && it.slot && it.rarity);
+  const checks = {
+    lootedToInventory: held.length > 0, // server rolled gear into the inventory
+    validItemShape: validShape, // items carry the shared Item fields
+    persistedAcrossRelogin: sameIds, // D1 round-trip on logoff/login
+  };
+  report(
+    "INVENTORY — server-rolled loot enters the inventory + persists across relogin",
+    {
+      held: held.length,
+      reloaded: reloaded.length,
+      sample: held[0] ? `${held[0].rarity} ${held[0].name} [${held[0].slot}]` : null,
+    },
+    Object.values(checks).every(Boolean),
+    checks,
+  );
+}
+
 async function mp() {
   const AOI = 720;
   const a = await connect();
@@ -973,6 +1053,7 @@ async function look() {
 try {
   if (mode === "check") await check();
   else if (mode === "combat") await combat();
+  else if (mode === "inventory") await inventory();
   else if (mode === "mp") await mp();
   else if (mode === "zones") await zones();
   else if (mode === "territory") await territory();

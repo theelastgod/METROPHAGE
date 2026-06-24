@@ -5,7 +5,52 @@
 // the *numbers*. Each has a distinct projectile tint (or a swung blade, for swords), an
 // icon (by `klass`, tinted) and a $METRO store price + tier.
 
-import type { PrimaryDef } from "./classes";
+/**
+ * Primary-weapon fire configs, interpreted generically by GameScene.fireWeapon. Lives
+ * here (with the weapons) rather than in classes.ts so the weapon/item model stays free
+ * of the class → ability → render chain, and can be shared with the server.
+ */
+export type PrimaryDef =
+  | {
+      kind: "spread"; // short-range cone of pellets
+      fireRateMs: number;
+      damage: number;
+      speed: number;
+      lifetimeMs: number;
+      pellets: number;
+      spreadDeg: number;
+    }
+  | {
+      kind: "burst"; // N-round burst per trigger
+      fireRateMs: number;
+      damage: number;
+      speed: number;
+      lifetimeMs: number;
+      burstCount: number;
+      burstGapMs: number;
+    }
+  | {
+      kind: "rapid"; // very fast, weak, slightly inaccurate
+      fireRateMs: number;
+      damage: number;
+      speed: number;
+      lifetimeMs: number;
+      jitterDeg: number;
+    }
+  | {
+      kind: "beam"; // piercing hitscan line
+      fireRateMs: number;
+      damage: number;
+      range: number;
+      halfWidth: number;
+    }
+  | {
+      kind: "melee"; // a swung energy blade — hits a cone in front, no projectile
+      fireRateMs: number;
+      damage: number;
+      range: number;
+      arcDeg: number; // half-arc of the swing each side of aim
+    };
 
 export type WeaponTier = "common" | "rare" | "exotic";
 

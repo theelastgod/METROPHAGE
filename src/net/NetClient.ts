@@ -1,6 +1,6 @@
 import { stepMove, NET_TICK_MS, PLAYER_HP, type MoveState } from "./sim";
 import type { TileGrid } from "../world/district";
-import type { ClientMsg, ServerMsg, InputCmd, PlayerLook } from "./protocol";
+import type { ClientMsg, ServerMsg, InputCmd, PlayerLook, Item } from "./protocol";
 
 export interface RemotePlayer {
   id: string;
@@ -66,6 +66,7 @@ export default class NetClient {
   dead = false;
   credits = 0;
   cores = 0;
+  inventory: Item[] = []; // server-authoritative held gear (sent on login + on change)
   trade: null | {
     with: string;
     youOffer: { credits: number; cores: number };
@@ -96,6 +97,7 @@ export default class NetClient {
   lastAck = 0;
   playersOnline = 0;
   onWelcome?: (x: number, y: number) => void;
+  onInventory?: () => void; // fired when the server pushes an inventory update
 
   private ws?: WebSocket;
   private intent = { mx: 0, my: 0 };
@@ -275,6 +277,9 @@ export default class NetClient {
     } else if (msg.t === "story") {
       this.story = { act: msg.act, title: msg.title, text: msg.text, done: msg.done, at: performance.now() };
       this.pushChat({ from: "", ch: "sys", text: `${msg.act} — ${msg.title}`, faction: -1, sys: true });
+    } else if (msg.t === "inv") {
+      this.inventory = msg.items;
+      this.onInventory?.();
     } else if (msg.t === "trade") {
       if (msg.state === "done" || msg.state === "cancelled") {
         this.trade = null;

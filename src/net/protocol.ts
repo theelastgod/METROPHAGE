@@ -2,8 +2,10 @@
 // Movement/sim constants live in ./sim (the single source both sides simulate with).
 
 import { NET_TICK_MS } from "./sim";
+import type { Item } from "../game/items";
 
 export { NET_TICK_MS };
+export type { Item };
 
 /** One buffered local input the client keeps until the server acks its seq. */
 export interface InputCmd {
@@ -136,6 +138,7 @@ export type ServerMsg =
   | { t: "sys"; text: string }
   | { t: "emote"; from: string; kind: number; ping: boolean; x: number; y: number } // relayed emote/ping
   | { t: "story"; act: string; title: string; text: string; step: number; done: boolean }
+  | { t: "inv"; items: Item[] } // the owning client's full inventory (login + on change)
   | {
       t: "trade";
       state: "open" | "update" | "done" | "cancelled";

@@ -48,6 +48,21 @@ import {
 } from "../../src/net/sim";
 import { buildGrid, spawnPoint, isWall, type TileGrid } from "../../src/world/district";
 import { DISTRICTS } from "../../src/game/districts";
+import { rollItem, type Item } from "../../src/game/items";
+
+/** Inventory is capped so the persisted JSON stays bounded; oldest drops out (FIFO). */
+const INVENTORY_CAP = 24;
+
+/** Defensive JSON → Item[] parse for the persisted inventory column. */
+function parseInventory(raw: string | null | undefined): Item[] {
+  if (!raw) return [];
+  try {
+    const v = JSON.parse(raw);
+    return Array.isArray(v) ? (v as Item[]).slice(0, INVENTORY_CAP) : [];
+  } catch {
+    return [];
+  }
+}
 import { TILE } from "../../src/config";
 import { QUESTLINE, QUEST_DONE_TEXT, type QuestObjective } from "../../src/net/quest";
 
@@ -114,6 +129,7 @@ interface PlayerState {
   pvpSafeUntil: number; // tick until which the player is immune to PvP (spawn protection)
   credits: number;
   cores: number;
+  inventory: Item[]; // server-authoritative loot, persisted as JSON (capped FIFO)
   aim: number;
   lastFireTick: number;
   // progression
@@ -718,6 +734,7 @@ export class WorldDO {
       world: { w: WORLD_W, h: WORLD_H },
     });
     this.sendStory(ws, p.questStep); // brief the Blank on their current beat
+    this.send(ws, { t: "inv", items: p.inventory }); // hydrate their held gear
     this.ensureTick();
     await this.ensureSupervisor();
   }
@@ -732,8 +749,9 @@ export class WorldDO {
     let xp = 0;
     let cores = 0;
     let questStep = 0;
+    let inventory: Item[] = [];
     const row = await this.env.DB.prepare(
-      "SELECT x, y, credits, xp, zone, cores, quest_step FROM players WHERE id = ?",
+      "SELECT x, y, credits, xp, zone, cores, quest_step, inventory FROM players WHERE id = ?",
     )
       .bind(id)
       .first<{
@@ -744,12 +762,14 @@ export class WorldDO {
         zone: string;
         cores: number;
         quest_step: number;
+        inventory: string;
       }>();
     if (row) {
       credits = row.credits ?? 0;
       xp = row.xp ?? 0;
       cores = row.cores ?? 0;
       questStep = row.quest_step ?? 0;
+      inventory = parseInventory(row.inventory);
       // Same zone → resume exact position. Different zone → they just travelled in,
       // so spawn at this district's entrance (x,y already hold the spawn).
       if (row.zone === this.zoneName) {
@@ -757,7 +777,7 @@ export class WorldDO {
         y = row.y;
       }
     } else {
-      await this.upsert(id, name, x, y, 0, 0, 0, 0);
+      await this.upsert(id, name, x, y, 0, 0, 0, 0, []);
     }
     return {
       id,
@@ -775,6 +795,7 @@ export class WorldDO {
       pvpSafeUntil: 0,
       credits,
       cores,
+      inventory,
       aim: 0,
       lastFireTick: -999,
       xp,
@@ -1016,6 +1037,13 @@ export class WorldDO {
                 killer.dirty = true;
                 this.bumpMeta("f" + killer.faction, 1); // faction contribution from combat
                 this.questEvent(killer, "kill");
+                // item loot — the server rolls gear straight into the killer's
+                // inventory (FIFO-capped), then pushes the change to that client only.
+                if (Math.random() < LOOT_DROP_CHANCE) {
+                  killer.inventory.push(rollItem(killer.level));
+                  if (killer.inventory.length > INVENTORY_CAP) killer.inventory.shift();
+                  this.sendTo(killer.id, { t: "inv", items: killer.inventory });
+                }
               }
               // shared meta: every kill (any player, ANY zone) pushes the server-wide
               // Singularity. Optimistic local bump now; flushed/synced to D1 on persist.
@@ -1314,7 +1342,7 @@ export class WorldDO {
     for (const p of this.players.values()) {
       if (!p.dirty) continue;
       p.dirty = false;
-      await this.upsert(p.id, p.name, p.x, p.y, p.credits, p.xp, p.cores, p.questStep);
+      await this.upsert(p.id, p.name, p.x, p.y, p.credits, p.xp, p.cores, p.questStep, p.inventory);
     }
     await this.syncMeta();
   }
@@ -1353,13 +1381,14 @@ export class WorldDO {
     xp: number,
     cores: number,
     questStep: number,
+    inventory: Item[],
   ) {
     try {
       await this.env.DB.prepare(
-        "INSERT INTO players (id, name, x, y, zone, credits, xp, cores, quest_step, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?) " +
-          "ON CONFLICT(id) DO UPDATE SET x=excluded.x, y=excluded.y, credits=excluded.credits, xp=excluded.xp, cores=excluded.cores, quest_step=excluded.quest_step, updated_at=excluded.updated_at",
+        "INSERT INTO players (id, name, x, y, zone, credits, xp, cores, quest_step, inventory, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) " +
+          "ON CONFLICT(id) DO UPDATE SET x=excluded.x, y=excluded.y, credits=excluded.credits, xp=excluded.xp, cores=excluded.cores, quest_step=excluded.quest_step, inventory=excluded.inventory, updated_at=excluded.updated_at",
       )
-        .bind(id, name, round2(x), round2(y), this.zoneName, Math.round(credits), Math.round(xp), Math.round(cores), Math.round(questStep), Date.now())
+        .bind(id, name, round2(x), round2(y), this.zoneName, Math.round(credits), Math.round(xp), Math.round(cores), Math.round(questStep), JSON.stringify(inventory.slice(0, INVENTORY_CAP)), Date.now())
         .run();
     } catch {
       /* D1 hiccup — next snapshot retries */
@@ -1376,7 +1405,7 @@ export class WorldDO {
       if (tr) this.endTrade(tr, "cancelled", "trade partner left");
       this.leaveParty(p);
       this.pendingInvites.delete(p.id);
-      await this.upsert(p.id, p.name, p.x, p.y, p.credits, p.xp, p.cores, p.questStep);
+      await this.upsert(p.id, p.name, p.x, p.y, p.credits, p.xp, p.cores, p.questStep, p.inventory);
       await this.syncMeta();
       this.players.delete(id);
     }

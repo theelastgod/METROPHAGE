@@ -5,49 +5,10 @@
 // generic AbilityHost. Classes stay config, not bespoke systems.
 
 import type { AbilityDef } from "./ability";
-
-/** Primary-weapon configs, interpreted generically by GameScene.fireWeapon. */
-export type PrimaryDef =
-  | {
-      kind: "spread"; // short-range cone of pellets
-      fireRateMs: number;
-      damage: number;
-      speed: number;
-      lifetimeMs: number;
-      pellets: number;
-      spreadDeg: number;
-    }
-  | {
-      kind: "burst"; // N-round burst per trigger
-      fireRateMs: number;
-      damage: number;
-      speed: number;
-      lifetimeMs: number;
-      burstCount: number;
-      burstGapMs: number;
-    }
-  | {
-      kind: "rapid"; // very fast, weak, slightly inaccurate
-      fireRateMs: number;
-      damage: number;
-      speed: number;
-      lifetimeMs: number;
-      jitterDeg: number;
-    }
-  | {
-      kind: "beam"; // piercing hitscan line (bonus vs shields lands in Step 3)
-      fireRateMs: number;
-      damage: number;
-      range: number;
-      halfWidth: number;
-    }
-  | {
-      kind: "melee"; // a swung energy blade — hits a cone in front, no projectile
-      fireRateMs: number;
-      damage: number;
-      range: number;
-      arcDeg: number; // half-arc of the swing each side of aim
-    };
+// PrimaryDef now lives with the weapons, keeping the class → ability → render chain out
+// of the shared weapon/item model; re-exported here so existing importers don't move.
+import type { PrimaryDef } from "./weapons";
+export type { PrimaryDef };
 
 export interface ClassDef {
   id: string;
