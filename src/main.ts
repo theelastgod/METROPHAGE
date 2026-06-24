@@ -3,6 +3,7 @@ import { VIEW_W, VIEW_H, COLORS } from "./config";
 import BootScene from "./scenes/BootScene";
 import SelectScene from "./scenes/SelectScene";
 import CustomizeScene from "./scenes/CustomizeScene";
+import Prologue from "./scenes/Prologue";
 import GameScene from "./scenes/GameScene";
 import DiveScene from "./scenes/DiveScene";
 import OnlineScene from "./scenes/OnlineScene";
@@ -31,7 +32,7 @@ const config: Phaser.Types.Core.GameConfig = {
       debug: false,
     },
   },
-  scene: [BootScene, SelectScene, CustomizeScene, GameScene, DiveScene, OnlineScene, CityScene],
+  scene: [BootScene, SelectScene, CustomizeScene, Prologue, GameScene, DiveScene, OnlineScene, CityScene],
 };
 
 const game = new Phaser.Game(config);

@@ -482,6 +482,6 @@ export default class CustomizeScene extends Phaser.Scene {
     this.registry.set("customization", this.cust);
     this.registry.set("resume", false);
     this.cameras.main.fadeOut(350, 2, 2, 8);
-    this.cameras.main.once("camerafadeoutcomplete", () => this.scene.start("Game"));
+    this.cameras.main.once("camerafadeoutcomplete", () => this.scene.start("Prologue"));
   }
 }
