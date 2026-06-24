@@ -862,6 +862,97 @@ async function guild() {
   );
 }
 
+async function market() {
+  // AUCTION HOUSE. (harness pre-seeds: mseller/mbuyer credits=2000, empty bags; auctions+mail cleared)
+  // SELLER buys a cache → item, lists it, then goes OFFLINE (to prove the mailbox payout path).
+  const S = await connect();
+  const ss = { inventory: [], credits: 0, listings: [], sys: [] };
+  S.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "inv") ss.inventory = m.items;
+    if (m.t === "market") ss.listings = m.listings;
+    if (m.t === "sys") ss.sys.push(m.text);
+  });
+  const wsS = await login(S, "mseller", 0);
+  trackState(S, wsS.id, ss);
+  await sleep(400);
+  S.send(JSON.stringify({ t: "buy", sku: "cache_tuned" })); // 180 → a deterministic Tuned item
+  await sleep(550);
+  const item = ss.inventory[ss.inventory.length - 1];
+  const haveItem = !!item;
+  const bagBeforeList = ss.inventory.length;
+  const cBeforeList = ss.credits;
+  S.send(JSON.stringify({ t: "market", action: "list", itemId: item.id, price: 500, currency: "credits" }));
+  await sleep(550);
+  const listingId = ss.listings.find((l) => l.item.id === item.id)?.id;
+  const cAfterList = ss.credits;
+  const listed = ss.inventory.length === bagBeforeList - 1 && cAfterList < cBeforeList && !!listingId; // escrowed + fee paid
+  S.close(); // seller goes offline
+  await sleep(750);
+
+  // BUYER browses, buys (atomic), receives the item + is debited; a 2nd buy is refused
+  const B = await connect();
+  const sb = { inventory: [], credits: 0, listings: [] };
+  B.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "inv") sb.inventory = m.items;
+    if (m.t === "market") sb.listings = m.listings;
+  });
+  const wbB = await login(B, "mbuyer", 0);
+  trackState(B, wbB.id, sb);
+  await sleep(400);
+  B.send(JSON.stringify({ t: "market", action: "browse" }));
+  await sleep(450);
+  const sawListing = sb.listings.some((l) => l.id === listingId);
+  const cBuy0 = sb.credits;
+  const bag0 = sb.inventory.length;
+  B.send(JSON.stringify({ t: "market", action: "buy", id: listingId }));
+  await sleep(650);
+  const bought = sb.inventory.some((it) => it.id === item.id) && sb.credits === cBuy0 - 500 && sb.inventory.length === bag0 + 1;
+  const cAfterBuy = sb.credits;
+  B.send(JSON.stringify({ t: "market", action: "buy", id: listingId })); // already sold
+  await sleep(450);
+  const doubleBuyRejected = sb.credits === cAfterBuy;
+  B.close();
+  await sleep(750);
+
+  // SELLER reconnects → the cross-zone mailbox pays them the ₵500 sale (offline payout)
+  const S2 = await connect();
+  const ss2 = { inventory: [], credits: 0, listings: [], sys: [] };
+  S2.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "inv") ss2.inventory = m.items;
+    if (m.t === "market") ss2.listings = m.listings;
+    if (m.t === "sys") ss2.sys.push(m.text);
+  });
+  const ws2 = await login(S2, "mseller", 0);
+  trackState(S2, ws2.id, ss2);
+  await sleep(800);
+  const sellerPaidViaMailbox = ss2.credits === cAfterList + 500;
+
+  // CANCEL — list another item then cancel it; the item returns to the bag
+  S2.send(JSON.stringify({ t: "buy", sku: "cache_standard" }));
+  await sleep(500);
+  const item2 = ss2.inventory[ss2.inventory.length - 1];
+  const bagBeforeCancel = ss2.inventory.length;
+  S2.send(JSON.stringify({ t: "market", action: "list", itemId: item2.id, price: 300 }));
+  await sleep(500);
+  const cancelId = ss2.listings.find((l) => l.item.id === item2.id)?.id;
+  S2.send(JSON.stringify({ t: "market", action: "cancel", id: cancelId }));
+  await sleep(550);
+  const cancelled = !!cancelId && ss2.inventory.some((it) => it.id === item2.id) && ss2.inventory.length === bagBeforeCancel;
+  S2.close();
+  await sleep(200);
+
+  const checks = { haveItem, listed, sawListing, bought, doubleBuyRejected, sellerPaidViaMailbox, cancelled };
+  report(
+    "MARKET — escrow list, atomic buy, no double-buy, offline payout via mailbox, cancel",
+    { listingId, soldFor: 500, sellerCredits: ss2.credits, buyerCredits: sb.credits },
+    Object.values(checks).every(Boolean),
+    checks,
+  );
+}
+
 async function shop() {
   const ws = await connect();
   const store = { x: 0, y: 0, enemies: [], inventory: [], credits: 0 };
@@ -1724,6 +1815,7 @@ try {
   else if (mode === "craft") await craft();
   else if (mode === "achv") await achv();
   else if (mode === "guild") await guild();
+  else if (mode === "market") await market();
   else if (mode === "shop") await shop();
   else if (mode === "bestiary") await bestiary();
   else if (mode === "safehouse") await safehouse();

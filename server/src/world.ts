@@ -62,6 +62,7 @@ import {
 import { addMods, ZERO_MODS, type ModBag } from "../../src/game/stats";
 import { achievementsForStat, type StatKey } from "../../src/game/achievements";
 import { GUILD_CREATE_COST, guildLevel, guildPerkPct, validateGuild } from "../../src/game/guilds";
+import { listingFee, MIN_PRICE, MAX_PRICE } from "../../src/game/market";
 import { verifyWalletLogin } from "./auth";
 
 /** Inventory is capped so the persisted JSON stays bounded; oldest drops out (FIFO). */
@@ -582,6 +583,7 @@ export class WorldDO {
     if (msg.t === "buy") return this.onBuy(ws, msg);
     if (msg.t === "chat") return this.onChat(ws, msg);
     if (msg.t === "guild") return this.onGuild(ws, msg);
+    if (msg.t === "market") return this.onMarket(ws, msg);
     if (msg.t === "party") return this.onParty(ws, msg);
     if (msg.t === "mute") return this.onMute(ws, msg);
     if (msg.t === "emote") return this.onEmote(ws, msg);
@@ -944,6 +946,158 @@ export class WorldDO {
     }
   }
 
+  // ── auction house — cross-zone player market (D1); item escrowed, buy is atomic ──
+  private parseItemJson(raw: string | null | undefined): Item | null {
+    if (!raw) return null;
+    try {
+      const v = JSON.parse(raw);
+      return v && typeof v === "object" && !Array.isArray(v) ? (v as Item) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Push the current open listings (newest first) to one viewer. */
+  private async sendMarket(ws: WebSocket) {
+    try {
+      const { results } = await this.env.DB.prepare(
+        "SELECT id, seller, seller_name, item, price, currency FROM auctions WHERE status='open' ORDER BY created_at DESC LIMIT 60",
+      ).all<{ id: number; seller: string; seller_name: string; item: string; price: number; currency: string }>();
+      const listings = [];
+      for (const r of results ?? []) {
+        const it = this.parseItemJson(r.item);
+        if (it) listings.push({ id: r.id, seller: r.seller, sellerName: r.seller_name, item: it, price: r.price, currency: r.currency });
+      }
+      this.send(ws, { t: "market", listings });
+    } catch {
+      this.send(ws, { t: "market", listings: [] });
+    }
+  }
+
+  private async onMarket(ws: WebSocket, msg: Extract<ClientMsg, { t: "market" }>) {
+    const p = this.playerFor(ws);
+    if (!p) return;
+    const DB = this.env.DB;
+    const sys = (text: string) => this.send(ws, { t: "sys", text });
+    try {
+      if (msg.action === "browse") {
+        await this.drainMail(p); // a good moment to collect any sale proceeds
+        await this.sendMarket(ws);
+        return;
+      }
+      if (msg.action === "list") {
+        const currency = msg.currency === "metro" ? "metro" : "credits";
+        if (currency === "metro") return sys("the $METRO market is gated (devnet / counsel)");
+        const price = Math.floor(msg.price ?? 0);
+        if (!(price >= MIN_PRICE && price <= MAX_PRICE)) return sys(`price must be ₵${MIN_PRICE}–${MAX_PRICE}`);
+        const idx = p.inventory.findIndex((it) => it.id === msg.itemId);
+        if (idx < 0) return sys("can only list items in your bag (unequip first)");
+        const fee = listingFee(price);
+        if (p.credits < fee) return sys(`listing fee is ₵${fee}`);
+        const item = p.inventory[idx];
+        // ESCROW: remove from the bag FIRST (dupe-proof), then write the listing row
+        p.inventory.splice(idx, 1);
+        p.credits -= fee;
+        p.dirty = true;
+        await DB.prepare("INSERT INTO auctions (seller, seller_name, item, price, currency, status, created_at) VALUES (?,?,?,?,?,'open',?)")
+          .bind(p.id, p.name, JSON.stringify(item), price, currency, Date.now())
+          .run();
+        sys(`listed ${item.name} for ₵${price} (fee ₵${fee})`);
+        this.send(ws, { t: "inv", items: p.inventory });
+        await this.sendMarket(ws);
+        return;
+      }
+      if (msg.action === "cancel") {
+        const id = msg.id ?? -1;
+        const row = await DB.prepare("SELECT item FROM auctions WHERE id=? AND seller=? AND status='open'").bind(id, p.id).first<{ item: string }>();
+        if (!row) return sys("no such open listing of yours");
+        const r = await DB.prepare("UPDATE auctions SET status='cancelled' WHERE id=? AND seller=? AND status='open'").bind(id, p.id).run();
+        if (r.meta.changes === 0) return sys("listing already gone");
+        const item = this.parseItemJson(row.item);
+        if (item) {
+          p.inventory.push(item);
+          if (p.inventory.length > INVENTORY_CAP) p.inventory.shift();
+          p.dirty = true;
+          this.send(ws, { t: "inv", items: p.inventory });
+        }
+        sys("listing cancelled — item returned to your bag");
+        await this.sendMarket(ws);
+        return;
+      }
+      if (msg.action === "buy") {
+        const id = msg.id ?? -1;
+        const row = await DB.prepare("SELECT seller, seller_name, item, price, currency FROM auctions WHERE id=? AND status='open'")
+          .bind(id)
+          .first<{ seller: string; seller_name: string; item: string; price: number; currency: string }>();
+        if (!row) return sys("that listing is gone");
+        if (row.seller === p.id) return sys("you can't buy your own listing");
+        if (row.currency !== "credits") return sys("the $METRO market is gated");
+        const price = row.price;
+        if (p.credits < price) return sys(`not enough credits (₵${price})`);
+        // ATOMIC claim — a single buyer wins the row; ONLY then do money + item move
+        const claim = await DB.prepare("UPDATE auctions SET status='sold', buyer=? WHERE id=? AND status='open'").bind(p.id, id).run();
+        if (claim.meta.changes === 0) return sys("someone else just bought it");
+        const item = this.parseItemJson(row.item);
+        p.credits -= price;
+        p.dirty = true;
+        if (item) {
+          p.inventory.push(item);
+          if (p.inventory.length > INVENTORY_CAP) p.inventory.shift();
+          this.send(ws, { t: "inv", items: p.inventory });
+        }
+        // pay the seller: in-memory if they're in THIS zone, else via the cross-zone mailbox
+        const seller = this.players.get(row.seller);
+        if (seller) {
+          seller.credits += price;
+          seller.dirty = true;
+          this.bumpStat(seller, "credits", price);
+          this.sendTo(seller.id, { t: "sys", text: `✦ sold ${item?.name ?? "item"} for ₵${price}` });
+        } else {
+          await DB.prepare("INSERT INTO mailbox (player, credits, reason, created_at) VALUES (?,?,?,?)").bind(row.seller, price, "auction sale", Date.now()).run();
+        }
+        sys(`bought ${item?.name ?? "item"} for ₵${price}`);
+        await this.sendMarket(ws);
+        return;
+      }
+    } catch {
+      sys("market action failed");
+    }
+  }
+
+  /** Drain a player's cross-zone mailbox into their live state (claim-once: rows deleted). */
+  private async drainMail(p: PlayerState): Promise<boolean> {
+    try {
+      const { results } = await this.env.DB.prepare("SELECT id, credits, cores, item FROM mailbox WHERE player=? LIMIT 50")
+        .bind(p.id)
+        .all<{ id: number; credits: number; cores: number; item: string | null }>();
+      if (!results || results.length === 0) return false;
+      let dc = 0;
+      let dk = 0;
+      const items: Item[] = [];
+      const ids: number[] = [];
+      for (const r of results) {
+        dc += r.credits || 0;
+        dk += r.cores || 0;
+        const it = this.parseItemJson(r.item);
+        if (it) items.push(it);
+        ids.push(r.id);
+      }
+      p.credits += dc;
+      p.cores += dk;
+      for (const it of items) {
+        p.inventory.push(it);
+        if (p.inventory.length > INVENTORY_CAP) p.inventory.shift();
+      }
+      p.dirty = true;
+      await this.env.DB.prepare(`DELETE FROM mailbox WHERE id IN (${ids.map(() => "?").join(",")})`).bind(...ids).run();
+      if (dc || dk) this.sendTo(p.id, { t: "sys", text: `✉ received ₵${dc}${dk ? ` ${dk}◈` : ""} from the market` });
+      if (items.length) this.sendTo(p.id, { t: "inv", items: p.inventory });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   // ── secure server-mediated trading ──────────────────────────────────
   // Properties: both must confirm; changing an offer resets BOTH confirms;
   // execution re-validates LIVE balances (dupe-proof) and swaps all-or-nothing.
@@ -1151,6 +1305,7 @@ export class WorldDO {
     this.noteDeepest(p); // arriving in this district may set a "deepest reached" milestone
     this.send(ws, { t: "achv", ids: [...p.achv] }); // hydrate the unlocked achievement set
     await this.sendGuild(ws, p); // hydrate cell membership/bank/roster (cross-zone, D1)
+    await this.drainMail(p); // collect any auction proceeds that arrived while away
     this.ensureTick();
     await this.ensureSupervisor();
   }
@@ -1556,6 +1711,7 @@ export class WorldDO {
   async alarm() {
     if (this.sessions.size > 0) {
       this.ensureTick();
+      for (const p of this.players.values()) await this.drainMail(p); // cross-zone payouts land here
       await this.persistDirty();
       await this.state.storage.setAlarm(Date.now() + SUPERVISOR_ALARM_MS);
     }

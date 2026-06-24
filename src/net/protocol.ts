@@ -68,6 +68,8 @@ export type ClientMsg =
   | { t: "unequip"; slot: string }
   // gear forge — server validates legality + deducts credits/cores (itemId2 = fuse partner)
   | { t: "craft"; action: "upgrade" | "reforge" | "salvage" | "fuse"; itemId: string; itemId2?: string }
+  // auction house — server escrows the item + settles atomically (cross-zone, D1)
+  | { t: "market"; action: "list" | "cancel" | "buy" | "browse"; id?: number; itemId?: string; price?: number; currency?: "credits" | "metro" }
   | { t: "buy"; sku: string } // vendor purchase (heal / gear cache), priced + validated server-side
   | { t: "emote"; kind: number; ping: boolean; x: number; y: number } // emote (above avatar) or world ping
   | {
@@ -175,6 +177,11 @@ export type ServerMsg =
   | { t: "equipped"; items: Item[]; maxHp: number } // owning client's equipped gear + derived max HP
   | { t: "achv"; ids: string[] } // full unlocked achievement set (sent on login)
   | { t: "ach"; id: string; name: string; reward: number } // a freshly-unlocked achievement
+  // auction house — open listings (browse result), refreshed on any market change
+  | {
+      t: "market";
+      listings: Array<{ id: number; seller: string; sellerName: string; item: Item; price: number; currency: string }>;
+    }
   // guild ("Cell") state — full summary + roster, or "none" when not in a cell
   | {
       t: "guild";

@@ -112,6 +112,8 @@ export default class NetClient {
     members: Array<{ id: string; rank: string }>;
   } = null;
   onGuildUpdate?: () => void;
+  marketListings: Array<{ id: number; seller: string; sellerName: string; item: Item; price: number; currency: string }> = [];
+  onMarket?: () => void;
   story: { act: string; title: string; text: string; done: boolean; at: number } | null = null;
   lastError = 0;
   reconciles = 0;
@@ -336,6 +338,9 @@ export default class NetClient {
       this.equipped = msg.items;
       this.maxHp = msg.maxHp;
       this.onInventory?.(); // refresh the bag (equipped marks) + HUD
+    } else if (msg.t === "market") {
+      this.marketListings = msg.listings;
+      this.onMarket?.();
     } else if (msg.t === "guild") {
       this.guild = msg.state === "info" ? msg.guild ?? null : null;
       this.onGuildUpdate?.();
@@ -387,6 +392,19 @@ export default class NetClient {
   }
   sendParty(action: "invite" | "accept" | "leave", to?: string) {
     this.sendMsg({ t: "party", action, to });
+  }
+  /** Auction house — server escrows the item + settles atomically (cross-zone, D1). */
+  marketBrowse() {
+    this.sendMsg({ t: "market", action: "browse" });
+  }
+  marketList(itemId: string, price: number, currency: "credits" | "metro" = "credits") {
+    this.sendMsg({ t: "market", action: "list", itemId, price, currency });
+  }
+  marketCancel(id: number) {
+    this.sendMsg({ t: "market", action: "cancel", id });
+  }
+  marketBuy(id: number) {
+    this.sendMsg({ t: "market", action: "buy", id });
   }
   /** Guild ("Cell") action — server validates rank/balance + owns the shared bank (D1). */
   guildAction(

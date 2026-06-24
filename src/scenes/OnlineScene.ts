@@ -7,6 +7,7 @@ import OnlineShop from "../ui/OnlineShop";
 import OnlineForge from "../ui/OnlineForge";
 import OnlineBoard from "../ui/OnlineBoard";
 import OnlineGuild from "../ui/OnlineGuild";
+import OnlineMarket from "../ui/OnlineMarket";
 import { COLORS, TILE, VIEW_W, VIEW_H } from "../config";
 import { TILESET_KEY, PLAYER_KEY, COP_KEY, BULLET_KEY, GLOW_KEY, NODE_KEY } from "../assets/manifest";
 import { driveChar } from "../assets/anim";
@@ -97,6 +98,7 @@ export default class OnlineScene extends Phaser.Scene {
   private forge!: OnlineForge; // gear forge — upgrade/reforge/fuse/salvage (credits+cores sink)
   private board!: OnlineBoard; // achievements + cross-zone leaderboards (D1-backed, HTTP)
   private guildPanel!: OnlineGuild; // guild ("Cell") bank/roster/level (D1-backed)
+  private market!: OnlineMarket; // auction house — cross-zone player market (D1-backed)
   private lastSeason = -1;
   private chatLogText!: Phaser.GameObjects.Text;
   private chatInput!: Phaser.GameObjects.Text;
@@ -213,6 +215,7 @@ export default class OnlineScene extends Phaser.Scene {
       this.inv.setItems(this.net.inventory);
       this.inv.setEquipped(this.net.equipped);
       this.forge.setState(this.net.inventory, this.net.equipped, this.net.credits, this.net.cores);
+      if (this.market?.open) this.market.setState(this.net.marketListings, this.net.inventory, this.net.id, this.net.credits);
     };
     this.shop = new OnlineShop(this);
     this.shop.onBuy = (sku) => this.net.buy(sku);
@@ -228,6 +231,14 @@ export default class OnlineScene extends Phaser.Scene {
       else this.net.guildAction(action, { credits: c, cores: k });
     };
     this.net.onGuildUpdate = () => this.guildPanel.setGuild(this.net.guild, this.net.id);
+    this.market = new OnlineMarket(this);
+    this.market.onBuy = (id) => this.net.marketBuy(id);
+    this.market.onCancel = (id) => this.net.marketCancel(id);
+    this.market.onList = (itemId, price) => this.net.marketList(itemId, price);
+    this.market.onRefresh = () => this.net.marketBrowse();
+    this.net.onMarket = () => {
+      if (this.market.open) this.market.setState(this.net.marketListings, this.net.inventory, this.net.id, this.net.credits);
+    };
     // World-boss locator: a status banner + a screen-edge arrow toward an off-screen boss.
     this.bossBanner = this.add
       .text(VIEW_W / 2, 46, "", {
@@ -269,7 +280,7 @@ export default class OnlineScene extends Phaser.Scene {
       .text(
         this.scale.width / 2,
         this.scale.height - 12,
-        `WASD · CLICK fire · I bag · G forge · B vendor · C cell · L board · H safehouse · V emote · ENTER chat · [1-${DISTRICTS.length}] travel`,
+        `WASD · CLICK fire · I bag · G forge · B vendor · K market · C cell · L board · H safehouse · V emote · ENTER chat · [1-${DISTRICTS.length}] travel`,
         { fontFamily: "Courier New, monospace", fontSize: "11px", color: "#6b7184" },
       )
       .setOrigin(0.5, 1)
@@ -461,6 +472,14 @@ export default class OnlineScene extends Phaser.Scene {
         this.guildPanel.close();
         return;
       }
+      if (e.key === "k" || e.key === "K") {
+        this.market.toggle(this.net.marketListings, this.net.inventory, this.net.id, this.net.credits);
+        return;
+      }
+      if (this.market.open && e.key === "Escape") {
+        this.market.close();
+        return;
+      }
       if (e.key === "h" || e.key === "H") {
         // H enters the safehouse (a no-combat hub) from a district, and returns to where
         // you came from. Travel = reconnect to the destination zone's DO.
@@ -554,6 +573,14 @@ export default class OnlineScene extends Phaser.Scene {
     } else if (s.startsWith("/gwd ")) {
       const parts = s.slice(5).trim().split(/\s+/);
       this.net.guildAction("withdraw", { credits: parseInt(parts[0], 10) || 0, cores: parseInt(parts[1], 10) || 0 });
+    }
+    // auction house — /list <bagSlot 1-based> <price> for a custom ask (quick-list via the K panel)
+    else if (s.startsWith("/list ")) {
+      const parts = s.slice(6).trim().split(/\s+/);
+      const slot = parseInt(parts[0], 10);
+      const price = parseInt(parts[1], 10);
+      const it = this.net.inventory[slot - 1];
+      if (it && price > 0) this.net.marketList(it.id, price);
     }
     else if (s.startsWith("/mute ")) this.net.sendMute(s.slice(6).trim());
     else if (s.startsWith("/trade ")) this.net.tradeRequest(s.slice(7).trim());
