@@ -54,6 +54,8 @@ export type ClientMsg =
   | { t: "chat"; ch: "zone" | "party" | "whisper"; to?: string; text: string }
   | { t: "party"; action: "invite" | "accept" | "leave"; to?: string }
   | { t: "mute"; to: string }
+  | { t: "equip"; itemId: string } // equip an inventory item into its slot
+  | { t: "unequip"; slot: string }
   | { t: "emote"; kind: number; ping: boolean; x: number; y: number } // emote (above avatar) or world ping
   | {
       t: "trade";
@@ -157,6 +159,7 @@ export type ServerMsg =
   | { t: "emote"; from: string; kind: number; ping: boolean; x: number; y: number } // relayed emote/ping
   | { t: "story"; act: string; title: string; text: string; step: number; done: boolean }
   | { t: "inv"; items: Item[] } // the owning client's full inventory (login + on change)
+  | { t: "equipped"; items: Item[]; maxHp: number } // owning client's equipped gear + derived max HP
   | {
       t: "trade";
       state: "open" | "update" | "done" | "cancelled";

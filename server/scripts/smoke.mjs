@@ -516,6 +516,86 @@ async function boss() {
   );
 }
 
+async function equip() {
+  const name = "eq_" + Math.random().toString(36).slice(2, 8);
+  const ws = await connect();
+  const store = { x: 0, y: 0, enemies: [], inventory: [], equipped: [], maxHp: 100 };
+  ws.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "inv") store.inventory = m.items;
+    else if (m.t === "equipped") {
+      store.equipped = m.items;
+      store.maxHp = m.maxHp;
+    }
+  });
+  const w = await login(ws, name);
+  store.x = w.x;
+  store.y = w.y;
+  trackState(ws, w.id, store);
+  await sleep(250);
+
+  // kill cops until we have an item to equip
+  let seq = 0;
+  const t0 = Date.now();
+  const nearest = () => {
+    let b = null, bd = 1e9;
+    for (const e of store.enemies) {
+      const d = Math.hypot(e.x - store.x, e.y - store.y);
+      if (d < bd) { bd = d; b = e; }
+    }
+    return b;
+  };
+  while (Date.now() - t0 < 15000 && store.inventory.length < 1) {
+    const e = nearest();
+    if (e) {
+      const dx = e.x - store.x, dy = e.y - store.y, d = Math.hypot(dx, dy) || 1;
+      seq++;
+      ws.send(JSON.stringify({ t: "input", seq, mx: d > 110 ? dx / d : 0, my: d > 110 ? dy / d : 0 }));
+      ws.send(JSON.stringify({ t: "fire", seq, aim: Math.atan2(dy, dx) }));
+    }
+    await sleep(45);
+  }
+  const item = store.inventory[0];
+  const gotItem = !!item;
+
+  // equip it → it moves to the loadout, and maxHp reflects any +HP mod exactly
+  let equippedOk = false, maxHpOk = false;
+  if (item) {
+    ws.send(JSON.stringify({ t: "equip", itemId: item.id }));
+    await sleep(500);
+    equippedOk = store.equipped.some((e) => e.id === item.id) && !store.inventory.some((e) => e.id === item.id);
+    maxHpOk = store.maxHp === 100 + Math.round(item.mods?.hpAdd ?? 0);
+  }
+  ws.close();
+  await sleep(800);
+
+  // reconnect → the equipped item must persist (loadout hydrated from D1)
+  const ws2 = await connect();
+  const store2 = { equipped: [] };
+  ws2.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "equipped") store2.equipped = m.items;
+  });
+  await login(ws2, name);
+  await sleep(400);
+  const persists = !!item && store2.equipped.some((e) => e.id === item.id);
+  ws2.close();
+  await sleep(200);
+
+  const checks = {
+    gotItem,
+    equippedMovedToLoadout: equippedOk,
+    maxHpDerived: maxHpOk,
+    persistedAcrossRelogin: persists,
+  };
+  report(
+    "EQUIP — gear equips, derives max HP, and the loadout persists across relogin",
+    { item: item ? `${item.rarity} ${item.name} [${item.slot}]` : null, maxHp: store.maxHp, hpAdd: item?.mods?.hpAdd ?? 0 },
+    Object.values(checks).every(Boolean),
+    checks,
+  );
+}
+
 async function mp() {
   const AOI = 720;
   const a = await connect();
@@ -1232,6 +1312,7 @@ try {
   else if (mode === "lookpersist") await lookpersist();
   else if (mode === "auth") await auth();
   else if (mode === "boss") await boss();
+  else if (mode === "equip") await equip();
   else if (mode === "mp") await mp();
   else if (mode === "zones") await zones();
   else if (mode === "territory") await territory();

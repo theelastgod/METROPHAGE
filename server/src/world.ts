@@ -48,7 +48,8 @@ import {
 } from "../../src/net/sim";
 import { buildGrid, spawnPoint, isWall, type TileGrid } from "../../src/world/district";
 import { DISTRICTS } from "../../src/game/districts";
-import { rollItem, type Item } from "../../src/game/items";
+import { rollItem, type Item, type Slot } from "../../src/game/items";
+import { addMods, ZERO_MODS, type ModBag } from "../../src/game/stats";
 import { verifyWalletLogin } from "./auth";
 
 /** Inventory is capped so the persisted JSON stays bounded; oldest drops out (FIFO). */
@@ -62,6 +63,24 @@ function parseInventory(raw: string | null | undefined): Item[] {
     return Array.isArray(v) ? (v as Item[]).slice(0, INVENTORY_CAP) : [];
   } catch {
     return [];
+  }
+}
+
+/** Aggregate the mods of every equipped item into one ModBag. */
+function deriveMods(equipped: Partial<Record<Slot, Item>>): ModBag {
+  let bag = ZERO_MODS;
+  for (const it of Object.values(equipped)) if (it) bag = addMods(bag, it.mods);
+  return bag;
+}
+
+/** Defensive JSON → equipped map (slot → Item) for the persisted equipped column. */
+function parseEquipped(raw: string | null | undefined): Partial<Record<Slot, Item>> {
+  if (!raw) return {};
+  try {
+    const v = JSON.parse(raw);
+    return v && typeof v === "object" && !Array.isArray(v) ? (v as Partial<Record<Slot, Item>>) : {};
+  } catch {
+    return {};
   }
 }
 
@@ -142,6 +161,9 @@ interface PlayerState {
   credits: number;
   cores: number;
   inventory: Item[]; // server-authoritative loot, persisted as JSON (capped FIFO)
+  equipped: Partial<Record<Slot, Item>>; // gear by slot; its mods boost combat
+  mods: ModBag; // aggregate of the equipped mods (cached; recomputed on change)
+  maxHp: number; // PLAYER_HP + mods.hpAdd
   aim: number;
   lastFireTick: number;
   // progression
@@ -490,6 +512,8 @@ export class WorldDO {
       });
     if (msg.t === "input") return this.onInput(ws, msg);
     if (msg.t === "fire") return this.onFire(ws, msg);
+    if (msg.t === "equip") return this.onEquip(ws, msg);
+    if (msg.t === "unequip") return this.onUnequip(ws, msg);
     if (msg.t === "chat") return this.onChat(ws, msg);
     if (msg.t === "party") return this.onParty(ws, msg);
     if (msg.t === "mute") return this.onMute(ws, msg);
@@ -842,6 +866,7 @@ export class WorldDO {
     });
     this.sendStory(ws, p.questStep); // brief the Blank on their current beat
     this.send(ws, { t: "inv", items: p.inventory }); // hydrate their held gear
+    this.sendLoadout(ws, p); // hydrate equipped gear + derived max HP
     this.ensureTick();
     await this.ensureSupervisor();
   }
@@ -858,8 +883,9 @@ export class WorldDO {
     let questStep = 0;
     let inventory: Item[] = [];
     let look: PlayerLook | undefined;
+    let equipped: Partial<Record<Slot, Item>> = {};
     const row = await this.env.DB.prepare(
-      "SELECT x, y, credits, xp, zone, cores, quest_step, inventory, look FROM players WHERE id = ?",
+      "SELECT x, y, credits, xp, zone, cores, quest_step, inventory, look, equipped FROM players WHERE id = ?",
     )
       .bind(id)
       .first<{
@@ -872,6 +898,7 @@ export class WorldDO {
         quest_step: number;
         inventory: string;
         look: string | null;
+        equipped: string;
       }>();
     if (row) {
       credits = row.credits ?? 0;
@@ -880,6 +907,7 @@ export class WorldDO {
       questStep = row.quest_step ?? 0;
       inventory = parseInventory(row.inventory);
       look = parseLook(row.look);
+      equipped = parseEquipped(row.equipped);
       // Same zone → resume exact position. Different zone → they just travelled in,
       // so spawn at this district's entrance (x,y already hold the spawn).
       if (row.zone === this.zoneName) {
@@ -887,8 +915,10 @@ export class WorldDO {
         y = row.y;
       }
     } else {
-      await this.upsert(id, name, x, y, 0, 0, 0, 0, [], undefined);
+      await this.upsert(id, name, x, y, 0, 0, 0, 0, [], undefined, {});
     }
+    const mods = deriveMods(equipped);
+    const maxHp = PLAYER_HP + Math.round(mods.hpAdd);
     return {
       id,
       name,
@@ -899,13 +929,16 @@ export class WorldDO {
       lastInputTick: this.tick,
       ack: 0,
       dirty: false,
-      hp: PLAYER_HP,
+      hp: maxHp,
       dead: false,
       respawnTick: 0,
       pvpSafeUntil: 0,
       credits,
       cores,
       inventory,
+      equipped,
+      mods,
+      maxHp,
       aim: 0,
       lastFireTick: -999,
       xp,
@@ -961,6 +994,49 @@ export class WorldDO {
     if (Number.isFinite(msg.seq)) p.ack = Math.max(p.ack, msg.seq | 0);
   }
 
+  private recomputeStats(p: PlayerState) {
+    p.mods = deriveMods(p.equipped);
+    p.maxHp = PLAYER_HP + Math.round(p.mods.hpAdd);
+    if (p.hp > p.maxHp) p.hp = p.maxHp;
+  }
+
+  private sendLoadout(ws: WebSocket, p: PlayerState) {
+    this.send(ws, { t: "equipped", items: Object.values(p.equipped).filter(Boolean) as Item[], maxHp: p.maxHp });
+  }
+
+  /** Equip an inventory item into its slot (swapping any current piece back to the bag);
+   *  its mods immediately change this player's server-side combat stats. */
+  private onEquip(ws: WebSocket, msg: Extract<ClientMsg, { t: "equip" }>) {
+    const p = this.playerFor(ws);
+    if (!p) return;
+    const idx = p.inventory.findIndex((it) => it.id === msg.itemId);
+    if (idx < 0) return;
+    const item = p.inventory[idx];
+    p.inventory.splice(idx, 1);
+    const prev = p.equipped[item.slot];
+    p.equipped[item.slot] = item;
+    if (prev) p.inventory.push(prev); // the old piece returns to the bag
+    this.recomputeStats(p);
+    p.dirty = true;
+    this.send(ws, { t: "inv", items: p.inventory });
+    this.sendLoadout(ws, p);
+  }
+
+  private onUnequip(ws: WebSocket, msg: Extract<ClientMsg, { t: "unequip" }>) {
+    const p = this.playerFor(ws);
+    if (!p) return;
+    const slot = msg.slot as Slot;
+    const it = p.equipped[slot];
+    if (!it) return;
+    delete p.equipped[slot];
+    p.inventory.push(it);
+    if (p.inventory.length > INVENTORY_CAP) p.inventory.shift();
+    this.recomputeStats(p);
+    p.dirty = true;
+    this.send(ws, { t: "inv", items: p.inventory });
+    this.sendLoadout(ws, p);
+  }
+
   private onFire(ws: WebSocket, msg: Extract<ClientMsg, { t: "fire" }>) {
     const p = this.playerFor(ws);
     if (!p || p.dead) return;
@@ -979,7 +1055,7 @@ export class WorldDO {
       dieTick: this.tick + ticks(PROJ_TTL_MS),
       team: 0,
       owner: p.id,
-      dmg: PLAYER_DMG,
+      dmg: Math.round(PLAYER_DMG * (1 + (p.mods.dmgPct || 0))), // equipped gear scales damage
     });
   }
 
@@ -1055,7 +1131,7 @@ export class WorldDO {
         if (this.tick >= p.respawnTick) {
           p.x = this.spawn.x;
           p.y = this.spawn.y;
-          p.hp = PLAYER_HP;
+          p.hp = p.maxHp; // respawn at full, including equipped +HP
           p.dead = false;
           p.pvpSafeUntil = this.tick + ticks(2500); // brief immunity so arenas can't be spawn-camped
           p.dirty = true;
@@ -1129,11 +1205,11 @@ export class WorldDO {
             const owner = this.players.get(s.owner);
             let dmg = s.dmg;
             if (owner) {
-              const critChance = Math.min(0.05 + owner.level * 0.012, 0.3);
+              const critChance = Math.min(0.05 + owner.level * 0.012, 0.3) + (owner.mods.critPct || 0);
               if (Math.random() < critChance) dmg *= 1.85;
-              const lifesteal = Math.min(owner.level * 0.004, 0.08);
+              const lifesteal = Math.min(owner.level * 0.004, 0.08) + (owner.mods.lifestealPct || 0);
               if (lifesteal > 0 && !owner.dead && owner.hp > 0) {
-                owner.hp = Math.min(PLAYER_HP, owner.hp + dmg * lifesteal);
+                owner.hp = Math.min(owner.maxHp, owner.hp + dmg * lifesteal);
               }
             }
             e.hp -= dmg;
@@ -1488,7 +1564,7 @@ export class WorldDO {
     for (const p of this.players.values()) {
       if (!p.dirty) continue;
       p.dirty = false;
-      await this.upsert(p.id, p.name, p.x, p.y, p.credits, p.xp, p.cores, p.questStep, p.inventory, p.look);
+      await this.upsert(p.id, p.name, p.x, p.y, p.credits, p.xp, p.cores, p.questStep, p.inventory, p.look, p.equipped);
     }
     await this.syncMeta();
   }
@@ -1529,13 +1605,14 @@ export class WorldDO {
     questStep: number,
     inventory: Item[],
     look: PlayerLook | undefined,
+    equipped: Partial<Record<Slot, Item>>,
   ) {
     try {
       await this.env.DB.prepare(
-        "INSERT INTO players (id, name, x, y, zone, credits, xp, cores, quest_step, inventory, look, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) " +
-          "ON CONFLICT(id) DO UPDATE SET x=excluded.x, y=excluded.y, credits=excluded.credits, xp=excluded.xp, cores=excluded.cores, quest_step=excluded.quest_step, inventory=excluded.inventory, look=excluded.look, updated_at=excluded.updated_at",
+        "INSERT INTO players (id, name, x, y, zone, credits, xp, cores, quest_step, inventory, look, equipped, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) " +
+          "ON CONFLICT(id) DO UPDATE SET x=excluded.x, y=excluded.y, credits=excluded.credits, xp=excluded.xp, cores=excluded.cores, quest_step=excluded.quest_step, inventory=excluded.inventory, look=excluded.look, equipped=excluded.equipped, updated_at=excluded.updated_at",
       )
-        .bind(id, name, round2(x), round2(y), this.zoneName, Math.round(credits), Math.round(xp), Math.round(cores), Math.round(questStep), JSON.stringify(inventory.slice(0, INVENTORY_CAP)), look ? JSON.stringify(look) : null, Date.now())
+        .bind(id, name, round2(x), round2(y), this.zoneName, Math.round(credits), Math.round(xp), Math.round(cores), Math.round(questStep), JSON.stringify(inventory.slice(0, INVENTORY_CAP)), look ? JSON.stringify(look) : null, JSON.stringify(equipped), Date.now())
         .run();
     } catch {
       /* D1 hiccup — next snapshot retries */
@@ -1552,7 +1629,7 @@ export class WorldDO {
       if (tr) this.endTrade(tr, "cancelled", "trade partner left");
       this.leaveParty(p);
       this.pendingInvites.delete(p.id);
-      await this.upsert(p.id, p.name, p.x, p.y, p.credits, p.xp, p.cores, p.questStep, p.inventory, p.look);
+      await this.upsert(p.id, p.name, p.x, p.y, p.credits, p.xp, p.cores, p.questStep, p.inventory, p.look, p.equipped);
       await this.syncMeta();
       this.players.delete(id);
     }

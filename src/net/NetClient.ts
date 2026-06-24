@@ -71,6 +71,8 @@ export default class NetClient {
   credits = 0;
   cores = 0;
   inventory: Item[] = []; // server-authoritative held gear (sent on login + on change)
+  equipped: Item[] = []; // currently equipped items (one per slot), server-authoritative
+  maxHp = PLAYER_HP; // derived from equipped +HP mods
   trade: null | {
     with: string;
     youOffer: { credits: number; cores: number };
@@ -123,6 +125,13 @@ export default class NetClient {
   private auth?: { wallet: string; sig: string; ts: number };
   setAuth(proof?: { wallet: string; sig: string; ts: number }) {
     this.auth = proof;
+  }
+
+  equip(itemId: string) {
+    this.ws?.send(JSON.stringify({ t: "equip", itemId } satisfies ClientMsg));
+  }
+  unequip(slot: string) {
+    this.ws?.send(JSON.stringify({ t: "unequip", slot } satisfies ClientMsg));
   }
 
   connect() {
@@ -303,6 +312,10 @@ export default class NetClient {
     } else if (msg.t === "inv") {
       this.inventory = msg.items;
       this.onInventory?.();
+    } else if (msg.t === "equipped") {
+      this.equipped = msg.items;
+      this.maxHp = msg.maxHp;
+      this.onInventory?.(); // refresh the bag (equipped marks) + HUD
     } else if (msg.t === "trade") {
       if (msg.state === "done" || msg.state === "cancelled") {
         this.trade = null;
