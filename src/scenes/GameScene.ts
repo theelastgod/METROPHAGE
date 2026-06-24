@@ -70,6 +70,7 @@ import Pops from "../render/Pops";
 import Particles from "../render/Particles";
 import { juiceShake, juiceFlash } from "../systems/juice";
 import Hud from "../ui/Hud";
+import Minimap from "../ui/Minimap";
 import DialogueBox, { DialoguePage } from "../ui/DialogueBox";
 import SkillPanel from "../ui/SkillPanel";
 import InventoryPanel from "../ui/InventoryPanel";
@@ -162,6 +163,7 @@ export default class GameScene
   private playerLight?: Phaser.GameObjects.Image; // soft ground pool that follows the hero
   private nodeLights: Phaser.GameObjects.Image[] = []; // per-node light pools (recolored by state)
   private hud!: Hud;
+  private minimap!: Minimap;
   private dialogue!: DialogueBox;
 
   private overdriveActive = false;
@@ -662,6 +664,7 @@ export default class GameScene
 
   private setupUi() {
     this.hud = new Hud(this);
+    this.minimap = new Minimap(this, this.grid, WORLD_W, WORLD_H);
     this.pops = new Pops(this);
     this.particles = new Particles(this);
     this.bossBar = new BossBar(this);
@@ -1089,6 +1092,15 @@ export default class GameScene
     }
 
     this.updateHud();
+    this.minimap.render(
+      this.player,
+      this.playerColor,
+      this.enemies.getChildren(),
+      this.territory.nodes,
+      [this.terminal, this.vendorTerminal, this.diveTerminal],
+      this.boss,
+      this.gate,
+    );
     this.atmosphere.update(now, delta, this.heat.normalized); // weather/fog/holos animate always
     this.autosave();
     this.synth.setDialogueDuck(this.dialogue.isOpen); // duck music under dialogue
