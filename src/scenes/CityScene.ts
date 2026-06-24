@@ -7,6 +7,9 @@ import {
   buildInterior,
   ENV_IDENTITY,
   envAt,
+  HEAL_KINDS,
+  LANDMARK_KINDS,
+  INTERIOR_NAMES,
   type CityMap,
   type CityBuilding,
   type BuildingKind,
@@ -532,21 +535,23 @@ export default class CityScene extends Phaser.Scene {
     if (!this.cityMap) return;
     const residents = this.assignResidents();
     const NAMES: Record<string, string> = { bar: "THE FERAL CAT", clinic: "MED-CLINIC", guild: "RUNNERS' GUILD" };
-    for (const b of this.cityMap.buildings) {
-      const ids = b.door && residents[b.id];
-      if (!ids || !ids.length) continue;
-      const label = NAMES[b.kind] ?? (npcDef(ids[0])?.name ?? "");
-      if (!label) continue;
-      const [dx, dy] = b.door!;
+    const sign = (dx: number, dy: number, label: string, color: string) =>
       this.add
-        .text(dx * TILE + TILE / 2, dy * TILE - 4, "▾ " + label, {
-          fontFamily: "Courier New, monospace",
-          fontSize: "10px",
-          color: "#f7ff3c",
-        })
+        .text(dx * TILE + TILE / 2, dy * TILE - 4, "▾ " + label, { fontFamily: "Courier New, monospace", fontSize: "10px", color })
         .setOrigin(0.5, 1)
         .setDepth(8)
         .setShadow(0, 0, "#0a0e1a", 4, true, true);
+    for (const b of this.cityMap.buildings) {
+      if (!b.door) continue;
+      // landmarks (hospital/hotel/subway/stadium/spire) — always signed so they're findable
+      if (LANDMARK_KINDS.includes(b.kind)) {
+        const col = b.kind === "hospital" || b.kind === "hotel" ? "#39ff88" : b.kind === "stadium" ? "#ff3b6b" : "#29e7ff";
+        sign(b.door[0], b.door[1], INTERIOR_NAMES[b.kind], col);
+        continue;
+      }
+      const ids = residents[b.id];
+      if (!ids || !ids.length) continue;
+      sign(b.door[0], b.door[1], NAMES[b.kind] ?? (npcDef(ids[0])?.name ?? ""), "#f7ff3c");
     }
   }
 
@@ -576,7 +581,27 @@ export default class CityScene extends Phaser.Scene {
     }
     if (!nearest) return;
     const n = nearest;
+    // Hospital / hotel / clinic: the keeper patches you up (restores persisted HP).
+    if (this.mode === "interior" && this.interiorKind && HEAL_KINDS.includes(this.interiorKind) && (n.id.startsWith("keep_") || n.id === "doc")) {
+      this.healPlayer();
+    }
     this.showTalk(this.quests.onTalk(n.id, n.name, n.def.lines, n.def.quest));
+  }
+
+  /** Full-heal the persisted HP — the hospital / hotel / clinic service. */
+  private healPlayer() {
+    const save = loadSave();
+    if (!save) {
+      this.toast("▣ Rest up — start the campaign first.");
+      return;
+    }
+    if ((save.progress.hp ?? -1) <= 0) {
+      this.toast("▣ You're already at full strength.");
+      return;
+    }
+    save.progress.hp = -1; // -1 = full
+    writeSave(save);
+    this.toast("▣ FULLY HEALED — patched to full strength");
   }
 
   private showTalk(res: TalkResult) {
@@ -818,6 +843,43 @@ export default class CityScene extends Phaser.Scene {
         break;
       case "plant":
         g.fillStyle(WOOD_D, 1).fillRect(x - 3, y + 1, 6, 5); g.fillStyle(0x2fa050, 1).fillCircle(x, y - 3, 5); g.fillStyle(0x39ff88, 1).fillCircle(x - 2, y - 4, 2);
+        break;
+      case "planter":
+        g.fillStyle(0x1a2235, 1).fillRect(x - 8, y - 2, 16, 8); g.fillStyle(0x2fbf5a, 1).fillRect(x - 6, y - 6, 12, 4);
+        break;
+      case "turnstile":
+        g.fillStyle(MET, 1).fillRect(x - 8, y - 2, 16, 5); g.fillStyle(MET_L, 1).fillRect(x - 8, y - 2, 16, 1);
+        g.lineStyle(2, MET_L, 1).lineBetween(x - 5, y, x + 5, y - 8); // arm
+        g.fillStyle(0x39ff88, 0.9).fillRect(x - 1, y + 3, 2, 2);
+        break;
+      case "bench":
+        g.fillStyle(0x2a3142, 1).fillRect(x - 9, y - 2, 18, 3); g.fillStyle(0x1a2030, 1).fillRect(x - 8, y + 1, 2, 4).fillRect(x + 6, y + 1, 2, 4);
+        break;
+      case "track":
+        g.fillStyle(0x0a0c12, 1).fillRect(x - 12, y - 4, 24, 10); // pit
+        g.fillStyle(MET, 1).fillRect(x - 11, y - 1, 24, 2).fillRect(x - 11, y + 3, 24, 2); // rails
+        glow(0x29e7ff, 0.7, 0.18);
+        break;
+      case "scoreboard":
+        g.fillStyle(DARK, 1).fillRect(x - 14, y - 5, 28, 10); g.fillStyle(0xff3b6b, 0.9).fillRect(x - 12, y - 3, 11, 6); g.fillStyle(0x29e7ff, 0.9).fillRect(x + 1, y - 3, 11, 6);
+        glow(0xff3b6b, 1.0, 0.4);
+        break;
+      case "banner":
+        g.fillStyle(0xff3b6b, 0.9).fillRect(x - 3, y - 10, 6, 18); g.fillStyle(0xffffff, 0.6).fillRect(x - 2, y - 8, 4, 3);
+        break;
+      case "barrier":
+        g.fillStyle(0xffb13c, 1).fillRect(x - 9, y - 3, 18, 5); for (let i = 0; i < 4; i++) g.fillStyle(0x15121d, 1).fillRect(x - 8 + i * 5, y - 3, 2, 5);
+        break;
+      case "arenamark":
+        g.lineStyle(2, 0xff3b6b, 0.7).strokeCircle(x, y, 14); g.lineStyle(2, 0xff3b6b, 0.5).strokeCircle(x, y, 8);
+        break;
+      case "fountain":
+        g.fillStyle(0x14243a, 1).fillCircle(x, y, 14); g.fillStyle(0x29e7ff, 0.45).fillCircle(x, y, 11); g.fillStyle(MET_L, 1).fillCircle(x, y, 3);
+        glow(0x29e7ff, 1.1, 0.4);
+        break;
+      case "directory":
+        g.fillStyle(DARK, 1).fillRect(x - 5, y - 8, 10, 12); g.fillStyle(0x4d8cff, 0.9).fillRect(x - 4, y - 7, 8, 8); g.fillStyle(MET, 1).fillRect(x - 2, y + 4, 4, 3);
+        glow(0x4d8cff, 0.7, 0.3);
         break;
     }
   }

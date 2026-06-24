@@ -109,7 +109,24 @@ export interface Rect {
   y2: number;
 }
 
-export type BuildingKind = "home" | "shop" | "den" | "guild" | "clinic" | "bar";
+export type BuildingKind =
+  | "home"
+  | "shop"
+  | "den"
+  | "guild"
+  | "clinic"
+  | "bar"
+  | "hospital" // full heal + cure (the low-HP loop)
+  | "hotel" // rest to recover
+  | "subway" // metro — gateway to the underground (combat dungeon)
+  | "stadium" // THE CRUCIBLE — PvP arena
+  | "citycenter"; // CIVIC SPIRE — landmark plaza
+
+/** Heal buildings restore the player's persisted HP when you talk to the keeper. */
+export const HEAL_KINDS: ReadonlyArray<BuildingKind> = ["hospital", "hotel", "clinic"];
+
+/** Unique landmark buildings — exactly one each, placed near the plaza so they're findable. */
+export const LANDMARK_KINDS: ReadonlyArray<BuildingKind> = ["hospital", "hotel", "subway", "stadium", "citycenter"];
 
 export interface CityBuilding {
   rect: Rect; // wall footprint
@@ -286,6 +303,15 @@ export function buildCity(seed = 1337): CityMap {
     }
   }
 
+  // Promote the nearest enterable homes into the unique landmarks (hospital, hotel,
+  // subway, stadium, civic spire) so each exists exactly once, close to the plaza.
+  const distToCentre = (b: CityBuilding) =>
+    ((b.rect.x1 + b.rect.x2) / 2 - cx) ** 2 + ((b.rect.y1 + b.rect.y2) / 2 - cy) ** 2;
+  const homes = buildings.filter((b) => b.door && b.kind === "home").sort((a, b) => distToCentre(a) - distToCentre(b));
+  LANDMARK_KINDS.forEach((lk, i) => {
+    if (homes[i]) homes[i].kind = lk;
+  });
+
   return { grid, w, h, spawn: [cx, cy], buildings, plazas, npcSpots, zones, decorations };
 }
 
@@ -337,6 +363,29 @@ function furnishInterior(kind: BuildingKind, ex: number): InteriorProp[] {
   } else if (kind === "den") {
     add("crate", 3, 3); add("crate", 5, 3); add("crate", 16, 3);
     add("terminal", 4, 7); add("terminal", 15, 7); add("table", 9, 8); add("crate", 16, 9);
+  } else if (kind === "hospital") {
+    add("cross", ex, 1);
+    for (const x of [3, 5, 7, 12, 14, 16]) add("medbay", x, 7); // a ward of beds
+    for (const x of [3, 5, 7, 12, 14, 16]) add("medbay", x, 10);
+    add("cabinet", 4, 2); add("cabinet", 15, 2); add("plant", 2, 11); add("plant", 17, 11);
+  } else if (kind === "hotel") {
+    add("sign", ex, 1);
+    add("bed", 3, 7); add("bed", 6, 7); add("bed", 13, 7); add("bed", 16, 7);
+    add("rug", ex, 9); add("plant", 2, 2); add("plant", 17, 2); add("register", ex - 2, 3);
+  } else if (kind === "subway") {
+    add("sign", ex, 1);
+    add("turnstile", 6, 4); add("turnstile", 13, 4);
+    add("bench", 4, 8); add("bench", 8, 8); add("bench", 15, 8);
+    add("track", 3, 11); add("track", 7, 11); add("track", 11, 11); add("track", 15, 11);
+    add("terminal", 17, 6);
+  } else if (kind === "stadium") {
+    add("scoreboard", ex, 1);
+    add("banner", 3, 2); add("banner", 16, 2);
+    add("barrier", 4, 8); add("barrier", 8, 8); add("barrier", 12, 8); add("barrier", 16, 8);
+    add("arenamark", ex, 8);
+  } else if (kind === "citycenter") {
+    add("fountain", ex, 6); add("directory", 4, 4); add("directory", 16, 4);
+    add("bench", 5, 10); add("bench", 15, 10); add("planter", 3, 2); add("planter", 16, 2);
   } else {
     add("bed", 3, 3); add("table", 14, 8); add("stool", 13, 8); add("stool", 15, 8);
     add("rug", ex, 8); add("shelf", 17, 3); add("plant", 2, 10);
@@ -344,13 +393,18 @@ function furnishInterior(kind: BuildingKind, ex: number): InteriorProp[] {
   return p;
 }
 
-const INTERIOR_NAMES: Record<BuildingKind, string> = {
+export const INTERIOR_NAMES: Record<BuildingKind, string> = {
   home: "RESIDENCE",
   shop: "GENERAL STORE",
   den: "BACK ROOM",
   guild: "RUNNERS' GUILD",
   clinic: "MED-CLINIC",
   bar: "THE FERAL CAT",
+  hospital: "HELIX GENERAL",
+  hotel: "THE NEON ROOST",
+  subway: "METRO — THE UNDERLINE",
+  stadium: "THE CRUCIBLE",
+  citycenter: "CIVIC SPIRE",
 };
 
 /** Build a small interior room for a building of the given kind. */
@@ -376,7 +430,7 @@ export function buildInterior(kind: BuildingKind): Interior {
 
   const npcSpots: [number, number][] = [];
   // a counter for service buildings: a wall row with a gap, NPC behind it
-  if (kind === "shop" || kind === "bar" || kind === "clinic" || kind === "guild") {
+  if (kind === "shop" || kind === "bar" || kind === "clinic" || kind === "guild" || kind === "hospital" || kind === "hotel") {
     const cy = 4;
     for (let x = 3; x <= w - 4; x++) grid[cy][x] = TILE_INNER_WALL;
     grid[cy][ex] = TILE_INNER_FLOOR; // a gap to step behind, if needed

@@ -326,6 +326,9 @@ export default class GameScene
     this.optionsPanel = new OptionsPanel(this, () => this.synth.applyVolumes());
     this.statsPanel = new StatsPanel(this, () => this.statLines());
     this.recomputeStats();
+    // Restore persisted HP — wounds carry across districts (-1 = full). Heal at a
+    // hospital/hotel/clinic, or with a medkit, to recover.
+    if (this.progression.hp > 0) this.player.hp = Math.min(this.progression.hp, this.player.maxHp);
     this.maybeSpawnBoss();
     this.worldEvents = new WorldEvents(this);
     this.worldEvents.reset(this.time.now);
@@ -416,6 +419,8 @@ export default class GameScene
     const now = this.time.now;
     if (!force && now < this.nextAutosaveAt) return;
     this.nextAutosaveAt = now + 4000;
+    // Persist current HP so wounds carry between districts (full → -1).
+    if (this.player) this.progression.hp = this.player.hp > 0 ? Math.round(this.player.hp) : -1;
     writeSave({
       v: 1,
       progress: this.progression.toData(),
@@ -2764,6 +2769,7 @@ export default class GameScene
 
   private respawnPlayer() {
     this.player.respawn(this.spawn.x, this.spawn.y);
+    this.progression.hp = -1; // respawn at full; clear the persisted wound
     juiceFlash(this, 220, 60, 0, 24);
   }
 

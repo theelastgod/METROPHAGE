@@ -12,6 +12,7 @@ export interface ProgressData {
   skillPoints: number;
   currency: number;
   metro?: number; // off-chain $METRO premium balance (the Black-Market currency)
+  hp?: number; // persisted current HP (carries across districts; -1 / undefined = full)
   allocations: Record<string, number>;
   consumables?: Record<string, number>;
 }
@@ -33,6 +34,7 @@ export default class Progression {
   skillPoints = 0;
   currency = 0;
   metro = 0; // off-chain $METRO premium balance (Black-Market currency)
+  hp = -1; // persisted current HP across districts (-1 = full / not yet wounded)
   allocations: Record<string, number> = {};
   consumables: Record<string, number> = {};
 
@@ -44,6 +46,7 @@ export default class Progression {
       this.skillPoints = data.skillPoints;
       this.currency = data.currency;
       this.metro = data.metro ?? 0;
+      this.hp = data.hp ?? -1;
       this.allocations = { ...data.allocations };
       this.consumables = { ...(data.consumables ?? {}) };
     }
@@ -148,6 +151,7 @@ export default class Progression {
       skillPoints: this.skillPoints,
       currency: this.currency,
       metro: this.metro,
+      hp: this.hp,
       allocations: { ...this.allocations },
       consumables: { ...this.consumables },
     };
