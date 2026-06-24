@@ -13,6 +13,7 @@ import Inventory from "../systems/Inventory";
 import { rollItem } from "../game/items";
 import NeonPipeline from "../render/NeonPipeline";
 import Atmosphere from "../render/Atmosphere";
+import { shadeWalls } from "../render/wallShade";
 import { getClass } from "../game/classes";
 import { sanitizeCustomization, bakeCustomPlayer, PLAYER_CUSTOM_KEY, type Customization } from "../game/customization";
 
@@ -96,6 +97,7 @@ export default class CityScene extends Phaser.Scene {
     const tileset = map.addTilesetImage(TILESET_KEY, TILESET_KEY, TILE, TILE)!;
     this.wallLayer = map.createLayer(0, tileset, 0, 0)!;
     this.wallLayer.setCollision(COLLIDING_TILES);
+    shadeWalls(this, grid); // raise buildings off the floor (edge light + cast shadow)
 
     this.cameras.main.setBackgroundColor(COLORS.bgVoid);
     this.physics.world.setBounds(0, 0, worldW, worldH);

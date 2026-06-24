@@ -65,6 +65,7 @@ import Boss from "../entities/Boss";
 import { getBoss, BossDef } from "../game/bosses";
 import NeonPipeline from "../render/NeonPipeline";
 import Atmosphere from "../render/Atmosphere";
+import { shadeWalls } from "../render/wallShade";
 import Synth from "../audio/Synth";
 import Pops from "../render/Pops";
 import Particles from "../render/Particles";
@@ -729,6 +730,7 @@ export default class GameScene
     const tileset = map.addTilesetImage(TILESET_KEY, TILESET_KEY, TILE, TILE)!;
     this.wallLayer = map.createLayer(0, tileset, 0, 0)!;
     this.wallLayer.setCollision(TILE_WALL);
+    shadeWalls(this, this.grid); // raise buildings off the floor (edge light + cast shadow)
 
     this.physics.world.setBounds(0, 0, WORLD_W, WORLD_H);
     this.cameras.main.setBackgroundColor(COLORS.bgVoid);
