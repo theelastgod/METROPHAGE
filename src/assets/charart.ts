@@ -242,39 +242,60 @@ function drawPose(ctx: CanvasRenderingContext2D, facing: Facing, spec: CharSpec,
     }
   }
 
-  // ── legs (clear stance, dark gap between) — feet alternate on the stride ──
+  // ── legs — feet alternate on the stride; knee + boot definition ──
   const legDy = [-sw * 2, sw * 2]; // left foot lifts forward as the right plants
   [cx - 6, cx + 2].forEach((lx, i) => {
     const dy = legDy[i];
-    part(lx, 23 + dy, 5, 6, t.b); // 3px-fill leg
-    px(lx + 1, 24 + dy, 3, 3, t.c); // shin highlight
-    px(lx + 1, 28 + dy, 3, 1, t.a); // boot shadow
+    part(lx, 23 + dy, 5, 6, t.b); // thigh + shin
+    px(lx + 1, 24 + dy, 3, 2, t.c); // knee/shin highlight
+    px(lx, 23 + dy, 1, 4, t.rim, 0.4); // outer rim light
+    px(lx + 1, 27 + dy, 4, 2, t.a); // boot
+    px(lx + 1, 27 + dy, 4, 1, t.c, 0.45); // boot top lip
+    px(lx + 3, 28 + dy, 2, 1, t.o); // toe shadow
   });
   px(cx - 1, 23, 2, 5, t.o); // dark gap so the legs read as two
 
-  // ── torso + shoulders (horizontal light banding, not vertical bars) ──
+  // ── torso + shoulders — chest plating, rim light, belt ──
   const tw = 14 + bulk; // torso width
   const tx = cx - tw / 2;
   part(tx - 1, 12, tw + 2, 5, t.b); // shoulder yoke
   px(tx, 13, tw, 1, t.c); // lit shoulder top
   px(tx, 14, tw, 1, t.d, 0.6); // shoulder highlight
+  px(tx + 1, 13, 1, 1, t.d); // yoke rivet L
+  px(tx + tw - 2, 13, 1, 1, t.d); // yoke rivet R
   part(tx, 16, tw, 8, t.b); // torso
   if (!back) {
-    px(tx + 1, 17, tw - 2, 2, t.c); // upper-chest light band
-    px(tx + 1, 22, tw - 2, 1, t.a); // lower-belly shadow band
-    px(cx - 2, 18, 1, 4, t.a, 0.6); // soft centre groove (short, not full height)
+    px(tx + 1, 16, 1, 7, t.rim, 0.45); // left rim down the chest
+    px(tx + tw - 2, 16, 1, 7, t.a); // right edge shadow
+    px(tx + 2, 17, tw - 4, 2, t.c); // upper-chest light
+    px(cx - 3, 17, 6, 1, t.d, 0.45); // collarbone sheen
+    px(cx - 1, 18, 2, 4, t.a, 0.6); // sternum groove
+    px(cx - 4, 19, 2, 2, t.b); // left pec plate
+    px(cx + 2, 19, 2, 2, t.b); // right pec plate
+    px(tx + 1, 22, tw - 2, 1, t.a); // lower-belly shadow
+    px(tx, 23, tw, 1, t.o, 0.55); // belt line
+    px(cx - 2, 22, 4, 2, t.c, 0.7); // belt buckle (lit)
   } else {
     px(tx + 1, 17, tw - 2, 6, t.a); // back is shadowed
     px(tx + 1, 16, tw - 2, 1, t.c); // nape light
+    px(cx, 17, 1, 6, t.o, 0.5); // spine line
     part(cx - 3, 18, 6, 5, t.a); // backpack housing
     px(cx - 2, 19, 4, 1, t.rim, 0.8); // pack rim light
+    px(cx - 2, 21, 4, 1, t.o, 0.6); // pack seam
   }
 
-  // arms at the sides — swing opposite the legs for a natural gait
-  part(tx - 3, 15 + sw, 3, 8, t.b);
-  part(tx + tw, 15 - sw, 3, 8, t.b);
-  px(tx - 2, 16 + sw, 1, 5, t.c); // left arm catches light
-  px(tx + tw + 1, 17 - sw, 1, 5, t.a); // right arm in shadow
+  // arms + gloved fists — swing opposite the legs for a natural gait
+  const laY = 15 + sw;
+  const raY = 15 - sw;
+  part(tx - 3, laY, 3, 8, t.b); // left arm
+  part(tx + tw, raY, 3, 8, t.b); // right arm
+  px(tx - 2, laY + 1, 1, 5, t.c); // left arm catches light
+  px(tx + tw + 1, raY + 1, 1, 5, t.a); // right arm in shadow
+  px(tx - 2, laY + 3, 1, 1, t.a); // elbow crease L
+  px(tx + tw + 1, raY + 3, 1, 1, t.a); // elbow crease R
+  part(tx - 3, laY + 7, 3, 3, t.a); // left fist (gloved)
+  part(tx + tw, raY + 7, 3, 3, t.a); // right fist
+  px(tx - 2, laY + 8, 1, 1, t.rim, 0.55); // knuckle glint
 
   // ── shoulder armor (over the arms/yoke) ─────────────────────────
   if (spec.shoulders && spec.shoulders !== "none") drawShoulders(spec, px, part, tx, tw);
@@ -381,15 +402,21 @@ function drawHumanHead(facing: Facing, spec: CharSpec, px: Px, part: Part) {
     return;
   }
 
-  // face — brow / eyes / nose / mouth
+  // face — cheeks / eyes / nose / mouth, lit from the top-left
   px(cx - 4, 8, 8, 5, skin.b);
+  px(cx - 4, 8, 3, 3, skin.c, 0.7); // lit left cheek
+  px(cx + 2, 9, 2, 3, skin.a, 0.5); // shaded right cheek
   px(cx - 4, 12, 8, 1, skin.a); // jaw shadow
   px(cx - 3, 9, 2, 2, 0x0a0b12);
   px(cx + 1, 9, 2, 2, 0x0a0b12); // eye sockets
   px(cx - 3, 9, 1, 1, skin.e);
   px(cx + 1, 9, 1, 1, skin.e); // catchlights
-  px(cx - 1, 10, 1, 2, skin.a); // nose
-  px(cx - 1, 12, 2, 1, skin.a, 0.7); // mouth
+  px(cx - 3, 11, 2, 1, skin.d, 0.45); // under-eye light L
+  px(cx + 1, 11, 2, 1, skin.d, 0.45); // under-eye light R
+  px(cx - 1, 9, 1, 2, skin.d, 0.5); // nose bridge highlight
+  px(cx - 1, 11, 2, 1, skin.a); // nostril shadow
+  px(cx - 2, 12, 4, 1, skin.a, 0.8); // mouth line
+  px(cx - 1, 13, 2, 1, skin.d, 0.4); // lower-lip light
   px(cx - 3, 8, 2, 1, hair.b); // brows
   px(cx + 1, 8, 2, 1, hair.b);
 
@@ -514,16 +541,23 @@ function drawHead(
     px(cx + 3, 1, 1, 1, t.e);
   }
 
-  // helmet / head dome (10 wide)
+  // helmet / head dome (12 wide) — domed crown, cheek plates, jaw guard
   part(cx - 6, 3, 12, 11, t.b);
   px(cx - 5, 4, 10, 2, t.c); // lit crown
-  px(cx - 4, 4, 8, 1, t.d); // crown highlight
+  px(cx - 4, 4, 7, 1, t.d); // crown highlight
+  px(cx - 5, 4, 1, 1, t.e, 0.5); // crown spec
   px(cx + 3, 6, 2, 7, t.a); // right side shadow
+  px(cx + 4, 5, 1, 8, t.o, 0.5); // right edge core-shadow
   px(cx - 5, 6, 1, 7, t.rim, 0.7); // cool rim on the left
+  px(cx - 6, 6, 1, 5, t.rim, 0.3); // outer rim halo
+  px(cx - 5, 11, 2, 2, t.b); // left cheek plate
+  px(cx + 3, 11, 2, 2, t.a); // right cheek plate (shadowed)
+  px(cx - 3, 13, 6, 1, t.o, 0.6); // jaw guard shadow
 
   // crest ridge
   px(cx - 1, 2, 3, 2, t.c);
   px(cx, 2, 1, 1, t.d);
+  px(cx - 1, 2, 1, 2, t.rim, 0.5); // crest rim-light
 
   // ── extra headgear that layers on the dome (front + back) ───────
   if (spec.head === "mohawk") {
@@ -566,10 +600,14 @@ function drawHead(
   // ── visor (emissive, tints to class hue) ────────────────────────
   if (spec.visor === "goggles") {
     px(cx - 5, 7, 10, 4, t.o); // housing
+    px(cx - 5, 7, 10, 1, t.a); // brow shadow over the lenses
     px(cx - 4, 8, 3, 2, t.e); // left lens
     px(cx + 1, 8, 3, 2, t.e); // right lens
-    px(cx - 4, 8, 1, 1, t.e);
-    px(cx + 1, 8, 1, 1, t.e); // hot specks
+    px(cx - 4, 9, 3, 1, t.e, 0.5); // left lens falloff
+    px(cx + 1, 9, 3, 1, t.e, 0.5); // right lens falloff
+    px(cx - 4, 8, 1, 1, 0xffffff, 0.85);
+    px(cx + 1, 8, 1, 1, 0xffffff, 0.85); // hot specular specks
+    px(cx, 8, 1, 2, t.o); // nose bridge between lenses
   } else if (spec.visor === "single") {
     px(cx - 4, 7, 8, 3, t.o);
     px(cx - 2, 8, 4, 1, t.e); // narrow focused optic
@@ -596,9 +634,13 @@ function drawHead(
     const w = spec.visor === "wide" ? 10 : 9;
     const x = cx - w / 2;
     px(x, 7, w, 4, t.o); // recessed housing
+    px(x, 7, w, 1, t.o); // top brow shadow
     px(x + 1, 8, w - 2, 2, t.e); // glowing band
-    px(x + 1, 8, 2, 1, t.d); // reflection
-    px(x + w - 3, 9, 2, 1, t.a, 0.7);
+    px(x + 1, 9, w - 2, 1, t.e, 0.5); // lower band falloff (vertical gradient)
+    px(x + 1, 8, 3, 1, 0xffffff, 0.55); // hot reflection streak
+    px(x + 2, 8, 1, 1, 0xffffff, 0.9); // hotspot
+    px(x + w - 3, 9, 2, 1, t.a, 0.6); // right shadow corner
+    px(x + 1, 10, w - 2, 1, t.e, 0.28); // under-glow bleed
   }
 }
 
