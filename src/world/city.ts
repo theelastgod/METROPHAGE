@@ -294,6 +294,13 @@ export function buildCity(seed = 1337): CityMap {
 // reads different from a home; the EXIT tile (a door in the bottom wall) returns to
 // the city, and npcSpots place the shopkeeper / quest-giver (Step 3).
 
+/** A decorative interior furnishing (rendered by CityScene; non-colliding). */
+export interface InteriorProp {
+  kind: string;
+  x: number;
+  y: number;
+}
+
 export interface Interior {
   grid: TileGrid;
   w: number;
@@ -301,7 +308,40 @@ export interface Interior {
   spawn: [number, number]; // player appears here (just inside the exit)
   exit: [number, number]; // step onto this tile to leave
   npcSpots: [number, number][];
+  props: InteriorProp[]; // furniture
   name: string;
+}
+
+/** Per-kind furniture layout for a 20×13 room (tile coords; `ex` is the exit column). */
+function furnishInterior(kind: BuildingKind, ex: number): InteriorProp[] {
+  const p: InteriorProp[] = [];
+  const add = (k: string, x: number, y: number) => p.push({ kind: k, x, y });
+  if (kind === "bar") {
+    for (const x of [4, 6, 8, 12, 14]) add("bottles", x, 2); // back bar shelf
+    add("sign", ex, 1);
+    for (const x of [5, 8, 12, 15]) add("stool", x, 6); // bar stools
+    add("table", 5, 9); add("stool", 6, 10); add("table", 15, 9); add("stool", 14, 10);
+  } else if (kind === "clinic") {
+    for (const x of [4, 6, 13, 15]) add("cabinet", x, 2);
+    add("cross", ex, 1);
+    add("medbay", 3, 7); add("medbay", 3, 9); add("medbay", 16, 7); add("plant", 17, 10);
+  } else if (kind === "shop") {
+    for (const x of [4, 6, 13, 15]) add("shelf", x, 2);
+    add("register", ex - 2, 3);
+    add("shelf", 2, 7); add("shelf", 2, 9); add("shelf", 17, 7); add("shelf", 17, 9);
+    add("crate", 4, 10); add("crate", 15, 10);
+  } else if (kind === "guild") {
+    add("board", ex, 2);
+    add("rack", 2, 6); add("rack", 2, 8); add("locker", 17, 6); add("locker", 17, 8);
+    add("table", 7, 9); add("stool", 8, 9);
+  } else if (kind === "den") {
+    add("crate", 3, 3); add("crate", 5, 3); add("crate", 16, 3);
+    add("terminal", 4, 7); add("terminal", 15, 7); add("table", 9, 8); add("crate", 16, 9);
+  } else {
+    add("bed", 3, 3); add("table", 14, 8); add("stool", 13, 8); add("stool", 15, 8);
+    add("rug", ex, 8); add("shelf", 17, 3); add("plant", 2, 10);
+  }
+  return p;
 }
 
 const INTERIOR_NAMES: Record<BuildingKind, string> = {
@@ -340,15 +380,14 @@ export function buildInterior(kind: BuildingKind): Interior {
     const cy = 4;
     for (let x = 3; x <= w - 4; x++) grid[cy][x] = TILE_INNER_WALL;
     grid[cy][ex] = TILE_INNER_FLOOR; // a gap to step behind, if needed
-    npcSpots.push([ex, cy - 1]); // shopkeeper / quest-giver behind the counter
-    npcSpots.push([4, h - 3]); // a patron / second NPC in the room
+    npcSpots.push([ex, cy - 1]); // keeper / quest-giver behind the counter
+    npcSpots.push([5, h - 4]); // a patron / second NPC
+    npcSpots.push([w - 5, h - 4]); // a third NPC
   } else {
-    // home / den — a lived-in room: a couple of props (walls) + an occupant
-    grid[3][3] = TILE_INNER_WALL;
-    grid[3][4] = TILE_INNER_WALL; // a table / shelf
-    grid[3][w - 4] = TILE_INNER_WALL;
+    // home / den — a lived-in room: an occupant + a visitor (furniture is decorative)
     npcSpots.push([ex, 3]); // occupant
+    npcSpots.push([5, h - 4]); // a visitor
   }
 
-  return { grid, w, h, spawn, exit, npcSpots, name: INTERIOR_NAMES[kind] };
+  return { grid, w, h, spawn, exit, npcSpots, props: furnishInterior(kind, ex), name: INTERIOR_NAMES[kind] };
 }

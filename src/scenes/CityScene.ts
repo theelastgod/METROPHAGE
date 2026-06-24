@@ -12,11 +12,12 @@ import {
   type BuildingKind,
   type PropKind,
   type Env,
+  type InteriorProp,
 } from "../world/city";
 import Player from "../entities/Player";
 import CityNpc from "../entities/CityNpc";
 import DialogueBox from "../ui/DialogueBox";
-import { KEY_NPCS, CITIZENS } from "../game/cityNpcs";
+import { AMBIENT_NPCS, INTERIOR_PLAN, keeperFor, npcDef } from "../game/cityNpcs";
 import { CityQuests, type TalkResult } from "../game/cityQuests";
 import { loadSave, writeSave } from "../systems/Save";
 import Inventory from "../systems/Inventory";
@@ -33,7 +34,7 @@ import { sanitizeCustomization, bakeCustomPlayer, PLAYER_CUSTOM_KEY, type Custom
 
 /** Scene-restart payload: enter a building interior, or return to the city. */
 interface CityEnter {
-  interior?: { kind: BuildingKind; returnTile: [number, number] };
+  interior?: { kind: BuildingKind; returnTile: [number, number]; bldgId?: string };
   returnTo?: [number, number];
 }
 
@@ -76,6 +77,10 @@ export default class CityScene extends Phaser.Scene {
   private envSub?: Phaser.GameObjects.Text;
   private neonTint: [number, number, number] = [0, 0.9, 1]; // current screen mood (lerped)
   private neonTarget: [number, number, number] = [0, 0.9, 1];
+  private interiorKind?: BuildingKind; // populated interiors
+  private interiorSpots?: [number, number][];
+  private interiorProps?: InteriorProp[];
+  private interiorBldg?: string;
 
   constructor() {
     super("City");
@@ -103,6 +108,10 @@ export default class CityScene extends Phaser.Scene {
       this.exitTile = intr.exit;
       this.returnTile = data.interior.returnTile;
       title = intr.name;
+      this.interiorKind = data.interior.kind;
+      this.interiorSpots = intr.npcSpots;
+      this.interiorProps = intr.props;
+      this.interiorBldg = data.interior.bldgId;
     } else {
       this.mode = "city";
       this.cityMap = buildCity();
@@ -167,12 +176,17 @@ export default class CityScene extends Phaser.Scene {
     this.dialogue = new DialogueBox(this);
     this.buildQuestHud();
     if (this.mode === "city") {
+      this.assignResidents();
       this.drawEnvWash();
       this.drawDecorations();
       this.placeCityNpcs();
+      this.drawResidentSigns();
       this.spawnCollectibles();
       this.setupBlackMarket();
       this.setupEnvPlate();
+    } else {
+      this.drawInteriorFurniture();
+      this.populateInterior();
     }
     this.input.keyboard!.on("keydown-E", () => this.tryTalk());
     this.input.keyboard!.on("keydown-J", () => this.toggleJournal());
@@ -468,13 +482,71 @@ export default class CityScene extends Phaser.Scene {
     }
   }
 
+  /** The open streets carry the ambient crowd — the named NPCs now live in their
+   *  buildings (see populateInterior), so the city reads consistent with the quests. */
   private placeCityNpcs() {
     if (!this.cityMap) return;
     const spots = this.cityMap.npcSpots;
-    const roster = [...KEY_NPCS, ...CITIZENS];
-    for (let i = 0; i < roster.length && i < spots.length; i++) {
+    // Any named NPC without a building goes first (central spots), then the ambient crowd.
+    const homeless = ((this.registry.get("cityHomeless") as string[]) ?? [])
+      .map((id) => npcDef(id))
+      .filter((d): d is NonNullable<typeof d> => !!d);
+    for (let i = 0; i < spots.length; i++) {
+      const def = i < homeless.length ? homeless[i] : AMBIENT_NPCS[(i - homeless.length) % AMBIENT_NPCS.length];
       const [tx, ty] = spots[i];
-      this.npcs.push(new CityNpc(this, tx * TILE + TILE / 2, ty * TILE + TILE / 2, roster[i]));
+      this.npcs.push(new CityNpc(this, tx * TILE + TILE / 2, ty * TILE + TILE / 2, def));
+    }
+  }
+
+  /** Assign each named NPC to the nearest enterable building of their kind (cached in the
+   *  registry so it survives city ↔ interior restarts). Returns bldgId → [npc ids]. */
+  private assignResidents(): Record<string, string[]> {
+    const cached = this.registry.get("cityResidents") as Record<string, string[]> | undefined;
+    if (cached) return cached;
+    const map: Record<string, string[]> = {};
+    if (!this.cityMap) return map;
+    const [sx, sy] = this.cityMap.spawn;
+    const doored = this.cityMap.buildings.filter((b) => b.door);
+    const distTo = (b: CityBuilding) => Phaser.Math.Distance.Between((b.rect.x1 + b.rect.x2) / 2, (b.rect.y1 + b.rect.y2) / 2, sx, sy);
+    const placed = new Set<string>();
+    for (const kind in INTERIOR_PLAN) {
+      const ranked = doored.filter((b) => b.kind === kind).sort((a, b) => distTo(a) - distTo(b));
+      INTERIOR_PLAN[kind].forEach((group, i) => {
+        if (ranked[i]) {
+          map[ranked[i].id] = group;
+          group.forEach((id) => placed.add(id));
+        }
+      });
+    }
+    // Safety net: any named NPC with no building (e.g. a seed lacks that kind) stays
+    // reachable on the street, so quests that need them never soft-lock.
+    const homeless: string[] = [];
+    for (const kind in INTERIOR_PLAN) for (const group of INTERIOR_PLAN[kind]) for (const id of group) if (!placed.has(id)) homeless.push(id);
+    this.registry.set("cityResidents", map);
+    this.registry.set("cityHomeless", homeless);
+    return map;
+  }
+
+  /** Float the resident's name (or the venue) over each occupied building's door. */
+  private drawResidentSigns() {
+    if (!this.cityMap) return;
+    const residents = this.assignResidents();
+    const NAMES: Record<string, string> = { bar: "THE FERAL CAT", clinic: "MED-CLINIC", guild: "RUNNERS' GUILD" };
+    for (const b of this.cityMap.buildings) {
+      const ids = b.door && residents[b.id];
+      if (!ids || !ids.length) continue;
+      const label = NAMES[b.kind] ?? (npcDef(ids[0])?.name ?? "");
+      if (!label) continue;
+      const [dx, dy] = b.door!;
+      this.add
+        .text(dx * TILE + TILE / 2, dy * TILE - 4, "▾ " + label, {
+          fontFamily: "Courier New, monospace",
+          fontSize: "10px",
+          color: "#f7ff3c",
+        })
+        .setOrigin(0.5, 1)
+        .setDepth(8)
+        .setShadow(0, 0, "#0a0e1a", 4, true, true);
     }
   }
 
@@ -635,9 +707,119 @@ export default class CityScene extends Phaser.Scene {
 
   private enterInterior(b: CityBuilding) {
     this.transitioning = true;
-    const payload: CityEnter = { interior: { kind: b.kind, returnTile: b.door! } };
+    const payload: CityEnter = { interior: { kind: b.kind, returnTile: b.door!, bldgId: b.id } };
     this.cameras.main.fadeOut(220, 2, 2, 8);
     this.cameras.main.once("camerafadeoutcomplete", () => this.scene.restart(payload));
+  }
+
+  /** Put the right people in the room: the building's named residents (quest-givers /
+   *  targets) behind the counter, generic keeper otherwise, plus a patron or two. */
+  private populateInterior() {
+    const spots = this.interiorSpots ?? [];
+    if (!spots.length || !this.interiorKind) return;
+    const residents = (this.registry.get("cityResidents") as Record<string, string[]>) ?? {};
+    const ids = (this.interiorBldg && residents[this.interiorBldg]) || [];
+    const occupants = ids.length
+      ? ids.map((id) => npcDef(id)).filter((d): d is NonNullable<typeof d> => !!d)
+      : [keeperFor(this.interiorKind)];
+    // fill remaining spots with ambient patrons (deterministic by building id)
+    const seed = (this.interiorBldg ?? "x").split("").reduce((a, c) => a + c.charCodeAt(0), 0);
+    while (occupants.length < spots.length && occupants.length < 3) {
+      occupants.push(AMBIENT_NPCS[(seed + occupants.length) % AMBIENT_NPCS.length]);
+    }
+    occupants.forEach((def, i) => {
+      const s = spots[i];
+      if (!s) return;
+      this.npcs.push(new CityNpc(this, s[0] * TILE + TILE / 2, s[1] * TILE + TILE / 2, def));
+    });
+  }
+
+  /** Render the room's furniture (procedural; non-colliding). Warm interior palette. */
+  private drawInteriorFurniture() {
+    for (const p of this.interiorProps ?? []) {
+      this.spawnInteriorProp(p.kind, p.x * TILE + TILE / 2, p.y * TILE + TILE / 2);
+    }
+  }
+
+  private spawnInteriorProp(kind: string, x: number, y: number) {
+    const D = 3;
+    const g = this.add.graphics().setDepth(D);
+    const glow = (col: number, r: number, a: number) =>
+      this.add.image(x, y - 3, GLOW_KEY).setTint(col).setBlendMode(Phaser.BlendModes.ADD).setDepth(D - 1).setScale(r).setAlpha(a);
+    const WOOD = 0x6b4a2a, WOOD_D = 0x3a2818, MET = 0x4a5468, MET_L = 0x868fa3, DARK = 0x15121d, CLOTH = 0x5a2740;
+    switch (kind) {
+      case "bottles":
+        g.fillStyle(WOOD_D, 1).fillRect(x - 11, y - 8, 22, 12); // shelf
+        for (let i = 0; i < 5; i++) g.fillStyle([0x39ff88, 0xff79c6, 0x29e7ff, 0xffb13c, 0xb06bff][i], 0.9).fillRect(x - 9 + i * 4, y - 7, 2, 6);
+        g.fillStyle(MET_L, 0.5).fillRect(x - 11, y + 3, 22, 1);
+        break;
+      case "sign":
+        g.fillStyle(0xff2bd6, 0.9).fillRect(x - 12, y - 3, 24, 5);
+        g.fillStyle(0xffffff, 0.7).fillRect(x - 10, y - 2, 20, 1);
+        glow(0xff2bd6, 1.1, 0.5);
+        break;
+      case "stool":
+        g.fillStyle(WOOD_D, 1).fillRect(x - 1, y - 1, 2, 7); // post
+        g.fillStyle(MET, 1).fillCircle(x, y - 3, 5); g.fillStyle(MET_L, 1).fillCircle(x, y - 4, 2);
+        break;
+      case "table":
+        g.fillStyle(WOOD_D, 1).fillRect(x - 10, y - 5, 20, 8); g.fillStyle(WOOD, 1).fillRect(x - 9, y - 5, 18, 4);
+        g.fillStyle(WOOD_D, 1).fillRect(x - 9, y + 3, 2, 4).fillRect(x + 7, y + 3, 2, 4);
+        break;
+      case "shelf":
+        g.fillStyle(WOOD_D, 1).fillRect(x - 8, y - 11, 16, 22); g.fillStyle(DARK, 1).fillRect(x - 7, y - 10, 14, 20);
+        for (let r = 0; r < 3; r++) { g.fillStyle(WOOD, 1).fillRect(x - 7, y - 7 + r * 7, 14, 1); for (let c = 0; c < 3; c++) g.fillStyle([0x29e7ff, 0xffb13c, 0x39ff88][(r + c) % 3], 0.8).fillRect(x - 6 + c * 5, y - 6 + r * 7, 3, 4); }
+        break;
+      case "cabinet":
+        g.fillStyle(0xdfe6ef, 1).fillRect(x - 8, y - 8, 16, 14); g.fillStyle(0xb7c2d2, 1).fillRect(x - 7, y - 7, 7, 12); g.fillStyle(0xb7c2d2, 1).fillRect(x + 1, y - 7, 6, 12);
+        g.fillStyle(0xff3b6b, 1).fillRect(x - 1, y - 4, 2, 5).fillRect(x - 3, y - 2, 6, 1); // red cross
+        break;
+      case "medbay":
+        g.fillStyle(MET, 1).fillRect(x - 11, y - 5, 22, 9); g.fillStyle(0x29e7ff, 0.35).fillRect(x - 10, y - 4, 20, 6); // bed
+        g.fillStyle(0xeef2f8, 1).fillRect(x - 10, y - 4, 6, 6); // pillow
+        g.fillStyle(DARK, 1).fillRect(x + 7, y - 10, 5, 6); g.fillStyle(0x39ff88, 1).fillRect(x + 8, y - 9, 3, 1); // monitor
+        glow(0x29e7ff, 0.8, 0.25);
+        break;
+      case "cross":
+        g.fillStyle(0x39ff88, 1).fillRect(x - 1, y - 5, 3, 10).fillRect(x - 4, y - 2, 9, 3);
+        glow(0x39ff88, 0.9, 0.5);
+        break;
+      case "register":
+        g.fillStyle(DARK, 1).fillRect(x - 5, y - 5, 10, 7); g.fillStyle(0x29e7ff, 0.9).fillRect(x - 4, y - 4, 8, 2); g.fillStyle(MET_L, 1).fillRect(x - 4, y + 1, 8, 1);
+        break;
+      case "crate":
+        g.fillStyle(WOOD_D, 1).fillRect(x - 7, y - 7, 14, 14); g.fillStyle(WOOD, 1).fillRect(x - 6, y - 6, 12, 12);
+        g.lineStyle(1, WOOD_D, 1).lineBetween(x - 6, y - 6, x + 6, y + 6).lineBetween(x + 6, y - 6, x - 6, y + 6);
+        break;
+      case "board":
+        g.fillStyle(0x2a2018, 1).fillRect(x - 12, y - 9, 24, 16); // cork board
+        for (let i = 0; i < 6; i++) g.fillStyle([0xeae6ff, 0xf7ff3c, 0x9fdcff][i % 3], 0.9).fillRect(x - 10 + (i % 3) * 8, y - 7 + Math.floor(i / 3) * 8, 5, 5); // notes
+        break;
+      case "rack":
+        g.fillStyle(DARK, 1).fillRect(x - 6, y - 10, 12, 20);
+        for (let i = 0; i < 3; i++) { g.fillStyle(MET, 1).fillRect(x - 4, y - 9 + i * 7, 8, 2); g.fillStyle(MET_L, 1).fillRect(x - 4, y - 9 + i * 7, 6, 1); }
+        break;
+      case "locker":
+        g.fillStyle(MET, 1).fillRect(x - 6, y - 11, 12, 22); g.fillStyle(MET_L, 1).fillRect(x - 5, y - 10, 5, 20); g.fillStyle(0x2a3242, 1).fillRect(x + 1, y - 10, 4, 20);
+        g.fillStyle(0xf7ff3c, 0.8).fillRect(x - 1, y - 1, 1, 2); // handle
+        break;
+      case "terminal":
+        g.fillStyle(DARK, 1).fillRect(x - 6, y - 8, 12, 10); g.fillStyle(0x29e7ff, 0.85).fillRect(x - 5, y - 7, 10, 7);
+        for (let i = 0; i < 3; i++) g.fillStyle(0xeafdff, 0.7).fillRect(x - 4, y - 6 + i * 2, 6 - i, 1);
+        g.fillStyle(MET, 1).fillRect(x - 2, y + 2, 4, 4); // stand
+        glow(0x29e7ff, 0.8, 0.3);
+        break;
+      case "bed":
+        g.fillStyle(WOOD_D, 1).fillRect(x - 8, y - 6, 16, 16); g.fillStyle(CLOTH, 1).fillRect(x - 7, y - 5, 14, 14); g.fillStyle(0x7a3a58, 1).fillRect(x - 7, y - 5, 14, 4);
+        g.fillStyle(0xeef2f8, 1).fillRect(x - 6, y - 4, 6, 4); // pillow
+        break;
+      case "rug":
+        g.fillStyle(0x3a2440, 0.85).fillRect(x - 9, y - 6, 18, 12); g.lineStyle(1, 0xff79c6, 0.5).strokeRect(x - 7, y - 4, 14, 8);
+        break;
+      case "plant":
+        g.fillStyle(WOOD_D, 1).fillRect(x - 3, y + 1, 6, 5); g.fillStyle(0x2fa050, 1).fillCircle(x, y - 3, 5); g.fillStyle(0x39ff88, 1).fillCircle(x - 2, y - 4, 2);
+        break;
+    }
   }
 
   private leaveInterior() {
