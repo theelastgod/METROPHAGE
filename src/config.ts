@@ -87,6 +87,9 @@ export const SPAWN = {
 /** WINTERMUTE beam shield-break multiplier. */
 export const BEAM_SHIELD_MULT = 3;
 
+/** Critical-hit damage multiplier (crit chance comes from skills/gear: ModBag.critPct). */
+export const CRIT_MULT = 1.85;
+
 /** Player shield pool (from gear): absorbs before HP, regenerates when safe. */
 export const SHIELD = {
   regenDelayMs: 2500, // no-damage time before regen begins

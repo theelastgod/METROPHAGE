@@ -59,6 +59,8 @@ const STAT_DEFS: StatDef[] = [
   { key: "hackPct", label: "HACK", perPoint: 0.07, slots: ["implant"], pct: true, good: "+" },
   { key: "heatGainPct", label: "HEAT GAIN", perPoint: 0.08, slots: ["implant", "chip"], pct: true, good: "+" },
   { key: "heatDecayPct", label: "HEAT DECAY", perPoint: 0.08, slots: ["chip"], pct: true, good: "-" },
+  { key: "critPct", label: "CRIT", perPoint: 0.04, slots: ["weapon", "chip"], pct: true, good: "+" },
+  { key: "lifestealPct", label: "LIFESTEAL", perPoint: 0.03, slots: ["implant", "chip"], pct: true, good: "+" },
 ];
 
 let counter = 0;

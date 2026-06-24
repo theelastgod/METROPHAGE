@@ -13,6 +13,7 @@ import {
   AGENT_TINTS,
   SPAWN,
   BEAM_SHIELD_MULT,
+  CRIT_MULT,
 } from "../config";
 import { getClass, ClassDef, PrimaryDef } from "../game/classes";
 import { AbilityHost, AbilityDef } from "../game/ability";
@@ -1831,19 +1832,32 @@ export default class GameScene
    */
   damageCop(cop: TuringCop, dmg: number, juice = true, shieldMult = 1) {
     if (!cop.active || cop.isDead) return;
+    // Crit — only player direct hits (juice) roll; scales damage + flags a louder pop.
+    let isCrit = false;
+    if (juice && this.mods.critPct > 0 && Math.random() < this.mods.critPct) {
+      dmg *= CRIT_MULT;
+      isCrit = true;
+    }
     const heatGain = 1 + this.mods.heatGainPct;
     const wasShielded = cop.shielded;
     const killed = cop.hurt(dmg, shieldMult);
     if (wasShielded && !cop.shielded && !killed) this.contracts.onShieldBreak();
+    // Lifesteal — heal a fraction of direct-hit damage that wasn't fully shield-tanked.
+    if (juice && this.mods.lifestealPct > 0 && !(wasShielded && cop.shielded)) {
+      const heal = dmg * this.mods.lifestealPct;
+      if (heal > 0 && this.player.hp < this.player.maxHp) {
+        this.player.hp = Math.min(this.player.maxHp, this.player.hp + heal);
+      }
+    }
     if (juice) {
       this.combatHeat = 1; // swell the music in combat
       const shieldHit = wasShielded && cop.shielded; // absorbed by ICE shield
       this.pops.pop(
         cop.x,
         cop.y - 14,
-        String(Math.round(dmg)),
-        shieldHit ? "#6ab0ff" : killed ? "#ffffff" : this.classDef.hex,
-        killed ? 19 : 14,
+        (isCrit ? "✦" : "") + String(Math.round(dmg)),
+        shieldHit ? "#6ab0ff" : isCrit ? "#f7ff3c" : killed ? "#ffffff" : this.classDef.hex,
+        isCrit ? (killed ? 22 : 18) : killed ? 19 : 14,
       );
     }
     this.heat.add(dmg * HEAT.perDamage * heatGain, this.time.now);

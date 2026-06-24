@@ -11,6 +11,8 @@ export interface ModBag {
   hackPct: number; // hack/shield-break potency
   heatGainPct: number; // +heat gained
   heatDecayPct: number; // -heat decay (slower cooldown)
+  critPct: number; // chance a direct hit crits (×CRIT_MULT damage)
+  lifestealPct: number; // fraction of direct-hit damage healed back
 }
 
 export const ZERO_MODS: ModBag = {
@@ -23,6 +25,8 @@ export const ZERO_MODS: ModBag = {
   hackPct: 0,
   heatGainPct: 0,
   heatDecayPct: 0,
+  critPct: 0,
+  lifestealPct: 0,
 };
 
 export function addMods(a: ModBag, b: Partial<ModBag>): ModBag {
@@ -36,6 +40,8 @@ export function addMods(a: ModBag, b: Partial<ModBag>): ModBag {
     hackPct: a.hackPct + (b.hackPct ?? 0),
     heatGainPct: a.heatGainPct + (b.heatGainPct ?? 0),
     heatDecayPct: a.heatDecayPct + (b.heatDecayPct ?? 0),
+    critPct: a.critPct + (b.critPct ?? 0),
+    lifestealPct: a.lifestealPct + (b.lifestealPct ?? 0),
   };
 }
 
