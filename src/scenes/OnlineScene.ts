@@ -11,6 +11,8 @@ import {
   FACTION_NAMES,
   NEUTRAL,
   factionForColor,
+  PVP_ZONES,
+  inPvpZone,
 } from "../net/sim";
 import { buildGrid } from "../world/district";
 import { DISTRICTS } from "../game/districts";
@@ -94,6 +96,9 @@ export default class OnlineScene extends Phaser.Scene {
   private emoteWheelOpen = false;
   private wheelObjs: Phaser.GameObjects.GameObject[] = [];
   private lastEmoteShownAt = 0; // newest relayed emote already rendered
+  private wasInPvp = false; // last-frame PvP-arena state (for enter/exit warnings)
+  private pvpWarn!: Phaser.GameObjects.Text;
+  private pvpTag!: Phaser.GameObjects.Text;
 
   constructor() {
     super("Online");
@@ -122,6 +127,7 @@ export default class OnlineScene extends Phaser.Scene {
     map.createLayer(0, tileset, 0, 0)!;
     this.cameras.main.setBounds(0, 0, WORLD_W, WORLD_H);
     this.applyNeon();
+    this.drawPvpZones(); // mark the free-for-all arenas (server enforces the damage)
 
     // Local player — your full customization (build/head/visor/shoulders/decal/cloak/
     // accessories), baked and tinted by your signature colour, the same as singleplayer.
@@ -196,6 +202,29 @@ export default class OnlineScene extends Phaser.Scene {
         fontStyle: "bold",
       })
       .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(1001)
+      .setVisible(false);
+
+    // PvP arena warning (center) + a persistent tag while you're inside one
+    this.pvpWarn = this.add
+      .text(this.scale.width / 2, this.scale.height / 2 - 110, "", {
+        fontFamily: "Courier New, monospace",
+        fontSize: "16px",
+        color: "#ff3b6b",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(1004)
+      .setAlpha(0);
+    this.pvpTag = this.add
+      .text(12, this.scale.height - 80, "", {
+        fontFamily: "Courier New, monospace",
+        fontSize: "12px",
+        color: "#ff5a6b",
+        fontStyle: "bold",
+      })
       .setScrollFactor(0)
       .setDepth(1001)
       .setVisible(false);
@@ -443,6 +472,19 @@ export default class OnlineScene extends Phaser.Scene {
       }
     }
     this.me.setVisible(this.net.connected && !this.net.dead);
+
+    // PvP arena state — warn on enter/exit; the SERVER enforces the actual damage.
+    const inPvp = this.net.connected && inPvpZone(this.net.pred.x, this.net.pred.y);
+    if (inPvp !== this.wasInPvp) {
+      this.wasInPvp = inPvp;
+      this.pvpWarn
+        .setText(inPvp ? "⚔ ENTERING PVP ARENA — players can kill you here" : "✓ leaving the arena — safe")
+        .setColor(inPvp ? "#ff3b6b" : "#39ff88")
+        .setAlpha(1);
+      this.tweens.killTweensOf(this.pvpWarn);
+      this.tweens.add({ targets: this.pvpWarn, alpha: 0, delay: 1600, duration: 800 });
+    }
+    this.pvpTag.setVisible(inPvp).setText("⚔ PVP — free-for-all");
 
     // enemies (server-simulated) — tinted by HSS archetype (matches singleplayer reads)
     for (const [id, e] of this.net.enemies) {
@@ -717,6 +759,39 @@ export default class OnlineScene extends Phaser.Scene {
         .setDepth(1002);
       txt.setShadow(0, 0, "#0a0e1a", 4, true, true);
       this.tweens.add({ targets: txt, y: y - 50, alpha: { from: 1, to: 0 }, duration: 1700, onComplete: () => txt.destroy() });
+    }
+  }
+
+  /** Paint the PvP arenas onto the world: a faint red fill, a border, hazard-stripe
+   *  corners and a banner — so the free-for-all zones are obvious before you walk in. */
+  private drawPvpZones() {
+    const g = this.add.graphics().setDepth(4);
+    for (const z of PVP_ZONES) {
+      g.fillStyle(0xff2b3b, 0.05).fillRect(z.x, z.y, z.w, z.h);
+      g.lineStyle(2, 0xff3b6b, 0.55).strokeRect(z.x, z.y, z.w, z.h);
+      g.lineStyle(3, 0xff3b6b, 0.85);
+      const c = 28;
+      const corner = (cx: number, cy: number, dx: number, dy: number) => {
+        g.beginPath();
+        g.moveTo(cx, cy + dy * c);
+        g.lineTo(cx, cy);
+        g.lineTo(cx + dx * c, cy);
+        g.strokePath();
+      };
+      corner(z.x, z.y, 1, 1);
+      corner(z.x + z.w, z.y, -1, 1);
+      corner(z.x, z.y + z.h, 1, -1);
+      corner(z.x + z.w, z.y + z.h, -1, -1);
+      this.add
+        .text(z.x + z.w / 2, z.y + 12, `⚔ ${z.name} · PVP ARENA`, {
+          fontFamily: "Courier New, monospace",
+          fontSize: "13px",
+          color: "#ff5a6b",
+          fontStyle: "bold",
+        })
+        .setOrigin(0.5, 0)
+        .setDepth(4)
+        .setShadow(0, 0, "#000000", 4, true, true);
     }
   }
 

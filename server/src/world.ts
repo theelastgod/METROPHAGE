@@ -44,6 +44,7 @@ import {
   NODE_DECAY_PER_SEC,
   FACTION_CAPTURE_SCORE,
   NODE_HOLD_SCORE_PER_SEC,
+  inPvpZone,
 } from "../../src/net/sim";
 import { buildGrid, spawnPoint, isWall, type TileGrid } from "../../src/world/district";
 import { DISTRICTS } from "../../src/game/districts";
@@ -110,6 +111,7 @@ interface PlayerState {
   hp: number;
   dead: boolean;
   respawnTick: number;
+  pvpSafeUntil: number; // tick until which the player is immune to PvP (spawn protection)
   credits: number;
   cores: number;
   aim: number;
@@ -770,6 +772,7 @@ export class WorldDO {
       hp: PLAYER_HP,
       dead: false,
       respawnTick: 0,
+      pvpSafeUntil: 0,
       credits,
       cores,
       aim: 0,
@@ -922,6 +925,7 @@ export class WorldDO {
           p.y = this.spawn.y;
           p.hp = PLAYER_HP;
           p.dead = false;
+          p.pvpSafeUntil = this.tick + ticks(2500); // brief immunity so arenas can't be spawn-camped
           p.dirty = true;
         }
         continue;
@@ -1032,6 +1036,9 @@ export class WorldDO {
             break;
           }
         }
+        // PvP: a player shot can also hit OTHER players — but only inside a PvP arena
+        // (server-authoritative; the lone place player-vs-player damage is applied).
+        if (!consumed && this.resolvePvpHit(s, ax, ay)) consumed = true;
       } else {
         for (const p of this.players.values()) {
           if (p.dead) continue;
@@ -1245,6 +1252,48 @@ export class WorldDO {
     let best = 0;
     for (let i = 1; i < FACTION_COUNT; i++) if (counts[i] > counts[best]) best = i;
     return best;
+  }
+
+  /** Player-vs-player damage, gated to the PvP arenas. The server owns HP/death/respawn
+   *  and awards an arena bounty; a kill-feed line is broadcast. Returns true on a hit. */
+  private resolvePvpHit(s: Shot, ax: number, ay: number): boolean {
+    const shooter = this.players.get(s.owner);
+    if (!shooter || !inPvpZone(shooter.x, shooter.y)) return false;
+    const R2 = PROJ_HIT_RADIUS * PROJ_HIT_RADIUS;
+    for (const v of this.players.values()) {
+      if (v.id === s.owner || v.dead) continue;
+      if (this.tick < v.pvpSafeUntil) continue; // spawn protection
+      if (shooter.party >= 0 && v.party === shooter.party) continue; // no team-killing
+      if (!inPvpZone(v.x, v.y)) continue;
+      if (segPointDist2(v.x, v.y, ax, ay, s.x, s.y) <= R2) {
+        v.hp -= s.dmg;
+        if (v.hp <= 0) {
+          v.hp = 0;
+          v.dead = true;
+          v.respawnTick = this.tick + ticks(RESPAWN_MS);
+          v.dirty = true;
+          shooter.credits += CREDITS_PER_KILL * 3; // an arena kill pays a bounty
+          shooter.xp += XP_PER_KILL * 2;
+          shooter.level = levelForXp(shooter.xp);
+          shooter.dirty = true;
+          this.broadcastSys(`☠ ${shooter.name} eliminated ${v.name} in the arena`);
+        }
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Broadcast a system line to everyone in this zone (kill feed, announcements). */
+  private broadcastSys(text: string) {
+    const out = JSON.stringify({ t: "sys", text });
+    for (const [sock] of this.sessions) {
+      try {
+        sock.send(out);
+      } catch {
+        /* dropped */
+      }
+    }
   }
 
   private nearestLivePlayer(x: number, y: number, range: number): PlayerState | null {

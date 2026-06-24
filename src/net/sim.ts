@@ -153,6 +153,35 @@ export function factionForColor(color: number): number {
   return best;
 }
 
+// ── PvP arenas (free-for-all combat zones) ──
+// Designated rectangles (world px) where the server lets players damage each other.
+// Everywhere else is PvE-safe. The SAME arenas exist in every district/zone, so each
+// district has a known battlefield. Shared here so client (rendering + warnings) and
+// server (the only place damage is actually applied) use one definition.
+export interface PvpZone {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  name: string;
+}
+export const PVP_ZONES: PvpZone[] = [
+  // THE CRUCIBLE — a big central arena. Centred so it's an obvious landmark; the
+  // server gives a respawn-protection window so it can't be spawn-camped.
+  { x: WORLD_W / 2 - 280, y: WORLD_H / 2 - 200, w: 560, h: 400, name: "THE CRUCIBLE" },
+];
+
+/** Index of the PvP arena containing (x,y), or -1 if the point is in safe territory. */
+export function pvpZoneAt(x: number, y: number): number {
+  for (let i = 0; i < PVP_ZONES.length; i++) {
+    const z = PVP_ZONES[i];
+    if (x >= z.x && x <= z.x + z.w && y >= z.y && y <= z.y + z.h) return i;
+  }
+  return -1;
+}
+/** True if (x,y) is inside any PvP arena. */
+export const inPvpZone = (x: number, y: number): boolean => pvpZoneAt(x, y) >= 0;
+
 /** True if the point (x,y) is inside a wall tile or out of bounds. */
 export function tileIsWall(x: number, y: number, grid: TileGrid): boolean {
   const tx = Math.floor(x / TILE);
