@@ -5,6 +5,7 @@ import Atmosphere from "../render/Atmosphere";
 import OnlineInventory from "../ui/OnlineInventory";
 import OnlineShop from "../ui/OnlineShop";
 import OnlineForge from "../ui/OnlineForge";
+import OnlineBoard from "../ui/OnlineBoard";
 import { COLORS, TILE, VIEW_W, VIEW_H } from "../config";
 import { TILESET_KEY, PLAYER_KEY, COP_KEY, BULLET_KEY, GLOW_KEY, NODE_KEY } from "../assets/manifest";
 import { driveChar } from "../assets/anim";
@@ -93,6 +94,7 @@ export default class OnlineScene extends Phaser.Scene {
   private inv!: OnlineInventory; // bottom hotbar + openable bag, fed by the server
   private shop!: OnlineShop; // vendor panel (credits sink)
   private forge!: OnlineForge; // gear forge — upgrade/reforge/fuse/salvage (credits+cores sink)
+  private board!: OnlineBoard; // achievements + cross-zone leaderboards (D1-backed, HTTP)
   private lastSeason = -1;
   private chatLogText!: Phaser.GameObjects.Text;
   private chatInput!: Phaser.GameObjects.Text;
@@ -214,6 +216,9 @@ export default class OnlineScene extends Phaser.Scene {
     this.shop.onBuy = (sku) => this.net.buy(sku);
     this.forge = new OnlineForge(this);
     this.forge.onCraft = (action, id, id2) => this.net.craft(action, id, id2);
+    // HTTP base for cross-zone reads (leaderboards): ws(s)://host/ws → http(s)://host
+    const httpBase = SERVER_URL.replace(/^ws/, "http").replace(/\/ws$/, "");
+    this.board = new OnlineBoard(this, httpBase);
     // World-boss locator: a status banner + a screen-edge arrow toward an off-screen boss.
     this.bossBanner = this.add
       .text(VIEW_W / 2, 46, "", {
@@ -428,6 +433,14 @@ export default class OnlineScene extends Phaser.Scene {
       }
       if (this.forge.open && e.key === "Escape") {
         this.forge.close();
+        return;
+      }
+      if (e.key === "l" || e.key === "L") {
+        this.board.toggle(this.net.achievements, this.net.id);
+        return;
+      }
+      if (this.board.open && e.key === "Escape") {
+        this.board.close();
         return;
       }
       if (e.key === "h" || e.key === "H") {

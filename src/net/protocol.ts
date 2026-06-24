@@ -163,6 +163,8 @@ export type ServerMsg =
   | { t: "story"; act: string; title: string; text: string; step: number; done: boolean }
   | { t: "inv"; items: Item[] } // the owning client's full inventory (login + on change)
   | { t: "equipped"; items: Item[]; maxHp: number } // owning client's equipped gear + derived max HP
+  | { t: "achv"; ids: string[] } // full unlocked achievement set (sent on login)
+  | { t: "ach"; id: string; name: string; reward: number } // a freshly-unlocked achievement
   | {
       t: "trade";
       state: "open" | "update" | "done" | "cancelled";

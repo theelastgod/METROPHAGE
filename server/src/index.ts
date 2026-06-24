@@ -21,7 +21,32 @@ async function pickSettlement(env: Env): Promise<Settlement> {
 }
 
 const json = (body: unknown, status = 200): Response =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+  new Response(JSON.stringify(body), {
+    status,
+    // CORS so the browser client (Vite dev origin) can read the HTTP economy/board APIs.
+    headers: { "content-type": "application/json", "access-control-allow-origin": "*" },
+  });
+
+/**
+ * Cross-zone leaderboards. Reads the shared D1 player_stats (every zone DO contributes),
+ * ranking players by a stat. Lives in the Worker, not a DO, because it aggregates across
+ * ALL zones — the whole point of keeping global state in D1.
+ */
+async function handleLeaderboard(url: URL, env: Env): Promise<Response> {
+  const stat = (url.searchParams.get("stat") || "kills").replace(/[^a-z]/g, "").slice(0, 24);
+  const n = Math.min(50, Math.max(1, parseInt(url.searchParams.get("n") || "10", 10)));
+  try {
+    const { results } = await env.DB.prepare(
+      "SELECT s.player AS player, COALESCE(p.name, s.player) AS name, s.v AS v " +
+        "FROM player_stats s LEFT JOIN players p ON p.id = s.player WHERE s.stat = ? AND s.v > 0 ORDER BY s.v DESC LIMIT ?",
+    )
+      .bind(stat, n)
+      .all<{ player: string; name: string; v: number }>();
+    return json({ ok: true, stat, rows: results ?? [] });
+  } catch (e) {
+    return json({ ok: false, reason: String((e as Error)?.message ?? e), rows: [] }, 200);
+  }
+}
 
 /**
  * $METRO custodial bridge endpoints (Phase 5). Account-level economy — operates on the
@@ -74,6 +99,8 @@ export default {
       const stub = env.WORLD.get(env.WORLD.idFromName(zone));
       return stub.fetch(new Request(`https://world/stats?zone=${zone}`));
     }
+
+    if (url.pathname === "/leaderboard") return handleLeaderboard(url, env);
 
     if (url.pathname.startsWith("/metro/")) return handleMetro(url, req, env);
 

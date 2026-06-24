@@ -99,6 +99,7 @@ export default class NetClient {
   emotes: Array<{ from: string; kind: number; ping: boolean; x: number; y: number; at: number }> = [];
   questStep = 0;
   questProgress = 0;
+  achievements = new Set<string>(); // unlocked achievement ids (hydrated on login, grows live)
   story: { act: string; title: string; text: string; done: boolean; at: number } | null = null;
   lastError = 0;
   reconciles = 0;
@@ -323,6 +324,11 @@ export default class NetClient {
       this.equipped = msg.items;
       this.maxHp = msg.maxHp;
       this.onInventory?.(); // refresh the bag (equipped marks) + HUD
+    } else if (msg.t === "achv") {
+      this.achievements = new Set(msg.ids);
+    } else if (msg.t === "ach") {
+      this.achievements.add(msg.id);
+      this.pushChat({ from: "", ch: "sys", text: `★ ACHIEVEMENT — ${msg.name} (+₵${msg.reward})`, faction: -1, sys: true });
     } else if (msg.t === "trade") {
       if (msg.state === "done" || msg.state === "cancelled") {
         this.trade = null;

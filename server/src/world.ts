@@ -60,6 +60,7 @@ import {
   type Cost,
 } from "../../src/game/crafting";
 import { addMods, ZERO_MODS, type ModBag } from "../../src/game/stats";
+import { achievementsForStat, type StatKey } from "../../src/game/achievements";
 import { verifyWalletLogin } from "./auth";
 
 /** Inventory is capped so the persisted JSON stays bounded; oldest drops out (FIFO). */
@@ -188,6 +189,13 @@ interface PlayerState {
   // questline (The Blank — per-player, server-authoritative)
   questStep: number;
   questProgress: number;
+  // achievements + leaderboards — cross-zone lifetime counters persisted to D1 player_stats
+  stats: Record<string, number>; // additive counters (kills, bosses, captures, credits, pvp)
+  statDelta: Record<string, number>; // unflushed increments queued for D1
+  deepest: number; // deepest district reached (1-based); flushed with a MAX upsert
+  deepestDirty: boolean;
+  achv: Set<string>; // unlocked achievement ids
+  achvNew: string[]; // unlocked-this-session ids queued for D1 insert
   // appearance (relayed to other clients so they render this player's customization)
   look?: PlayerLook;
 }
@@ -920,6 +928,8 @@ export class WorldDO {
     this.sendStory(ws, p.questStep); // brief the Blank on their current beat
     this.send(ws, { t: "inv", items: p.inventory }); // hydrate their held gear
     this.sendLoadout(ws, p); // hydrate equipped gear + derived max HP
+    this.noteDeepest(p); // arriving in this district may set a "deepest reached" milestone
+    this.send(ws, { t: "achv", ids: [...p.achv] }); // hydrate the unlocked achievement set
     this.ensureTick();
     await this.ensureSupervisor();
   }
@@ -970,6 +980,23 @@ export class WorldDO {
     } else {
       await this.upsert(id, name, x, y, 0, 0, 0, 0, [], undefined, {});
     }
+    // achievements + leaderboard counters (cross-zone, shared D1)
+    const stats: Record<string, number> = {};
+    const achv = new Set<string>();
+    try {
+      const sres = await this.env.DB.prepare("SELECT stat, v FROM player_stats WHERE player = ?")
+        .bind(id)
+        .all<{ stat: string; v: number }>();
+      for (const r of sres.results ?? []) stats[r.stat] = r.v;
+      const ares = await this.env.DB.prepare("SELECT ach FROM player_achv WHERE player = ?")
+        .bind(id)
+        .all<{ ach: string }>();
+      for (const r of ares.results ?? []) achv.add(r.ach);
+    } catch {
+      /* tables may not exist before migration */
+    }
+    const storedDeep = stats["deepest"] ?? 0;
+    const deepest = Math.max(storedDeep, this.districtIndex + 1);
     const mods = deriveMods(equipped);
     const maxHp = PLAYER_HP + Math.round(mods.hpAdd);
     return {
@@ -1003,6 +1030,12 @@ export class WorldDO {
       lastEmoteTick: -999,
       questStep,
       questProgress: 0,
+      stats,
+      statDelta: {},
+      deepest,
+      deepestDirty: deepest > storedDeep,
+      achv,
+      achvNew: [],
       look,
     };
   }
@@ -1035,6 +1068,42 @@ export class WorldDO {
       p.questProgress = 0;
       p.dirty = true;
       for (const [sock, id] of this.sessions) if (id === p.id) this.sendStory(sock, p.questStep);
+    }
+  }
+
+  // ── achievements + leaderboards (cross-zone counters, persisted to D1) ──────
+  private statVal(p: PlayerState, stat: StatKey): number {
+    return stat === "deepest" ? p.deepest : p.stats[stat] ?? 0;
+  }
+
+  /** Increment a lifetime counter (queued for D1) and check for any newly-crossed milestone. */
+  private bumpStat(p: PlayerState, stat: StatKey, n = 1) {
+    if (n <= 0) return;
+    p.stats[stat] = (p.stats[stat] ?? 0) + n;
+    p.statDelta[stat] = (p.statDelta[stat] ?? 0) + n;
+    this.checkAchv(p, stat);
+  }
+
+  /** Record the deepest district this player has reached (a MAX, not a sum). */
+  private noteDeepest(p: PlayerState) {
+    if (this.districtIndex + 1 > p.deepest) {
+      p.deepest = this.districtIndex + 1;
+      p.deepestDirty = true;
+      this.checkAchv(p, "deepest");
+    }
+  }
+
+  /** Unlock + reward any achievement whose threshold the given stat just crossed. */
+  private checkAchv(p: PlayerState, stat: StatKey) {
+    const v = this.statVal(p, stat);
+    for (const a of achievementsForStat(stat)) {
+      if (v >= a.threshold && !p.achv.has(a.id)) {
+        p.achv.add(a.id);
+        p.achvNew.push(a.id);
+        p.credits += a.reward; // server-authoritative reward (rides the next snapshot)
+        p.dirty = true;
+        this.sendTo(p.id, { t: "ach", id: a.id, name: a.name, reward: a.reward });
+      }
     }
   }
 
@@ -1385,6 +1454,10 @@ export class WorldDO {
                 killer.dirty = true;
                 this.bumpMeta("f" + killer.faction, isBoss ? 10 : 1); // faction contribution
                 this.questEvent(killer, "kill");
+                // achievement counters (cross-zone, D1)
+                this.bumpStat(killer, "kills", 1);
+                if (isBoss) this.bumpStat(killer, "bosses", 1);
+                this.bumpStat(killer, "credits", CREDITS_PER_KILL * mult);
                 // item loot — a boss ALWAYS drops, rarity-boosted; a grunt rolls the chance.
                 // Pushed (FIFO-capped) to the killer's client only.
                 if (isBoss || Math.random() < arch.loot.chance) {
@@ -1490,8 +1563,10 @@ export class WorldDO {
           this.bumpMeta("f" + node.by, FACTION_CAPTURE_SCORE);
           // credit the players who channelled it (quest "capture" objective)
           for (const pl of this.players.values()) {
-            if (!pl.dead && pl.faction === node.by && dist2(pl.x, pl.y, node.x, node.y) <= CR2)
+            if (!pl.dead && pl.faction === node.by && dist2(pl.x, pl.y, node.x, node.y) <= CR2) {
               this.questEvent(pl, "capture");
+              this.bumpStat(pl, "captures", 1);
+            }
           }
         }
       } else {
@@ -1684,6 +1759,8 @@ export class WorldDO {
           shooter.xp += XP_PER_KILL * 2;
           shooter.level = levelForXp(shooter.xp);
           shooter.dirty = true;
+          this.bumpStat(shooter, "pvp", 1);
+          this.bumpStat(shooter, "credits", CREDITS_PER_KILL * 3);
           this.broadcastSys(`☠ ${shooter.name} eliminated ${v.name} in the arena`);
         }
         return true;
@@ -1720,11 +1797,47 @@ export class WorldDO {
 
   private async persistDirty() {
     for (const p of this.players.values()) {
-      if (!p.dirty) continue;
-      p.dirty = false;
-      await this.upsert(p.id, p.name, p.x, p.y, p.credits, p.xp, p.cores, p.questStep, p.inventory, p.look, p.equipped);
+      if (p.dirty) {
+        p.dirty = false;
+        await this.upsert(p.id, p.name, p.x, p.y, p.credits, p.xp, p.cores, p.questStep, p.inventory, p.look, p.equipped);
+      }
+      await this.flushStats(p); // lifetime counters / achievements may change without `dirty`
     }
     await this.syncMeta();
+  }
+
+  /** Flush a player's queued stat increments + deepest-district + new achievements to the
+   *  shared D1 store (so leaderboards aggregate across every zone). Counters are additive
+   *  UPSERTs; deepest is a MAX; achievements insert-once. */
+  private async flushStats(p: PlayerState) {
+    try {
+      for (const k of Object.keys(p.statDelta)) {
+        const d = p.statDelta[k];
+        delete p.statDelta[k];
+        if (!d) continue;
+        await this.env.DB.prepare(
+          "INSERT INTO player_stats (player, stat, v) VALUES (?,?,?) ON CONFLICT(player,stat) DO UPDATE SET v = v + excluded.v",
+        )
+          .bind(p.id, k, d)
+          .run();
+      }
+      if (p.deepestDirty) {
+        p.deepestDirty = false;
+        await this.env.DB.prepare(
+          "INSERT INTO player_stats (player, stat, v) VALUES (?,?,?) ON CONFLICT(player,stat) DO UPDATE SET v = MAX(v, excluded.v)",
+        )
+          .bind(p.id, "deepest", p.deepest)
+          .run();
+      }
+      if (p.achvNew.length) {
+        const now = Date.now();
+        for (const a of p.achvNew.splice(0)) {
+          await this.env.DB.prepare("INSERT OR IGNORE INTO player_achv (player, ach, at) VALUES (?,?,?)").bind(p.id, a, now).run();
+        }
+      }
+    } catch {
+      /* tables may not exist before migration */
+    }
   }
 
   /** Flush queued meta increments to D1 atomically (so every zone DO contributes to
@@ -1788,6 +1901,7 @@ export class WorldDO {
       this.leaveParty(p);
       this.pendingInvites.delete(p.id);
       await this.upsert(p.id, p.name, p.x, p.y, p.credits, p.xp, p.cores, p.questStep, p.inventory, p.look, p.equipped);
+      await this.flushStats(p);
       await this.syncMeta();
       this.players.delete(id);
     }

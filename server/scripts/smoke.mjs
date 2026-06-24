@@ -698,6 +698,81 @@ async function craft() {
   );
 }
 
+async function achv() {
+  // ACHIEVEMENTS + LEADERBOARDS — kills bump a cross-zone D1 counter; crossing a threshold
+  // unlocks an achievement (server push + reward); the leaderboard aggregates over D1.
+  const name = "ach_" + Math.random().toString(36).slice(2, 8); // fresh player → no prior unlocks
+  const ws = await connect();
+  const store = { x: 0, y: 0, enemies: [], credits: 0, achvSet: new Set(), unlocked: [] };
+  ws.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "achv") store.achvSet = new Set(m.ids);
+    if (m.t === "ach") store.unlocked.push(m);
+  });
+  const w = await login(ws, name, 0);
+  store.x = w.x;
+  store.y = w.y;
+  trackState(ws, w.id, store);
+  await sleep(350);
+  const startedFresh = store.achvSet.size === 0;
+
+  const nearest = () => {
+    let b = null, bd = 1e9;
+    for (const e of store.enemies) {
+      const d = Math.hypot(e.x - store.x, e.y - store.y);
+      if (d < bd) { bd = d; b = e; }
+    }
+    return b;
+  };
+  let seq = 0;
+  const t0 = Date.now();
+  while (Date.now() - t0 < 15000 && store.unlocked.length < 1) {
+    const e = nearest();
+    if (e) {
+      const dx = e.x - store.x, dy = e.y - store.y, d = Math.hypot(dx, dy) || 1;
+      seq++;
+      ws.send(JSON.stringify({ t: "input", seq, mx: d > 110 ? dx / d : 0, my: d > 110 ? dy / d : 0 }));
+      ws.send(JSON.stringify({ t: "fire", seq, aim: Math.atan2(dy, dx) }));
+    }
+    await sleep(45);
+  }
+  const achievementUnlocked = store.unlocked.some((a) => a.id === "first_blood");
+  const rewardGranted = store.unlocked.some((a) => (a.reward || 0) > 0);
+  ws.close();
+  await sleep(900); // onClose flushes stats + achievements to D1
+
+  // cross-zone leaderboard over HTTP (aggregates D1 across all zones)
+  const httpBase = WS_URL.replace(/^ws/, "http").replace(/\/ws$/, "");
+  let lb = { rows: [] };
+  try {
+    lb = await (await fetch(`${httpBase}/leaderboard?stat=kills&n=25`)).json();
+  } catch {
+    /* server down */
+  }
+  const onLeaderboard = (lb.rows || []).some((r) => r.player === w.id && r.v > 0);
+
+  // reconnect → the unlocked set reloads from D1
+  const ws2 = await connect();
+  const store2 = { achvSet: new Set() };
+  ws2.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "achv") store2.achvSet = new Set(m.ids);
+  });
+  await login(ws2, name, 0);
+  await sleep(550);
+  const achvPersisted = store2.achvSet.has("first_blood");
+  ws2.close();
+
+  const checks = { startedFresh, achievementUnlocked, rewardGranted, onLeaderboard, achvPersisted };
+  await sleep(200);
+  report(
+    "ACHV — kill-counter unlocks an achievement (+reward) & ranks on the cross-zone board",
+    { unlocked: store.unlocked.map((a) => a.id), boardRows: (lb.rows || []).length, myKills: (lb.rows || []).find((r) => r.player === w.id)?.v ?? 0 },
+    Object.values(checks).every(Boolean),
+    checks,
+  );
+}
+
 async function shop() {
   const ws = await connect();
   const store = { x: 0, y: 0, enemies: [], inventory: [], credits: 0 };
@@ -1558,6 +1633,7 @@ try {
   else if (mode === "boss") await boss();
   else if (mode === "equip") await equip();
   else if (mode === "craft") await craft();
+  else if (mode === "achv") await achv();
   else if (mode === "shop") await shop();
   else if (mode === "bestiary") await bestiary();
   else if (mode === "safehouse") await safehouse();
