@@ -29,6 +29,7 @@ export interface EnemyTierDef {
   xp: number; // progression reward
   credits: number; // currency reward
   healAmount?: number; // for attack "heal": HP restored to allies in slamRadius
+  statusResist?: number; // 0..1 innate resistance to burn/chill/shock (heavies shrug them off)
 }
 
 export const ENEMY_TIERS: Record<string, EnemyTierDef> = {
@@ -100,6 +101,7 @@ export const ENEMY_TIERS: Record<string, EnemyTierDef> = {
     kite: false,
     xp: 60,
     credits: 26,
+    statusResist: 0.5, // heavy chassis shrugs off half of any status
   },
   // WASP-DRONE — tiny, fast, fragile harasser; closes in and chips with rapid weak shots.
   wasp: {

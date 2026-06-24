@@ -18,6 +18,7 @@ import {
 import { getClass, ClassDef, PrimaryDef } from "../game/classes";
 import { AbilityHost, AbilityDef } from "../game/ability";
 import { ENEMY_TIERS, ENEMY_BARKS, EnemyHost } from "../game/enemies";
+import { rollElite, type EliteModifier } from "../game/elites";
 import { buildGrid, spawnPoint, isWall, TILE_WALL, TileGrid } from "../world/district";
 import { DistrictDef, DISTRICTS } from "../game/districts";
 import {
@@ -407,11 +408,29 @@ export default class GameScene
   /** Rarity-weighted loot drop from a killed cop (Purge Units drop better). */
   private maybeDropLoot(cop: TuringCop) {
     const tier = cop.tier;
-    const chance = tier.id === "purge" ? 0.7 : tier.id === "enforcer" ? 0.28 : 0.12;
+    const base = tier.id === "purge" ? 0.7 : tier.id === "enforcer" ? 0.28 : 0.12;
+    const chance = base + (cop.elite ? 0.35 : 0); // elites drop much more often
     if (Math.random() > chance) return;
-    const boost = (tier.id === "purge" ? 2 : tier.id === "enforcer" ? 0.6 : 0) + this.city.cycle * 0.3;
+    const boost =
+      (tier.id === "purge" ? 2 : tier.id === "enforcer" ? 0.6 : 0) +
+      this.city.cycle * 0.3 +
+      (cop.elite?.lootBonus ?? 0);
     const item = rollItem(this.progression.level, boost);
     this.pickups.add(new Pickup(this, cop.x, cop.y, item));
+  }
+
+  /** VOLATILE elite death burst: a damaging AoE at the corpse. */
+  private eliteExplode(x: number, y: number, color: number) {
+    const r = 72;
+    const b = this.add.circle(x, y, r, color, 0.4).setDepth(7);
+    this.tweens.add({ targets: b, alpha: 0, scale: 1.5, duration: 320, onComplete: () => b.destroy() });
+    this.spark(x, y, color, 3);
+    juiceShake(this, 170, 0.008);
+    if (!this.player.invulnerable && Phaser.Math.Distance.Between(this.player.x, this.player.y, x, y) <= r) {
+      const died = this.player.applyDamage(22);
+      this.onPlayerHurt();
+      if (died) this.respawnPlayer();
+    }
   }
 
   // ---- contracts ----
@@ -800,13 +819,25 @@ export default class GameScene
   private spawnEnemy(tierId: string, x: number, y: number, bark = false) {
     const cop = new TuringCop(this, x, y, ENEMY_TIERS[tierId]);
     if (this.cycleMult > 1) cop.scaleHp(this.cycleMult);
+    // Reinforcements can roll an elite modifier (rarer than ambient garrison) — chance
+    // climbs with Heat and NG+ cycle.
+    if (bark) {
+      const elite = rollElite(0.1 + this.heat.normalized * 0.14 + this.city.cycle * 0.05);
+      if (elite) cop.makeElite(elite);
+    }
     this.enemies.add(cop);
-    if (bark) this.maybeBark(tierId, x, y);
+    if (bark) this.maybeBark(tierId, x, y, cop.elite);
   }
 
-  /** Occasional system-voiced deploy bark above a reinforcement (throttled, not every
-   *  spawn) — gives the new archetypes a bit of menace as they engage. */
-  private maybeBark(tierId: string, x: number, y: number) {
+  /** Deploy callout above a reinforcement: elites always announce (loud, aura-coloured);
+   *  ordinary units bark occasionally (throttled). */
+  private maybeBark(tierId: string, x: number, y: number, elite?: EliteModifier) {
+    if (elite) {
+      const hex = "#" + (elite.aura & 0xffffff).toString(16).padStart(6, "0");
+      this.pops.pop(x, y - 24, `◆ ${elite.name} ${ENEMY_TIERS[tierId].name}`, hex, 13, 46);
+      this.synth.tierUp(2);
+      return;
+    }
     const now = this.time.now;
     if (now < this.nextBarkAt || Math.random() > 0.5) return;
     const pool = ENEMY_BARKS[tierId];
@@ -2012,8 +2043,10 @@ export default class GameScene
       if (cop instanceof Boss) {
         this.onBossDefeated(cop);
       } else {
-        this.grantKillRewards(cop.tier.xp, cop.tier.credits);
+        const mult = cop.elite?.xpMult ?? 1;
+        this.grantKillRewards(Math.round(cop.tier.xp * mult), Math.round(cop.tier.credits * mult));
         this.maybeDropLoot(cop);
+        if (cop.elite?.volatile) this.eliteExplode(cop.x, cop.y, cop.elite.aura);
       }
       this.contracts.onKill();
       this.fireQuestTrigger("kill");
@@ -2034,10 +2067,13 @@ export default class GameScene
   private applyStatus(cop: TuringCop) {
     const el = this.classDef.element;
     if (!el || cop.isDead || cop instanceof Boss) return; // bosses are status-immune
+    const resist = cop.statusResist; // innate tier + elite WARDED
+    if (resist >= 0.95) return; // effectively immune
+    const keep = 1 - resist; // duration / chance kept after resistance
     const now = this.time.now;
     if (el === "shock") {
-      if (Math.random() < 0.18) {
-        cop.disable(450); // brief stun (reuses the hack-disable freeze)
+      if (Math.random() < 0.18 * keep) {
+        cop.disable(450 * keep); // brief stun (reuses the hack-disable freeze)
         this.spark(cop.x, cop.y, 0xf7ff3c, 1.8);
       }
       return;
@@ -2048,11 +2084,11 @@ export default class GameScene
       this.statuses.set(cop, s);
     }
     if (el === "burn") {
-      s.burnUntil = now + 2200;
+      s.burnUntil = now + 2200 * keep;
       if (s.burnNext < now) s.burnNext = now + 360;
       this.spark(cop.x, cop.y, 0xff7a3c, 1.2);
     } else {
-      s.chillUntil = now + 1700; // chill
+      s.chillUntil = now + 1700 * keep; // chill
       this.spark(cop.x, cop.y, 0x6ad6ff, 1.2);
     }
   }

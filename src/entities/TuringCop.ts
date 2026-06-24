@@ -3,6 +3,7 @@ import { COLORS } from "../config";
 import { COP_KEY } from "../assets/manifest";
 import { driveChar } from "../assets/anim";
 import { EnemyTierDef, ENEMY_TIERS, EnemyHost } from "../game/enemies";
+import type { EliteModifier } from "../game/elites";
 
 export enum CopState {
   Patrol = "patrol",
@@ -25,6 +26,10 @@ export default class TuringCop extends Phaser.Physics.Arcade.Sprite {
   state: CopState = CopState.Patrol;
   /** Movement multiplier from status (chill slows; 1 = normal). Set by the scene. */
   speedScale = 1;
+  /** Rolled elite modifier (undefined = ordinary unit). */
+  elite?: EliteModifier;
+  private eliteSpeed = 1; // base move multiplier from an elite (SWIFT etc.)
+  private eliteAura?: Phaser.GameObjects.Arc;
 
   private home: Phaser.Math.Vector2;
   private patrolTarget: Phaser.Math.Vector2;
@@ -92,6 +97,33 @@ export default class TuringCop extends Phaser.Physics.Arcade.Sprite {
     return true;
   }
 
+  /** Promote to an elite: scale pools + base speed, raise a coloured aura. At spawn. */
+  makeElite(mod: EliteModifier) {
+    this.elite = mod;
+    this.hp = Math.round(this.hp * mod.hpMult);
+    this.maxHp = Math.round(this.maxHp * mod.hpMult);
+    if (this.shield > 0) this.shield = Math.round(this.shield * mod.hpMult);
+    this.eliteSpeed = mod.speedMult;
+    const r = this.tier.bodyRadius * this.tier.scale + 8;
+    this.eliteAura = this.scene.add
+      .circle(this.x, this.y, r, mod.aura, 0.08)
+      .setStrokeStyle(2, mod.aura, 0.7)
+      .setDepth(7);
+    this.scene.tweens.add({
+      targets: this.eliteAura,
+      scale: { from: 0.94, to: 1.12 },
+      duration: 850,
+      yoyo: true,
+      repeat: -1,
+      ease: "Sine.inOut",
+    });
+  }
+
+  /** Combined status resistance (innate tier + elite), 0..1. */
+  get statusResist(): number {
+    return Math.max(this.tier.statusResist ?? 0, this.elite?.statusResist ?? 0);
+  }
+
   private applyTierTint() {
     if (this.tier.tint === null) this.clearTint();
     else this.setTint(this.tier.tint);
@@ -118,6 +150,7 @@ export default class TuringCop extends Phaser.Physics.Arcade.Sprite {
     if (this.dead) return;
     const now = this.scene.time.now;
     if (this.shieldArc) this.shieldArc.setPosition(this.x, this.y);
+    if (this.eliteAura) this.eliteAura.setPosition(this.x, this.y);
 
     if (now < this.disabledUntil) {
       this.setVelocity(0, 0);
@@ -215,7 +248,7 @@ export default class TuringCop extends Phaser.Physics.Arcade.Sprite {
 
   private moveToward(tx: number, ty: number, speed: number) {
     const a = Phaser.Math.Angle.Between(this.x, this.y, tx, ty);
-    const s = speed * this.speedScale; // chill slows movement
+    const s = speed * this.speedScale * this.eliteSpeed; // chill slows; elites (SWIFT) speed up
     this.setVelocity(Math.cos(a) * s, Math.sin(a) * s);
   }
 
@@ -289,6 +322,7 @@ export default class TuringCop extends Phaser.Physics.Arcade.Sprite {
     body.stop();
     body.enable = false;
     this.shieldArc?.destroy();
+    this.eliteAura?.destroy();
 
     const burst = this.scene.add
       .circle(this.x, this.y, 8 * this.tier.scale, COLORS.enemy, 0.9)
