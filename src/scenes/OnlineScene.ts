@@ -14,6 +14,7 @@ import {
 } from "../net/sim";
 import { buildGrid } from "../world/district";
 import { DISTRICTS } from "../game/districts";
+import { ENEMY_BARKS } from "../game/enemies";
 import { WORLD_W, WORLD_H } from "../net/sim";
 import NetClient from "../net/NetClient";
 import NeonPipeline from "../render/NeonPipeline";
@@ -77,6 +78,7 @@ export default class OnlineScene extends Phaser.Scene {
   private zone = "d0";
   private districtIndex = 0;
   private meDir = new Phaser.Math.Vector2(0, 1); // last facing for the local avatar
+  private nextEnemyBarkAt = 0; // throttle for online HSS barks
 
   constructor() {
     super("Online");
@@ -421,6 +423,7 @@ export default class OnlineScene extends Phaser.Scene {
       if (!s) {
         s = this.add.sprite(e.x, e.y, COP_KEY, 0).setDepth(8);
         this.enemySprites.set(id, s);
+        this.maybeEnemyBark(e.x, e.y, e.kind); // deploy bark on first appearance
       }
       if (s.getData("kind") !== e.kind) {
         s.setTint(ENEMY_KIND_TINT[e.kind] ?? COLORS.enemy);
@@ -582,6 +585,28 @@ export default class OnlineScene extends Phaser.Scene {
     } else {
       this.storyPanel.setVisible(false);
     }
+  }
+
+  /** Floating HSS deploy bark above a newly-seen online enemy (throttled), tinted to
+   *  its archetype — matches the singleplayer feel. */
+  private maybeEnemyBark(x: number, y: number, kind: number) {
+    const now = this.time.now;
+    if (now < this.nextEnemyBarkAt || Math.random() > 0.4) return;
+    const ids = ["patrol", "wasp", "lancer", "hound"];
+    const pool = ENEMY_BARKS[ids[kind] ?? "patrol"];
+    if (!pool?.length) return;
+    this.nextEnemyBarkAt = now + 2200;
+    const tint = ENEMY_KIND_TINT[kind] ?? COLORS.enemy;
+    const hex = "#" + (tint & 0xffffff).toString(16).padStart(6, "0");
+    const t = this.add
+      .text(x, y - 20, pool[Math.floor(Math.random() * pool.length)], {
+        fontFamily: "Courier New, monospace",
+        fontSize: "10px",
+        color: hex,
+      })
+      .setOrigin(0.5)
+      .setDepth(11);
+    this.tweens.add({ targets: t, y: y - 42, alpha: 0, duration: 1200, onComplete: () => t.destroy() });
   }
 
   private applyNeon() {

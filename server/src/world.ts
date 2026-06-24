@@ -967,11 +967,23 @@ export class WorldDO {
         for (const e of this.enemies.values()) {
           if (e.hp <= 0) continue;
           if (segPointDist2(e.x, e.y, ax, ay, s.x, s.y) <= R2) {
-            e.hp -= s.dmg;
+            // Server-authoritative crit + lifesteal, scaled by the shooter's level
+            // (computed server-side so a client can't spoof its own crit chance).
+            const owner = this.players.get(s.owner);
+            let dmg = s.dmg;
+            if (owner) {
+              const critChance = Math.min(0.05 + owner.level * 0.012, 0.3);
+              if (Math.random() < critChance) dmg *= 1.85;
+              const lifesteal = Math.min(owner.level * 0.004, 0.08);
+              if (lifesteal > 0 && !owner.dead && owner.hp > 0) {
+                owner.hp = Math.min(PLAYER_HP, owner.hp + dmg * lifesteal);
+              }
+            }
+            e.hp -= dmg;
             consumed = true;
             if (e.hp <= 0) {
               e.respawnTick = this.tick + ticks(4000);
-              const killer = this.players.get(s.owner);
+              const killer = owner;
               if (killer) {
                 killer.credits += CREDITS_PER_KILL; // server-authoritative currency
                 killer.xp += XP_PER_KILL; // server-authoritative progression
