@@ -21,6 +21,8 @@ import {
   TILE_NEON,
   TILE_DIRT,
   TILE_WALL_SLUM,
+  TILE_INNER_FLOOR,
+  TILE_INNER_WALL,
   isWall,
   type TileGrid,
 } from "./district";
@@ -251,22 +253,22 @@ const INTERIOR_NAMES: Record<BuildingKind, string> = {
 
 /** Build a small interior room for a building of the given kind. */
 export function buildInterior(kind: BuildingKind): Interior {
-  const w = 16;
-  const h = 11;
+  const w = 20;
+  const h = 13;
   const grid: TileGrid = [];
-  for (let y = 0; y < h; y++) grid.push(new Array(w).fill(TILE_FLOOR));
+  for (let y = 0; y < h; y++) grid.push(new Array(w).fill(TILE_INNER_FLOOR));
   // wall ring
   for (let x = 0; x < w; x++) {
-    grid[0][x] = TILE_WALL;
-    grid[h - 1][x] = TILE_WALL;
+    grid[0][x] = TILE_INNER_WALL;
+    grid[h - 1][x] = TILE_INNER_WALL;
   }
   for (let y = 0; y < h; y++) {
-    grid[y][0] = TILE_WALL;
-    grid[y][w - 1] = TILE_WALL;
+    grid[y][0] = TILE_INNER_WALL;
+    grid[y][w - 1] = TILE_INNER_WALL;
   }
   // exit door in the bottom wall (centre), with the player just inside it
   const ex = Math.floor(w / 2);
-  grid[h - 1][ex] = TILE_PLAZA; // distinct, walkable exit tile
+  grid[h - 1][ex] = TILE_PLAZA; // distinct, walkable exit tile (glows)
   const exit: [number, number] = [ex, h - 1];
   const spawn: [number, number] = [ex, h - 2];
 
@@ -274,15 +276,15 @@ export function buildInterior(kind: BuildingKind): Interior {
   // a counter for service buildings: a wall row with a gap, NPC behind it
   if (kind === "shop" || kind === "bar" || kind === "clinic" || kind === "guild") {
     const cy = 4;
-    for (let x = 3; x <= w - 4; x++) grid[cy][x] = TILE_WALL;
-    grid[cy][ex] = TILE_FLOOR; // a gap to step behind, if needed
+    for (let x = 3; x <= w - 4; x++) grid[cy][x] = TILE_INNER_WALL;
+    grid[cy][ex] = TILE_INNER_FLOOR; // a gap to step behind, if needed
     npcSpots.push([ex, cy - 1]); // shopkeeper / quest-giver behind the counter
     npcSpots.push([4, h - 3]); // a patron / second NPC in the room
   } else {
     // home / den — a lived-in room: a couple of props (walls) + an occupant
-    grid[3][3] = TILE_WALL;
-    grid[3][4] = TILE_WALL; // a table / shelf
-    grid[3][w - 4] = TILE_WALL;
+    grid[3][3] = TILE_INNER_WALL;
+    grid[3][4] = TILE_INNER_WALL; // a table / shelf
+    grid[3][w - 4] = TILE_INNER_WALL;
     npcSpots.push([ex, 3]); // occupant
   }
 

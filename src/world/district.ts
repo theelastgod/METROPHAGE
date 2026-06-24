@@ -23,6 +23,8 @@ export const TILE_CROSSWALK = 12; // road crossing, walkable
 export const TILE_NEON = 13; // neon-strip floor (nightlife), walkable
 export const TILE_DIRT = 14; // wasteland / slum ground, walkable
 export const TILE_WALL_SLUM = 15; // shanty building
+export const TILE_INNER_FLOOR = 16; // building interior floor (wood/tile), walkable
+export const TILE_INNER_WALL = 17; // building interior wall
 
 /** Tiles that block movement (buildings + water). */
 const WALL_TILES = new Set<number>([
@@ -32,6 +34,7 @@ const WALL_TILES = new Set<number>([
   TILE_WALL_RES,
   TILE_WALL_CORP,
   TILE_WALL_SLUM,
+  TILE_INNER_WALL,
 ]);
 
 /** Every building/blocking tile index — scenes pass this to setCollision(). */

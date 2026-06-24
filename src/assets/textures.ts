@@ -319,6 +319,35 @@ function makeTileset(scene: Phaser.Scene) {
       px(ox + 19, oy + 4, 3, 1, 0x39414e);
       for (let k = 0; k < 5; k++) px(ox + 5 + k * 4, oy + 26, 2, 1, 0x2a2014, 0.7); // junk
     });
+
+    // ── interiors ──────────────────────────────────────────────────────────────
+    // 16 interior floor — warm wood planks (horizontal boards, grain, seams)
+    {
+      const ox = cellX(16);
+      const oy = cellY(16);
+      px(ox, oy, 32, 32, 0x2a1d10);
+      for (let y = 0; y < 32; y += 8) {
+        px(ox, oy + y, 32, 7, 0x33240f);
+        px(ox, oy + y, 32, 1, 0x453519, 0.8); // board top light
+        px(ox, oy + y + 7, 32, 1, 0x1c1208, 0.9); // board shadow seam
+      }
+      for (let k = 0; k < 10; k++)
+        px(ox + ((h(ox + k, oy) * 30) | 0), oy + ((h(ox, oy + k) * 30) | 0), 1, 1, 0x241808, 0.7); // grain
+      px(ox + 8, oy, 1, 16, 0x1c1208, 0.6); // board butt-joints
+      px(ox + 24, oy + 16, 1, 16, 0x1c1208, 0.6);
+    }
+    // 17 interior wall — plain plaster, top light + baseboard + a faint panel seam
+    {
+      const ox = cellX(17);
+      const oy = cellY(17);
+      px(ox, oy, 32, 32, 0x1a1622);
+      px(ox + 1, oy + 1, 30, 30, 0x201b2a);
+      px(ox, oy, 32, 2, 0x2c2640);
+      px(ox, oy, 32, 1, 0x3a3354, 0.7);
+      px(ox, oy + 28, 32, 4, 0x14101c); // baseboard
+      px(ox, oy + 28, 32, 1, 0x2a2440, 0.6);
+      px(ox + 16, oy, 1, 28, 0x161220, 0.5);
+    }
   });
 }
 
