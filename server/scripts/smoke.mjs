@@ -699,6 +699,45 @@ async function bestiary() {
   report("BESTIARY — varied HSS archetypes populate the zone", { kindsSeen: kinds }, Object.values(checks).every(Boolean), checks);
 }
 
+async function safehouse() {
+  const SAFE = WS_URL + (WS_URL.includes("?") ? "&" : "?") + "zone=safe";
+  // two players enter the same safehouse interior
+  const a = await connect(SAFE);
+  const storeA = { x: 0, y: 0, enemies: [], players: [] };
+  const wa = await login(a, "homebody_" + Math.random().toString(36).slice(2, 6));
+  storeA.x = wa.x;
+  storeA.y = wa.y;
+  trackState(a, wa.id, storeA);
+  const b = await connect(SAFE);
+  const wb = await login(b, "homebody2_" + Math.random().toString(36).slice(2, 6));
+  await sleep(700); // a few snapshots
+
+  const noEnemies = storeA.enemies.length === 0; // it's a no-combat hub
+  const seesOther = (storeA.players || []).some((p) => p.id === wb.id); // shared presence
+
+  // walk the room — the server moves us against the interior floor/walls
+  const startX = storeA.x;
+  let seq = 0;
+  for (let i = 0; i < 40; i++) {
+    seq++;
+    a.send(JSON.stringify({ t: "input", seq, mx: 1, my: 0 }));
+    await sleep(45);
+  }
+  await sleep(200);
+  const moved = Math.abs(storeA.x - startX) > 20 && storeA.enemies.length === 0;
+
+  a.close();
+  b.close();
+  await sleep(200);
+  const checks = { noCombatZone: noEnemies, sharedPresence: seesOther, canWalk: moved };
+  report(
+    "SAFEHOUSE — a no-combat shared interior zone you can walk + gather in",
+    { enemies: storeA.enemies.length, players: (storeA.players || []).length, movedDx: Math.round(storeA.x - startX) },
+    Object.values(checks).every(Boolean),
+    checks,
+  );
+}
+
 async function mp() {
   const AOI = 720;
   const a = await connect();
@@ -1418,6 +1457,7 @@ try {
   else if (mode === "equip") await equip();
   else if (mode === "shop") await shop();
   else if (mode === "bestiary") await bestiary();
+  else if (mode === "safehouse") await safehouse();
   else if (mode === "mp") await mp();
   else if (mode === "zones") await zones();
   else if (mode === "territory") await territory();

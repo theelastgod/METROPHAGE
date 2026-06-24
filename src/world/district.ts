@@ -116,6 +116,36 @@ export function isWall(tile: number): boolean {
   return WALL_TILES.has(tile);
 }
 
+/**
+ * The SAFEHOUSE interior — a walled room of warm interior floor: a server-authoritative,
+ * no-combat social hub (+ vendor) players enter from any district. Shared by the client
+ * (renders it) and the server (sims zone "safe"). Same world bounds as a district so the
+ * camera/physics need no special-casing.
+ */
+export function buildSafehouse(): TileGrid {
+  const g: TileGrid = [];
+  for (let y = 0; y < GRID_H; y++) {
+    const row: number[] = [];
+    for (let x = 0; x < GRID_W; x++) {
+      const border = x < 4 || x >= GRID_W - 4 || y < 3 || y >= GRID_H - 3;
+      row.push(border ? TILE_INNER_WALL : TILE_INNER_FLOOR);
+    }
+    g.push(row);
+  }
+  // interior pillars for character (all collide)
+  for (const [px, py] of [[12, 10], [27, 10], [12, 20], [27, 20]] as const) {
+    g[py][px] = TILE_INNER_WALL;
+    g[py][px + 1] = TILE_INNER_WALL;
+  }
+  return g;
+}
+
+/** Centre of the safehouse (open floor) — the spawn / return point, in world pixels. */
+export const SAFEHOUSE_SPAWN = {
+  x: Math.floor(GRID_W / 2) * TILE + TILE / 2,
+  y: Math.floor(GRID_H / 2) * TILE + TILE / 2,
+};
+
 /** Player start in world (pixel) coordinates, at tile center, from the district def. */
 export function spawnPoint(grid: TileGrid, def: DistrictDef = DISTRICTS[0]): { x: number; y: number } {
   const [sx, sy] = def.spawnTile;

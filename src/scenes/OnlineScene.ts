@@ -19,7 +19,7 @@ import {
   PVP_ZONES,
   inPvpZone,
 } from "../net/sim";
-import { buildGrid } from "../world/district";
+import { buildGrid, buildSafehouse } from "../world/district";
 import { DISTRICTS } from "../game/districts";
 import { ENEMY_BARKS } from "../game/enemies";
 import { WORLD_W, WORLD_H } from "../net/sim";
@@ -105,6 +105,8 @@ export default class OnlineScene extends Phaser.Scene {
   private callsign = "runner";
   private zone = "d0";
   private districtIndex = 0;
+  private interior = false; // true when this is the safehouse zone
+  private fromZone = "d0"; // district to return to when leaving the safehouse
   private meDir = new Phaser.Math.Vector2(0, 1); // last facing for the local avatar
   private nextEnemyBarkAt = 0; // throttle for online HSS barks
   private emoteWheelOpen = false;
@@ -118,7 +120,7 @@ export default class OnlineScene extends Phaser.Scene {
     super("Online");
   }
 
-  create(data?: { zone?: string }) {
+  create(data?: { zone?: string; from?: string }) {
     const rawCust = this.registry.get("customization") as Customization | undefined;
     const cust = sanitizeCustomization(rawCust, this.registry.get("classId") as string | undefined);
     this.callsign = (rawCust?.callsign || "runner").toLowerCase();
@@ -128,40 +130,56 @@ export default class OnlineScene extends Phaser.Scene {
     this.lastEmoteShownAt = 0;
     this.bossOverlays.clear(); // GO destroyed on shutdown; drop stale refs before re-create
 
-    // Zone = which district this client is in. Travel hands off to another DO.
-    this.districtIndex = this.parseZone(data?.zone);
-    this.zone = "d" + this.districtIndex;
+    // Zone = which district (or the safehouse interior) this client is in. Travel hands off
+    // to another DO by reconnecting with a new zone.
+    this.zone = data?.zone === "safe" ? "safe" : "d" + this.parseZone(data?.zone);
+    this.interior = this.zone === "safe";
+    this.fromZone = data?.from ?? "d0"; // where 'H' returns to from inside the safehouse
+    this.districtIndex = this.interior ? 0 : this.parseZone(data?.zone);
     const def = DISTRICTS[this.districtIndex];
 
     this.cameras.main.setBackgroundColor(COLORS.bgVoid);
 
-    // Real world — same grid + tileset the server simulates against.
-    const grid = buildGrid(def);
+    // Real world — same grid + tileset the server simulates against (or the safehouse room).
+    const grid = this.interior ? buildSafehouse() : buildGrid(def);
     const map = this.make.tilemap({ data: grid, tileWidth: TILE, tileHeight: TILE });
     const tileset = map.addTilesetImage(TILESET_KEY, TILESET_KEY, TILE, TILE)!;
     map.createLayer(0, tileset, 0, 0)!;
-    // Rich static world: the same building-silhouette pass + atmospheric layer the
-    // single-player city uses, so the authoritative shared world reads as the neon city
-    // (step 1 of unifying SP + MP on one world) rather than a flat tile grid. Both are
-    // pure ambiance — no collision, no server state — and the grid already matches what
-    // the server simulates against.
+    // Building-silhouette pass (also shades the interior walls). The atmospheric weather is
+    // outdoors-only — the safehouse is a calm, indoor social hub.
     shadeWalls(this, grid);
-    this.atmosphere = new Atmosphere(this, {
-      weather: def.weather,
-      accent: def.accent,
-      worldW: WORLD_W,
-      worldH: WORLD_H,
-    });
-    for (let i = 0; i < def.layout.buildings.length; i += 2) {
-      const b = def.layout.buildings[i];
-      const cx = ((b.x1 + b.x2) / 2) * TILE + TILE / 2;
-      const cy = ((b.y1 + b.y2) / 2) * TILE + TILE / 2;
-      this.atmosphere.addHologram(cx, cy, def.accent);
+    if (!this.interior) {
+      this.atmosphere = new Atmosphere(this, {
+        weather: def.weather,
+        accent: def.accent,
+        worldW: WORLD_W,
+        worldH: WORLD_H,
+      });
+      for (let i = 0; i < def.layout.buildings.length; i += 2) {
+        const b = def.layout.buildings[i];
+        const cx = ((b.x1 + b.x2) / 2) * TILE + TILE / 2;
+        const cy = ((b.y1 + b.y2) / 2) * TILE + TILE / 2;
+        this.atmosphere.addHologram(cx, cy, def.accent);
+      }
     }
     this.cameras.main.setBounds(0, 0, WORLD_W, WORLD_H);
     installUiCamera(this, 1);
     this.applyNeon();
-    this.drawPvpZones(); // mark the free-for-all arenas (server enforces the damage)
+    if (!this.interior) this.drawPvpZones(); // no PvP arena inside the safehouse
+    if (this.interior) {
+      this.add
+        .text(WORLD_W / 2, 4 * TILE, "▣ SAFEHOUSE", { fontFamily: "Courier New, monospace", fontSize: "20px", color: "#39ff88", fontStyle: "bold" })
+        .setOrigin(0.5)
+        .setDepth(6);
+      this.add
+        .text(WORLD_W / 2, 4 * TILE + 26, "a quiet hold — no combat · H to leave · B vendor", {
+          fontFamily: "Courier New, monospace",
+          fontSize: "11px",
+          color: "#9aa3b2",
+        })
+        .setOrigin(0.5)
+        .setDepth(6);
+    }
 
     // Local player — your full customization (build/head/visor/shoulders/decal/cloak/
     // accessories), baked and tinted by your signature colour, the same as singleplayer.
@@ -232,7 +250,7 @@ export default class OnlineScene extends Phaser.Scene {
       .text(
         this.scale.width / 2,
         this.scale.height - 12,
-        `WASD · CLICK fire · V emote · I bag · B vendor · ENTER chat · [1-${DISTRICTS.length}] travel · ESC`,
+        `WASD · CLICK fire · I bag · B vendor · H safehouse · V emote · ENTER chat · [1-${DISTRICTS.length}] travel · ESC`,
         { fontFamily: "Courier New, monospace", fontSize: "11px", color: "#6b7184" },
       )
       .setOrigin(0.5, 1)
@@ -396,6 +414,15 @@ export default class OnlineScene extends Phaser.Scene {
       }
       if (this.shop.open && e.key === "Escape") {
         this.shop.close();
+        return;
+      }
+      if (e.key === "h" || e.key === "H") {
+        // H enters the safehouse (a no-combat hub) from a district, and returns to where
+        // you came from. Travel = reconnect to the destination zone's DO.
+        const dest = this.interior ? this.fromZone : "safe";
+        const from = this.interior ? undefined : this.zone;
+        this.net.disconnect();
+        this.scene.restart({ zone: dest, from });
         return;
       }
       if (e.key === "v" || e.key === "V") {
@@ -571,7 +598,7 @@ export default class OnlineScene extends Phaser.Scene {
     this.me.setVisible(this.net.connected && !this.net.dead);
 
     // PvP arena state — warn on enter/exit; the SERVER enforces the actual damage.
-    const inPvp = this.net.connected && inPvpZone(this.net.pred.x, this.net.pred.y);
+    const inPvp = this.net.connected && !this.interior && inPvpZone(this.net.pred.x, this.net.pred.y);
     if (inPvp !== this.wasInPvp) {
       this.wasInPvp = inPvp;
       this.pvpWarn
@@ -713,7 +740,7 @@ export default class OnlineScene extends Phaser.Scene {
     const war = FACTION_NAMES.map((nm, i) => `${nm[0]}:${this.net.factions[i]}`).join("  ");
     this.hud.setText([
       st.connected
-        ? `◢ ONLINE  ${this.callsign}  ·  ${this.zone.toUpperCase()} ${DISTRICTS[this.districtIndex].name}`
+        ? `◢ ONLINE  ${this.callsign}  ·  ${this.interior ? "▣ SAFEHOUSE" : `${this.zone.toUpperCase()} ${DISTRICTS[this.districtIndex].name}`}`
         : "connecting to server…",
       `CELL ${FACTION_NAMES[this.net.faction]}   ·   DISTRICT CONTROL: ${ctrl}`,
       `players: ${st.players}   enemies: ${this.net.enemies.size}   nodes: ${this.net.nodes.size}`,

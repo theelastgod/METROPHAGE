@@ -69,7 +69,8 @@ export default {
 
     // Ops: forward a per-zone metrics probe to that zone's DO.
     if (url.pathname === "/stats") {
-      const zone = "d" + parseZone(url.searchParams.get("zone"));
+      const raw = url.searchParams.get("zone");
+      const zone = raw === "safe" ? "safe" : "d" + parseZone(raw);
       const stub = env.WORLD.get(env.WORLD.idFromName(zone));
       return stub.fetch(new Request(`https://world/stats?zone=${zone}`));
     }
@@ -77,7 +78,8 @@ export default {
     if (url.pathname.startsWith("/metro/")) return handleMetro(url, req, env);
 
     if (url.pathname === "/ws") {
-      const zone = "d" + parseZone(url.searchParams.get("zone")); // canonical
+      const raw = url.searchParams.get("zone");
+      const zone = raw === "safe" ? "safe" : "d" + parseZone(raw); // canonical; safehouse passes through
       const stub = env.WORLD.get(env.WORLD.idFromName(zone));
       return stub.fetch(req);
     }

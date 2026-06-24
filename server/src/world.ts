@@ -46,7 +46,7 @@ import {
   NODE_HOLD_SCORE_PER_SEC,
   inPvpZone,
 } from "../../src/net/sim";
-import { buildGrid, spawnPoint, isWall, type TileGrid } from "../../src/world/district";
+import { buildGrid, spawnPoint, isWall, buildSafehouse, SAFEHOUSE_SPAWN, type TileGrid } from "../../src/world/district";
 import { DISTRICTS } from "../../src/game/districts";
 import { rollItem, type Item, type Slot, type Rarity } from "../../src/game/items";
 import { addMods, ZERO_MODS, type ModBag } from "../../src/game/stats";
@@ -342,6 +342,7 @@ export class WorldDO {
   private zoneName = "d0";
   private districtIndex = 0;
   private zoneReady = false;
+  private interior = false; // the safehouse zone — no enemies, no PvP
   private msgRate = new Map<WebSocket, { tick: number; n: number }>(); // per-socket flood guard
 
   constructor(
@@ -356,8 +357,9 @@ export class WorldDO {
     // Durable state (pos/credits/xp/cores/quest) reloads from D1; transient combat
     // state (in-flight shots, live HP) resets — acceptable on a rare eviction.
     state.blockConcurrencyWhile(async () => {
-      const z = await state.storage.get<number>("zone");
-      if (typeof z === "number") this.initZone("d" + z);
+      const z = await state.storage.get<string | number>("zone");
+      if (typeof z === "string") this.initZone(z); // "safe" or "dN"
+      else if (typeof z === "number") this.initZone("d" + z); // legacy numeric
       for (const ws of state.getWebSockets()) {
         const att = ws.deserializeAttachment() as SessionAttach | null;
         if (att) await this.resumeSession(ws, att);
@@ -373,9 +375,20 @@ export class WorldDO {
   private initZone(zone: string | null) {
     if (this.zoneReady) return;
     this.zoneReady = true;
+    // SAFEHOUSE — a no-combat social interior: build the room, NO enemies/boss/territory.
+    if (zone === "safe") {
+      this.interior = true;
+      this.zoneName = "safe";
+      this.districtIndex = 0;
+      this.grid = buildSafehouse();
+      this.spawn = SAFEHOUSE_SPAWN;
+      this.nodes = [];
+      void this.state.storage.put("zone", "safe"); // a wake re-binds the safehouse
+      return;
+    }
     this.districtIndex = parseZone(zone);
     this.zoneName = "d" + this.districtIndex;
-    void this.state.storage.put("zone", this.districtIndex); // so a wake re-binds the right district
+    void this.state.storage.put("zone", this.zoneName); // store the zone NAME so "safe" survives a wake
     const def = DISTRICTS[this.districtIndex];
     this.grid = buildGrid(def);
     this.spawn = spawnPoint(this.grid, def);
@@ -1561,7 +1574,7 @@ export class WorldDO {
    *  and awards an arena bounty; a kill-feed line is broadcast. Returns true on a hit. */
   private resolvePvpHit(s: Shot, ax: number, ay: number): boolean {
     const shooter = this.players.get(s.owner);
-    if (!shooter || !inPvpZone(shooter.x, shooter.y)) return false;
+    if (this.interior || !shooter || !inPvpZone(shooter.x, shooter.y)) return false; // safehouse = no PvP
     const R2 = PROJ_HIT_RADIUS * PROJ_HIT_RADIUS;
     for (const v of this.players.values()) {
       if (v.id === s.owner || v.dead) continue;
