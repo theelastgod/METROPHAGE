@@ -29,6 +29,7 @@ import { getWeapon } from "../game/weapons";
 import { CONSUMABLES } from "../game/consumables";
 import { fmtMetro } from "../economy/metro";
 import BlackMarketPanel from "../ui/BlackMarketPanel";
+import CityMinimap from "../ui/CityMinimap";
 import NeonPipeline from "../render/NeonPipeline";
 import Atmosphere from "../render/Atmosphere";
 import { shadeWalls } from "../render/wallShade";
@@ -84,6 +85,7 @@ export default class CityScene extends Phaser.Scene {
   private interiorSpots?: [number, number][];
   private interiorProps?: InteriorProp[];
   private interiorBldg?: string;
+  private cityMinimap?: CityMinimap; // city-mode building-aware minimap + world map
 
   constructor() {
     super("City");
@@ -162,6 +164,10 @@ export default class CityScene extends Phaser.Scene {
     this.cursors = this.input.keyboard!.createCursorKeys();
     this.input.keyboard!.on("keydown-ESC", () => {
       if (this.transitioning) return;
+      if (this.cityMinimap?.isWorldOpen) {
+        this.cityMinimap.toggleWorld();
+        return;
+      }
       if (this.market?.isOpen) {
         this.market.close();
         return;
@@ -188,12 +194,20 @@ export default class CityScene extends Phaser.Scene {
       this.setupBlackMarket();
       this.setupEnvPlate();
       this.checkSubwayCleared();
+      if (this.cityMap) {
+        this.cityMinimap = new CityMinimap(this, this.cityMap);
+        this.cityMinimap.setMarkers(
+          [Math.floor(this.marketX / TILE), Math.floor(this.marketY / TILE)],
+          this.cityMap.npcSpots[0],
+        );
+      }
     } else {
       this.drawInteriorFurniture();
       this.populateInterior();
     }
     this.input.keyboard!.on("keydown-E", () => this.tryTalk());
     this.input.keyboard!.on("keydown-J", () => this.toggleJournal());
+    this.input.keyboard!.on("keydown-M", () => this.cityMinimap?.toggleWorld());
     this.input.keyboard!.on("keydown-B", () => {
       if (this.mode === "city" && !this.dialogue.isOpen && !this.transitioning) this.market?.toggle();
     });
@@ -679,9 +693,9 @@ export default class CityScene extends Phaser.Scene {
       this.neon.tint = [t[0], t[1], t[2]];
     }
     if (this.transitioning) return;
-    if (this.dialogue.isOpen || this.market?.isOpen) {
+    if (this.dialogue.isOpen || this.market?.isOpen || this.cityMinimap?.isWorldOpen) {
       this.player.setVelocity(0, 0);
-      return; // freeze while talking / shopping
+      return; // freeze while talking / shopping / reading the map
     }
     const left = this.wasd.A.isDown || this.cursors.left.isDown;
     const right = this.wasd.D.isDown || this.cursors.right.isDown;
@@ -703,6 +717,7 @@ export default class CityScene extends Phaser.Scene {
 
     // NPC "E TALK" prompts by proximity
     for (const n of this.npcs) n.update(Phaser.Math.Distance.Between(this.player.x, this.player.y, n.x, n.y));
+    this.cityMinimap?.update(this.player.x, this.player.y);
 
     // black-market "E to browse" prompt by proximity
     if (this.market && this.marketPrompt) {
