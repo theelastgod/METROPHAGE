@@ -180,7 +180,12 @@ export default class OnlineScene extends Phaser.Scene {
       setOnlinePlayer(this.net.id); // let the $METRO bridge panel address this player
     };
     this.inv = new OnlineInventory(this);
-    this.net.onInventory = () => this.inv.setItems(this.net.inventory);
+    this.inv.onEquip = (id) => this.net.equip(id);
+    this.inv.onUnequip = (slot) => this.net.unequip(slot);
+    this.net.onInventory = () => {
+      this.inv.setItems(this.net.inventory);
+      this.inv.setEquipped(this.net.equipped);
+    };
     // World-boss locator: a status banner + a screen-edge arrow toward an off-screen boss.
     this.bossBanner = this.add
       .text(VIEW_W / 2, 46, "", {
