@@ -2,7 +2,17 @@ import Phaser from "phaser";
 import { TILE, COLORS, NPC } from "../config";
 import { TILESET_KEY, PORTRAIT_NPC_KEY, GLOW_KEY } from "../assets/manifest";
 import { COLLIDING_TILES, isWall } from "../world/district";
-import { buildCity, buildInterior, type CityMap, type CityBuilding, type BuildingKind } from "../world/city";
+import {
+  buildCity,
+  buildInterior,
+  ENV_IDENTITY,
+  envAt,
+  type CityMap,
+  type CityBuilding,
+  type BuildingKind,
+  type PropKind,
+  type Env,
+} from "../world/city";
 import Player from "../entities/Player";
 import CityNpc from "../entities/CityNpc";
 import DialogueBox from "../ui/DialogueBox";
@@ -60,6 +70,11 @@ export default class CityScene extends Phaser.Scene {
   private marketX = 0;
   private marketY = 0;
   private marketPrompt?: Phaser.GameObjects.Text;
+  private currentEnv?: Env; // which district the player is standing in
+  private envPlate?: Phaser.GameObjects.Text; // "▸ DISTRICT" nameplate on entry
+  private envSub?: Phaser.GameObjects.Text;
+  private neonTint: [number, number, number] = [0, 0.9, 1]; // current screen mood (lerped)
+  private neonTarget: [number, number, number] = [0, 0.9, 1];
 
   constructor() {
     super("City");
@@ -151,9 +166,12 @@ export default class CityScene extends Phaser.Scene {
     this.dialogue = new DialogueBox(this);
     this.buildQuestHud();
     if (this.mode === "city") {
+      this.drawEnvWash();
+      this.drawDecorations();
       this.placeCityNpcs();
       this.spawnCollectibles();
       this.setupBlackMarket();
+      this.setupEnvPlate();
     }
     this.input.keyboard!.on("keydown-E", () => this.tryTalk());
     this.input.keyboard!.on("keydown-J", () => this.toggleJournal());
@@ -273,6 +291,123 @@ export default class CityScene extends Phaser.Scene {
     this.refreshWallet();
     this.toast(`◈ ${item.name} → bag`);
     return "ok";
+  }
+
+  // ── environments: per-district colour, props + a "you are entering X" nameplate ──
+
+  /** A translucent mood-wash over every block, coloured by its district. */
+  private drawEnvWash() {
+    if (!this.cityMap) return;
+    const g = this.add.graphics().setDepth(1);
+    for (const z of this.cityMap.zones) {
+      const id = ENV_IDENTITY[z.env];
+      g.fillStyle(id.wash, id.washAlpha);
+      g.fillRect(z.rect.x1 * TILE, z.rect.y1 * TILE, (z.rect.x2 - z.rect.x1 + 1) * TILE, (z.rect.y2 - z.rect.y1 + 1) * TILE);
+    }
+  }
+
+  /** Spawn the env-specific street props the generator placed. */
+  private drawDecorations() {
+    if (!this.cityMap) return;
+    for (const d of this.cityMap.decorations) {
+      const env = envAt(d.x, d.y, this.cityMap.w, this.cityMap.h);
+      this.spawnProp(d.kind, d.x * TILE + TILE / 2, d.y * TILE + TILE / 2, ENV_IDENTITY[env].accent);
+    }
+  }
+
+  /** Draw one decorative prop (procedural). Glowy props (fire/lantern) pulse. */
+  private spawnProp(kind: PropKind, x: number, y: number, accent: number) {
+    const D = 4;
+    const g = this.add.graphics().setDepth(D);
+    const glow = (col: number, r: number, a = 0.5, pulse = false) => {
+      const img = this.add.image(x, y - 4, GLOW_KEY).setTint(col).setBlendMode(Phaser.BlendModes.ADD).setDepth(D - 1).setScale(r).setAlpha(a);
+      if (pulse) this.tweens.add({ targets: img, scale: r * 1.3, alpha: a * 0.55, duration: 600 + Math.random() * 300, yoyo: true, repeat: -1, ease: "Sine.inOut" });
+    };
+    switch (kind) {
+      case "billboard":
+        g.fillStyle(0x0a0e1a, 1).fillRect(x - 1, y - 6, 2, 14);
+        g.fillStyle(0x05060c, 1).fillRect(x - 9, y - 30, 18, 22);
+        g.lineStyle(2, accent, 0.95).strokeRect(x - 9, y - 30, 18, 22);
+        g.fillStyle(accent, 0.5).fillRect(x - 6, y - 26, 12, 4);
+        g.fillStyle(accent, 0.3).fillRect(x - 6, y - 19, 12, 3);
+        glow(accent, 0.9, 0.4);
+        break;
+      case "planter":
+        g.fillStyle(0x1a2235, 1).fillRect(x - 8, y - 2, 16, 8);
+        g.lineStyle(1, 0x39ff88, 0.6).strokeRect(x - 8, y - 2, 16, 8);
+        g.fillStyle(0x2fbf5a, 1).fillRect(x - 6, y - 6, 12, 4);
+        break;
+      case "stall":
+        g.fillStyle(0x2a1c10, 1).fillRect(x - 10, y - 2, 20, 8);
+        for (let i = 0; i < 5; i++) g.fillStyle(i % 2 ? 0xff5a4a : 0xffd24a, 1).fillRect(x - 10 + i * 4, y - 12, 4, 8);
+        g.fillStyle(0x0a0e1a, 1).fillRect(x - 10, y - 4, 2, 10).fillRect(x + 8, y - 4, 2, 10);
+        break;
+      case "lantern":
+        g.fillStyle(0x0a0e1a, 1).fillRect(x - 1, y - 14, 2, 16);
+        g.fillStyle(accent, 1).fillCircle(x, y - 16, 4);
+        glow(accent, 0.7, 0.55, true);
+        break;
+      case "pipe":
+        g.lineStyle(5, 0x4a5468, 1).lineBetween(x - 12, y, x + 12, y);
+        g.fillStyle(0x2b3242, 1).fillCircle(x - 12, y, 4).fillCircle(x + 12, y, 4);
+        g.lineStyle(5, 0x4a5468, 1).lineBetween(x + 12, y, x + 12, y - 10);
+        g.fillStyle(0x8bff6a, 0.18).fillCircle(x - 4, y - 2, 3);
+        break;
+      case "barrel":
+        g.fillStyle(0x3a4150, 1).fillRect(x - 6, y - 12, 12, 16);
+        g.fillStyle(0x2a3040, 1).fillRect(x - 6, y - 9, 12, 2).fillRect(x - 6, y - 2, 12, 2);
+        g.fillStyle(0xffb13c, 0.9).fillRect(x - 6, y - 6, 12, 2);
+        break;
+      case "fire":
+        g.fillStyle(0x2a2420, 1).fillRect(x - 6, y - 6, 12, 12);
+        g.fillStyle(0xff7a2c, 1).fillTriangle(x - 4, y - 6, x + 4, y - 6, x, y - 16);
+        glow(0xff6a2c, 0.95, 0.7, true);
+        break;
+      case "trash":
+        g.fillStyle(0x1a1d26, 1).fillTriangle(x - 10, y + 4, x + 10, y + 4, x, y - 8);
+        g.fillStyle(0x2a2030, 1).fillRect(x - 4, y - 2, 6, 6);
+        g.fillStyle(0x39ff88, 0.15).fillCircle(x + 2, y + 2, 4);
+        break;
+      case "tree":
+        g.fillStyle(0x3a2a18, 1).fillRect(x - 2, y - 4, 4, 10);
+        g.fillStyle(0x1f7a3a, 1).fillCircle(x, y - 12, 10);
+        g.fillStyle(0x2fa050, 1).fillCircle(x - 4, y - 14, 6).fillCircle(x + 5, y - 11, 5);
+        break;
+      case "bench":
+        g.fillStyle(0x2a3142, 1).fillRect(x - 9, y - 2, 18, 3);
+        g.fillStyle(0x1a2030, 1).fillRect(x - 8, y + 1, 2, 5).fillRect(x + 6, y + 1, 2, 5);
+        break;
+    }
+  }
+
+  private setupEnvPlate() {
+    const w = this.scale.width;
+    this.envPlate = this.add
+      .text(w / 2, 116, "", { fontFamily: "Courier New, monospace", fontSize: "26px", color: "#ffffff", fontStyle: "bold" })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(1002)
+      .setAlpha(0);
+    this.envSub = this.add
+      .text(w / 2, 144, "DISTRICT", { fontFamily: "Courier New, monospace", fontSize: "11px", color: "#9aa3b2" })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(1002)
+      .setAlpha(0);
+  }
+
+  /** Crossing into a new district: shift the screen mood + flash the nameplate. */
+  private enterEnv(env: Env) {
+    this.currentEnv = env;
+    const id = ENV_IDENTITY[env];
+    this.neonTarget = id.tint;
+    if (!this.envPlate || !this.envSub) return;
+    const hex = "#" + (id.accent & 0xffffff).toString(16).padStart(6, "0");
+    this.envPlate.setText(`▸ ${id.name}`).setColor(hex).setAlpha(1).setScale(0.85).setShadow(0, 0, "#000000", 6, true, true);
+    this.envSub.setAlpha(1);
+    this.tweens.killTweensOf([this.envPlate, this.envSub]);
+    this.tweens.add({ targets: this.envPlate, scale: 1, duration: 300, ease: "Back.out" });
+    this.tweens.add({ targets: [this.envPlate, this.envSub], alpha: 0, delay: 1800, duration: 700 });
   }
 
   private toast(msg: string) {
@@ -409,6 +544,12 @@ export default class CityScene extends Phaser.Scene {
 
   update(_time: number, delta: number) {
     this.atmosphere?.update(this.time.now, delta, 0.15); // weather/fog/holos animate always
+    // ease the screen mood toward the current district's tint (keeps shifting even when frozen)
+    if (this.mode === "city" && this.neon) {
+      const t = this.neonTint;
+      for (let i = 0; i < 3; i++) t[i] += (this.neonTarget[i] - t[i]) * 0.05;
+      this.neon.tint = [t[0], t[1], t[2]];
+    }
     if (this.transitioning) return;
     if (this.dialogue.isOpen || this.market?.isOpen) {
       this.player.setVelocity(0, 0);
@@ -459,6 +600,10 @@ export default class CityScene extends Phaser.Scene {
     const tx = Math.floor(this.player.x / TILE);
     const ty = Math.floor(this.player.y / TILE);
     if (this.mode === "city") {
+      if (this.cityMap) {
+        const env = envAt(tx, ty, this.cityMap.w, this.cityMap.h);
+        if (env !== this.currentEnv) this.enterEnv(env);
+      }
       if (this.time.now >= this.enterCooldownUntil) {
         const b = this.doors.get(tx + "," + ty);
         if (b?.door) this.enterInterior(b);

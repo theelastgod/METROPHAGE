@@ -49,6 +49,46 @@ const ENV: Record<Env, EnvPalette> = {
   park: { ground: TILE_GRASS, sidewalk: TILE_GRASS, wall: TILE_WALL_RES },
 };
 
+/** Decorative prop kinds scattered per-environment (rendered by CityScene). */
+export type PropKind =
+  | "billboard"
+  | "planter"
+  | "stall"
+  | "lantern"
+  | "pipe"
+  | "barrel"
+  | "fire"
+  | "trash"
+  | "tree"
+  | "bench";
+
+/** The look + feel signature of each district: a name, a neon accent, a screen-mood
+ *  tint (rgb 0..1 for the Neon pipeline), a ground colour-wash, and which props live
+ *  there. This is what makes each environment read as a distinct place. */
+export interface EnvIdentity {
+  name: string;
+  accent: number;
+  tint: [number, number, number];
+  wash: number;
+  washAlpha: number;
+  props: PropKind[];
+}
+
+export const ENV_IDENTITY: Record<Env, EnvIdentity> = {
+  downtown: { name: "NEON CORE", accent: 0xff2bd6, tint: [1.0, 0.3, 1.0], wash: 0xff2bd6, washAlpha: 0.06, props: ["billboard", "billboard", "lantern"] },
+  corporate: { name: "CORP ROW", accent: 0x29e7ff, tint: [0.3, 0.75, 1.0], wash: 0x1f4f9e, washAlpha: 0.1, props: ["planter", "billboard", "planter"] },
+  market: { name: "THE BAZAAR", accent: 0xffb13c, tint: [1.0, 0.72, 0.3], wash: 0xff9a3c, washAlpha: 0.08, props: ["stall", "stall", "lantern"] },
+  residential: { name: "THE TERRACES", accent: 0xff8a5c, tint: [1.0, 0.62, 0.42], wash: 0xff7a4c, washAlpha: 0.06, props: ["lantern", "bench", "planter"] },
+  industrial: { name: "THE WORKS", accent: 0x8bff6a, tint: [0.5, 1.0, 0.45], wash: 0x49632a, washAlpha: 0.12, props: ["pipe", "barrel", "pipe"] },
+  slum: { name: "THE SPRAWL", accent: 0xff5a3c, tint: [1.0, 0.45, 0.32], wash: 0x6e2c1c, washAlpha: 0.12, props: ["fire", "trash", "barrel"] },
+  park: { name: "GREENWAY", accent: 0x39ff88, tint: [0.4, 1.0, 0.6], wash: 0x216e3c, washAlpha: 0.1, props: ["tree", "tree", "bench"] },
+};
+
+/** Which environment a world tile belongs to (for the colour-wash + district nameplate). */
+export function envAt(tileX: number, tileY: number, w: number, h: number): Env {
+  return envForBlock(tileX / w, tileY / h);
+}
+
 /** Which environment a block belongs to — concentric rings + quadrants around the
  *  downtown core, so you cross distinct districts as you walk out from the centre. */
 function envForBlock(nx: number, ny: number): Env {
@@ -88,6 +128,10 @@ export interface CityMap {
   plazas: Rect[];
   /** Curated open spots (tile coords) where NPCs / props can stand on walkable ground. */
   npcSpots: [number, number][];
+  /** Per-block environment regions (for the colour-wash + minimap). */
+  zones: Array<{ rect: Rect; env: Env }>;
+  /** Environment-specific decorative props (tile coords). */
+  decorations: Array<{ kind: PropKind; x: number; y: number }>;
 }
 
 /** Deterministic RNG (mulberry32) so the city is identical every run for a given seed. */
@@ -164,6 +208,8 @@ export function buildCity(seed = 1337): CityMap {
   plazas.push(central);
 
   const buildings: CityBuilding[] = [];
+  const zones: Array<{ rect: Rect; env: Env }> = [];
+  const decorations: Array<{ kind: PropKind; x: number; y: number }> = [];
   const npcSpots: [number, number][] = [
     [cx - 4, cy - 3],
     [cx + 4, cy - 3],
@@ -172,6 +218,14 @@ export function buildCity(seed = 1337): CityMap {
     [cx, cy - 4],
   ];
   let bid = 0;
+
+  /** Drop an env-typed prop on a walkable tile (skips walls / out-of-bounds). */
+  const placeProp = (env: Env, tx: number, ty: number) => {
+    if (tx < 1 || ty < 1 || tx >= w - 1 || ty >= h - 1) return;
+    if (isWall(grid[ty][tx])) return;
+    const kinds = ENV_IDENTITY[env].props;
+    decorations.push({ kind: kinds[Math.floor(rand() * kinds.length)], x: tx, y: ty });
+  };
 
   const cols = blockRanges(w);
   const rows = blockRanges(h);
@@ -187,6 +241,7 @@ export function buildCity(seed = 1337): CityMap {
       const pal = ENV[env];
       // paint the block's ground (the env's surface — sidewalk/grate/dirt/grass/neon…)
       fill(grid, { x1: bx1, y1: ry1, x2: bx2, y2: ry2 }, pal.ground);
+      zones.push({ rect: { x1: bx1, y1: ry1, x2: bx2, y2: ry2 }, env });
 
       const roll = rand();
       if (roll < 0.16) {
@@ -198,6 +253,10 @@ export function buildCity(seed = 1337): CityMap {
         }
         plazas.push({ x1: bx1, y1: ry1, x2: bx2, y2: ry2 });
         npcSpots.push([Math.round(mcx), Math.round(mcy)]);
+        // squares read as the district's commons — scatter a few env props around the edge
+        placeProp(env, bx1, ry1);
+        placeProp(env, bx2, ry2);
+        placeProp(env, bx1, ry2);
         continue;
       }
 
@@ -221,10 +280,13 @@ export function buildCity(seed = 1337): CityMap {
         if (doorY + 2 < h && !isWall(grid[doorY + 2][doorX])) npcSpots.push([doorX, doorY + 2]);
       }
       buildings.push({ rect: { x1: ix1, y1: iy1, x2: ix2, y2: iy2 }, door, kind, env, id: `bldg_${bid++}` });
+      // a prop or two on the sidewalk ring, so the street reads as its district
+      if (rand() < 0.75) placeProp(env, bx1, ry2);
+      if (rand() < 0.4) placeProp(env, bx2, ry1);
     }
   }
 
-  return { grid, w, h, spawn: [cx, cy], buildings, plazas, npcSpots };
+  return { grid, w, h, spawn: [cx, cy], buildings, plazas, npcSpots, zones, decorations };
 }
 
 // ── interiors ───────────────────────────────────────────────────────────────
