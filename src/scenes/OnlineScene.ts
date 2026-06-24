@@ -26,6 +26,8 @@ import NetClient from "../net/NetClient";
 import NeonPipeline from "../render/NeonPipeline";
 import { QUESTLINE } from "../net/quest";
 import { setOnlinePlayer } from "../economy/session";
+import { connectedWallet, signWalletLogin } from "../economy/wallet";
+import { loginMessage } from "../net/protocol";
 import {
   sanitizeCustomization,
   customizationToLook,
@@ -175,7 +177,7 @@ export default class OnlineScene extends Phaser.Scene {
     };
     this.inv = new OnlineInventory(this);
     this.net.onInventory = () => this.inv.setItems(this.net.inventory);
-    this.net.connect();
+    void this.signInThenConnect();
 
     this.keys = this.input.keyboard!.addKeys("W,A,S,D,UP,DOWN,LEFT,RIGHT") as Record<
       string,
@@ -377,6 +379,19 @@ export default class OnlineScene extends Phaser.Scene {
       this.net?.disconnect();
       setOnlinePlayer(null);
     });
+  }
+
+  /** Resolve a signed wallet identity (if a wallet is connected), then connect. A
+   *  connected wallet signs the login message → a durable wallet account; otherwise,
+   *  or if the user declines the signature, we connect as a guest keyed by callsign. */
+  private async signInThenConnect() {
+    const addr = connectedWallet();
+    if (addr) {
+      const ts = Date.now();
+      const signed = await signWalletLogin(loginMessage(addr, ts));
+      if (signed) this.net.setAuth({ wallet: addr, sig: signed.signature, ts });
+    }
+    this.net.connect();
   }
 
   private openChat() {

@@ -113,12 +113,24 @@ export default class NetClient {
     private look?: PlayerLook,
   ) {}
 
+  /** Optional signed wallet proof; when set, login is a durable wallet identity. */
+  private auth?: { wallet: string; sig: string; ts: number };
+  setAuth(proof?: { wallet: string; sig: string; ts: number }) {
+    this.auth = proof;
+  }
+
   connect() {
     const ws = new WebSocket(this.url);
     this.ws = ws;
     ws.onopen = () =>
       ws.send(
-        JSON.stringify({ t: "login", name: this.name, faction: this.loginFaction, look: this.look } satisfies ClientMsg),
+        JSON.stringify({
+          t: "login",
+          name: this.name,
+          faction: this.loginFaction,
+          look: this.look,
+          ...(this.auth ?? {}),
+        } satisfies ClientMsg),
       );
     ws.onmessage = (e) => this.onMessage(e.data);
     ws.onclose = () => (this.connected = false);
