@@ -61,6 +61,7 @@ import {
 } from "../../src/game/crafting";
 import { addMods, ZERO_MODS, type ModBag } from "../../src/game/stats";
 import { achievementsForStat, type StatKey } from "../../src/game/achievements";
+import { GUILD_CREATE_COST, guildLevel, guildPerkPct, validateGuild } from "../../src/game/guilds";
 import { verifyWalletLogin } from "./auth";
 
 /** Inventory is capped so the persisted JSON stays bounded; oldest drops out (FIFO). */
@@ -196,6 +197,10 @@ interface PlayerState {
   deepestDirty: boolean;
   achv: Set<string>; // unlocked achievement ids
   achvNew: string[]; // unlocked-this-session ids queued for D1 insert
+  // guild ("Cell") membership — cached from the D1 registry, refreshed on change
+  guildId: number; // 0 = none
+  guildRank: string; // leader | officer | member | ""
+  guildBonus: number; // credit-find perk fraction from the cell level
   // appearance (relayed to other clients so they render this player's customization)
   look?: PlayerLook;
 }
@@ -576,6 +581,7 @@ export class WorldDO {
     if (msg.t === "craft") return this.onCraft(ws, msg);
     if (msg.t === "buy") return this.onBuy(ws, msg);
     if (msg.t === "chat") return this.onChat(ws, msg);
+    if (msg.t === "guild") return this.onGuild(ws, msg);
     if (msg.t === "party") return this.onParty(ws, msg);
     if (msg.t === "mute") return this.onMute(ws, msg);
     if (msg.t === "emote") return this.onEmote(ws, msg);
@@ -641,6 +647,13 @@ export class WorldDO {
         return;
       }
       for (const mid of this.parties.get(p.party) ?? []) this.sendTo(mid, out, p.id);
+    } else if (msg.ch === "guild") {
+      // Cell chat — reaches guildmates in THIS zone (cross-zone fanout would need a hub DO).
+      if (!p.guildId) {
+        this.send(ws, { t: "sys", text: "you're not in a cell" });
+        return;
+      }
+      this.guildBroadcast(p.guildId, out, p.id);
     } else {
       // zone — everyone in this DO, respecting mutes
       for (const [sock, id] of this.sessions) {
@@ -722,6 +735,213 @@ export class WorldDO {
     if (!set) return;
     const members = [...set];
     for (const mid of members) this.sendTo(mid, { t: "party", members });
+  }
+
+  // ── guilds ("Cells") — cross-zone registry in D1; this DO mutates rows for its members ──
+  /** Send a message to every connected member of a guild in THIS zone (optionally mute-aware). */
+  private guildBroadcast(gid: number, msg: unknown, fromId?: string) {
+    for (const [sock, id] of this.sessions) {
+      const r = this.players.get(id);
+      if (!r || r.guildId !== gid) continue;
+      if (fromId && r.muted.has(fromId)) continue;
+      try {
+        sock.send(JSON.stringify(msg));
+      } catch {
+        /* dropped */
+      }
+    }
+  }
+
+  /** Push a player their current cell summary + roster (or "none"). */
+  private async sendGuild(ws: WebSocket, p: PlayerState) {
+    if (!p.guildId) {
+      this.send(ws, { t: "guild", state: "none" });
+      return;
+    }
+    const g = await this.env.DB.prepare("SELECT id, name, tag, xp, bank_credits, bank_cores FROM guilds WHERE id = ?")
+      .bind(p.guildId)
+      .first<{ id: number; name: string; tag: string; xp: number; bank_credits: number; bank_cores: number }>();
+    if (!g) {
+      p.guildId = 0;
+      p.guildRank = "";
+      p.guildBonus = 0;
+      this.send(ws, { t: "guild", state: "none" });
+      return;
+    }
+    const ms = await this.env.DB.prepare("SELECT player, rank FROM guild_members WHERE guild_id = ? ORDER BY joined_at ASC LIMIT 50")
+      .bind(p.guildId)
+      .all<{ player: string; rank: string }>();
+    this.send(ws, {
+      t: "guild",
+      state: "info",
+      guild: {
+        id: g.id,
+        name: g.name,
+        tag: g.tag,
+        level: guildLevel(g.xp),
+        xp: g.xp,
+        bankCredits: g.bank_credits,
+        bankCores: g.bank_cores,
+        rank: p.guildRank,
+        members: (ms.results ?? []).map((m) => ({ id: m.player, rank: m.rank })),
+      },
+    });
+  }
+
+  /** Refresh the cached cell perk for every connected member after the cell's XP changes. */
+  private async refreshGuildBonus(gid: number) {
+    const g = await this.env.DB.prepare("SELECT xp FROM guilds WHERE id = ?").bind(gid).first<{ xp: number }>();
+    const bonus = g ? guildPerkPct(guildLevel(g.xp)) : 0;
+    for (const pl of this.players.values()) if (pl.guildId === gid) pl.guildBonus = bonus;
+  }
+
+  /** Remove a player from their cell, transferring leadership (or disbanding if empty). */
+  private async removeFromGuild(p: PlayerState) {
+    const gid = p.guildId;
+    if (!gid) return;
+    await this.env.DB.prepare("DELETE FROM guild_members WHERE player = ? AND guild_id = ?").bind(p.id, gid).run();
+    if (p.guildRank === "leader") {
+      const next = await this.env.DB.prepare("SELECT player FROM guild_members WHERE guild_id = ? ORDER BY joined_at ASC LIMIT 1")
+        .bind(gid)
+        .first<{ player: string }>();
+      if (next) {
+        await this.env.DB.prepare("UPDATE guilds SET leader = ? WHERE id = ?").bind(next.player, gid).run();
+        await this.env.DB.prepare("UPDATE guild_members SET rank = 'leader' WHERE player = ? AND guild_id = ?").bind(next.player, gid).run();
+        const np = this.players.get(next.player);
+        if (np) np.guildRank = "leader";
+      } else {
+        await this.env.DB.prepare("DELETE FROM guilds WHERE id = ?").bind(gid).run(); // last one out — disband
+      }
+    }
+    p.guildId = 0;
+    p.guildRank = "";
+    p.guildBonus = 0;
+  }
+
+  private async onGuild(ws: WebSocket, msg: Extract<ClientMsg, { t: "guild" }>) {
+    const p = this.playerFor(ws);
+    if (!p) return;
+    const DB = this.env.DB;
+    const sys = (text: string) => this.send(ws, { t: "sys", text });
+    const isOfficer = p.guildRank === "leader" || p.guildRank === "officer";
+    try {
+      if (msg.action === "create") {
+        if (p.guildId) return sys("you're already in a cell — leave it first");
+        const name = (msg.name || "").trim().slice(0, 24);
+        const tag = (msg.tag || "").trim().slice(0, 5).toUpperCase();
+        const err = validateGuild(name, tag);
+        if (err) return sys("cell: " + err);
+        if (p.credits < GUILD_CREATE_COST) return sys(`founding a cell costs ₵${GUILD_CREATE_COST}`);
+        if (await DB.prepare("SELECT id FROM guilds WHERE name = ?").bind(name).first()) return sys("that cell name is taken");
+        p.credits -= GUILD_CREATE_COST;
+        p.dirty = true;
+        const now = Date.now();
+        const res = await DB.prepare("INSERT INTO guilds (name, tag, leader, created_at) VALUES (?,?,?,?)").bind(name, tag, p.id, now).run();
+        const gid = Number(res.meta.last_row_id);
+        await DB.prepare("INSERT OR REPLACE INTO guild_members (player, guild_id, rank, joined_at) VALUES (?,?,?,?)").bind(p.id, gid, "leader", now).run();
+        p.guildId = gid;
+        p.guildRank = "leader";
+        sys(`✶ founded cell [${tag}] ${name}`);
+        await this.sendGuild(ws, p);
+      } else if (msg.action === "invite") {
+        if (!isOfficer) return sys("only a leader/officer can invite");
+        const to = (msg.to || "").toLowerCase().replace(/[^a-z0-9_:-]/g, "");
+        if (!to) return sys("invite who? (/ginvite <id>)");
+        await DB.prepare("INSERT OR REPLACE INTO guild_invites (player, guild_id, at) VALUES (?,?,?)").bind(to, p.guildId, Date.now()).run();
+        sys(`invited ${to} to the cell`);
+        this.sendTo(to, { t: "sys", text: `you've been invited to a cell — type /gjoin` });
+      } else if (msg.action === "accept") {
+        if (p.guildId) return sys("leave your current cell first");
+        const inv = await DB.prepare("SELECT guild_id FROM guild_invites WHERE player = ? ORDER BY at DESC LIMIT 1")
+          .bind(p.id)
+          .first<{ guild_id: number }>();
+        if (!inv) return sys("no pending cell invite");
+        const gid = inv.guild_id;
+        if (!(await DB.prepare("SELECT id FROM guilds WHERE id = ?").bind(gid).first())) {
+          await DB.prepare("DELETE FROM guild_invites WHERE player = ?").bind(p.id).run();
+          return sys("that cell no longer exists");
+        }
+        await DB.prepare("INSERT OR REPLACE INTO guild_members (player, guild_id, rank, joined_at) VALUES (?,?,?,?)").bind(p.id, gid, "member", Date.now()).run();
+        await DB.prepare("DELETE FROM guild_invites WHERE player = ?").bind(p.id).run();
+        p.guildId = gid;
+        p.guildRank = "member";
+        await this.refreshGuildBonus(gid);
+        sys("joined the cell");
+        await this.sendGuild(ws, p);
+        this.guildBroadcast(gid, { t: "sys", text: `${p.name} joined the cell` });
+      } else if (msg.action === "leave") {
+        if (!p.guildId) return sys("you're not in a cell");
+        const gid = p.guildId;
+        await this.removeFromGuild(p);
+        sys("left the cell");
+        this.send(ws, { t: "guild", state: "none" });
+        this.guildBroadcast(gid, { t: "sys", text: `${p.name} left the cell` });
+      } else if (msg.action === "deposit") {
+        if (!p.guildId) return sys("join a cell first");
+        const c = Math.max(0, Math.floor(msg.credits ?? 0));
+        const k = Math.max(0, Math.floor(msg.cores ?? 0));
+        if (c === 0 && k === 0) return sys("deposit how much? (/gdep <credits> [cores])");
+        if (p.credits < c || p.cores < k) return sys("insufficient balance");
+        p.credits -= c;
+        p.cores -= k;
+        p.dirty = true;
+        await DB.prepare("UPDATE guilds SET bank_credits = bank_credits + ?, bank_cores = bank_cores + ?, xp = xp + ? WHERE id = ?")
+          .bind(c, k, c, p.guildId)
+          .run();
+        await this.refreshGuildBonus(p.guildId); // deposits raise XP → maybe a new level + perk
+        sys(`deposited ₵${c} ${k}◈ to the cell bank`);
+        await this.sendGuild(ws, p);
+      } else if (msg.action === "withdraw") {
+        if (!isOfficer) return sys("only a leader/officer can withdraw");
+        const c = Math.max(0, Math.floor(msg.credits ?? 0));
+        const k = Math.max(0, Math.floor(msg.cores ?? 0));
+        if (c === 0 && k === 0) return sys("withdraw how much? (/gwd <credits> [cores])");
+        // atomic guarded decrement — dupe-proof against the live bank balance
+        const r = await DB.prepare(
+          "UPDATE guilds SET bank_credits = bank_credits - ?, bank_cores = bank_cores - ? WHERE id = ? AND bank_credits >= ? AND bank_cores >= ?",
+        )
+          .bind(c, k, p.guildId, c, k)
+          .run();
+        if (r.meta.changes === 0) return sys("cell bank can't cover that");
+        p.credits += c;
+        p.cores += k;
+        p.dirty = true;
+        sys(`withdrew ₵${c} ${k}◈ from the cell bank`);
+        await this.sendGuild(ws, p);
+      } else if (msg.action === "promote" || msg.action === "demote") {
+        if (p.guildRank !== "leader") return sys("only the leader can change ranks");
+        const to = (msg.to || "").toLowerCase();
+        const m = await DB.prepare("SELECT rank FROM guild_members WHERE player = ? AND guild_id = ?").bind(to, p.guildId).first();
+        if (!m || to === p.id) return sys("pick another cell member");
+        const newRank = msg.action === "promote" ? "officer" : "member";
+        await DB.prepare("UPDATE guild_members SET rank = ? WHERE player = ? AND guild_id = ?").bind(newRank, to, p.guildId).run();
+        const op = this.players.get(to);
+        if (op) op.guildRank = newRank;
+        sys(`${to} is now ${newRank}`);
+        await this.sendGuild(ws, p);
+      } else if (msg.action === "kick") {
+        if (p.guildRank !== "leader") return sys("only the leader can kick");
+        const to = (msg.to || "").toLowerCase();
+        if (to === p.id) return sys("can't kick yourself — use /gleave");
+        const m = await DB.prepare("SELECT player FROM guild_members WHERE player = ? AND guild_id = ?").bind(to, p.guildId).first();
+        if (!m) return sys("not a cell member");
+        await DB.prepare("DELETE FROM guild_members WHERE player = ? AND guild_id = ?").bind(to, p.guildId).run();
+        const op = this.players.get(to);
+        if (op) {
+          op.guildId = 0;
+          op.guildRank = "";
+          op.guildBonus = 0;
+          this.sendTo(to, { t: "guild", state: "none" });
+          this.sendTo(to, { t: "sys", text: "you were removed from the cell" });
+        }
+        sys(`kicked ${to}`);
+        await this.sendGuild(ws, p);
+      } else if (msg.action === "info") {
+        await this.sendGuild(ws, p);
+      }
+    } catch {
+      sys("cell action failed");
+    }
   }
 
   // ── secure server-mediated trading ──────────────────────────────────
@@ -930,6 +1150,7 @@ export class WorldDO {
     this.sendLoadout(ws, p); // hydrate equipped gear + derived max HP
     this.noteDeepest(p); // arriving in this district may set a "deepest reached" milestone
     this.send(ws, { t: "achv", ids: [...p.achv] }); // hydrate the unlocked achievement set
+    await this.sendGuild(ws, p); // hydrate cell membership/bank/roster (cross-zone, D1)
     this.ensureTick();
     await this.ensureSupervisor();
   }
@@ -997,6 +1218,27 @@ export class WorldDO {
     }
     const storedDeep = stats["deepest"] ?? 0;
     const deepest = Math.max(storedDeep, this.districtIndex + 1);
+    // guild ("Cell") membership + the cell-level credit-find perk (cross-zone, shared D1)
+    let guildId = 0;
+    let guildRank = "";
+    let guildBonus = 0;
+    try {
+      const gm = await this.env.DB.prepare("SELECT guild_id, rank FROM guild_members WHERE player = ?")
+        .bind(id)
+        .first<{ guild_id: number; rank: string }>();
+      if (gm) {
+        guildId = gm.guild_id;
+        guildRank = gm.rank;
+        const gx = await this.env.DB.prepare("SELECT xp FROM guilds WHERE id = ?").bind(guildId).first<{ xp: number }>();
+        if (gx) guildBonus = guildPerkPct(guildLevel(gx.xp));
+        else {
+          guildId = 0; // membership row orphaned (guild was disbanded) — treat as none
+          guildRank = "";
+        }
+      }
+    } catch {
+      /* tables may not exist before migration */
+    }
     const mods = deriveMods(equipped);
     const maxHp = PLAYER_HP + Math.round(mods.hpAdd);
     return {
@@ -1036,6 +1278,9 @@ export class WorldDO {
       deepestDirty: deepest > storedDeep,
       achv,
       achvNew: [],
+      guildId,
+      guildRank,
+      guildBonus,
       look,
     };
   }
@@ -1448,7 +1693,8 @@ export class WorldDO {
               const killer = owner;
               if (killer) {
                 const mult = isBoss ? 12 : 1; // a boss pays out like a dozen grunts
-                killer.credits += CREDITS_PER_KILL * mult; // server-authoritative currency
+                const gained = Math.round(CREDITS_PER_KILL * mult * (1 + (killer.guildBonus || 0))); // cell perk
+                killer.credits += gained; // server-authoritative currency
                 killer.xp += XP_PER_KILL * mult; // server-authoritative progression
                 killer.level = levelForXp(killer.xp);
                 killer.dirty = true;
@@ -1457,7 +1703,7 @@ export class WorldDO {
                 // achievement counters (cross-zone, D1)
                 this.bumpStat(killer, "kills", 1);
                 if (isBoss) this.bumpStat(killer, "bosses", 1);
-                this.bumpStat(killer, "credits", CREDITS_PER_KILL * mult);
+                this.bumpStat(killer, "credits", gained);
                 // item loot — a boss ALWAYS drops, rarity-boosted; a grunt rolls the chance.
                 // Pushed (FIFO-capped) to the killer's client only.
                 if (isBoss || Math.random() < arch.loot.chance) {

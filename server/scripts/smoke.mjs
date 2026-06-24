@@ -773,6 +773,95 @@ async function achv() {
   );
 }
 
+async function guild() {
+  // GUILDS / CELLS. (harness pre-seeds: galice credits=2000, gbob credits=1000; cells cleared)
+  const A = await connect();
+  const ga = { guild: null, sys: [] };
+  A.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "guild") ga.guild = m.state === "info" ? m.guild : null;
+    if (m.t === "sys") ga.sys.push(m.text);
+  });
+  const wa = await login(A, "galice", 0);
+  const sa = { credits: 0, cores: 0 };
+  trackState(A, wa.id, sa);
+  const B = await connect();
+  const gb = { guild: null, sys: [] };
+  B.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "guild") gb.guild = m.state === "info" ? m.guild : null;
+    if (m.t === "sys") gb.sys.push(m.text);
+  });
+  const wb = await login(B, "gbob", 0);
+  const sb = { credits: 0 };
+  trackState(B, wb.id, sb);
+  await sleep(600);
+
+  const G = (ws, action, extra = {}) => ws.send(JSON.stringify({ t: "guild", action, ...extra }));
+
+  // CREATE (deducts ₵500) → alice is leader
+  G(A, "create", { tag: "RST", name: "Resistance " + Math.random().toString(36).slice(2, 6) });
+  await sleep(550);
+  const created = !!ga.guild && ga.guild.rank === "leader";
+  const gid = ga.guild?.id;
+
+  // INVITE + ACCEPT → bob joins
+  G(A, "invite", { to: "gbob" });
+  await sleep(350);
+  G(B, "accept");
+  await sleep(550);
+  const bobJoined = !!gb.guild && gb.guild.id === gid && gb.guild.members.some((m) => m.id === "gbob");
+
+  // DEPOSIT (alice) → bank rises, alice debited, cell XP grows
+  const aC0 = sa.credits;
+  G(A, "deposit", { credits: 300, cores: 0 });
+  await sleep(550);
+  const deposited = !!ga.guild && ga.guild.bankCredits >= 300 && sa.credits === aC0 - 300;
+  const bankAfterDep = ga.guild?.bankCredits ?? 0;
+
+  // MEMBER withdraw is REFUSED (rank gate)
+  G(B, "withdraw", { credits: 100 });
+  await sleep(400);
+  G(A, "info");
+  await sleep(350);
+  const memberBlocked = (ga.guild?.bankCredits ?? -1) === bankAfterDep;
+
+  // PROMOTE bob → officer; now his withdraw works (atomic guarded bank debit)
+  G(A, "promote", { to: "gbob" });
+  await sleep(450);
+  const promoted = (ga.guild?.members.find((m) => m.id === "gbob")?.rank ?? "") === "officer";
+  const bC0 = sb.credits;
+  G(B, "withdraw", { credits: 100 });
+  await sleep(500);
+  G(A, "info");
+  await sleep(350);
+  const officerWithdrew = sb.credits === bC0 + 100 && (ga.guild?.bankCredits ?? -1) === bankAfterDep - 100;
+
+  // PERSISTENCE — alice reconnects; cell membership reloads from D1
+  A.close();
+  await sleep(750);
+  const A2 = await connect();
+  const ga2 = { guild: null };
+  A2.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "guild") ga2.guild = m.state === "info" ? m.guild : null;
+  });
+  await login(A2, "galice", 0);
+  await sleep(550);
+  const persisted = !!ga2.guild && ga2.guild.id === gid && ga2.guild.bankCredits === bankAfterDep - 100;
+  A2.close();
+  B.close();
+  await sleep(200);
+
+  const checks = { created, bobJoined, deposited, memberBlocked, promoted, officerWithdrew, persisted };
+  report(
+    "GUILD — found a Cell, invite/join, shared bank deposit/withdraw, rank gate, persist",
+    { cell: ga2.guild ? `[${ga2.guild.tag}] L${ga2.guild.level} bank ₵${ga2.guild.bankCredits}` : null, members: ga2.guild?.members.length ?? 0 },
+    Object.values(checks).every(Boolean),
+    checks,
+  );
+}
+
 async function shop() {
   const ws = await connect();
   const store = { x: 0, y: 0, enemies: [], inventory: [], credits: 0 };
@@ -1634,6 +1723,7 @@ try {
   else if (mode === "equip") await equip();
   else if (mode === "craft") await craft();
   else if (mode === "achv") await achv();
+  else if (mode === "guild") await guild();
   else if (mode === "shop") await shop();
   else if (mode === "bestiary") await bestiary();
   else if (mode === "safehouse") await safehouse();

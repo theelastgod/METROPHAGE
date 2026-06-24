@@ -100,6 +100,18 @@ export default class NetClient {
   questStep = 0;
   questProgress = 0;
   achievements = new Set<string>(); // unlocked achievement ids (hydrated on login, grows live)
+  guild: null | {
+    id: number;
+    name: string;
+    tag: string;
+    level: number;
+    xp: number;
+    bankCredits: number;
+    bankCores: number;
+    rank: string;
+    members: Array<{ id: string; rank: string }>;
+  } = null;
+  onGuildUpdate?: () => void;
   story: { act: string; title: string; text: string; done: boolean; at: number } | null = null;
   lastError = 0;
   reconciles = 0;
@@ -324,6 +336,9 @@ export default class NetClient {
       this.equipped = msg.items;
       this.maxHp = msg.maxHp;
       this.onInventory?.(); // refresh the bag (equipped marks) + HUD
+    } else if (msg.t === "guild") {
+      this.guild = msg.state === "info" ? msg.guild ?? null : null;
+      this.onGuildUpdate?.();
     } else if (msg.t === "achv") {
       this.achievements = new Set(msg.ids);
     } else if (msg.t === "ach") {
@@ -367,11 +382,18 @@ export default class NetClient {
     if (this.chatLog.length > 40) this.chatLog.shift();
   }
 
-  sendChat(ch: "zone" | "party" | "whisper", to: string | undefined, text: string) {
+  sendChat(ch: "zone" | "party" | "whisper" | "guild", to: string | undefined, text: string) {
     this.sendMsg({ t: "chat", ch, to, text });
   }
   sendParty(action: "invite" | "accept" | "leave", to?: string) {
     this.sendMsg({ t: "party", action, to });
+  }
+  /** Guild ("Cell") action — server validates rank/balance + owns the shared bank (D1). */
+  guildAction(
+    action: "create" | "invite" | "accept" | "leave" | "promote" | "demote" | "kick" | "deposit" | "withdraw" | "info",
+    extra: { name?: string; tag?: string; to?: string; credits?: number; cores?: number } = {},
+  ) {
+    this.sendMsg({ t: "guild", action, ...extra });
   }
   sendMute(to: string) {
     this.sendMsg({ t: "mute", to });

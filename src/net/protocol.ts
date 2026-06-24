@@ -51,7 +51,17 @@ export type ClientMsg =
   | { t: "login"; name: string; faction?: number; look?: PlayerLook; wallet?: string; sig?: string; ts?: number }
   | { t: "input"; seq: number; mx: number; my: number }
   | { t: "fire"; seq: number; aim: number } // aim in radians; server validates rate
-  | { t: "chat"; ch: "zone" | "party" | "whisper"; to?: string; text: string }
+  | { t: "chat"; ch: "zone" | "party" | "whisper" | "guild"; to?: string; text: string }
+  // guilds ("Cells") — server validates rank/balance + owns the shared bank (cross-zone, D1)
+  | {
+      t: "guild";
+      action: "create" | "invite" | "accept" | "leave" | "promote" | "demote" | "kick" | "deposit" | "withdraw" | "info";
+      name?: string;
+      tag?: string;
+      to?: string;
+      credits?: number;
+      cores?: number;
+    }
   | { t: "party"; action: "invite" | "accept" | "leave"; to?: string }
   | { t: "mute"; to: string }
   | { t: "equip"; itemId: string } // equip an inventory item into its slot
@@ -165,6 +175,22 @@ export type ServerMsg =
   | { t: "equipped"; items: Item[]; maxHp: number } // owning client's equipped gear + derived max HP
   | { t: "achv"; ids: string[] } // full unlocked achievement set (sent on login)
   | { t: "ach"; id: string; name: string; reward: number } // a freshly-unlocked achievement
+  // guild ("Cell") state — full summary + roster, or "none" when not in a cell
+  | {
+      t: "guild";
+      state: "info" | "none";
+      guild?: {
+        id: number;
+        name: string;
+        tag: string;
+        level: number;
+        xp: number;
+        bankCredits: number;
+        bankCores: number;
+        rank: string;
+        members: Array<{ id: string; rank: string }>;
+      };
+    }
   | {
       t: "trade";
       state: "open" | "update" | "done" | "cancelled";

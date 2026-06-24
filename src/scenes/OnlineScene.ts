@@ -6,6 +6,7 @@ import OnlineInventory from "../ui/OnlineInventory";
 import OnlineShop from "../ui/OnlineShop";
 import OnlineForge from "../ui/OnlineForge";
 import OnlineBoard from "../ui/OnlineBoard";
+import OnlineGuild from "../ui/OnlineGuild";
 import { COLORS, TILE, VIEW_W, VIEW_H } from "../config";
 import { TILESET_KEY, PLAYER_KEY, COP_KEY, BULLET_KEY, GLOW_KEY, NODE_KEY } from "../assets/manifest";
 import { driveChar } from "../assets/anim";
@@ -95,6 +96,7 @@ export default class OnlineScene extends Phaser.Scene {
   private shop!: OnlineShop; // vendor panel (credits sink)
   private forge!: OnlineForge; // gear forge — upgrade/reforge/fuse/salvage (credits+cores sink)
   private board!: OnlineBoard; // achievements + cross-zone leaderboards (D1-backed, HTTP)
+  private guildPanel!: OnlineGuild; // guild ("Cell") bank/roster/level (D1-backed)
   private lastSeason = -1;
   private chatLogText!: Phaser.GameObjects.Text;
   private chatInput!: Phaser.GameObjects.Text;
@@ -219,6 +221,13 @@ export default class OnlineScene extends Phaser.Scene {
     // HTTP base for cross-zone reads (leaderboards): ws(s)://host/ws → http(s)://host
     const httpBase = SERVER_URL.replace(/^ws/, "http").replace(/\/ws$/, "");
     this.board = new OnlineBoard(this, httpBase);
+    this.guildPanel = new OnlineGuild(this);
+    this.guildPanel.onAction = (action, c, k) => {
+      if (action === "leave") this.net.guildAction("leave");
+      else if (action === "info") this.net.guildAction("info");
+      else this.net.guildAction(action, { credits: c, cores: k });
+    };
+    this.net.onGuildUpdate = () => this.guildPanel.setGuild(this.net.guild, this.net.id);
     // World-boss locator: a status banner + a screen-edge arrow toward an off-screen boss.
     this.bossBanner = this.add
       .text(VIEW_W / 2, 46, "", {
@@ -260,7 +269,7 @@ export default class OnlineScene extends Phaser.Scene {
       .text(
         this.scale.width / 2,
         this.scale.height - 12,
-        `WASD · CLICK fire · I bag · B vendor · H safehouse · V emote · ENTER chat · [1-${DISTRICTS.length}] travel · ESC`,
+        `WASD · CLICK fire · I bag · G forge · B vendor · C cell · L board · H safehouse · V emote · ENTER chat · [1-${DISTRICTS.length}] travel`,
         { fontFamily: "Courier New, monospace", fontSize: "11px", color: "#6b7184" },
       )
       .setOrigin(0.5, 1)
@@ -443,6 +452,15 @@ export default class OnlineScene extends Phaser.Scene {
         this.board.close();
         return;
       }
+      if (e.key === "c" || e.key === "C") {
+        this.net.guildAction("info"); // pull a fresh summary before showing
+        this.guildPanel.toggle(this.net.guild, this.net.id);
+        return;
+      }
+      if (this.guildPanel.open && e.key === "Escape") {
+        this.guildPanel.close();
+        return;
+      }
       if (e.key === "h" || e.key === "H") {
         // H enters the safehouse (a no-combat hub) from a district, and returns to where
         // you came from. Travel = reconnect to the destination zone's DO.
@@ -516,6 +534,27 @@ export default class OnlineScene extends Phaser.Scene {
     else if (s.startsWith("/party ")) this.net.sendParty("invite", s.slice(7).trim());
     else if (s === "/join") this.net.sendParty("accept");
     else if (s === "/leave") this.net.sendParty("leave");
+    // ── guild ("Cell") commands ──
+    else if (s.startsWith("/g ")) this.net.sendChat("guild", undefined, s.slice(3));
+    else if (s.startsWith("/gcreate ")) {
+      const r = s.slice(9).trim();
+      const i = r.indexOf(" ");
+      if (i > 0) this.net.guildAction("create", { tag: r.slice(0, i), name: r.slice(i + 1) });
+      else this.net.guildAction("create", { tag: r, name: r });
+    } else if (s.startsWith("/ginvite ")) this.net.guildAction("invite", { to: s.slice(9).trim() });
+    else if (s === "/gjoin") this.net.guildAction("accept");
+    else if (s === "/gleave") this.net.guildAction("leave");
+    else if (s === "/ginfo") this.net.guildAction("info");
+    else if (s.startsWith("/gpromote ")) this.net.guildAction("promote", { to: s.slice(10).trim() });
+    else if (s.startsWith("/gdemote ")) this.net.guildAction("demote", { to: s.slice(9).trim() });
+    else if (s.startsWith("/gkick ")) this.net.guildAction("kick", { to: s.slice(7).trim() });
+    else if (s.startsWith("/gdep ")) {
+      const parts = s.slice(6).trim().split(/\s+/);
+      this.net.guildAction("deposit", { credits: parseInt(parts[0], 10) || 0, cores: parseInt(parts[1], 10) || 0 });
+    } else if (s.startsWith("/gwd ")) {
+      const parts = s.slice(5).trim().split(/\s+/);
+      this.net.guildAction("withdraw", { credits: parseInt(parts[0], 10) || 0, cores: parseInt(parts[1], 10) || 0 });
+    }
     else if (s.startsWith("/mute ")) this.net.sendMute(s.slice(6).trim());
     else if (s.startsWith("/trade ")) this.net.tradeRequest(s.slice(7).trim());
     else if (s === "/taccept") this.net.tradeAccept();
