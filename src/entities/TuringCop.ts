@@ -20,6 +20,7 @@ export enum CopState {
 export default class TuringCop extends Phaser.Physics.Arcade.Sprite {
   readonly tier: EnemyTierDef;
   hp: number;
+  maxHp: number;
   shield: number;
   state: CopState = CopState.Patrol;
 
@@ -41,6 +42,7 @@ export default class TuringCop extends Phaser.Physics.Arcade.Sprite {
     super(scene, x, y, COP_KEY);
     this.tier = tier;
     this.hp = tier.hp;
+    this.maxHp = tier.hp;
     this.shield = tier.shieldHp;
     scene.add.existing(this);
     scene.physics.add.existing(this);
@@ -73,7 +75,19 @@ export default class TuringCop extends Phaser.Physics.Arcade.Sprite {
   /** NG+ scaling: multiply this unit's pools. Applied once at spawn. */
   scaleHp(mult: number) {
     this.hp = Math.round(this.hp * mult);
+    this.maxHp = Math.round(this.maxHp * mult);
     if (this.shield > 0) this.shield = Math.round(this.shield * mult);
+  }
+
+  /** MENDER support pulse: restore HP up to this unit's (scaled) max. */
+  heal(amount: number): boolean {
+    if (this.dead || this.hp >= this.maxHp) return false;
+    this.hp = Math.min(this.maxHp, this.hp + amount);
+    this.setTint(0x6affa0);
+    this.scene.time.delayedCall(80, () => {
+      if (!this.dead) this.applyTierTint();
+    });
+    return true;
   }
 
   private applyTierTint() {
@@ -155,6 +169,8 @@ export default class TuringCop extends Phaser.Physics.Arcade.Sprite {
           if (t.attack === "shot") {
             const a = Phaser.Math.Angle.Between(this.x, this.y, player.x, player.y);
             host.enemyShot(this.x, this.y, a, t.attackDamage);
+          } else if (t.attack === "heal") {
+            host.enemyHeal(this.x, this.y, t.slamRadius, t.healAmount ?? 20);
           } else {
             host.enemySlam(player.x, player.y, t.slamRadius, t.attackDamage, t.slamWindupMs);
           }

@@ -774,10 +774,17 @@ export default class GameScene
     this.nextSpawnAt = now + interval;
     if (this.enemies.countActive(true) >= SPAWN.maxEnemies) return;
 
+    // Escalating archetype mix: harassers + marksmen at low/mid heat, heavies +
+    // chargers + a rare medic as the district heats up (partitions one roll).
     let tier = "patrol";
     const r = Math.random();
-    if (heat >= SPAWN.purgeHeat && r < 0.18) tier = "purge";
-    else if (heat >= SPAWN.enforcerHeat && r < 0.45) tier = "enforcer";
+    const active = this.enemies.countActive(true);
+    if (heat >= 55 && active >= 3 && r < 0.06) tier = "mender";
+    else if (heat >= SPAWN.purgeHeat && r < 0.17) tier = "purge";
+    else if (heat >= 45 && r < 0.31) tier = "hound";
+    else if (heat >= 35 && r < 0.47) tier = "lancer";
+    else if (heat >= SPAWN.enforcerHeat && r < 0.63) tier = "enforcer";
+    else if (r < 0.82) tier = "wasp";
 
     // Spawn in a ring around the player (focuses pressure), clamped to the world.
     const a = Math.random() * Math.PI * 2;
@@ -2199,6 +2206,24 @@ export default class GameScene
         if (died) this.respawnPlayer();
       }
     });
+  }
+
+  /** MENDER support pulse: a green ring that tops up HSS units within range. */
+  enemyHeal(x: number, y: number, radius: number, amount: number) {
+    let healed = 0;
+    this.enemies.getChildren().forEach((go) => {
+      const cop = go as TuringCop;
+      if (!cop.active || cop.isDead || cop instanceof Boss) return;
+      if (Phaser.Math.Distance.Between(cop.x, cop.y, x, y) <= radius && cop.heal(amount)) {
+        healed++;
+        this.spark(cop.x, cop.y, 0x6affa0, 1.2);
+      }
+    });
+    const ring = this.add
+      .circle(x, y, radius, 0x6affa0, healed ? 0.12 : 0.05)
+      .setStrokeStyle(2, 0x6affa0, 0.6)
+      .setDepth(5);
+    this.tweens.add({ targets: ring, alpha: 0, scale: 1.2, duration: 360, onComplete: () => ring.destroy() });
   }
 
   private respawnPlayer() {

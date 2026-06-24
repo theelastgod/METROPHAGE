@@ -504,6 +504,19 @@ export default class DiveScene extends Phaser.Scene implements EnemyHost {
     });
   }
 
+  /** MENDER support pulse: top up dive enemies within range. */
+  enemyHeal(x: number, y: number, radius: number, amount: number) {
+    this.enemies.getChildren().forEach((go) => {
+      const cop = go as TuringCop;
+      if (!cop.active || cop.isDead) return;
+      if (Phaser.Math.Distance.Between(cop.x, cop.y, x, y) <= radius && cop.heal(amount)) {
+        this.spark(cop.x, cop.y, 0x6affa0, 1.2);
+      }
+    });
+    const ring = this.add.circle(x, y, radius, 0x6affa0, 0.1).setStrokeStyle(2, 0x6affa0, 0.6).setDepth(5);
+    this.tweens.add({ targets: ring, alpha: 0, scale: 1.2, duration: 360, onComplete: () => ring.destroy() });
+  }
+
   // ---- fx + hud ----
 
   private spark(x: number, y: number, color: number, scale: number) {
