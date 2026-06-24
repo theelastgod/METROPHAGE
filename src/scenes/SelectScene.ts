@@ -105,7 +105,9 @@ export default class SelectScene extends Phaser.Scene {
     const gap = 18;
     const cardW = (VIEW_W - margin * 2 - gap * (n - 1)) / n;
     const cardH = 232;
-    const cardY = 96;
+    // Centre the card band in the space between the header and the footer hint, so the
+    // taller (supersampled) viewport doesn't leave the cards stranded near the top.
+    const cardY = Math.round((VIEW_H - cardH) / 2 + 20);
 
     CLASSES.forEach((c, i) => {
       const x = margin + i * (cardW + gap);
