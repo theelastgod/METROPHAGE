@@ -40,6 +40,13 @@ export type PrimaryDef =
       damage: number;
       range: number;
       halfWidth: number;
+    }
+  | {
+      kind: "melee"; // a swung energy blade — hits a cone in front, no projectile
+      fireRateMs: number;
+      damage: number;
+      range: number;
+      arcDeg: number; // half-arc of the swing each side of aim
     };
 
 export interface ClassDef {

@@ -35,6 +35,8 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
   /** Ability / ultimate cooldown timestamps (scene-managed). */
   nextAbilityAt = 0;
   nextUltAt = 0;
+  /** Primary fire cadence — defaults to the class primary, overridden by an equipped weapon. */
+  fireRateMs: number;
 
   private dashUntil = 0;
   private dashReadyAt = 0;
@@ -67,6 +69,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this.classDef = classDef;
     this.maxHp = classDef.maxHp;
     this.hp = classDef.maxHp;
+    this.fireRateMs = classDef.primary.fireRateMs;
     scene.add.existing(this);
     scene.physics.add.existing(this);
     this.baseTint = opts?.color ?? 0xffffff;
@@ -166,7 +169,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     if (!input.fire) return null;
     const now = this.scene.time.now;
     if (now < this.nextFireAt) return null;
-    this.nextFireAt = now + this.classDef.primary.fireRateMs;
+    this.nextFireAt = now + this.fireRateMs;
     this.firedAt = now; // trigger the recoil squash
     return Phaser.Math.Angle.Between(this.x, this.y, input.aimX, input.aimY);
   }

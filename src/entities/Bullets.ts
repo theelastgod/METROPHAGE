@@ -40,6 +40,12 @@ export default class Bullets {
     });
   }
 
+  /** Update the pool's shot params in place (e.g. on a weapon swap) — keeps the group +
+   *  its wall/enemy colliders intact. */
+  configure(opts: Partial<BulletOpts>) {
+    this.opts = { ...this.opts, ...opts };
+  }
+
   fire(x: number, y: number, angle: number, damageOverride?: number) {
     const b = this.group.get(x, y) as Phaser.Physics.Arcade.Image | null;
     if (!b) return; // pool exhausted

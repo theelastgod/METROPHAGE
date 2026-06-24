@@ -139,13 +139,14 @@ export default class DiveScene extends Phaser.Scene implements EnemyHost {
 
   private setupProjectiles() {
     const prim = this.classDef.primary;
+    const ranged = prim.kind !== "beam" && prim.kind !== "melee";
     this.bullets = new Bullets(this, {
-      speed: prim.kind === "beam" ? 600 : prim.speed,
-      lifetimeMs: prim.kind === "beam" ? 200 : prim.lifetimeMs,
+      speed: ranged ? prim.speed : 600,
+      lifetimeMs: ranged ? prim.lifetimeMs : 200,
       radius: BULLET.radius,
       maxActive: 96,
       tint: this.playerColor,
-      damage: prim.kind === "beam" ? prim.damage : prim.damage,
+      damage: prim.damage,
     });
     this.enemyBullets = new Bullets(this, {
       speed: ENEMY_BULLET.speed,

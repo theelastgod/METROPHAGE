@@ -55,6 +55,7 @@ import {
 import { CONSUMABLES, CONSUMABLE_KEYS } from "../game/consumables";
 import { ModBag, ZERO_MODS, addMods } from "../game/stats";
 import { rollItem } from "../game/items";
+import { getWeapon } from "../game/weapons";
 import { Contract, objectiveLabel } from "../game/contracts";
 import { getFragment, FRAGMENTS } from "../game/fragments";
 import { generateDive, DiveResult } from "../game/dives";
@@ -350,6 +351,29 @@ export default class GameScene
     this.player.setMaxHp(this.classDef.maxHp + this.mods.hpAdd);
     this.player.setMaxShield(this.mods.shieldAdd);
     this.player.bonusSpeedMult = 1 + this.mods.movePct;
+    this.reconfigureWeapon();
+  }
+
+  /** The fire config in effect — an equipped weapon overrides the class primary. */
+  private activePrimary(): PrimaryDef {
+    return getWeapon(this.inventory.equipped.weapon?.weaponId)?.primary ?? this.classDef.primary;
+  }
+  /** Projectile / blade colour — the equipped weapon's, else the signature colour. */
+  private weaponTint(): number {
+    return getWeapon(this.inventory.equipped.weapon?.weaponId)?.tint ?? this.playerColor;
+  }
+  /** Re-apply the active weapon to the bullet pool + fire cadence (called on equip change). */
+  private reconfigureWeapon() {
+    const prim = this.activePrimary();
+    this.player.fireRateMs = prim.fireRateMs;
+    if (prim.kind !== "beam" && prim.kind !== "melee") {
+      this.bullets.configure({
+        speed: prim.speed,
+        lifetimeMs: prim.lifetimeMs,
+        damage: prim.damage,
+        tint: this.weaponTint(),
+      });
+    }
   }
 
   /** Effective derived stats for the character sheet (StatsPanel). */
@@ -366,8 +390,10 @@ export default class GameScene
           : this.classDef.element === "shock"
             ? "#f7ff3c"
             : "#9aa3b2";
+    const wpn = getWeapon(this.inventory.equipped.weapon?.weaponId);
     return [
       { label: "CLASS", value: this.classDef.name, color: this.classDef.hex },
+      { label: "WEAPON", value: wpn ? `${wpn.name} [${wpn.klass}]` : `${this.classDef.primaryName} (class)`, color: "#f7ff3c" },
       { label: "LEVEL", value: String(this.progression.level) },
       { label: "MAX HP", value: String(Math.round(this.player.maxHp)), color: "#39ff88" },
       { label: "MAX SHIELD", value: String(Math.round(this.player.maxShield)), color: "#6ab0ff" },
@@ -753,10 +779,11 @@ export default class GameScene
   }
 
   private setupProjectiles() {
-    // The player projectile pool is configured from the chosen class primary.
+    // The player projectile pool is configured from the chosen class primary (an equipped
+    // weapon re-configures it later via reconfigureWeapon).
     const prim = this.classDef.primary;
-    if (prim.kind === "beam") {
-      this.bullets = new Bullets(this, { tint: this.playerColor }); // unused by beam
+    if (prim.kind === "beam" || prim.kind === "melee") {
+      this.bullets = new Bullets(this, { tint: this.playerColor, maxActive: 96 }); // pool kept for weapon swaps
     } else {
       this.bullets = new Bullets(this, {
         speed: prim.speed,
@@ -2009,7 +2036,7 @@ export default class GameScene
   }
 
   private fireWeapon(angle: number) {
-    const prim = this.classDef.primary;
+    const prim = this.activePrimary();
     switch (prim.kind) {
       case "spread":
         this.fireSpread(angle, prim);
@@ -2023,9 +2050,51 @@ export default class GameScene
       case "beam":
         this.fireBeam(angle, prim);
         break;
+      case "melee":
+        this.fireMelee(angle, prim);
+        break;
     }
-    juiceShake(this, 40, 0.0018);
+    juiceShake(this, prim.kind === "melee" ? 70 : 40, prim.kind === "melee" ? 0.004 : 0.0018);
     this.synth.shoot();
+  }
+
+  /** Swung energy blade — hits every cop in a cone in front, draws a glowing slash arc. */
+  private fireMelee(angle: number, prim: Extract<PrimaryDef, { kind: "melee" }>) {
+    const dmg = prim.damage * this.dmgMult;
+    const halfArc = Phaser.Math.DegToRad(prim.arcDeg);
+    const tint = this.weaponTint();
+    this.enemies.getChildren().forEach((go) => {
+      const cop = go as TuringCop;
+      if (!cop.active || cop.isDead) return;
+      const d = Phaser.Math.Distance.Between(this.player.x, this.player.y, cop.x, cop.y);
+      if (d > prim.range + 14) return;
+      const a = Phaser.Math.Angle.Between(this.player.x, this.player.y, cop.x, cop.y);
+      if (Math.abs(Phaser.Math.Angle.Wrap(a - angle)) > halfArc) return;
+      this.spark(cop.x, cop.y, tint, 1.8);
+      cop.knock(cop.x - this.player.x, cop.y - this.player.y, 240);
+      this.damageCop(cop, dmg, true);
+    });
+    this.drawSlash(angle, prim.range, halfArc, tint);
+  }
+
+  /** A bright blade arc swept in front of the player, fading fast. */
+  private drawSlash(angle: number, range: number, halfArc: number, color: number) {
+    const px = this.player.x;
+    const py = this.player.y;
+    const g = this.add.graphics().setDepth(11);
+    g.lineStyle(5, color, 0.85);
+    g.beginPath();
+    g.arc(px, py, range, angle - halfArc, angle + halfArc);
+    g.strokePath();
+    g.lineStyle(2, 0xffffff, 0.95);
+    g.beginPath();
+    g.arc(px, py, range * 0.9, angle - halfArc * 0.92, angle + halfArc * 0.92);
+    g.strokePath();
+    // a couple of radial fl: the blade tip + a leading edge
+    g.lineStyle(2, color, 0.7);
+    g.lineBetween(px, py, px + Math.cos(angle - halfArc) * range, py + Math.sin(angle - halfArc) * range);
+    g.lineBetween(px, py, px + Math.cos(angle + halfArc) * range, py + Math.sin(angle + halfArc) * range);
+    this.tweens.add({ targets: g, alpha: 0, duration: 200, onComplete: () => g.destroy() });
   }
 
   private muzzleAt(angle: number): { x: number; y: number } {
@@ -2073,19 +2142,20 @@ export default class GameScene
     const ex = px + Math.cos(angle) * prim.range;
     const ey = py + Math.sin(angle) * prim.range;
     const dmg = prim.damage * this.dmgMult;
+    const tint = this.weaponTint();
 
     // Pierce: hit every cop near the beam line.
     this.enemies.getChildren().forEach((go) => {
       const cop = go as TuringCop;
       if (!cop.active || cop.isDead) return;
       if (this.pointSegDist(cop.x, cop.y, px, py, ex, ey) <= prim.halfWidth + 10) {
-        this.spark(cop.x, cop.y, this.playerColor, 1.4);
+        this.spark(cop.x, cop.y, tint, 1.4);
         this.damageCop(cop, dmg, true, BEAM_SHIELD_MULT); // WINTERMUTE shreds shields
       }
     });
 
     const g = this.add.graphics().setDepth(11);
-    g.lineStyle(4, this.playerColor, 0.85).lineBetween(px, py, ex, ey);
+    g.lineStyle(4, tint, 0.85).lineBetween(px, py, ex, ey);
     g.lineStyle(1.5, 0xffffff, 0.9).lineBetween(px, py, ex, ey);
     this.tweens.add({
       targets: g,

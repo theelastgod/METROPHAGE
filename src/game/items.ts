@@ -2,6 +2,7 @@
 // Item mods feed the same ModBag pipeline as skills (game/stats.ts).
 
 import type { ModBag } from "./stats";
+import { WEAPON_IDS, getWeapon } from "./weapons";
 
 export type Slot = "weapon" | "implant" | "armor" | "chip";
 export const SLOTS: Slot[] = ["weapon", "implant", "armor", "chip"];
@@ -38,6 +39,7 @@ export interface Item {
   slot: Slot;
   rarity: Rarity;
   mods: Partial<ModBag>;
+  weaponId?: string; // weapon-slot items carry a weapon — equipping it overrides your fire
 }
 
 interface StatDef {
@@ -99,12 +101,21 @@ export function rollItem(level = 1, rarityBoost = 0, forceRarity?: Rarity): Item
     mods[sd.key] = sd.pct ? Math.round(raw * 100) / 100 : Math.max(1, Math.round(raw));
   }
 
+  // A weapon-slot drop IS a weapon: pick a type, name it by rarity + weapon.
+  let weaponId: string | undefined;
+  let name = `${def.name} ${SLOT_NAMES[slot]}`;
+  if (slot === "weapon") {
+    weaponId = WEAPON_IDS[randInt(0, WEAPON_IDS.length - 1)];
+    name = `${def.name} ${getWeapon(weaponId)!.name}`;
+  }
+
   return {
     id: `it_${++counter}_${Math.random().toString(36).slice(2, 7)}`,
-    name: `${def.name} ${SLOT_NAMES[slot]}`,
+    name,
     slot,
     rarity,
     mods,
+    weaponId,
   };
 }
 
@@ -125,10 +136,13 @@ export function sellValue(item: Item): number {
 
 /** Human-readable stat lines for tooltips/UI. */
 export function itemStatLines(item: Item): string[] {
-  return (Object.keys(item.mods) as (keyof ModBag)[]).map((key) => {
+  const lines = (Object.keys(item.mods) as (keyof ModBag)[]).map((key) => {
     const sd = STAT_DEFS.find((s) => s.key === key)!;
     const v = item.mods[key] ?? 0;
     const val = sd.pct ? `${Math.round(v * 100)}%` : `${v}`;
     return `${sd.good}${val} ${sd.label}`;
   });
+  const w = getWeapon(item.weaponId);
+  if (w) lines.unshift(`◈ ${w.klass} — ${w.desc}`);
+  return lines;
 }
