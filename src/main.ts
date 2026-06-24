@@ -6,6 +6,7 @@ import CustomizeScene from "./scenes/CustomizeScene";
 import GameScene from "./scenes/GameScene";
 import DiveScene from "./scenes/DiveScene";
 import OnlineScene from "./scenes/OnlineScene";
+import CityScene from "./scenes/CityScene";
 import { getMetroStatus } from "./economy/metro";
 import { mountMetroPanel } from "./ui/MetroPanel";
 import { getOnlinePlayer } from "./economy/session";
@@ -30,7 +31,7 @@ const config: Phaser.Types.Core.GameConfig = {
       debug: false,
     },
   },
-  scene: [BootScene, SelectScene, CustomizeScene, GameScene, DiveScene, OnlineScene],
+  scene: [BootScene, SelectScene, CustomizeScene, GameScene, DiveScene, OnlineScene, CityScene],
 };
 
 const game = new Phaser.Game(config);

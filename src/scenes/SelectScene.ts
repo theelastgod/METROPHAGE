@@ -205,6 +205,22 @@ export default class SelectScene extends Phaser.Scene {
       this.cameras.main.once("camerafadeoutcomplete", () => this.scene.start("Online"));
     });
 
+    // THE CITY — the big walkable hub (buildings to enter, NPCs, single-player quests).
+    const cityBtn = this.add
+      .text(16, 32, "▣ THE CITY", {
+        fontFamily: "Courier New, monospace",
+        fontSize: "12px",
+        color: "#00e5ff",
+      })
+      .setInteractive({ useHandCursor: true });
+    cityBtn.on("pointerover", () => cityBtn.setColor("#eafdff"));
+    cityBtn.on("pointerout", () => cityBtn.setColor("#00e5ff"));
+    cityBtn.on("pointerdown", () => {
+      if (this.options?.isOpen) return;
+      this.cameras.main.fadeOut(250, 2, 2, 8);
+      this.cameras.main.once("camerafadeoutcomplete", () => this.scene.start("City"));
+    });
+
     this.drawFrames();
 
     this.input.keyboard?.on("keydown", (e: KeyboardEvent) => {
