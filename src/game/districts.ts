@@ -27,6 +27,11 @@ export interface EnemyWeights {
   purge: number;
 }
 
+/** Ambient weather for a district — drives the render-side Atmosphere (rain streaks,
+ *  drifting industrial smog, falling ash, rising meltdown embers). Kept here (data,
+ *  Phaser-free) so the world model owns the mood; render/Atmosphere.ts consumes it. */
+export type Weather = "rain" | "ash" | "embers" | "smog";
+
 /**
  * A territory node in a district's infection graph. `links` are indices into the
  * district's `nodes` array (undirected adjacency) — contagion spreads along them.
@@ -64,6 +69,8 @@ export interface DistrictDef {
   bossId?: string;
   /** The HSS core — clearing it ends the cycle (meltdown victory). */
   isFinal?: boolean;
+  /** Ambient weather (default "rain"). Sets the Atmosphere mood per district. */
+  weather?: Weather;
 }
 
 // ── District 1 — DOWNTOWN / NEON PLAZA ──────────────────────────────────────
@@ -76,6 +83,7 @@ const DOWNTOWN: DistrictDef = {
   accentHex: "#ff2bd6",
   threat: 0,
   contagion: 22,
+  weather: "rain",
   enemyWeights: { patrol: 1, enforcer: 0, purge: 0 },
   layout: {
     buildings: [
@@ -120,6 +128,7 @@ const STACKS: DistrictDef = {
   accentHex: "#f7ff3c",
   threat: 1,
   contagion: 24,
+  weather: "smog",
   bossId: "sentinel",
   enemyWeights: { patrol: 0.7, enforcer: 0.3, purge: 0 },
   layout: {
@@ -169,6 +178,7 @@ const SPIRE: DistrictDef = {
   accentHex: "#00e5ff",
   threat: 2,
   contagion: 26,
+  weather: "rain",
   bossId: "sentinel",
   enemyWeights: { patrol: 0.5, enforcer: 0.35, purge: 0.15 },
   layout: {
@@ -215,6 +225,7 @@ const CORE: DistrictDef = {
   accentHex: "#ff3b6b",
   threat: 3,
   contagion: 28,
+  weather: "embers",
   isFinal: true,
   bossId: "overmind",
   enemyWeights: { patrol: 0.34, enforcer: 0.4, purge: 0.26 },

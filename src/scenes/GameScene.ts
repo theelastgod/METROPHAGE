@@ -62,6 +62,7 @@ import ExtractionGate from "../entities/ExtractionGate";
 import Boss from "../entities/Boss";
 import { getBoss } from "../game/bosses";
 import NeonPipeline from "../render/NeonPipeline";
+import Atmosphere from "../render/Atmosphere";
 import Synth from "../audio/Synth";
 import Pops from "../render/Pops";
 import Particles from "../render/Particles";
@@ -147,6 +148,7 @@ export default class GameScene
   private agents!: Phaser.Physics.Arcade.Group;
   private minions!: Phaser.Physics.Arcade.Group;
   private neon?: NeonPipeline;
+  private atmosphere!: Atmosphere;
   private playerAura?: Phaser.GameObjects.Image;
   private playerLight?: Phaser.GameObjects.Image; // soft ground pool that follows the hero
   private nodeLights: Phaser.GameObjects.Image[] = []; // per-node light pools (recolored by state)
@@ -277,6 +279,7 @@ export default class GameScene
     );
     this.createDecor();
     this.createLighting();
+    this.createAtmosphere();
     this.setupCamera();
     this.setupPostFX();
     this.setupInput();
@@ -558,6 +561,24 @@ export default class GameScene
       2.1,
       0.5,
     );
+  }
+
+  /** District weather + drifting fog + holographic rooftop signage. */
+  private createAtmosphere() {
+    this.atmosphere = new Atmosphere(this, {
+      weather: this.district.weather,
+      accent: this.district.accent,
+      worldW: WORLD_W,
+      worldH: WORLD_H,
+    });
+    // Float a holo-sign over a selection of building roofs (every other building).
+    const bld = this.district.layout.buildings;
+    for (let i = 0; i < bld.length; i += 2) {
+      const b = bld[i];
+      const cx = ((b.x1 + b.x2) / 2) * TILE + TILE / 2;
+      const cy = ((b.y1 + b.y2) / 2) * TILE + TILE / 2;
+      this.atmosphere.addHologram(cx, cy, this.district.accent);
+    }
   }
 
   /** Per-frame: the hero's pool follows + swells with Heat; node pools recolor. */
@@ -962,6 +983,7 @@ export default class GameScene
     }
 
     this.updateHud();
+    this.atmosphere.update(now, delta, this.heat.normalized); // weather/fog/holos animate always
     this.autosave();
     this.synth.setDialogueDuck(this.dialogue.isOpen); // duck music under dialogue
     if (
