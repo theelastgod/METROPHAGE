@@ -23,6 +23,10 @@ export default class TuringCop extends Phaser.Physics.Arcade.Sprite {
   hp: number;
   maxHp: number;
   shield: number;
+  level = 1;
+  private dmgMult = 1;
+  private rewardMult = 1;
+  private levelLabel?: Phaser.GameObjects.Text;
   state: CopState = CopState.Patrol;
   /** Movement multiplier from status (chill slows; 1 = normal). Set by the scene. */
   speedScale = 1;
@@ -84,6 +88,49 @@ export default class TuringCop extends Phaser.Physics.Arcade.Sprite {
     this.hp = Math.round(this.hp * mult);
     this.maxHp = Math.round(this.maxHp * mult);
     if (this.shield > 0) this.shield = Math.round(this.shield * mult);
+  }
+
+  /** Area difficulty: set this unit's level (scales pools + damage + rewards) and float a
+   *  colour-coded "Lv N" tag above its head — green = trivial, white = even, red ☠ = deadly. */
+  setLevel(level: number, playerLevel: number) {
+    this.level = Math.max(1, level);
+    const mult = 1 + (this.level - 1) * 0.1; // +10% per level
+    this.hp = Math.round(this.hp * mult);
+    this.maxHp = Math.round(this.maxHp * mult);
+    if (this.shield > 0) this.shield = Math.round(this.shield * mult);
+    this.dmgMult = mult;
+    this.rewardMult = mult;
+
+    const diff = this.level - playerLevel;
+    let color = "#eafdff";
+    let tail = "";
+    if (diff <= -4) color = "#5a6172"; // trivial
+    else if (diff <= -1) color = "#9aebc0"; // easy
+    else if (diff <= 1) color = "#eafdff"; // even
+    else if (diff <= 3) color = "#f7ff3c"; // tough
+    else if (diff <= 6) color = "#ff9a3c"; // dangerous
+    else {
+      color = "#ff3b6b"; // deadly
+      tail = " ☠";
+    }
+    this.levelLabel = this.scene.add
+      .text(this.x, this.y, `Lv ${this.level}${tail}`, {
+        fontFamily: "Courier New, monospace",
+        fontSize: "10px",
+        color,
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5, 1)
+      .setDepth(12)
+      .setShadow(0, 0, "#000000", 4, true, true);
+  }
+
+  /** Level-scaled rewards (read by the scene on kill). */
+  get xpReward(): number {
+    return Math.round(this.tier.xp * this.rewardMult);
+  }
+  get creditReward(): number {
+    return Math.round(this.tier.credits * this.rewardMult);
   }
 
   /** MENDER support pulse: restore HP up to this unit's (scaled) max. */
@@ -151,6 +198,7 @@ export default class TuringCop extends Phaser.Physics.Arcade.Sprite {
     const now = this.scene.time.now;
     if (this.shieldArc) this.shieldArc.setPosition(this.x, this.y);
     if (this.eliteAura) this.eliteAura.setPosition(this.x, this.y);
+    if (this.levelLabel) this.levelLabel.setPosition(this.x, this.y - (this.tier.bodyRadius * this.tier.scale + 13));
 
     if (now < this.disabledUntil) {
       this.setVelocity(0, 0);
@@ -203,11 +251,11 @@ export default class TuringCop extends Phaser.Physics.Arcade.Sprite {
           this.attackTell();
           if (t.attack === "shot") {
             const a = Phaser.Math.Angle.Between(this.x, this.y, player.x, player.y);
-            host.enemyShot(this.x, this.y, a, t.attackDamage);
+            host.enemyShot(this.x, this.y, a, Math.round(t.attackDamage * this.dmgMult));
           } else if (t.attack === "heal") {
             host.enemyHeal(this.x, this.y, t.slamRadius, t.healAmount ?? 20);
           } else {
-            host.enemySlam(player.x, player.y, t.slamRadius, t.attackDamage, t.slamWindupMs);
+            host.enemySlam(player.x, player.y, t.slamRadius, Math.round(t.attackDamage * this.dmgMult), t.slamWindupMs);
           }
         }
         break;
@@ -323,6 +371,7 @@ export default class TuringCop extends Phaser.Physics.Arcade.Sprite {
     body.enable = false;
     this.shieldArc?.destroy();
     this.eliteAura?.destroy();
+    this.levelLabel?.destroy();
 
     const burst = this.scene.add
       .circle(this.x, this.y, 8 * this.tier.scale, COLORS.enemy, 0.9)

@@ -169,6 +169,7 @@ export default class GameScene
   private nodeLights: Phaser.GameObjects.Image[] = []; // per-node light pools (recolored by state)
   private hud!: Hud;
   private minimap!: Minimap;
+  private lowHpText?: Phaser.GameObjects.Text; // "seek a hospital / use a medkit" advisory
   private dialogue!: DialogueBox;
 
   private overdriveActive = false;
@@ -901,8 +902,17 @@ export default class GameScene
     }
   }
 
+  /** Area difficulty: deeper districts + further from the spawn point = higher-level
+   *  enemies (with a ±1 jitter). This is what puts a colour-coded "Lv N" over each head. */
+  private enemyLevelAt(x: number, y: number): number {
+    const base = 1 + this.districtIndex * 5;
+    const d = Phaser.Math.Distance.Between(x, y, this.spawn.x, this.spawn.y);
+    return Math.max(1, base + Math.floor(d / 700) + Phaser.Math.Between(-1, 1));
+  }
+
   private spawnEnemy(tierId: string, x: number, y: number, bark = false) {
     const cop = new TuringCop(this, x, y, ENEMY_TIERS[tierId]);
+    cop.setLevel(this.enemyLevelAt(x, y), this.progression.level);
     if (this.cycleMult > 1) cop.scaleHp(this.cycleMult);
     // Reinforcements can roll an elite modifier (rarer than ambient garrison) — chance
     // climbs with Heat and NG+ cycle.
@@ -933,6 +943,45 @@ export default class GameScene
     this.pops.pop(x, y - 22, pool[Math.floor(Math.random() * pool.length)], hex, 11, 42);
   }
 
+  /** Which reinforcement to deploy, by district (area) + heat. Near spawn = thugs,
+   *  vermin, feral dogs; deeper = corp security, Palantir agents, Argus drones, mutants. */
+  private pickPressureTier(heat: number, active: number): string {
+    const di = this.districtIndex;
+    const r = Math.random();
+    if (di <= 0) {
+      // streets near the start — low threat
+      if (r < 0.24) return "thug";
+      if (r < 0.42) return "ratswarm";
+      if (r < 0.6) return "ripperdog";
+      if (heat >= 35 && r < 0.76) return "wasp";
+      if (heat >= SPAWN.enforcerHeat && r < 0.9) return "patrol";
+      return "wasp";
+    }
+    if (di === 1) {
+      if (heat >= 55 && active >= 3 && r < 0.06) return "mender";
+      if (r < 0.18) return "ripperdog";
+      if (heat >= 45 && r < 0.34) return "mutant";
+      if (heat >= 35 && r < 0.5) return "lancer";
+      if (heat >= SPAWN.enforcerHeat && r < 0.72) return "enforcer";
+      return "patrol";
+    }
+    if (di === 2) {
+      if (heat >= 55 && active >= 3 && r < 0.07) return "mender";
+      if (r < 0.18) return "sentinel";
+      if (heat >= 40 && r < 0.36) return "palantir";
+      if (heat >= 45 && r < 0.52) return "mutant";
+      if (heat >= 35 && r < 0.68) return "lancer";
+      return "enforcer";
+    }
+    // CORE — the worst the corps can field
+    if (heat >= 50 && active >= 3 && r < 0.08) return "mender";
+    if (heat >= SPAWN.purgeHeat && r < 0.24) return "purge";
+    if (r < 0.42) return "palantir";
+    if (r < 0.58) return "sentinel";
+    if (r < 0.76) return "mutant";
+    return "enforcer";
+  }
+
   /** Heat-scaled spawn pressure: faster + tougher tiers as the map heats up. */
   private spawnPressure(now: number) {
     if (this.boss && !this.boss.isDead) return; // boss fight: no ambient reinforcements
@@ -946,17 +995,10 @@ export default class GameScene
     this.nextSpawnAt = now + interval;
     if (this.enemies.countActive(true) >= SPAWN.maxEnemies) return;
 
-    // Escalating archetype mix: harassers + marksmen at low/mid heat, heavies +
-    // chargers + a rare medic as the district heats up (partitions one roll).
-    let tier = "patrol";
-    const r = Math.random();
+    // District-aware archetype mix: near-spawn streets are thugs/vermin/feral dogs;
+    // deeper districts field corp security, Palantir agents, drones + mutants.
     const active = this.enemies.countActive(true);
-    if (heat >= 55 && active >= 3 && r < 0.06) tier = "mender";
-    else if (heat >= SPAWN.purgeHeat && r < 0.17) tier = "purge";
-    else if (heat >= 45 && r < 0.31) tier = "hound";
-    else if (heat >= 35 && r < 0.47) tier = "lancer";
-    else if (heat >= SPAWN.enforcerHeat && r < 0.63) tier = "enforcer";
-    else if (r < 0.82) tier = "wasp";
+    const tier = this.pickPressureTier(heat, active);
 
     // Spawn in a ring around the player (focuses pressure), clamped to the world.
     const a = Math.random() * Math.PI * 2;
@@ -1127,6 +1169,31 @@ export default class GameScene
         (id, i) => `${i + 1}:${id.slice(0, 3).toUpperCase()}x${this.progression.consumables[id] ?? 0}`,
       ).join("  "),
     });
+
+    // ── low-health advisory: tells you where to recover ───────────────
+    if (!this.lowHpText) {
+      this.lowHpText = this.add
+        .text(this.scale.width / 2, this.scale.height - 64, "", {
+          fontFamily: "Courier New, monospace",
+          fontSize: "13px",
+          color: "#ff3b6b",
+          fontStyle: "bold",
+          align: "center",
+        })
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setDepth(1003)
+        .setShadow(0, 0, "#000000", 5, true, true);
+    }
+    const hpNorm = this.player.maxHp > 0 ? this.player.hp / this.player.maxHp : 1;
+    if (hpNorm > 0 && hpNorm < 0.3) {
+      this.lowHpText
+        .setText("⚠ LOW HEALTH — use a MEDKIT [1]   ·   heal at a MED-CLINIC or rest at a HOTEL in the city")
+        .setVisible(true)
+        .setAlpha(0.55 + 0.45 * Math.abs(Math.sin(now * 0.006)));
+    } else {
+      this.lowHpText.setVisible(false);
+    }
   }
 
   update(_time: number, delta: number) {
@@ -2282,7 +2349,7 @@ export default class GameScene
         this.onBossDefeated(cop);
       } else {
         const mult = cop.elite?.xpMult ?? 1;
-        this.grantKillRewards(Math.round(cop.tier.xp * mult), Math.round(cop.tier.credits * mult));
+        this.grantKillRewards(Math.round(cop.xpReward * mult), Math.round(cop.creditReward * mult));
         this.maybeDropLoot(cop);
         if (cop.elite?.volatile) this.eliteExplode(cop.x, cop.y, cop.elite.aura);
       }
