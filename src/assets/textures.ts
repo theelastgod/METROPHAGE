@@ -24,14 +24,12 @@ import {
   UI_FRAME_KEY,
   UI_GUN_KEY,
 } from "./manifest";
-import { bakeCanvas, bakeDrawnFrames } from "./pixelart";
+import { bakeCanvas } from "./pixelart";
+import { bakeWalkSheet, bakeAgentSheet } from "./anim";
 import { playerKeyFor } from "./manifest";
 import {
-  CHAR,
   AGENT_W,
   AGENT_H,
-  drawCharacter,
-  drawAgent,
   PLAYER_SPECS,
   PLAYER_IDS,
   COP_SPEC,
@@ -351,11 +349,10 @@ function makeTileset(scene: Phaser.Scene) {
   });
 }
 
-/** Player sprites — a detailed grayscale cyberian per class (tinted in-scene),
- *  plus a default key. 4 facings (down/left/right/up) each, 32×32. */
+/** Player sprites — a detailed grayscale cyberian per class (tinted in-scene), plus a
+ *  default key. 4 facings × WALK_STEPS animated frames each, 32×32. */
 function makePlayer(scene: Phaser.Scene) {
-  const bake = (key: string, id: string) =>
-    bakeDrawnFrames(scene, key, 4, CHAR, CHAR, (ctx, f) => drawCharacter(ctx, f, PLAYER_SPECS[id]));
+  const bake = (key: string, id: string) => bakeWalkSheet(scene, key, PLAYER_SPECS[id]);
   bake(PLAYER_KEY, "wintermute"); // default / fallback
   for (const id of PLAYER_IDS) bake(playerKeyFor(id), id);
 }
@@ -374,14 +371,14 @@ function makeBullet(scene: Phaser.Scene) {
   });
 }
 
-/** Turing Cop: grayscale armored trooper, tinted per tier. 4 frames, 32×32. */
+/** Turing Cop: grayscale armored trooper, tinted per tier. Animated walk, 32×32. */
 function makeCop(scene: Phaser.Scene) {
-  bakeDrawnFrames(scene, COP_KEY, 4, CHAR, CHAR, (ctx, f) => drawCharacter(ctx, f, COP_SPEC));
+  bakeWalkSheet(scene, COP_KEY, COP_SPEC);
 }
 
-/** District boss: grayscale hulking sentinel, tinted per boss. 4 frames, 32×32. */
+/** District boss: grayscale hulking sentinel, tinted per boss. Animated walk, 32×32. */
 function makeBoss(scene: Phaser.Scene) {
-  bakeDrawnFrames(scene, BOSS_KEY, 4, CHAR, CHAR, (ctx, f) => drawCharacter(ctx, f, BOSS_SPEC));
+  bakeWalkSheet(scene, BOSS_KEY, BOSS_SPEC);
 }
 
 /** A city node — a glowing data-obelisk on a pedestal. Same shape, two states. */
@@ -466,9 +463,9 @@ function makeNodeInfected(scene: Phaser.Scene) {
   bakeCanvas(scene, NODE_INFECTED_KEY, 48, 48, (ctx) => drawTerminal(ctx, 0x1f8f4a, 0x39ff88, true));
 }
 
-/** Friendly NPC (the FIXER contact): lime civilian w/ a yellow optic. 4 frames, 32×32. */
+/** Friendly NPC (the FIXER contact): lime civilian w/ a yellow optic. Animated, 32×32. */
 function makeNpc(scene: Phaser.Scene) {
-  bakeDrawnFrames(scene, NPC_KEY, 4, CHAR, CHAR, (ctx, f) => drawCharacter(ctx, f, NPC_SPEC));
+  bakeWalkSheet(scene, NPC_KEY, NPC_SPEC);
 }
 
 /** Soft additive glow disc (white — tinted per use: muzzle, gate, light). */
@@ -601,9 +598,10 @@ function makeUiGun(scene: Phaser.Scene) {
   });
 }
 
-/** Ambient citizen: a small grayscale civilian, tinted per-instance by the crowd. */
+/** Ambient citizen: a small grayscale civilian, tinted per-instance by the crowd.
+ *  Animated shuffle sheet (single facing) so the wandering crowd walks. */
 function makeAgent(scene: Phaser.Scene) {
-  bakeDrawnFrames(scene, AGENT_KEY, 1, AGENT_W, AGENT_H, (ctx) => drawAgent(ctx));
+  bakeAgentSheet(scene, AGENT_KEY, AGENT_W, AGENT_H);
 }
 
 /** Player dialogue portrait: a detailed neon cyberian bust against the city. */

@@ -1,7 +1,5 @@
 import Phaser from "phaser";
 import {
-  CHAR,
-  drawCharacter,
   tonesFromColor,
   PLAYER_SPECS,
   type Build,
@@ -14,7 +12,7 @@ import {
   type Beard,
   type CharSpec,
 } from "../assets/charart";
-import { bakeDrawnFrames } from "../assets/pixelart";
+import { bakeWalkSheet } from "../assets/anim";
 import { getClass } from "./classes";
 import type { PlayerLook } from "../net/protocol";
 
@@ -247,9 +245,7 @@ export function customSpec(c: Customization): CharSpec {
  * calls it live as options change.
  */
 export function bakeCustomPlayer(scene: Phaser.Scene, c: Customization) {
-  bakeDrawnFrames(scene, PLAYER_CUSTOM_KEY, 4, CHAR, CHAR, (ctx, f) =>
-    drawCharacter(ctx, f, customSpec(c)),
-  );
+  bakeWalkSheet(scene, PLAYER_CUSTOM_KEY, customSpec(c));
 }
 
 /** Extract the wire appearance (no callsign) from a customization, for multiplayer. */
@@ -297,7 +293,7 @@ export function lookKey(look: PlayerLook | undefined): string {
 export function bakeRemoteLook(scene: Phaser.Scene, key: string, look: PlayerLook | undefined): void {
   if (scene.textures.exists(key)) return;
   const c = sanitizeCustomization(look as unknown as Partial<Customization>, undefined);
-  bakeDrawnFrames(scene, key, 4, CHAR, CHAR, (ctx, f) => drawCharacter(ctx, f, customSpec(c)));
+  bakeWalkSheet(scene, key, customSpec(c));
 }
 
 /** Repair a possibly-stale/partial saved customization against the valid options. */

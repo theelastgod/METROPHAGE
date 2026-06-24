@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { COLORS } from "../config";
-import { COP_KEY, faceFrame } from "../assets/manifest";
+import { COP_KEY } from "../assets/manifest";
+import { driveChar } from "../assets/anim";
 import { EnemyTierDef, ENEMY_TIERS, EnemyHost } from "../game/enemies";
 
 export enum CopState {
@@ -166,11 +167,11 @@ export default class TuringCop extends Phaser.Physics.Arcade.Sprite {
 
   private faceTarget(player: Phaser.Physics.Arcade.Sprite) {
     const body = this.body as Phaser.Physics.Arcade.Body;
-    if (this.state === CopState.Patrol && body.velocity.lengthSq() > 1) {
-      this.setFrame(faceFrame(body.velocity.x, body.velocity.y));
-    } else {
-      this.setFrame(faceFrame(player.x - this.x, player.y - this.y));
-    }
+    const moving = body.velocity.lengthSq() > 64;
+    // Walking (patrol/chase): face + animate along travel. Holding/attacking: face the
+    // player on the neutral stance.
+    if (moving) driveChar(this, body.velocity.x, body.velocity.y, true);
+    else driveChar(this, player.x - this.x, player.y - this.y, false);
   }
 
   private patrol(now: number) {

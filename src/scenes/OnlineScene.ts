@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { COLORS, TILE } from "../config";
-import { TILESET_KEY, PLAYER_KEY, COP_KEY, BULLET_KEY, GLOW_KEY, NODE_KEY, faceFrame } from "../assets/manifest";
+import { TILESET_KEY, PLAYER_KEY, COP_KEY, BULLET_KEY, GLOW_KEY, NODE_KEY } from "../assets/manifest";
+import { driveChar } from "../assets/anim";
 import {
   PLAYER_HP,
   SING_MAX,
@@ -72,6 +73,7 @@ export default class OnlineScene extends Phaser.Scene {
   private callsign = "runner";
   private zone = "d0";
   private districtIndex = 0;
+  private meDir = new Phaser.Math.Vector2(0, 1); // last facing for the local avatar
 
   constructor() {
     super("Online");
@@ -350,7 +352,9 @@ export default class OnlineScene extends Phaser.Scene {
 
     if (this.net.connected) {
       this.me.setPosition(this.net.pred.x, this.net.pred.y);
-      if (mx !== 0 || my !== 0) this.me.setFrame(faceFrame(mx, my));
+      const moving = mx !== 0 || my !== 0;
+      if (moving) this.meDir.set(mx, my);
+      driveChar(this.me, this.meDir.x, this.meDir.y, moving);
     }
 
     // remote players (interpolated by NetClient) — each rendered with ITS OWN
@@ -378,6 +382,9 @@ export default class OnlineScene extends Phaser.Scene {
         this.remoteLabels.get(id)?.setColor("#" + (col & 0xffffff).toString(16).padStart(6, "0"));
       }
       s.setTint(r.look ? 0xffffff : 0xff79c6); // look is baked in colour; only the fallback tints
+      const rdx = r.tx - r.x;
+      const rdy = r.ty - r.y;
+      driveChar(s, rdx, rdy, rdx * rdx + rdy * rdy > 0.4); // walk from their heading
       s.setPosition(r.x, r.y).setVisible(!r.dead).setAlpha(r.dead ? 0.25 : 1);
       this.remoteLabels.get(id)?.setPosition(r.x, r.y - 22).setVisible(!r.dead);
     }
@@ -397,7 +404,11 @@ export default class OnlineScene extends Phaser.Scene {
       const wp = this.cameras.main.getWorldPoint(ptr.x, ptr.y);
       const aim = Math.atan2(wp.y - this.net.pred.y, wp.x - this.net.pred.x);
       this.net.fire(aim);
-      this.me.setFrame(faceFrame(Math.cos(aim), Math.sin(aim)));
+      // Aim steers the facing only when standing still, so it doesn't stop the walk.
+      if (mx === 0 && my === 0) {
+        this.meDir.set(Math.cos(aim), Math.sin(aim));
+        driveChar(this.me, this.meDir.x, this.meDir.y, false);
+      }
     }
     this.me.setVisible(this.net.connected && !this.net.dead);
 
@@ -408,6 +419,9 @@ export default class OnlineScene extends Phaser.Scene {
         s = this.add.sprite(e.x, e.y, COP_KEY, 0).setTint(COLORS.enemy).setDepth(8);
         this.enemySprites.set(id, s);
       }
+      const edx = e.tx - e.x;
+      const edy = e.ty - e.y;
+      driveChar(s, edx, edy, edx * edx + edy * edy > 0.4); // walk from their heading
       s.setPosition(e.x, e.y);
     }
     for (const [id, s] of this.enemySprites)

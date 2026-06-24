@@ -9,6 +9,17 @@
 
 export const CHAR = 32; // native px per character frame
 
+/** Walk-cycle frames baked per facing. Sheets are facing-major: the frame index is
+ *  `facing * WALK_STEPS + step`, so frame `facing*WALK_STEPS` is the neutral (idle)
+ *  stance and the four steps loop as a stride (see assets/anim.ts). */
+export const WALK_STEPS = 4;
+
+/** Per-step limb swing — a [0, +1, 0, -1] triangle across the cycle (contact → pass →
+ *  contact → pass). Legs/arms offset by this so a baked sheet reads as a walk. */
+export function walkSwing(step: number): number {
+  return [0, 1, 0, -1][((step % WALK_STEPS) + WALK_STEPS) % WALK_STEPS];
+}
+
 export type Facing = "down" | "left" | "right" | "up";
 const FACINGS: Facing[] = ["down", "left", "right", "up"];
 
@@ -130,9 +141,11 @@ const hex = (c: number) => "#" + (c & 0xffffff).toString(16).padStart(6, "0");
 export const AGENT_W = 16;
 export const AGENT_H = 22;
 
-/** A compact grayscale civilian for the ambient crowd (tinted per-instance). */
-export function drawAgent(ctx: CanvasRenderingContext2D) {
+/** A compact grayscale civilian for the ambient crowd (tinted per-instance). `step`
+ *  drives a small leg shuffle so the wandering crowd reads as walking. */
+export function drawAgent(ctx: CanvasRenderingContext2D, step = 0) {
   const t = GRAY;
+  const sw = walkSwing(step);
   const px = (x: number, y: number, w: number, h: number, c: number, a = 1) => {
     ctx.globalAlpha = a;
     ctx.fillStyle = hex(c);
@@ -144,9 +157,9 @@ export function drawAgent(ctx: CanvasRenderingContext2D) {
     px(x + 1, y + 1, w - 2, h - 2, fill);
   };
   px(2, 20, 12, 1, 0x000000, 0.25); // shadow
-  // legs
-  part(5, 16, 3, 5, t.b);
-  part(8, 16, 3, 5, t.a);
+  // legs — alternate fore/aft on the shuffle
+  part(5, 16 - sw, 3, 5, t.b);
+  part(8, 16 + sw, 3, 5, t.a);
   // body
   part(3, 9, 10, 8, t.b);
   px(5, 10, 5, 5, t.c); // front light
@@ -166,21 +179,27 @@ export function drawAgent(ctx: CanvasRenderingContext2D) {
  * top-left). Frame index → facing via FACINGS; `right` is drawn as a mirrored
  * `left`. Coordinates assume a 32×32 cell.
  */
-export function drawCharacter(ctx: CanvasRenderingContext2D, frame: number, spec: CharSpec) {
+export function drawCharacter(
+  ctx: CanvasRenderingContext2D,
+  frame: number,
+  spec: CharSpec,
+  step = 0,
+) {
   const facing = FACINGS[frame] ?? "down";
   if (facing === "right") {
     ctx.save();
     ctx.translate(CHAR, 0);
     ctx.scale(-1, 1);
-    drawPose(ctx, "left", spec);
+    drawPose(ctx, "left", spec, step);
     ctx.restore();
     return;
   }
-  drawPose(ctx, facing, spec);
+  drawPose(ctx, facing, spec, step);
 }
 
-function drawPose(ctx: CanvasRenderingContext2D, facing: Facing, spec: CharSpec) {
+function drawPose(ctx: CanvasRenderingContext2D, facing: Facing, spec: CharSpec, step = 0) {
   const t = spec.tones;
+  const sw = walkSwing(step); // -1..1 stride phase; legs/arms offset oppositely
   const px = (x: number, y: number, w: number, h: number, c: number, a = 1) => {
     ctx.globalAlpha = a;
     ctx.fillStyle = hex(c);
@@ -202,7 +221,7 @@ function drawPose(ctx: CanvasRenderingContext2D, facing: Facing, spec: CharSpec)
   px(cx - 5, 29, 10, 1, 0x000000, 0.22);
 
   if (facing === "left") {
-    drawProfile(spec, px, part, bulk);
+    drawProfile(spec, px, part, bulk, step);
     return;
   }
 
@@ -223,12 +242,14 @@ function drawPose(ctx: CanvasRenderingContext2D, facing: Facing, spec: CharSpec)
     }
   }
 
-  // ── legs (clear stance, dark gap between) ───────────────────────
-  for (const lx of [cx - 6, cx + 2]) {
-    part(lx, 23, 5, 6, t.b); // 3px-fill leg
-    px(lx + 1, 24, 3, 3, t.c); // shin highlight
-    px(lx + 1, 28, 3, 1, t.a); // boot shadow
-  }
+  // ── legs (clear stance, dark gap between) — feet alternate on the stride ──
+  const legDy = [-sw * 2, sw * 2]; // left foot lifts forward as the right plants
+  [cx - 6, cx + 2].forEach((lx, i) => {
+    const dy = legDy[i];
+    part(lx, 23 + dy, 5, 6, t.b); // 3px-fill leg
+    px(lx + 1, 24 + dy, 3, 3, t.c); // shin highlight
+    px(lx + 1, 28 + dy, 3, 1, t.a); // boot shadow
+  });
   px(cx - 1, 23, 2, 5, t.o); // dark gap so the legs read as two
 
   // ── torso + shoulders (horizontal light banding, not vertical bars) ──
@@ -249,11 +270,11 @@ function drawPose(ctx: CanvasRenderingContext2D, facing: Facing, spec: CharSpec)
     px(cx - 2, 19, 4, 1, t.rim, 0.8); // pack rim light
   }
 
-  // arms at the sides
-  part(tx - 3, 15, 3, 8, t.b);
-  part(tx + tw, 15, 3, 8, t.b);
-  px(tx - 2, 16, 1, 5, t.c); // left arm catches light
-  px(tx + tw + 1, 17, 1, 5, t.a); // right arm in shadow
+  // arms at the sides — swing opposite the legs for a natural gait
+  part(tx - 3, 15 + sw, 3, 8, t.b);
+  part(tx + tw, 15 - sw, 3, 8, t.b);
+  px(tx - 2, 16 + sw, 1, 5, t.c); // left arm catches light
+  px(tx + tw + 1, 17 - sw, 1, 5, t.a); // right arm in shadow
 
   // ── shoulder armor (over the arms/yoke) ─────────────────────────
   if (spec.shoulders && spec.shoulders !== "none") drawShoulders(spec, px, part, tx, tw);
@@ -587,9 +608,11 @@ function drawProfile(
   px: (x: number, y: number, w: number, h: number, c: number, a?: number) => void,
   part: (x: number, y: number, w: number, h: number, fill: number) => void,
   bulk: number,
+  step = 0,
 ) {
   const t = spec.tones;
   const cx = 15;
+  const sw = walkSwing(step); // front/back legs scissor along the walk axis
 
   // cape trails behind (to the right, since we face left)
   if (spec.cloak === "cape") {
@@ -598,10 +621,10 @@ function drawProfile(
     px(cx + 2, 14, 1, 14, t.rim, 0.5);
   }
 
-  // legs — front + trailing
-  part(cx - 1, 23, 4, 6, t.b);
-  part(cx + 3, 23, 4, 6, t.a); // trailing leg, shadowed
-  px(cx, 24, 1, 4, t.c);
+  // legs — front + trailing (scissor along the facing axis)
+  part(cx - 1 - sw, 23, 4, 6, t.b);
+  part(cx + 3 + sw, 23, 4, 6, t.a); // trailing leg, shadowed
+  px(cx - sw, 24, 1, 4, t.c);
 
   // torso (narrower in profile), facing left
   const tw = 9 + Math.max(0, bulk);
@@ -631,9 +654,9 @@ function drawProfile(
     px(cx - 2, 23, 1, 6, t.rim, 0.5);
   }
 
-  // leading arm
-  part(cx - 4, 16, 3, 8, t.b);
-  px(cx - 3, 17, 1, 6, t.c);
+  // leading arm — swings with the trailing leg
+  part(cx - 4 + sw, 16, 3, 8, t.b);
+  px(cx - 3 + sw, 17, 1, 6, t.c);
 
   // antennae (cyber heads only)
   if (spec.antennae && spec.skin == null) {

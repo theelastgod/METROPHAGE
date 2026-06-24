@@ -322,7 +322,8 @@ export default class CustomizeScene extends Phaser.Scene {
     // big hero (down-facing) + a row of the other facings beneath
     const hero = this.add.image(230, 250, PLAYER_CUSTOM_KEY, 0).setScale(7);
     this.preview.add(hero);
-    const facings = [1, 3, 2]; // left / up / right
+    // Neutral-stance frame per facing in the new 4×WALK_STEPS sheet: left/up/right.
+    const facings = [1 * 4, 3 * 4, 2 * 4];
     facings.forEach((f, i) => {
       const img = this.add.image(150 + i * 80, 400, PLAYER_CUSTOM_KEY, f).setScale(3).setAlpha(0.92);
       this.preview.add(img);

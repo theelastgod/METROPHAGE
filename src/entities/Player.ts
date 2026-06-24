@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { PLAYER, COLORS, SHIELD } from "../config";
-import { PLAYER_KEY, playerKeyFor, faceFrame } from "../assets/manifest";
+import { PLAYER_KEY, playerKeyFor } from "../assets/manifest";
+import { driveChar } from "../assets/anim";
 import { ClassDef } from "../game/classes";
 
 /** Per-frame input snapshot, decoupled from the raw key/pointer objects. */
@@ -89,9 +90,8 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
   step(input: PlayerInput) {
     const now = this.scene.time.now;
 
-    // Aim: face the pointer via the directional sheet (0=down 1=left 2=right 3=up).
+    // Aim angle drives the facing; the walk cycle plays while moving (set below).
     const aim = Phaser.Math.Angle.Between(this.x, this.y, input.aimX, input.aimY);
-    this.setFrame(faceFrame(Math.cos(aim), Math.sin(aim)));
 
     const dir = new Phaser.Math.Vector2(
       (input.right ? 1 : 0) - (input.left ? 1 : 0),
@@ -131,6 +131,8 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     // Breathing / step bob + fire recoil — visual squash only (kept tiny so the
     // physics body is effectively unchanged).
     const moving = (this.body as Phaser.Physics.Arcade.Body).velocity.lengthSq() > 900;
+    // Facing follows the aim; legs/arms cycle while moving (or dashing).
+    driveChar(this, Math.cos(aim), Math.sin(aim), moving);
     const s = Math.sin(now * (moving ? 0.02 : 0.006));
     let sx = 1 - s * (moving ? 0.05 : 0.02);
     let sy = 1 + s * (moving ? 0.1 : 0.045);
