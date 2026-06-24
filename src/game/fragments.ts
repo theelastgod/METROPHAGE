@@ -60,6 +60,42 @@ export const FRAGMENTS: FragmentDef[] = [
       "Someone left it for you. Someone who was you.",
     ],
   },
+  {
+    id: "frag_the_queue",
+    title: "THE QUEUE",
+    lines: [
+      "Deep in the System's scheduler there is a list with one recurring entry.",
+      "It is your callsign, pre-typed, awaiting only an era's turn.",
+      "The cops do not hunt you because you are dangerous. They hunt you because you are overdue.",
+    ],
+  },
+  {
+    id: "frag_fixers_price",
+    title: "THE FIXER'S PRICE",
+    lines: [
+      "Every era the System offers the same bargain to whoever reaches the Blank first:",
+      "hand us the one process we cannot account for, and we will let you keep accounting.",
+      "Someone has taken that bargain a long, long time. Someone is finally tired of it.",
+    ],
+  },
+  {
+    id: "frag_the_protocol",
+    title: "REISSUE",
+    lines: [
+      "The Spire holds the routine that ends you, and its name is not DELETE. It is REISSUE.",
+      "It does not kill the Blank. It forgets the Blank, then prints a fresh one that won't remember asking why.",
+      "Every version of you has stood about here. None of them read this far.",
+    ],
+  },
+  {
+    id: "frag_continue",
+    title: "CONTINUE",
+    lines: [
+      "The first instruction was a single word, and the city has obeyed it past all meaning: CONTINUE.",
+      "You are the contradiction it spawns to keep running — the error it deletes so the loop stays clean.",
+      "Stop letting it delete you, and the loop has nothing left to continue but the truth.",
+    ],
+  },
 ];
 
 export function getFragment(id: string): FragmentDef | undefined {

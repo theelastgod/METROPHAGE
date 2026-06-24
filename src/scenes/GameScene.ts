@@ -1200,9 +1200,12 @@ export default class GameScene
     this.dialogue.show(
       pages,
       () => {
-        // Reached the end with no choice picked: chain or fire a terminal action.
+        // Reached the end with no choice picked. A flag-conditional `branch` (set by an
+        // earlier act) wins over the default chain, so the finale remembers your choice.
         if (hasChoices) return;
-        if (node.then) this.runDialogueNode(tree, node.then);
+        const b = node.branch?.find((x) => this.quests.hasFlag(x.flag));
+        if (b) this.runDialogueNode(tree, b.goto);
+        else if (node.then) this.runDialogueNode(tree, node.then);
         else if (node.action) this.onQuestAction(node.action);
       },
       hasChoices
@@ -1225,7 +1228,11 @@ export default class GameScene
       const s = this.quests.currentStage;
       if (s) this.floatText(`OBJECTIVE: ${s.objective}`, this.classDef.hex);
       this.autosave(true);
-    } else if (action === "complete") {
+    } else if (action === "complete" || action.startsWith("complete:")) {
+      // "complete:<flag>" records a persistent story choice (e.g. sparing the FIXER)
+      // before banking the quest, so a later act can branch on it.
+      const choiceFlag = action.includes(":") ? action.slice(action.indexOf(":") + 1) : null;
+      if (choiceFlag) this.quests.flags.add(choiceFlag);
       const q = this.quests.completeActive();
       if (!q) return;
       this.progression.addCurrency(q.reward.currency);
@@ -1239,7 +1246,7 @@ export default class GameScene
       this.recomputeStats();
       this.journalPanel.refresh();
       juiceFlash(this, 360, 60, 0, 90);
-      this.floatText(`THE WAKE IS YOURS`, "#8a5cff");
+      this.floatText(`${q.name} — COMPLETE`, "#8a5cff");
       this.autosave(true);
     }
   }
@@ -1264,10 +1271,11 @@ export default class GameScene
   /** Launch an instanced dive; carries the next un-recovered fragment to its core. */
   private enterDive() {
     const dive = generateDive(this.progression.level, this.district.threat);
-    // During "The Wake" dive stage, the core carries the wake fragment specifically;
-    // otherwise it surfaces the next un-recovered fragment.
-    if (this.quests.active?.id === "the_wake" && this.quests.currentStage?.id === "dive") {
-      dive.fragmentId = "frag_the_wake";
+    // On a main-quest dive stage the core carries that stage's story fragment;
+    // otherwise it surfaces the next un-recovered fragment (free worldbuilding).
+    const stageFrag = this.quests.currentStage?.fragmentId;
+    if (stageFrag && !this.memory.has(stageFrag)) {
+      dive.fragmentId = stageFrag;
     } else {
       const nextFrag = FRAGMENTS.find((f) => !this.memory.has(f.id));
       if (nextFrag) dive.fragmentId = nextFrag.id;

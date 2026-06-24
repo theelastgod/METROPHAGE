@@ -13,6 +13,7 @@ export interface QuestStage {
   on: { type: QuestTriggerType; count?: number };
   talkTree?: string; // for talk stages — dialogue tree to run at the giver
   onEnterLine?: string; // a "// SYSTEM" line shown when this stage begins
+  fragmentId?: string; // dive stages: the specific memory fragment this dive surfaces
 }
 
 export interface QuestReward {
@@ -33,7 +34,13 @@ export interface QuestDef {
   requiresFlag?: string; // only offered once this flag is set
 }
 
+// The singleplayer main questline — five acts that arc with the campaign (plaza →
+// stacks → spire → core). Each quest gates the next via a flag, advances on the normal
+// gameplay verbs (infect/dive/kill/secure) plus a talk beat, and its dive stage pulls a
+// specific story fragment. Act III lets you spare or expose the FIXER; Act V's finale
+// remembers that choice. All text original to METROPHAGE.
 export const QUESTS: QuestDef[] = [
+  // ── ACT I — THE WAKE ──────────────────────────────────────────────────────
   {
     id: "the_wake",
     name: "THE WAKE",
@@ -52,6 +59,7 @@ export const QUESTS: QuestDef[] = [
         objective: "Break an ICE node",
         on: { type: "dive", count: 1 },
         onEnterLine: "The signal just spiked. It's coming from inside the ICE — find a node and dive it.",
+        fragmentId: "frag_the_wake",
       },
       {
         id: "return",
@@ -63,6 +71,142 @@ export const QUESTS: QuestDef[] = [
     ],
     reward: { xp: 200, currency: 150, loot: 1, lootBoost: 1 },
     setsFlag: "wake_done",
+  },
+
+  // ── ACT II — DEAD RECKONING ───────────────────────────────────────────────
+  {
+    id: "dead_reckoning",
+    name: "DEAD RECKONING",
+    giver: "fixer",
+    offerTree: "reckoning_offer",
+    requiresFlag: "wake_done",
+    stages: [
+      {
+        id: "trail",
+        journal: "The last you scattered itself across the district before the System caught up. The cops are picking the trail clean — get there first.",
+        objective: "Destroy 8 HSS units",
+        on: { type: "kill", count: 8 },
+      },
+      {
+        id: "cache",
+        journal: "A cache pings your callsign from deeper in the ICE. Dive for what the last you hid.",
+        objective: "Dive a cache node",
+        on: { type: "dive", count: 1 },
+        onEnterLine: "There — a cache, your own handprint on the lock. Whatever it knew, it left for you. Dive it.",
+        fragmentId: "frag_the_queue",
+      },
+      {
+        id: "report",
+        journal: "The cache held a scheduler list: your callsign, pre-typed, overdue for deletion. The FIXER needs to see this.",
+        objective: "Return to the FIXER",
+        on: { type: "talk" },
+        talkTree: "reckoning_final",
+      },
+    ],
+    reward: { xp: 280, currency: 200, loot: 1, lootBoost: 1 },
+    setsFlag: "reckoning_done",
+  },
+
+  // ── ACT III — THE FIXER'S DEBT (branch: spare / expose) ───────────────────
+  {
+    id: "fixers_debt",
+    name: "THE FIXER'S DEBT",
+    giver: "fixer",
+    offerTree: "debt_offer",
+    requiresFlag: "reckoning_done",
+    stages: [
+      {
+        id: "signal",
+        journal: "The FIXER wants to talk where the System can't listen. Spread your contagion until your signal reaches their old safehouse.",
+        objective: "Infect 3 nodes",
+        on: { type: "infect", count: 3 },
+      },
+      {
+        id: "vault",
+        journal: "The safehouse address resolves to an ICE vault. Whatever the FIXER buried there, they buried it deep.",
+        objective: "Dive the safehouse vault",
+        on: { type: "dive", count: 1 },
+        onEnterLine: "The safehouse is an ICE vault. The FIXER's lock — old, and afraid. Dive it.",
+        fragmentId: "frag_fixers_price",
+      },
+      {
+        id: "judgment",
+        journal: "The vault held the FIXER's bargain: every era, they trade a Blank to the System to keep accounting. You were next. Decide what that's worth.",
+        objective: "Confront the FIXER",
+        on: { type: "talk" },
+        talkTree: "debt_final",
+      },
+    ],
+    reward: { xp: 340, currency: 240, loot: 1, lootBoost: 1.2 },
+    setsFlag: "debt_done",
+  },
+
+  // ── ACT IV — REISSUE ──────────────────────────────────────────────────────
+  {
+    id: "spire_protocol",
+    name: "REISSUE",
+    giver: "fixer",
+    offerTree: "spire_offer",
+    requiresFlag: "debt_done",
+    stages: [
+      {
+        id: "ascent",
+        journal: "The routine that ends you lives in the Spire. Take a district from the System whole — that forces the uplink open.",
+        objective: "Secure a district",
+        on: { type: "secure", count: 1 },
+      },
+      {
+        id: "protocol",
+        journal: "The uplink exposed a protocol vault. Dive it before the Spire recompiles around the breach.",
+        objective: "Dive the protocol vault",
+        on: { type: "dive", count: 1 },
+        onEnterLine: "Uplink's open. The protocol vault is right there — dive it before the Spire patches you out.",
+        fragmentId: "frag_the_protocol",
+      },
+      {
+        id: "decrypt",
+        journal: "It isn't called DELETE. It's called REISSUE — the System forgets you, then prints a fresh you that won't ask why. Bring it to the FIXER.",
+        objective: "Decrypt REISSUE with the FIXER",
+        on: { type: "talk" },
+        talkTree: "spire_final",
+      },
+    ],
+    reward: { xp: 420, currency: 300, loot: 2, lootBoost: 1.3 },
+    setsFlag: "spire_done",
+  },
+
+  // ── ACT V — CONTINUE (finale; remembers the Act III choice) ───────────────
+  {
+    id: "continue_q",
+    name: "CONTINUE",
+    giver: "fixer",
+    offerTree: "continue_offer",
+    requiresFlag: "spire_done",
+    stages: [
+      {
+        id: "spine",
+        journal: "Everything routes through the spine now. Burn a path to the core — the System will spend everything it has to keep you from it.",
+        objective: "Destroy 10 HSS units",
+        on: { type: "kill", count: 10 },
+      },
+      {
+        id: "core",
+        journal: "The core's vault is the oldest ICE in the city. The first instruction is frozen inside it. Pull it.",
+        objective: "Dive the core vault",
+        on: { type: "dive", count: 1 },
+        onEnterLine: "This is the oldest ICE in the city. Whatever the first process wrote, it's in here. Dive.",
+        fragmentId: "frag_continue",
+      },
+      {
+        id: "decision",
+        journal: "CONTINUE — the one instruction the city has obeyed past all meaning. You are the error it deletes to keep the loop clean. End it.",
+        objective: "End the cycle",
+        on: { type: "talk" },
+        talkTree: "continue_final",
+      },
+    ],
+    reward: { xp: 600, currency: 450, loot: 2, lootBoost: 1.5 },
+    setsFlag: "continue_done",
   },
 ];
 
