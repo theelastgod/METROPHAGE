@@ -11,6 +11,7 @@ export interface NpcDef {
   name: string;
   look: PlayerLook;
   lines: string[]; // flavour dialogue; quest logic is layered on by the quest system
+  quest?: string; // quest id this NPC gives
 }
 
 export default class CityNpc {

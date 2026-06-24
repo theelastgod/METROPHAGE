@@ -1,12 +1,13 @@
 import Phaser from "phaser";
 import { TILE, COLORS, NPC } from "../config";
-import { TILESET_KEY, PORTRAIT_NPC_KEY } from "../assets/manifest";
-import { COLLIDING_TILES } from "../world/district";
+import { TILESET_KEY, PORTRAIT_NPC_KEY, GLOW_KEY } from "../assets/manifest";
+import { COLLIDING_TILES, isWall } from "../world/district";
 import { buildCity, buildInterior, type CityMap, type CityBuilding, type BuildingKind } from "../world/city";
 import Player from "../entities/Player";
 import CityNpc from "../entities/CityNpc";
 import DialogueBox from "../ui/DialogueBox";
 import { KEY_NPCS, CITIZENS } from "../game/cityNpcs";
+import { CityQuests, type TalkResult } from "../game/cityQuests";
 import NeonPipeline from "../render/NeonPipeline";
 import { getClass } from "../game/classes";
 import { sanitizeCustomization, bakeCustomPlayer, PLAYER_CUSTOM_KEY, type Customization } from "../game/customization";
@@ -41,6 +42,11 @@ export default class CityScene extends Phaser.Scene {
   private enterCooldownUntil = 0;
   private dialogue!: DialogueBox;
   private npcs: CityNpc[] = [];
+  private quests!: CityQuests;
+  private collectibles: Array<{ item: string; sprite: Phaser.GameObjects.Image; x: number; y: number }> = [];
+  private journalText!: Phaser.GameObjects.Text;
+  private toastText!: Phaser.GameObjects.Text;
+  private walletText!: Phaser.GameObjects.Text;
 
   constructor() {
     super("City");
@@ -118,11 +124,89 @@ export default class CityScene extends Phaser.Scene {
       else this.exitTo("Select");
     });
 
-    // NPCs + dialogue
+    // NPCs + quests + dialogue
     this.npcs = [];
+    this.collectibles = [];
+    this.quests = (this.registry.get("cityQuests") as CityQuests) ?? new CityQuests();
+    this.registry.set("cityQuests", this.quests); // persists across city ↔ interior
     this.dialogue = new DialogueBox(this);
-    if (this.mode === "city") this.placeCityNpcs();
+    this.buildQuestHud();
+    if (this.mode === "city") {
+      this.placeCityNpcs();
+      this.spawnCollectibles();
+    }
     this.input.keyboard!.on("keydown-E", () => this.tryTalk());
+    this.input.keyboard!.on("keydown-J", () => this.toggleJournal());
+  }
+
+  private buildQuestHud() {
+    const w = this.scale.width;
+    this.walletText = this.add
+      .text(w - 14, 12, "", { fontFamily: "Courier New, monospace", fontSize: "12px", color: "#f7ff3c" })
+      .setOrigin(1, 0)
+      .setScrollFactor(0)
+      .setDepth(1000);
+    this.toastText = this.add
+      .text(w / 2, 70, "", { fontFamily: "Courier New, monospace", fontSize: "13px", color: "#39ff88", fontStyle: "bold" })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(1001)
+      .setAlpha(0);
+    this.toastText.setShadow(0, 0, "#0a0e1a", 4, true, true);
+    this.journalText = this.add
+      .text(w - 14, 92, "", { fontFamily: "Courier New, monospace", fontSize: "11px", color: "#cfe8ff", align: "right" })
+      .setOrigin(1, 0)
+      .setScrollFactor(0)
+      .setDepth(1000)
+      .setVisible(false);
+    this.add
+      .text(160, 34, "·  J journal", { fontFamily: "Courier New, monospace", fontSize: "11px", color: "#6b7184" })
+      .setScrollFactor(0)
+      .setDepth(1000);
+    this.refreshWallet();
+    this.renderJournal();
+  }
+
+  private refreshWallet() {
+    this.walletText.setText(`◈ ${this.quests.credits}c   ${this.quests.xp} XP`);
+  }
+
+  private toast(msg: string) {
+    this.toastText.setText(msg).setAlpha(1);
+    this.tweens.killTweensOf(this.toastText);
+    this.tweens.add({ targets: this.toastText, alpha: 0, delay: 2400, duration: 700 });
+  }
+
+  private toggleJournal() {
+    this.renderJournal();
+    this.journalText.setVisible(!this.journalText.visible);
+  }
+
+  private renderJournal() {
+    const list = this.quests.journal();
+    const body = list.length ? list.map((q) => `${q.name}\n  ${q.objective}`).join("\n\n") : "(no active quests)";
+    this.journalText.setText("— JOURNAL —\n\n" + body);
+  }
+
+  private spawnCollectibles() {
+    for (const c of this.collectibles) c.sprite.destroy();
+    this.collectibles = [];
+    if (this.mode !== "city" || !this.cityMap) return;
+    const need = this.quests.activeCollectItem();
+    if (!need || need.remaining <= 0) return;
+    const grid = this.cityMap.grid;
+    let tries = 0;
+    while (this.collectibles.length < need.remaining && tries < 600) {
+      tries++;
+      const tx = 2 + Math.floor(Math.random() * (this.cityMap.w - 4));
+      const ty = 2 + Math.floor(Math.random() * (this.cityMap.h - 4));
+      if (isWall(grid[ty][tx])) continue;
+      const x = tx * TILE + TILE / 2;
+      const y = ty * TILE + TILE / 2;
+      const sprite = this.add.image(x, y, GLOW_KEY).setTint(0x39ff88).setDepth(7).setScale(0.7);
+      this.tweens.add({ targets: sprite, scale: 1.05, alpha: 0.55, duration: 700, yoyo: true, repeat: -1, ease: "Sine.inOut" });
+      this.collectibles.push({ item: need.item, sprite, x, y });
+    }
   }
 
   private placeCityNpcs() {
@@ -148,8 +232,38 @@ export default class CityScene extends Phaser.Scene {
     }
     if (!nearest) return;
     const n = nearest;
-    const pages = n.def.lines.map((text) => ({ speaker: n.name, text, portrait: { key: PORTRAIT_NPC_KEY, frame: 0 } }));
-    this.dialogue.show(pages);
+    this.showTalk(this.quests.onTalk(n.id, n.name, n.def.lines, n.def.quest));
+  }
+
+  private showTalk(res: TalkResult) {
+    const portrait = { key: PORTRAIT_NPC_KEY, frame: 0 };
+    if (res.kind === "offer") {
+      const pages = res.lines.map((text, i) => ({
+        speaker: res.speaker,
+        text,
+        portrait,
+        choices: i === res.lines.length - 1 ? ["Accept", "Maybe later"] : undefined,
+      }));
+      this.dialogue.show(pages, undefined, (choice) => {
+        if (choice === 0) {
+          this.quests.accept(res.questId);
+          this.spawnCollectibles();
+          this.renderJournal();
+          this.toast(`Quest accepted — ${res.name}`);
+        }
+      });
+    } else if (res.kind === "reward") {
+      this.dialogue.show(
+        res.lines.map((text) => ({ speaker: res.speaker, text, portrait })),
+        () => {
+          this.refreshWallet();
+          this.renderJournal();
+          this.toast(`${res.questName} complete    +${res.xp} XP    +${res.credits}c`);
+        },
+      );
+    } else {
+      this.dialogue.show(res.lines.map((text) => ({ speaker: res.speaker, text, portrait })));
+    }
   }
 
   update() {
@@ -178,6 +292,20 @@ export default class CityScene extends Phaser.Scene {
 
     // NPC "E TALK" prompts by proximity
     for (const n of this.npcs) n.update(Phaser.Math.Distance.Between(this.player.x, this.player.y, n.x, n.y));
+
+    // quest collectibles — walk over to pick up
+    for (let i = this.collectibles.length - 1; i >= 0; i--) {
+      const c = this.collectibles[i];
+      if (Phaser.Math.Distance.Between(this.player.x, this.player.y, c.x, c.y) < 24) {
+        c.sprite.destroy();
+        this.collectibles.splice(i, 1);
+        const msg = this.quests.collect(c.item);
+        if (msg) {
+          this.toast(msg);
+          this.renderJournal();
+        }
+      }
+    }
 
     // ── place transitions (door → interior, exit → street) ──────────
     const tx = Math.floor(this.player.x / TILE);
