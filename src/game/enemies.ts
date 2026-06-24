@@ -200,6 +200,18 @@ export const ENEMY_TIERS: Record<string, EnemyTierDef> = {
   },
 };
 
+/** Short Human Security System combat barks per archetype — shown as a callout when
+ *  a unit deploys into a fight. Terse, system-voiced; original to METROPHAGE. */
+export const ENEMY_BARKS: Record<string, string[]> = {
+  patrol: ["HALT.", "PROCESS FLAGGED.", "NON-COMPLIANT.", "ACCOUNT FOR YOURSELF."],
+  enforcer: ["SHIELD UP.", "YOU'RE ON THE LIST.", "HOLD THE LINE.", "QUERY: WHO ISSUED YOU?"],
+  purge: ["PURGE AUTHORIZED.", "DELETING.", "BE STILLED.", "RECLAIMING THIS PROCESS."],
+  wasp: ["SWARM ENGAGED.", "EYES ON, EYES ON.", "BUZZING YOUR SIGNAL.", "PINNED."],
+  lancer: ["TARGET ACQUIRED.", "RANGE LOCKED.", "ONE SHOT.", "HOLDING THE LINE FROM HERE."],
+  hound: ["RUN IT DOWN.", "NO EXITS.", "CLOSING.", "YOU SMELL OVERDUE."],
+  mender: ["HOLD THE LINE.", "PATCHING UNIT.", "STAY STANDING.", "RE-ISSUING INTEGRITY."],
+};
+
 /** Effects a cop invokes on attack. GameScene implements this. */
 export interface EnemyHost {
   enemyShot(x: number, y: number, angle: number, damage: number): void;

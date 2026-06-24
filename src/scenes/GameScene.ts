@@ -17,7 +17,7 @@ import {
 } from "../config";
 import { getClass, ClassDef, PrimaryDef } from "../game/classes";
 import { AbilityHost, AbilityDef } from "../game/ability";
-import { ENEMY_TIERS, EnemyHost } from "../game/enemies";
+import { ENEMY_TIERS, ENEMY_BARKS, EnemyHost } from "../game/enemies";
 import { buildGrid, spawnPoint, isWall, TILE_WALL, TileGrid } from "../world/district";
 import { DistrictDef, DISTRICTS } from "../game/districts";
 import {
@@ -97,6 +97,7 @@ export default class GameScene
   private districtIndex = 0;
   private cycleMult = 1; // NG+ difficulty scalar (1 + cycle * step)
   private nextSpawnAt = 0;
+  private nextBarkAt = 0; // throttle for HSS deploy barks
   private player!: Player;
   private bullets!: Bullets; // player weapon
   private enemyBullets!: Bullets; // hostile fire
@@ -755,10 +756,24 @@ export default class GameScene
     }
   }
 
-  private spawnEnemy(tierId: string, x: number, y: number) {
+  private spawnEnemy(tierId: string, x: number, y: number, bark = false) {
     const cop = new TuringCop(this, x, y, ENEMY_TIERS[tierId]);
     if (this.cycleMult > 1) cop.scaleHp(this.cycleMult);
     this.enemies.add(cop);
+    if (bark) this.maybeBark(tierId, x, y);
+  }
+
+  /** Occasional system-voiced deploy bark above a reinforcement (throttled, not every
+   *  spawn) — gives the new archetypes a bit of menace as they engage. */
+  private maybeBark(tierId: string, x: number, y: number) {
+    const now = this.time.now;
+    if (now < this.nextBarkAt || Math.random() > 0.5) return;
+    const pool = ENEMY_BARKS[tierId];
+    if (!pool?.length) return;
+    this.nextBarkAt = now + 1600;
+    const tint = ENEMY_TIERS[tierId].tint ?? COLORS.enemy;
+    const hex = "#" + (tint & 0xffffff).toString(16).padStart(6, "0");
+    this.pops.pop(x, y - 22, pool[Math.floor(Math.random() * pool.length)], hex, 11, 42);
   }
 
   /** Heat-scaled spawn pressure: faster + tougher tiers as the map heats up. */
@@ -799,7 +814,7 @@ export default class GameScene
       TILE * 1.5,
       WORLD_H - TILE * 1.5,
     );
-    this.spawnEnemy(tier, x, y);
+    this.spawnEnemy(tier, x, y, true); // reinforcement — may bark
   }
 
   private setupCamera() {
@@ -1481,7 +1496,7 @@ export default class GameScene
       const x = Phaser.Math.Clamp(this.player.x + Math.cos(a) * r, TILE * 1.5, WORLD_W - TILE * 1.5);
       const y = Phaser.Math.Clamp(this.player.y + Math.sin(a) * r, TILE * 1.5, WORLD_H - TILE * 1.5);
       const tier = hot >= 0.7 && i % 3 === 0 ? "purge" : hot >= 0.45 && i % 2 === 0 ? "enforcer" : "patrol";
-      this.spawnEnemy(tier, x, y);
+      this.spawnEnemy(tier, x, y, true);
     }
   }
 
@@ -1989,7 +2004,7 @@ export default class GameScene
         TILE * 1.5,
         WORLD_H - TILE * 1.5,
       );
-      this.spawnEnemy(mix[i % mix.length], x, y);
+      this.spawnEnemy(mix[i % mix.length], x, y, true);
     }
   }
 
