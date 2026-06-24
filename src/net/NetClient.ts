@@ -20,6 +20,7 @@ export interface NetEnemy {
   tx: number;
   ty: number;
   hp: number;
+  kind: number; // HSS archetype (tints the sprite client-side)
 }
 
 export interface NetShot {
@@ -221,10 +222,11 @@ export default class NetClient {
       const liveE = new Set<number>();
       for (const e of msg.enemies) {
         liveE.add(e.id);
-        const ne = this.enemies.get(e.id) ?? { id: e.id, x: e.x, y: e.y, tx: e.x, ty: e.y, hp: e.hp };
+        const ne = this.enemies.get(e.id) ?? { id: e.id, x: e.x, y: e.y, tx: e.x, ty: e.y, hp: e.hp, kind: e.kind };
         ne.tx = e.x;
         ne.ty = e.y;
         ne.hp = e.hp;
+        ne.kind = e.kind;
         this.enemies.set(e.id, ne);
       }
       for (const id of [...this.enemies.keys()]) if (!liveE.has(id)) this.enemies.delete(id);

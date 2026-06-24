@@ -80,6 +80,7 @@ export interface EnemySnap {
   x: number;
   y: number;
   hp: number;
+  kind: number; // HSS archetype: 0 patrol · 1 wasp · 2 lancer · 3 hound
 }
 export interface ShotSnap {
   id: number;

@@ -33,6 +33,9 @@ const SERVER_URL =
   (import.meta.env as Record<string, string | undefined>).VITE_SERVER_URL ??
   "ws://127.0.0.1:8787/ws";
 
+/** HSS archetype tints (index = enemy kind), matching the singleplayer reads. */
+const ENEMY_KIND_TINT = [0xff3b6b, 0x39ffd0, 0xffe06a, 0xff5ad0];
+
 /**
  * Step 2 — the online game client. Renders the real district + player, but the
  * local player's movement is SERVER-AUTHORITATIVE: the client predicts with the
@@ -412,12 +415,16 @@ export default class OnlineScene extends Phaser.Scene {
     }
     this.me.setVisible(this.net.connected && !this.net.dead);
 
-    // enemies (server-simulated)
+    // enemies (server-simulated) — tinted by HSS archetype (matches singleplayer reads)
     for (const [id, e] of this.net.enemies) {
       let s = this.enemySprites.get(id);
       if (!s) {
-        s = this.add.sprite(e.x, e.y, COP_KEY, 0).setTint(COLORS.enemy).setDepth(8);
+        s = this.add.sprite(e.x, e.y, COP_KEY, 0).setDepth(8);
         this.enemySprites.set(id, s);
+      }
+      if (s.getData("kind") !== e.kind) {
+        s.setTint(ENEMY_KIND_TINT[e.kind] ?? COLORS.enemy);
+        s.setData("kind", e.kind);
       }
       const edx = e.tx - e.x;
       const edy = e.ty - e.y;

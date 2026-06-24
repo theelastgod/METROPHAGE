@@ -169,7 +169,33 @@ interface Enemy {
   hp: number;
   respawnTick: number;
   lastFireTick: number;
+  kind: number; // index into ENEMY_ARCHES
 }
+
+/**
+ * Server-authoritative HSS archetypes — stat variations of the same chase-and-fire AI
+ * so online play gets the same threat variety as single-player. Index 0 (PATROL) is the
+ * original baseline (unchanged balance); the rest diversify hp/speed/range/cadence/dmg.
+ * Kept server-side (the client only renders a tint by `kind`).
+ */
+interface EnemyArch {
+  hp: number;
+  speed: number;
+  fireRange: number;
+  fireMs: number;
+  dmg: number;
+  projSpeed: number;
+}
+const ENEMY_ARCHES: EnemyArch[] = [
+  // 0 PATROL — baseline (imported constants, identical to the pre-archetype behavior)
+  { hp: COP_HP, speed: ENEMY_SPEED, fireRange: ENEMY_FIRE_RANGE, fireMs: COP_FIRE_MS, dmg: ENEMY_DMG, projSpeed: ENEMY_PROJ_SPEED },
+  // 1 WASP — fragile, fast, short-range, rapid weak shots
+  { hp: 30, speed: 168, fireRange: 180, fireMs: 620, dmg: 5, projSpeed: 360 },
+  // 2 LANCER — sturdy, slow, long-range, heavy aimed shots
+  { hp: 60, speed: 88, fireRange: 430, fireMs: 1850, dmg: 24, projSpeed: 520 },
+  // 3 HOUND — fast rusher, gets point-blank then hammers
+  { hp: 80, speed: 200, fireRange: 95, fireMs: 1000, dmg: 16, projSpeed: 300 },
+];
 
 interface Shot {
   id: number;
@@ -265,14 +291,21 @@ export class WorldDO {
     }));
   }
 
-  /** Seed a handful of cops at the district's cop-posts (walkable tiles only). */
+  /** Seed a handful of cops at the district's cop-posts (walkable tiles only). The
+   *  archetype is rotated across posts (and biased by district threat) so every zone
+   *  fields a varied garrison: patrol/wasp/lancer/hound. */
   private spawnEnemies(def: (typeof DISTRICTS)[number]) {
+    // Rotation patterns by threat tier — tougher districts skew toward lancers/hounds.
+    const pattern =
+      this.districtIndex <= 0 ? [0, 1, 0, 1, 2] : this.districtIndex === 1 ? [0, 1, 2, 3, 1, 0] : [2, 3, 1, 2, 0, 3, 1];
+    let i = 0;
     for (const [tx, ty] of def.copPosts) {
       if (isWall(this.grid[ty]?.[tx])) continue;
       const x = tx * TILE + TILE / 2;
       const y = ty * TILE + TILE / 2;
       const id = this.nextEnemyId++;
-      this.enemies.set(id, { id, x, y, ox: x, oy: y, hp: COP_HP, respawnTick: 0, lastFireTick: 0 });
+      const kind = pattern[i++ % pattern.length];
+      this.enemies.set(id, { id, x, y, ox: x, oy: y, hp: ENEMY_ARCHES[kind].hp, respawnTick: 0, lastFireTick: 0, kind });
     }
   }
 
@@ -886,11 +919,12 @@ export class WorldDO {
 
     // 2) enemies — chase nearest player, fire in range
     for (const e of this.enemies.values()) {
+      const arch = ENEMY_ARCHES[e.kind] ?? ENEMY_ARCHES[0];
       if (e.hp <= 0) {
         if (this.tick >= e.respawnTick) {
           e.x = e.ox;
           e.y = e.oy;
-          e.hp = COP_HP;
+          e.hp = arch.hp;
         }
         continue;
       }
@@ -899,22 +933,22 @@ export class WorldDO {
       const dx = target.x - e.x;
       const dy = target.y - e.y;
       const d = Math.hypot(dx, dy) || 1;
-      const eSpeed = meltdown ? ENEMY_SPEED * MELTDOWN_ENEMY_SPEED_MULT : ENEMY_SPEED;
-      const eFireMs = meltdown ? COP_FIRE_MS * MELTDOWN_FIRE_FASTER : COP_FIRE_MS;
+      const eSpeed = meltdown ? arch.speed * MELTDOWN_ENEMY_SPEED_MULT : arch.speed;
+      const eFireMs = meltdown ? arch.fireMs * MELTDOWN_FIRE_FASTER : arch.fireMs;
       stepMove(e, { mx: dx / d, my: dy / d }, this.grid, NET_TICK_MS, eSpeed);
-      if (d <= ENEMY_FIRE_RANGE && (this.tick - e.lastFireTick) * NET_TICK_MS >= eFireMs) {
+      if (d <= arch.fireRange && (this.tick - e.lastFireTick) * NET_TICK_MS >= eFireMs) {
         e.lastFireTick = this.tick;
         const aim = Math.atan2(target.y - e.y, target.x - e.x);
         this.shots.push({
           id: this.nextShotId++,
           x: e.x,
           y: e.y,
-          vx: Math.cos(aim) * ENEMY_PROJ_SPEED,
-          vy: Math.sin(aim) * ENEMY_PROJ_SPEED,
+          vx: Math.cos(aim) * arch.projSpeed,
+          vy: Math.sin(aim) * arch.projSpeed,
           dieTick: this.tick + ticks(ENEMY_PROJ_TTL_MS),
           team: 1,
           owner: String(e.id),
-          dmg: ENEMY_DMG,
+          dmg: arch.dmg,
         });
       }
     }
@@ -1107,7 +1141,7 @@ export class WorldDO {
     }
     const enemies = [];
     for (const e of this.enemies.values()) {
-      if (e.hp > 0 && near(e.x, e.y)) enemies.push({ id: e.id, x: round2(e.x), y: round2(e.y), hp: Math.round(e.hp) });
+      if (e.hp > 0 && near(e.x, e.y)) enemies.push({ id: e.id, x: round2(e.x), y: round2(e.y), hp: Math.round(e.hp), kind: e.kind });
     }
     const shots = [];
     for (const s of this.shots) {
