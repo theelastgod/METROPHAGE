@@ -119,6 +119,39 @@ export function rollItem(level = 1, rarityBoost = 0, forceRarity?: Rarity): Item
   };
 }
 
+/**
+ * Build a Black-Market exotic as a guaranteed-strong `singular` weapon item: it carries
+ * the exotic `weaponId` (so equipping it changes the *feel*) plus a potent, weapon-slot
+ * stat roll above a normal singular (so the *numbers* read premium too). DMG is always
+ * present; CRIT + one more strong line round it out.
+ */
+export function makeExoticWeaponItem(weaponId: string, level = 1): Item {
+  const w = getWeapon(weaponId);
+  const def = RARITIES.singular;
+  const budget = def.budget * (1 + level * 0.04) * 1.3; // a cut above a found singular
+  const pool = STAT_DEFS.filter((s) => s.slots.includes("weapon"));
+  // DMG + CRIT guaranteed (the headline weapon stats), then one more weapon line.
+  const dmg = pool.find((s) => s.key === "dmgPct")!;
+  const crit = pool.find((s) => s.key === "critPct")!;
+  const rest = pool.filter((s) => s.key !== "dmgPct" && s.key !== "critPct");
+  const extra = rest[Math.floor(Math.random() * rest.length)];
+  const chosen = [dmg, crit, extra];
+  const mods: Partial<ModBag> = {};
+  for (const sd of chosen) {
+    const pts = (budget / chosen.length) * (1.0 + Math.random() * 0.25); // high end of the band
+    const raw = sd.perPoint * pts;
+    mods[sd.key] = sd.pct ? Math.round(raw * 100) / 100 : Math.max(1, Math.round(raw));
+  }
+  return {
+    id: `ex_${++counter}_${Math.random().toString(36).slice(2, 7)}`,
+    name: `${w ? w.name : "EXOTIC"}`,
+    slot: "weapon",
+    rarity: "singular",
+    mods,
+    weaponId,
+  };
+}
+
 const RARITY_BASE: Record<Rarity, number> = {
   standard: 30,
   tuned: 80,

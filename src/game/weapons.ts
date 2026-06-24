@@ -13,6 +13,10 @@ export interface WeaponDef {
   desc: string;
   tint: number; // projectile / blade colour
   primary: PrimaryDef;
+  /** Exotic = a premium Black-Market weapon: never drops randomly, bought with $METRO,
+   *  and tuned a clear cut above the standard arsenal. `metro` is the store price. */
+  exotic?: boolean;
+  metro?: number;
 }
 
 export const WEAPONS: WeaponDef[] = [
@@ -81,9 +85,75 @@ export const WEAPONS: WeaponDef[] = [
     tint: 0xff2bd6,
     primary: { kind: "melee", fireRateMs: 280, damage: 28, range: 96, arcDeg: 42 },
   },
+
+  // ── EXOTICS — Black-Market only, paid in $METRO. A clear tier above the rest. ──
+  {
+    id: "singularity",
+    name: "SINGULARITY LANCE",
+    klass: "RAILGUN",
+    desc: "A collapsing-star beam. Pierces everything in a long line.",
+    tint: 0xeafdff,
+    primary: { kind: "beam", fireRateMs: 240, damage: 38, range: 540, halfWidth: 13 },
+    exotic: true,
+    metro: 1400,
+  },
+  {
+    id: "wraith",
+    name: "WRAITH",
+    klass: "SMG",
+    desc: "Silent flechette storm — absurd rate of fire, no recoil.",
+    tint: 0xb06bff,
+    primary: { kind: "rapid", fireRateMs: 55, damage: 9, speed: 700, lifetimeMs: 700, jitterDeg: 5 },
+    exotic: true,
+    metro: 900,
+  },
+  {
+    id: "gigadeath",
+    name: "GIGA-DEATH",
+    klass: "SHOTGUN",
+    desc: "Nine-slug demolition cone. Deletes anything point-blank.",
+    tint: 0xff7a3c,
+    primary: { kind: "spread", fireRateMs: 470, damage: 15, speed: 560, lifetimeMs: 320, pellets: 9, spreadDeg: 46 },
+    exotic: true,
+    metro: 1050,
+  },
+  {
+    id: "tempest",
+    name: "TEMPEST",
+    klass: "BURST-RIFLE",
+    desc: "Five-round overcharged bursts that punch through armour.",
+    tint: 0x39ffd0,
+    primary: { kind: "burst", fireRateMs: 360, damage: 17, speed: 780, lifetimeMs: 1000, burstCount: 5, burstGapMs: 42 },
+    exotic: true,
+    metro: 1150,
+  },
+  {
+    id: "voidedge",
+    name: "VOID-EDGE",
+    klass: "KATANA",
+    desc: "A blade of folded vacuum — long reach, devastating sweep.",
+    tint: 0x39ff88,
+    primary: { kind: "melee", fireRateMs: 240, damage: 46, range: 112, arcDeg: 54 },
+    exotic: true,
+    metro: 1300,
+  },
+  {
+    id: "daemon",
+    name: "DAEMON-9",
+    klass: "FLAK",
+    desc: "Roaring arc of heavy slugs — crowd control made cruel.",
+    tint: 0xff2bd6,
+    primary: { kind: "spread", fireRateMs: 320, damage: 12, speed: 480, lifetimeMs: 460, pellets: 7, spreadDeg: 38 },
+    exotic: true,
+    metro: 950,
+  },
 ];
 
-export const WEAPON_IDS = WEAPONS.map((w) => w.id);
+/** Standard drop pool — exotics are excluded (they're Black-Market only). */
+export const WEAPON_IDS = WEAPONS.filter((w) => !w.exotic).map((w) => w.id);
+
+/** The premium catalogue sold at the Black Market, paid in $METRO. */
+export const EXOTIC_WEAPONS = WEAPONS.filter((w) => w.exotic);
 
 export function getWeapon(id: string | undefined): WeaponDef | undefined {
   return id ? WEAPONS.find((w) => w.id === id) : undefined;

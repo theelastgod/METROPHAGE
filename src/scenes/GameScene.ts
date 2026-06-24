@@ -238,6 +238,7 @@ export default class GameScene
     } else {
       this.classDef = getClass(this.registry.get("classId") as string | undefined);
       this.progression = new Progression(this.classDef.id);
+      this.progression.addMetro(1000); // starting $METRO stipend → the Black Market is usable from run one
       this.city = new City();
       this.memory = new Memory();
       this.quests = new Quests();
@@ -497,6 +498,7 @@ export default class GameScene
     if (!c) return;
     this.progression.addXp(c.rewards.xp);
     this.progression.addCurrency(c.rewards.currency);
+    this.progression.addMetro(25);
     for (let i = 0; i < c.rewards.loot; i++) {
       const item = rollItem(this.progression.level, c.rewards.lootBoost);
       if (!this.inventory.add(item)) {
@@ -1397,6 +1399,7 @@ export default class GameScene
       const q = this.quests.completeActive();
       if (!q) return;
       this.progression.addCurrency(q.reward.currency);
+      this.progression.addMetro(40);
       this.progression.addXp(q.reward.xp);
       for (let i = 0; i < q.reward.loot; i++) {
         const item = rollItem(this.progression.level, q.reward.lootBoost);
@@ -1458,6 +1461,7 @@ export default class GameScene
     this.registry.remove("diveResult");
     if (!res || !res.success) return;
     this.progression.addCurrency(res.reward.currency);
+    this.progression.addMetro(20);
     const gained = this.progression.addXp(res.reward.xp);
     for (let i = 0; i < res.reward.loot; i++) {
       const item = rollItem(this.progression.level, res.reward.lootBoost);
@@ -1581,6 +1585,7 @@ export default class GameScene
     if (def.id === "blackout") this.endBlackout();
     if (def.id === "contagion_outbreak") this.territory.setOutbreak(false);
     this.progression.addCurrency(def.reward.currency);
+    this.progression.addMetro(15);
     const gained = this.progression.addXp(def.reward.xp);
     this.recomputeStats();
     if (gained > 0) this.floatText(`LEVEL ${this.progression.level}`, "#f7ff3c");
@@ -1795,6 +1800,7 @@ export default class GameScene
   private onBossDefeated(boss: Boss) {
     this.bossBar.hide();
     this.progression.addCurrency(boss.def.credits);
+    this.progression.addMetro(150); // a corp warden is worth real $METRO
     const gained = this.progression.addXp(boss.def.xp);
     this.recomputeStats();
     for (let i = 0; i < 2; i++) {

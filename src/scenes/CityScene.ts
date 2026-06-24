@@ -10,7 +10,9 @@ import { KEY_NPCS, CITIZENS } from "../game/cityNpcs";
 import { CityQuests, type TalkResult } from "../game/cityQuests";
 import { loadSave, writeSave } from "../systems/Save";
 import Inventory from "../systems/Inventory";
-import { rollItem } from "../game/items";
+import { rollItem, makeExoticWeaponItem } from "../game/items";
+import { getWeapon } from "../game/weapons";
+import BlackMarketPanel from "../ui/BlackMarketPanel";
 import NeonPipeline from "../render/NeonPipeline";
 import Atmosphere from "../render/Atmosphere";
 import { shadeWalls } from "../render/wallShade";
@@ -53,6 +55,10 @@ export default class CityScene extends Phaser.Scene {
   private journalText!: Phaser.GameObjects.Text;
   private toastText!: Phaser.GameObjects.Text;
   private walletText!: Phaser.GameObjects.Text;
+  private market?: BlackMarketPanel; // $METRO arms dealer (city mode only)
+  private marketX = 0;
+  private marketY = 0;
+  private marketPrompt?: Phaser.GameObjects.Text;
 
   constructor() {
     super("City");
@@ -127,6 +133,10 @@ export default class CityScene extends Phaser.Scene {
     this.cursors = this.input.keyboard!.createCursorKeys();
     this.input.keyboard!.on("keydown-ESC", () => {
       if (this.transitioning) return;
+      if (this.market?.isOpen) {
+        this.market.close();
+        return;
+      }
       if (this.dialogue.isOpen) return;
       if (this.mode === "interior") this.leaveInterior();
       else this.exitTo("Select");
@@ -142,9 +152,13 @@ export default class CityScene extends Phaser.Scene {
     if (this.mode === "city") {
       this.placeCityNpcs();
       this.spawnCollectibles();
+      this.setupBlackMarket();
     }
     this.input.keyboard!.on("keydown-E", () => this.tryTalk());
     this.input.keyboard!.on("keydown-J", () => this.toggleJournal());
+    this.input.keyboard!.on("keydown-B", () => {
+      if (this.mode === "city" && !this.dialogue.isOpen && !this.transitioning) this.market?.toggle();
+    });
   }
 
   private buildQuestHud() {
@@ -176,7 +190,88 @@ export default class CityScene extends Phaser.Scene {
   }
 
   private refreshWallet() {
-    this.walletText.setText(`◈ ${this.quests.credits}c   ${this.quests.xp} XP`);
+    const metro = loadSave()?.progress.metro ?? 0;
+    this.walletText.setText(`${this.quests.credits}c   ${this.quests.xp} XP   ◈ ${metro} $METRO`);
+  }
+
+  /** Place the $METRO arms dealer right by the spawn plaza — beacon-marked so it's the
+   *  first thing you see — and wire its store panel against the shared save. */
+  private setupBlackMarket() {
+    if (!this.cityMap) return;
+    const [sx, sy] = this.cityMap.spawn;
+    let tx = sx + 3;
+    let ty = sy - 2;
+    if (isWall(this.cityMap.grid[ty]?.[tx])) {
+      tx = sx + 2;
+      ty = sy;
+    }
+    this.marketX = tx * TILE + TILE / 2;
+    this.marketY = ty * TILE + TILE / 2;
+
+    // beacon: a pulsing magenta ground-glow + a kiosk + a sky-beam so it reads from afar
+    const glow = this.add
+      .image(this.marketX, this.marketY, GLOW_KEY)
+      .setTint(0xff2bd6)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setDepth(6)
+      .setScale(1.7);
+    this.tweens.add({ targets: glow, scale: 2.1, alpha: 0.6, duration: 900, yoyo: true, repeat: -1, ease: "Sine.inOut" });
+    const beam = this.add
+      .rectangle(this.marketX, this.marketY - 130, 10, 260, 0xff2bd6, 0.12)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setDepth(5);
+    this.tweens.add({ targets: beam, alpha: 0.04, duration: 1400, yoyo: true, repeat: -1 });
+    this.add.rectangle(this.marketX, this.marketY, 28, 22, 0x14081e, 0.92).setStrokeStyle(2, 0xff2bd6, 0.95).setDepth(7);
+    this.add
+      .text(this.marketX, this.marketY - 32, "◈ BLACK MARKET", {
+        fontFamily: "Courier New, monospace",
+        fontSize: "12px",
+        color: "#ff2bd6",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5)
+      .setDepth(8)
+      .setShadow(0, 0, "#00e5ff", 8, true, true);
+    this.add
+      .text(this.marketX, this.marketY - 17, "$METRO weapons", { fontFamily: "Courier New, monospace", fontSize: "9px", color: "#9af0ff" })
+      .setOrigin(0.5)
+      .setDepth(8);
+    this.marketPrompt = this.add
+      .text(this.marketX, this.marketY + 20, "▸ E to browse", { fontFamily: "Courier New, monospace", fontSize: "10px", color: "#f7ff3c" })
+      .setOrigin(0.5)
+      .setDepth(8)
+      .setVisible(false);
+
+    this.market = new BlackMarketPanel(this, {
+      getMetro: () => loadSave()?.progress.metro ?? 0,
+      buy: (weaponId) => this.buyExotic(weaponId),
+    });
+
+    // persistent corner hint so it's discoverable even before you find the stall
+    this.add
+      .text(160, 50, "·  B black market", { fontFamily: "Courier New, monospace", fontSize: "11px", color: "#ff79c6" })
+      .setScrollFactor(0)
+      .setDepth(1000);
+  }
+
+  /** Buy an exotic against the shared save: deduct $METRO, drop the weapon in the bag. */
+  private buyExotic(weaponId: string): "ok" | "poor" | "full" | "nochar" {
+    const save = loadSave();
+    if (!save) return "nochar";
+    const price = getWeapon(weaponId)?.metro ?? 0;
+    const metro = save.progress.metro ?? 0;
+    if (metro < price) return "poor";
+    const inv = new Inventory();
+    inv.load(save.inventory);
+    if (inv.full) return "full";
+    const item = makeExoticWeaponItem(weaponId, save.progress.level ?? 1);
+    if (!inv.add(item)) return "full";
+    save.progress.metro = metro - price;
+    save.inventory = inv.toData();
+    writeSave(save);
+    this.refreshWallet();
+    this.toast(`◈ ${item.name} → bag`);
+    return "ok";
   }
 
   private toast(msg: string) {
@@ -228,7 +323,20 @@ export default class CityScene extends Phaser.Scene {
   }
 
   private tryTalk() {
-    if (this.transitioning || this.dialogue.isOpen) return;
+    if (this.transitioning) return;
+    if (this.market?.isOpen) {
+      this.market.close();
+      return;
+    }
+    if (this.dialogue.isOpen) return;
+    // standing at the arms-dealer stall → open the $METRO black market
+    if (this.market && this.mode === "city") {
+      const dm = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.marketX, this.marketY);
+      if (dm <= NPC.interactRange + 12) {
+        this.market.show();
+        return;
+      }
+    }
     let nearest: CityNpc | undefined;
     let best = Infinity;
     for (const n of this.npcs) {
@@ -301,9 +409,9 @@ export default class CityScene extends Phaser.Scene {
   update(_time: number, delta: number) {
     this.atmosphere?.update(this.time.now, delta, 0.15); // weather/fog/holos animate always
     if (this.transitioning) return;
-    if (this.dialogue.isOpen) {
+    if (this.dialogue.isOpen || this.market?.isOpen) {
       this.player.setVelocity(0, 0);
-      return; // freeze while talking
+      return; // freeze while talking / shopping
     }
     const left = this.wasd.A.isDown || this.cursors.left.isDown;
     const right = this.wasd.D.isDown || this.cursors.right.isDown;
@@ -325,6 +433,12 @@ export default class CityScene extends Phaser.Scene {
 
     // NPC "E TALK" prompts by proximity
     for (const n of this.npcs) n.update(Phaser.Math.Distance.Between(this.player.x, this.player.y, n.x, n.y));
+
+    // black-market "E to browse" prompt by proximity
+    if (this.market && this.marketPrompt) {
+      const near = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.marketX, this.marketY) <= NPC.interactRange + 12;
+      this.marketPrompt.setVisible(near && !this.market.isOpen);
+    }
 
     // quest collectibles — walk over to pick up
     for (let i = this.collectibles.length - 1; i >= 0; i--) {
