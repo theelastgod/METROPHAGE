@@ -869,7 +869,7 @@ async function metro() {
   const start = a0.credits ?? 0;
   const q = await get(`/metro/quote?credits=1000`);
 
-  // happy path: 1000 credits -> 10 $METRO, credits debited atomically
+  // happy path: 1000 credits -> 1,000,000 $METRO (~$4.20 at launch), credits debited atomically
   const w = await post(`/metro/withdraw`, { player: "whale", wallet: WALLET, credits: 1000 });
   const a1 = await get(`/metro/account?player=whale`);
 
@@ -882,15 +882,15 @@ async function metro() {
   const wi = await post(`/metro/withdraw`, { player: "pauper", wallet: WALLET, credits: 50000 });
   const wm = await post(`/metro/withdraw`, { player: "pauper", wallet: WALLET, credits: 100 });
 
-  // deposit: claim 5 $METRO -> +500 credits; the SAME tx can't be claimed twice
+  // deposit: claim 500,000 $METRO -> +500 credits; the SAME tx can't be claimed twice
   const txSig = "DEPOSIT_" + Date.now();
-  const d = await post(`/metro/deposit`, { player: "whale", wallet: WALLET, txSig, metro: 5 });
-  const dd = await post(`/metro/deposit`, { player: "whale", wallet: WALLET, txSig, metro: 5 });
+  const d = await post(`/metro/deposit`, { player: "whale", wallet: WALLET, txSig, metro: 500_000 });
+  const dd = await post(`/metro/deposit`, { player: "whale", wallet: WALLET, txSig, metro: 500_000 });
   const a2 = await get(`/metro/account?player=whale`);
 
   const checks = {
-    quoteCorrect: q.ok && q.metro === 10,
-    withdrawDebited: w.ok && w.metro === 10 && a1.credits === start - 1000,
+    quoteCorrect: q.ok && q.metro === 1_000_000,
+    withdrawDebited: w.ok && w.metro === 1_000_000 && a1.credits === start - 1000,
     cooldownEnforced: wc.ok === false,
     badWalletRejected: wb.ok === false,
     insufficientRejected: wi.ok === false && /insufficient/.test(wi.reason || ""),

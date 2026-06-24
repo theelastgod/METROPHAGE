@@ -12,6 +12,7 @@ import { loadSave, writeSave } from "../systems/Save";
 import Inventory from "../systems/Inventory";
 import { rollItem, makeExoticWeaponItem } from "../game/items";
 import { getWeapon } from "../game/weapons";
+import { fmtMetro, metroUsdLabel } from "../economy/metro";
 import BlackMarketPanel from "../ui/BlackMarketPanel";
 import NeonPipeline from "../render/NeonPipeline";
 import Atmosphere from "../render/Atmosphere";
@@ -191,7 +192,7 @@ export default class CityScene extends Phaser.Scene {
 
   private refreshWallet() {
     const metro = loadSave()?.progress.metro ?? 0;
-    this.walletText.setText(`${this.quests.credits}c   ${this.quests.xp} XP   ◈ ${metro} $METRO`);
+    this.walletText.setText(`${this.quests.credits}c   ${this.quests.xp} XP   ◈ ${fmtMetro(metro)} $METRO (${metroUsdLabel(metro)})`);
   }
 
   /** Place the $METRO arms dealer right by the spawn plaza — beacon-marked so it's the

@@ -18,8 +18,12 @@
 import type { D1Database } from "@cloudflare/workers-types";
 
 export const BRIDGE = {
-  creditsPerMetro: 100, // 100 credits = 1 $METRO (devnet placeholder rate)
-  minWithdrawCredits: 500, // withdraw floor
+  // $METRO is a pump.fun-style token: 1,000,000,000 FIXED supply, launching on the
+  // bonding curve near a ~$4.2K market cap (≈ a few millionths of a cent per token).
+  // So $METRO is the ABUNDANT, low-unit-value denomination — a credit converts to MANY
+  // $METRO. 1 credit = 1,000 $METRO (→ 1,000,000 $METRO ≈ $4.20 at the launch mcap).
+  metroPerCredit: 1_000,
+  minWithdrawCredits: 500, // withdraw floor (→ 500,000 $METRO)
   withdrawCooldownMs: 60_000, // min gap between a player's withdrawals
   dailyCapCredits: 100_000, // max credits withdrawn per player per rolling 24h
   metroDecimals: 6, // SPL token precision for rounding amounts
@@ -30,8 +34,8 @@ const roundMetro = (n: number) => {
   const p = 10 ** BRIDGE.metroDecimals;
   return Math.round(n * p) / p;
 };
-export const creditsToMetro = (credits: number) => roundMetro(credits / BRIDGE.creditsPerMetro);
-export const metroToCredits = (metro: number) => Math.floor(metro * BRIDGE.creditsPerMetro);
+export const creditsToMetro = (credits: number) => roundMetro(credits * BRIDGE.metroPerCredit);
+export const metroToCredits = (metro: number) => Math.floor(metro / BRIDGE.metroPerCredit);
 
 const BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 /** A Solana address (wallet or mint) is base58 that decodes to exactly 32 bytes. */
@@ -105,7 +109,7 @@ export async function getAccount(db: D1Database, player: string): Promise<Bridge
     ok: true,
     player: id,
     credits: row.credits,
-    rate: BRIDGE.creditsPerMetro,
+    rate: BRIDGE.metroPerCredit,
     metroValue: creditsToMetro(row.credits),
     minWithdrawCredits: BRIDGE.minWithdrawCredits,
     dailyCapCredits: BRIDGE.dailyCapCredits,
@@ -117,7 +121,7 @@ export async function getAccount(db: D1Database, player: string): Promise<Bridge
 export function quote(credits: number): BridgeResponse {
   const c = Math.floor(credits);
   if (!Number.isFinite(c) || c <= 0) return { ok: false, reason: "bad amount" };
-  return { ok: true, credits: c, metro: creditsToMetro(c), rate: BRIDGE.creditsPerMetro };
+  return { ok: true, credits: c, metro: creditsToMetro(c), rate: BRIDGE.metroPerCredit };
 }
 
 export async function withdraw(

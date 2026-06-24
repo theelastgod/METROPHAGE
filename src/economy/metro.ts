@@ -98,6 +98,38 @@ export function getMetroStatus(): MetroStatus {
   };
 }
 
+// ── $METRO token economics (the pump.fun "starter token" reference) ─────────
+// $METRO is modelled as a standard pump.fun launch: a FIXED 1,000,000,000 supply
+// (mint authority revoked) that starts on the bonding curve at a ~$4.2K market cap
+// and "graduates" to a DEX near ~$69K. So each token is worth a few MILLIONTHS of a
+// cent — which is why in-game $METRO is denominated in memecoin-scale quantities
+// (you hold/earn/spend hundreds of thousands to millions), never dollars-per-token.
+export const METRO_TOTAL_SUPPLY = 1_000_000_000;
+/** pump.fun bonding-curve LAUNCH market cap (USD) — the "starter token" valuation. */
+export const METRO_LAUNCH_MCAP_USD = 4_200;
+/** Market cap (USD) at which a pump.fun token graduates the curve to a DEX. */
+export const METRO_GRADUATION_MCAP_USD = 69_000;
+
+/** USD value of `tokens` $METRO at a market cap (default: the launch/starter mcap). */
+export function metroUsd(tokens: number, mcapUsd: number = METRO_LAUNCH_MCAP_USD): number {
+  return tokens * (mcapUsd / METRO_TOTAL_SUPPLY);
+}
+/** Short USD label at the starter valuation (e.g. "$4.20", "$0.0008", "<$0.0001"). */
+export function metroUsdLabel(tokens: number, mcapUsd: number = METRO_LAUNCH_MCAP_USD): string {
+  const v = metroUsd(tokens, mcapUsd);
+  if (v >= 0.01) return "$" + v.toFixed(2);
+  if (v > 0) return v >= 0.0001 ? "$" + v.toFixed(4) : "<$0.0001";
+  return "$0.00";
+}
+/** Compact memecoin-style amount: 1_400_000 → "1.4M", 250_000 → "250k", 1e9 → "1B". */
+export function fmtMetro(n: number): string {
+  const strip = (s: string) => s.replace(/\.?0+$/, "");
+  if (n >= 1_000_000_000) return strip((n / 1_000_000_000).toFixed(2)) + "B";
+  if (n >= 1_000_000) return strip((n / 1_000_000).toFixed(2)) + "M";
+  if (n >= 1_000) return strip((n / 1_000).toFixed(1)) + "k";
+  return String(Math.round(n));
+}
+
 // ── P2E bridge seam (dormant) ──────────────────────────────────────────────
 // The off-chain authoritative ledger (server `credits`) is the live currency. The
 // bridge converts it to/from $METRO. Defined here as an interface + a safe disabled

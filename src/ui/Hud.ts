@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { COLORS } from "../config";
 import { UI_FRAME_KEY, UI_GUN_KEY } from "../assets/manifest";
+import { fmtMetro } from "../economy/metro";
 
 export interface HudState {
   hp: number;
@@ -196,7 +197,7 @@ export default class Hud {
 
     this.callsignText.setText(s.callsign ? `▸ ${s.callsign}` : "").setColor(hex(s.classColor));
     const xpLine = s.xpNext > 0 ? `XP ${s.xpInto}/${s.xpNext}` : "XP ▲MAX";
-    this.metaText.setText(`LV ${s.level}   ₵ ${s.credits}   ◈ ${s.metro}\n${xpLine}`);
+    this.metaText.setText(`LV ${s.level}   ₵ ${s.credits}   ◈ ${fmtMetro(s.metro)}\n${xpLine}`);
     this.contractText.setText(s.contract ? `◢ ${s.contract}` : "");
     this.questText.setText(s.quest ? `◆ ${s.quest}` : "");
     this.consumeText.setText(s.consumables);

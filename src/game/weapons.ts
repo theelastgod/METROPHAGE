@@ -95,7 +95,7 @@ export const WEAPONS: WeaponDef[] = [
     tint: 0xeafdff,
     primary: { kind: "beam", fireRateMs: 240, damage: 38, range: 540, halfWidth: 13 },
     exotic: true,
-    metro: 1400,
+    metro: 1_400_000,
   },
   {
     id: "wraith",
@@ -105,7 +105,7 @@ export const WEAPONS: WeaponDef[] = [
     tint: 0xb06bff,
     primary: { kind: "rapid", fireRateMs: 55, damage: 9, speed: 700, lifetimeMs: 700, jitterDeg: 5 },
     exotic: true,
-    metro: 900,
+    metro: 900_000,
   },
   {
     id: "gigadeath",
@@ -115,7 +115,7 @@ export const WEAPONS: WeaponDef[] = [
     tint: 0xff7a3c,
     primary: { kind: "spread", fireRateMs: 470, damage: 15, speed: 560, lifetimeMs: 320, pellets: 9, spreadDeg: 46 },
     exotic: true,
-    metro: 1050,
+    metro: 1_050_000,
   },
   {
     id: "tempest",
@@ -125,7 +125,7 @@ export const WEAPONS: WeaponDef[] = [
     tint: 0x39ffd0,
     primary: { kind: "burst", fireRateMs: 360, damage: 17, speed: 780, lifetimeMs: 1000, burstCount: 5, burstGapMs: 42 },
     exotic: true,
-    metro: 1150,
+    metro: 1_150_000,
   },
   {
     id: "voidedge",
@@ -135,7 +135,7 @@ export const WEAPONS: WeaponDef[] = [
     tint: 0x39ff88,
     primary: { kind: "melee", fireRateMs: 240, damage: 46, range: 112, arcDeg: 54 },
     exotic: true,
-    metro: 1300,
+    metro: 1_300_000,
   },
   {
     id: "daemon",
@@ -145,7 +145,7 @@ export const WEAPONS: WeaponDef[] = [
     tint: 0xff2bd6,
     primary: { kind: "spread", fireRateMs: 320, damage: 12, speed: 480, lifetimeMs: 460, pellets: 7, spreadDeg: 38 },
     exotic: true,
-    metro: 950,
+    metro: 950_000,
   },
 ];
 

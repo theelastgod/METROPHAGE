@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { VIEW_W, VIEW_H } from "../config";
 import { EXOTIC_WEAPONS } from "../game/weapons";
+import { fmtMetro, metroUsdLabel } from "../economy/metro";
 import { drawPanelFrame } from "./panelChrome";
 
 /** What the host scene must provide — the panel never touches the save/inventory itself. */
@@ -42,7 +43,14 @@ export default class BlackMarketPanel {
     const D = 1601;
 
     this.header = this.text(this.x + 16, this.y + 12, "", "#eafdff", "14px", D);
-    this.text(this.x + 16, this.y + 36, "EXOTIC ARMS  ·  paid in $METRO  ·  stronger than anything that drops", "#9aa3b2", "10px", D);
+    this.text(
+      this.x + 16,
+      this.y + 36,
+      "EXOTIC ARMS · paid in $METRO · pump.fun token · 1B fixed supply · launch ≈ $4.2K mcap",
+      "#9aa3b2",
+      "10px",
+      D,
+    );
 
     const rowH = (this.h - 110) / EXOTIC_WEAPONS.length;
     EXOTIC_WEAPONS.forEach((_, i) => {
@@ -93,7 +101,7 @@ export default class BlackMarketPanel {
     if (!w) return;
     const res = this.hooks.buy(w.id);
     if (res === "ok") this.flash(`✓ ${w.name} acquired — equip it from your bag (I)`, "#39ff88");
-    else if (res === "poor") this.flash(`✗ not enough $METRO (need ◈ ${w.metro})`, "#ff3b6b");
+    else if (res === "poor") this.flash(`✗ not enough $METRO (need ◈ ${fmtMetro(w.metro ?? 0)})`, "#ff3b6b");
     else if (res === "full") this.flash("✗ bag full — sell or drop something first", "#ff3b6b");
     else this.flash("✗ start the campaign first — exotics need a runner to wield them", "#ff3b6b");
     this.refresh();
@@ -110,10 +118,13 @@ export default class BlackMarketPanel {
     g.clear();
     drawPanelFrame(g, this.x, this.y, this.w, this.h);
     const metro = this.hooks.getMetro();
-    this.header.setText(`◈ THE BLACK MARKET          BALANCE:  ◈ ${metro} $METRO`);
+    this.header.setText(`◈ THE BLACK MARKET          BALANCE:  ◈ ${fmtMetro(metro)} $METRO  (${metroUsdLabel(metro)})`);
     EXOTIC_WEAPONS.forEach((w, i) => {
-      const afford = metro >= (w.metro ?? 0);
-      this.rowTitle[i].setText(`${w.name}   ·   ${w.klass}            ◈ ${w.metro}`).setColor(afford ? MAGENTA : "#5a6172");
+      const price = w.metro ?? 0;
+      const afford = metro >= price;
+      this.rowTitle[i]
+        .setText(`${w.name}   ·   ${w.klass}            ◈ ${fmtMetro(price)}  (${metroUsdLabel(price)})`)
+        .setColor(afford ? MAGENTA : "#5a6172");
       this.rowDesc[i].setText(`${w.desc}    ⚔ ${w.primary.damage} base dmg`);
     });
   }
