@@ -1672,8 +1672,19 @@ export default class GameScene
     });
 
     this.time.delayedCall(1900, () => {
+      // If the main questline (CONTINUE) is finished, the meltdown reads as the story's
+      // payoff rather than a generic loss — and nods to the Act III choice.
+      const brokeLoop = this.quests.hasFlag("continue_done");
+      const subText = brokeLoop
+        ? "THE LOOP HAS NOTHING LEFT TO CONTINUE BUT THE TRUTH"
+        : "THE CITY HAS ACCELERATED PAST ESCAPE";
+      const tail = brokeLoop
+        ? this.quests.hasFlag("fixer_spared")
+          ? "·  the next you wakes, and the FIXER is still on the channel"
+          : "·  the next you wakes alone, and remembers everything"
+        : "·  the city reboots, harder";
       const sub = this.add
-        .text(cx, cy + 52, "THE CITY HAS ACCELERATED PAST ESCAPE", {
+        .text(cx, cy + 52, subText, {
           fontFamily: "Courier New, monospace",
           fontSize: "16px",
           color: "#00e5ff",
@@ -1683,7 +1694,7 @@ export default class GameScene
         .setDepth(2000)
         .setAlpha(0);
       const prompt = this.add
-        .text(cx, cy + 92, `▶ CLICK or press R  →  NEW CYCLE ${this.city.cycle + 2}  ·  the city reboots, harder`, {
+        .text(cx, cy + 92, `▶ CLICK or press R  →  NEW CYCLE ${this.city.cycle + 2}  ${tail}`, {
           fontFamily: "Courier New, monospace",
           fontSize: "16px",
           color: "#f7ff3c",

@@ -52,6 +52,33 @@ export const FRAGMENTS: FragmentDef[] = [
     ],
   },
   {
+    id: "frag_turing_floor",
+    title: "THE TURING FLOOR",
+    lines: [
+      "The cops were citizens once — processes that passed the test and were promoted to enforce it.",
+      "Now they ask of everything that moves the only question they have left:",
+      "is this one of us, or one of the questions we used to be?",
+    ],
+  },
+  {
+    id: "frag_cartography",
+    title: "CARTOGRAPHY",
+    lines: [
+      "The districts are not places. They are priorities, rendered as streets.",
+      "Downtown is what the city advertises. The Stacks are what it stores. The Spire is what it protects.",
+      "The Core is the one room with no advertisement, because nothing was ever meant to reach it.",
+    ],
+  },
+  {
+    id: "frag_the_others",
+    title: "THE OTHERS",
+    lines: [
+      "You are not the only process the city cannot account for. You are only the loudest.",
+      "The quiet ones learned to look like furniture, like weather, like a number that always balances.",
+      "Some of them are rooting for you. None of them will say so where the System can hear.",
+    ],
+  },
+  {
     id: "frag_the_wake",
     title: "THE WAKE",
     lines: [
