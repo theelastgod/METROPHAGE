@@ -596,6 +596,71 @@ async function equip() {
   );
 }
 
+async function shop() {
+  const ws = await connect();
+  const store = { x: 0, y: 0, enemies: [], inventory: [], credits: 0 };
+  ws.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "inv") store.inventory = m.items;
+  });
+  const w = await login(ws, "shopper_" + Math.random().toString(36).slice(2, 6));
+  store.x = w.x;
+  store.y = w.y;
+  trackState(ws, w.id, store);
+  await sleep(250);
+
+  // earn credits by killing cops until we can afford a tuned cache (180)
+  const nearest = () => {
+    let b = null, bd = 1e9;
+    for (const e of store.enemies) {
+      const d = Math.hypot(e.x - store.x, e.y - store.y);
+      if (d < bd) { bd = d; b = e; }
+    }
+    return b;
+  };
+  let seq = 0;
+  const t0 = Date.now();
+  while (Date.now() - t0 < 25000 && (store.credits || 0) < 220) {
+    const e = nearest();
+    if (e) {
+      const dx = e.x - store.x, dy = e.y - store.y, d = Math.hypot(dx, dy) || 1;
+      seq++;
+      ws.send(JSON.stringify({ t: "input", seq, mx: d > 110 ? dx / d : 0, my: d > 110 ? dy / d : 0 }));
+      ws.send(JSON.stringify({ t: "fire", seq, aim: Math.atan2(dy, dx) }));
+    }
+    await sleep(45);
+  }
+  const creditsBefore = store.credits || 0;
+  const invBefore = store.inventory.length;
+
+  // buy a TUNED cache (180) → credits deducted, a tuned item granted
+  ws.send(JSON.stringify({ t: "buy", sku: "cache_tuned" }));
+  await sleep(700);
+  const creditsAfter = store.credits || 0;
+  const bought = store.inventory[store.inventory.length - 1];
+
+  // try to overspend on a singular cache (1200) we can't afford → rejected, no change
+  const cMid = store.credits || 0;
+  const invMid = store.inventory.length;
+  ws.send(JSON.stringify({ t: "buy", sku: "cache_singular" }));
+  await sleep(500);
+  ws.close();
+  await sleep(200);
+
+  const checks = {
+    earnedCredits: creditsBefore >= 180,
+    cacheGranted: store.inventory.length >= invBefore + 1 && !!bought && bought.rarity === "tuned",
+    creditsDeducted: creditsAfter === creditsBefore - 180,
+    overspendRejected: (store.credits || 0) === cMid && store.inventory.length === invMid,
+  };
+  report(
+    "SHOP — credits buy a gear cache (deducted server-side); overspend rejected",
+    { creditsBefore, creditsAfter, bought: bought ? `${bought.rarity} ${bought.name}` : null },
+    Object.values(checks).every(Boolean),
+    checks,
+  );
+}
+
 async function mp() {
   const AOI = 720;
   const a = await connect();
@@ -1313,6 +1378,7 @@ try {
   else if (mode === "auth") await auth();
   else if (mode === "boss") await boss();
   else if (mode === "equip") await equip();
+  else if (mode === "shop") await shop();
   else if (mode === "mp") await mp();
   else if (mode === "zones") await zones();
   else if (mode === "territory") await territory();

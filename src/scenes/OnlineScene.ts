@@ -3,6 +3,7 @@ import { installUiCamera } from "../render/cameras";
 import { shadeWalls } from "../render/wallShade";
 import Atmosphere from "../render/Atmosphere";
 import OnlineInventory from "../ui/OnlineInventory";
+import OnlineShop from "../ui/OnlineShop";
 import { COLORS, TILE, VIEW_W, VIEW_H } from "../config";
 import { TILESET_KEY, PLAYER_KEY, COP_KEY, BULLET_KEY, GLOW_KEY, NODE_KEY } from "../assets/manifest";
 import { driveChar } from "../assets/anim";
@@ -88,6 +89,7 @@ export default class OnlineScene extends Phaser.Scene {
   private meltdownText!: Phaser.GameObjects.Text;
   private atmosphere?: Atmosphere; // rich ambient layer, shared with the SP city
   private inv!: OnlineInventory; // bottom hotbar + openable bag, fed by the server
+  private shop!: OnlineShop; // vendor panel (credits sink)
   private lastSeason = -1;
   private chatLogText!: Phaser.GameObjects.Text;
   private chatInput!: Phaser.GameObjects.Text;
@@ -186,6 +188,8 @@ export default class OnlineScene extends Phaser.Scene {
       this.inv.setItems(this.net.inventory);
       this.inv.setEquipped(this.net.equipped);
     };
+    this.shop = new OnlineShop(this);
+    this.shop.onBuy = (sku) => this.net.buy(sku);
     // World-boss locator: a status banner + a screen-edge arrow toward an off-screen boss.
     this.bossBanner = this.add
       .text(VIEW_W / 2, 46, "", {
@@ -227,7 +231,7 @@ export default class OnlineScene extends Phaser.Scene {
       .text(
         this.scale.width / 2,
         this.scale.height - 12,
-        `WASD · CLICK fire · V emote · ENTER chat (/w /party /trade <name> /offer /confirm) · [1-${DISTRICTS.length}] travel · ESC`,
+        `WASD · CLICK fire · V emote · I bag · B vendor · ENTER chat · [1-${DISTRICTS.length}] travel · ESC`,
         { fontFamily: "Courier New, monospace", fontSize: "11px", color: "#6b7184" },
       )
       .setOrigin(0.5, 1)
@@ -385,6 +389,14 @@ export default class OnlineScene extends Phaser.Scene {
         this.inv.close(); // ESC closes the bag first, before it exits the scene
         return;
       }
+      if (e.key === "b" || e.key === "B") {
+        this.shop.toggle();
+        return;
+      }
+      if (this.shop.open && e.key === "Escape") {
+        this.shop.close();
+        return;
+      }
       if (e.key === "v" || e.key === "V") {
         this.openWheel();
         return;
@@ -493,6 +505,7 @@ export default class OnlineScene extends Phaser.Scene {
     // Drift fog + flicker the holo-signage; the shared singularity swells the haze.
     this.atmosphere?.update(this.time.now, dt, Phaser.Math.Clamp(this.net.singularity / SING_MAX, 0, 1));
     this.updateBossLocator();
+    if (this.shop.open) this.shop.setCredits(this.net.credits);
 
     if (this.net.connected) {
       this.me.setPosition(this.net.pred.x, this.net.pred.y);

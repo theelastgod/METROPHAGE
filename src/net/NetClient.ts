@@ -133,6 +133,9 @@ export default class NetClient {
   unequip(slot: string) {
     this.ws?.send(JSON.stringify({ t: "unequip", slot } satisfies ClientMsg));
   }
+  buy(sku: string) {
+    this.ws?.send(JSON.stringify({ t: "buy", sku } satisfies ClientMsg));
+  }
 
   connect() {
     const ws = new WebSocket(this.url);

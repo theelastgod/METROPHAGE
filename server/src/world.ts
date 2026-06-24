@@ -48,7 +48,7 @@ import {
 } from "../../src/net/sim";
 import { buildGrid, spawnPoint, isWall, type TileGrid } from "../../src/world/district";
 import { DISTRICTS } from "../../src/game/districts";
-import { rollItem, type Item, type Slot } from "../../src/game/items";
+import { rollItem, type Item, type Slot, type Rarity } from "../../src/game/items";
 import { addMods, ZERO_MODS, type ModBag } from "../../src/game/stats";
 import { verifyWalletLogin } from "./auth";
 
@@ -271,6 +271,23 @@ const BOSS_ROSTER: WorldBoss[] = [
   { name: "HELIOS WARDEN", tint: 0xffe08a, hp: 680 },
   { name: "PALANTIR ORACLE", tint: 0x4d8cff, hp: 600 },
 ];
+
+/** Vendor — the credits sink. A field-patch heal, and gear "caches" that roll an item of
+ *  a guaranteed rarity floor into the bag (feeding the equip loop). Server-authoritative:
+ *  it validates + deducts credits, so a client can't conjure gear it can't afford. */
+interface ShopItem {
+  price: number;
+  label: string;
+  rarity?: Rarity; // a gear cache of this rarity
+  heal?: boolean; // restore to full HP instead
+}
+const SHOP: Record<string, ShopItem> = {
+  heal: { price: 40, label: "FIELD PATCH", heal: true },
+  cache_standard: { price: 60, label: "SALVAGE CACHE", rarity: "standard" },
+  cache_tuned: { price: 180, label: "TUNED CACHE", rarity: "tuned" },
+  cache_blackice: { price: 480, label: "BLACK-ICE CACHE", rarity: "blackice" },
+  cache_singular: { price: 1200, label: "SINGULAR CACHE", rarity: "singular" },
+};
 
 interface Shot {
   id: number;
@@ -514,6 +531,7 @@ export class WorldDO {
     if (msg.t === "fire") return this.onFire(ws, msg);
     if (msg.t === "equip") return this.onEquip(ws, msg);
     if (msg.t === "unequip") return this.onUnequip(ws, msg);
+    if (msg.t === "buy") return this.onBuy(ws, msg);
     if (msg.t === "chat") return this.onChat(ws, msg);
     if (msg.t === "party") return this.onParty(ws, msg);
     if (msg.t === "mute") return this.onMute(ws, msg);
@@ -1035,6 +1053,29 @@ export class WorldDO {
     p.dirty = true;
     this.send(ws, { t: "inv", items: p.inventory });
     this.sendLoadout(ws, p);
+  }
+
+  /** Buy from the vendor: validate + deduct credits, then heal or roll a gear cache. */
+  private onBuy(ws: WebSocket, msg: Extract<ClientMsg, { t: "buy" }>) {
+    const p = this.playerFor(ws);
+    if (!p) return;
+    const sku = SHOP[msg.sku];
+    if (!sku) return;
+    if (p.credits < sku.price) {
+      this.send(ws, { t: "sys", text: `not enough credits for ${sku.label} (${sku.price})` });
+      return;
+    }
+    p.credits -= sku.price;
+    if (sku.heal) {
+      p.hp = p.maxHp;
+      this.send(ws, { t: "sys", text: `bought ${sku.label} — patched to full` });
+    } else if (sku.rarity) {
+      p.inventory.push(rollItem(p.level, 0, sku.rarity));
+      if (p.inventory.length > INVENTORY_CAP) p.inventory.shift();
+      this.send(ws, { t: "inv", items: p.inventory });
+      this.send(ws, { t: "sys", text: `bought ${sku.label}` });
+    }
+    p.dirty = true; // credits change rides the next snapshot
   }
 
   private onFire(ws: WebSocket, msg: Extract<ClientMsg, { t: "fire" }>) {

@@ -56,6 +56,7 @@ export type ClientMsg =
   | { t: "mute"; to: string }
   | { t: "equip"; itemId: string } // equip an inventory item into its slot
   | { t: "unequip"; slot: string }
+  | { t: "buy"; sku: string } // vendor purchase (heal / gear cache), priced + validated server-side
   | { t: "emote"; kind: number; ping: boolean; x: number; y: number } // emote (above avatar) or world ping
   | {
       t: "trade";
