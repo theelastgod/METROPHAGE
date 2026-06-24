@@ -54,7 +54,12 @@ export interface ClassDef {
   primaryDesc: string;
   ability: AbilityDef; // cooldown-gated
   ultimate: AbilityDef; // Heat-gated
+  /** Signature status the primary inflicts on hit (undefined = pure physical). */
+  element?: StatusKind;
 }
+
+/** On-hit status effects. burn = damage-over-time, chill = slow, shock = brief stun. */
+export type StatusKind = "burn" | "chill" | "shock";
 
 export const CLASSES: ClassDef[] = [
   {
@@ -62,6 +67,7 @@ export const CLASSES: ClassDef[] = [
     name: "METROPHAGE",
     color: 0x6bff3d,
     hex: "#6bff3d",
+    element: "burn",
     maxHp: 110,
     speed: 196,
     primaryName: "CONTAGION SPRAY",
@@ -130,6 +136,7 @@ export const CLASSES: ClassDef[] = [
     name: "WINTERMUTE",
     color: 0x29e7ff,
     hex: "#29e7ff",
+    element: "chill",
     maxHp: 90,
     speed: 200,
     primaryName: "ICE BEAM",
@@ -159,6 +166,7 @@ export const CLASSES: ClassDef[] = [
     name: "SWARM",
     color: 0x9b5cff,
     hex: "#9b5cff",
+    element: "shock",
     maxHp: 95,
     speed: 212,
     primaryName: "SWARM-BOLTS",

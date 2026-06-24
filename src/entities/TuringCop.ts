@@ -23,6 +23,8 @@ export default class TuringCop extends Phaser.Physics.Arcade.Sprite {
   maxHp: number;
   shield: number;
   state: CopState = CopState.Patrol;
+  /** Movement multiplier from status (chill slows; 1 = normal). Set by the scene. */
+  speedScale = 1;
 
   private home: Phaser.Math.Vector2;
   private patrolTarget: Phaser.Math.Vector2;
@@ -213,7 +215,15 @@ export default class TuringCop extends Phaser.Physics.Arcade.Sprite {
 
   private moveToward(tx: number, ty: number, speed: number) {
     const a = Phaser.Math.Angle.Between(this.x, this.y, tx, ty);
-    this.setVelocity(Math.cos(a) * speed, Math.sin(a) * speed);
+    const s = speed * this.speedScale; // chill slows movement
+    this.setVelocity(Math.cos(a) * s, Math.sin(a) * s);
+  }
+
+  /** Status overlay tint: a colour while a status is active, or null to restore the tier. */
+  setStatusTint(color: number | null) {
+    if (this.dead) return;
+    if (color === null) this.applyTierTint();
+    else this.setTint(color);
   }
 
   private attackTell() {

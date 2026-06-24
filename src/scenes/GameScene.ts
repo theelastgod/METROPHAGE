@@ -98,6 +98,8 @@ export default class GameScene
   private cycleMult = 1; // NG+ difficulty scalar (1 + cycle * step)
   private nextSpawnAt = 0;
   private nextBarkAt = 0; // throttle for HSS deploy barks
+  // Active on-hit statuses per enemy (burn DoT + chill slow; shock reuses disable()).
+  private statuses = new Map<TuringCop, { burnUntil: number; burnNext: number; chillUntil: number }>();
   private player!: Player;
   private bullets!: Bullets; // player weapon
   private enemyBullets!: Bullets; // hostile fire
@@ -200,6 +202,7 @@ export default class GameScene
     this.overdriveActive = false;
     this.overdriveUntil = 0;
     this.nextSpawnAt = 0;
+    this.statuses.clear();
     this.physics.world.resume();
     this.heat = new Heat();
     this.nextAutosaveAt = 0;
@@ -1083,6 +1086,7 @@ export default class GameScene
       if (cop.active && !cop.isDead) cop.step(this.player, this);
     });
     this.spawnPressure(now);
+    this.updateStatuses(now);
     if (this.boss && !this.boss.isDead) this.bossBar.update(this.boss.hp / this.boss.maxHp);
 
     // DYNAMIC WORLD EVENTS — paused during boss fights so the duel stays the focus.
@@ -1890,6 +1894,7 @@ export default class GameScene
         this.player.hp = Math.min(this.player.maxHp, this.player.hp + heal);
       }
     }
+    if (juice && !killed) this.applyStatus(cop); // signature element on a direct hit
     if (juice) {
       this.combatHeat = 1; // swell the music in combat
       const shieldHit = wasShielded && cop.shielded; // absorbed by ICE shield
@@ -1921,6 +1926,63 @@ export default class GameScene
     } else if (juice) {
       this.synth.hit();
       cop.knock(cop.x - this.player.x, cop.y - this.player.y, 150); // punch
+    }
+  }
+
+  // ---- status effects (burn / chill / shock) ----
+
+  /** Apply this class's signature on-hit status to a cop (player direct hits only). */
+  private applyStatus(cop: TuringCop) {
+    const el = this.classDef.element;
+    if (!el || cop.isDead || cop instanceof Boss) return; // bosses are status-immune
+    const now = this.time.now;
+    if (el === "shock") {
+      if (Math.random() < 0.18) {
+        cop.disable(450); // brief stun (reuses the hack-disable freeze)
+        this.spark(cop.x, cop.y, 0xf7ff3c, 1.8);
+      }
+      return;
+    }
+    let s = this.statuses.get(cop);
+    if (!s) {
+      s = { burnUntil: 0, burnNext: 0, chillUntil: 0 };
+      this.statuses.set(cop, s);
+    }
+    if (el === "burn") {
+      s.burnUntil = now + 2200;
+      if (s.burnNext < now) s.burnNext = now + 360;
+      this.spark(cop.x, cop.y, 0xff7a3c, 1.2);
+    } else {
+      s.chillUntil = now + 1700; // chill
+      this.spark(cop.x, cop.y, 0x6ad6ff, 1.2);
+    }
+  }
+
+  /** Tick burns (DoT that credits the player), expire statuses, drive slow + tint. */
+  private updateStatuses(now: number) {
+    for (const [cop, s] of this.statuses) {
+      if (!cop.active || cop.isDead) {
+        this.statuses.delete(cop);
+        continue;
+      }
+      const burning = now < s.burnUntil;
+      const chilled = now < s.chillUntil;
+      if (burning && now >= s.burnNext) {
+        s.burnNext = now + 360;
+        this.damageCop(cop, 5 + this.progression.level * 0.5, false); // DoT, no crit/steal
+        this.spark(cop.x, cop.y, 0xff7a3c, 1.1);
+      }
+      if (chilled) {
+        cop.speedScale = 0.5;
+        cop.setStatusTint(0x6ad6ff);
+      } else if (burning) {
+        cop.speedScale = 1;
+        cop.setStatusTint(0xff7a3c);
+      } else {
+        cop.speedScale = 1;
+        cop.setStatusTint(null);
+        this.statuses.delete(cop);
+      }
     }
   }
 
