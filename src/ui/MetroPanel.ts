@@ -4,7 +4,7 @@
 // to the server bridge (works today against the devnet-sim settlement); the on-chain
 // $METRO balance + real deposit signing arrive in 2c-2 (need the devnet mint).
 
-import { metroEnabled, getMetroStatus, metroApiBase, fmtMetro, metroUsdLabel } from "../economy/metro";
+import { metroEnabled, getMetroStatus, metroApiBase, fmtMetro } from "../economy/metro";
 import { walletAvailable, connectWallet, disconnectWallet, connectedWallet } from "../economy/wallet";
 
 const short = (a: string) => (a.length > 10 ? `${a.slice(0, 4)}…${a.slice(-4)}` : a);
@@ -55,7 +55,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
     <div class="row"><span class="muted">wallet</span><span id="m-wallet">—</span></div>
     <div class="row"><button id="m-connect">Connect Wallet</button><input id="m-addr" placeholder="or paste address" style="display:none"/></div>
     <div class="sep"></div>
-    <div class="row"><span class="muted">token</span><span class="pill">1B supply · ~$4.2K launch</span></div>
+    <div class="row"><span class="muted">token</span><span class="pill">1B fixed supply</span></div>
     <div class="row"><span class="muted">player</span><span id="m-player">—</span></div>
     <div class="row"><span class="muted">credits</span><span id="m-credits" class="big">—</span></div>
     <div class="row"><span class="muted">≈ value</span><span id="m-value">—</span></div>
@@ -93,7 +93,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
       const r = await fetch(`${metroApiBase()}/metro/account?player=${encodeURIComponent(player)}`).then((x) => x.json());
       if (r.ok) {
         $("m-credits").textContent = String(r.credits);
-        $("m-value").textContent = `${fmtMetro(r.metroValue)} $METRO (${metroUsdLabel(r.metroValue)})`;
+        $("m-value").textContent = `${fmtMetro(r.metroValue)} $METRO`;
       } else {
         $("m-credits").textContent = "—";
         status(r.reason ?? "account unavailable");
@@ -144,7 +144,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ player, wallet, credits }),
       }).then((x) => x.json());
-      status(r.ok ? `✓ withdrew ${r.credits} credits → ${fmtMetro(r.metro)} $METRO (${metroUsdLabel(r.metro)})` : `✗ ${r.reason}`);
+      status(r.ok ? `✓ withdrew ${r.credits} credits → ${fmtMetro(r.metro)} $METRO` : `✗ ${r.reason}`);
       void refresh();
     } catch {
       status("withdraw failed (server unreachable)");

@@ -1,7 +1,7 @@
 import Phaser from "phaser";
 import { VIEW_W, VIEW_H } from "../config";
 import { EXOTIC_WEAPONS } from "../game/weapons";
-import { fmtMetro, metroUsdLabel } from "../economy/metro";
+import { fmtMetro } from "../economy/metro";
 import { drawPanelFrame } from "./panelChrome";
 
 /** What the host scene must provide — the panel never touches the save/inventory itself. */
@@ -46,7 +46,7 @@ export default class BlackMarketPanel {
     this.text(
       this.x + 16,
       this.y + 36,
-      "EXOTIC ARMS · paid in $METRO · pump.fun token · 1B fixed supply · launch ≈ $4.2K mcap",
+      "EXOTIC ARMS · paid in $METRO · 1B fixed supply · stronger than anything that drops",
       "#9aa3b2",
       "10px",
       D,
@@ -118,12 +118,12 @@ export default class BlackMarketPanel {
     g.clear();
     drawPanelFrame(g, this.x, this.y, this.w, this.h);
     const metro = this.hooks.getMetro();
-    this.header.setText(`◈ THE BLACK MARKET          BALANCE:  ◈ ${fmtMetro(metro)} $METRO  (${metroUsdLabel(metro)})`);
+    this.header.setText(`◈ THE BLACK MARKET          BALANCE:  ◈ ${fmtMetro(metro)} $METRO`);
     EXOTIC_WEAPONS.forEach((w, i) => {
       const price = w.metro ?? 0;
       const afford = metro >= price;
       this.rowTitle[i]
-        .setText(`${w.name}   ·   ${w.klass}            ◈ ${fmtMetro(price)}  (${metroUsdLabel(price)})`)
+        .setText(`${w.name}   ·   ${w.klass}            ◈ ${fmtMetro(price)} $METRO`)
         .setColor(afford ? MAGENTA : "#5a6172");
       this.rowDesc[i].setText(`${w.desc}    ⚔ ${w.primary.damage} base dmg`);
     });
