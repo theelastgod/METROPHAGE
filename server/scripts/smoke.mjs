@@ -596,6 +596,108 @@ async function equip() {
   );
 }
 
+async function craft() {
+  // GEAR FORGE. (harness pre-seeds D1: crafter credits=6000 cores=60, empty bag)
+  // Buys deterministic Standard caches, then exercises every forge op server-side.
+  const ws = await connect();
+  const store = { x: 0, y: 0, inventory: [], credits: 0, cores: 0, sys: [] };
+  ws.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "inv") store.inventory = m.items;
+    if (m.t === "sys") store.sys.push(m.text);
+  });
+  const w = await login(ws, "crafter", 0);
+  store.x = w.x;
+  store.y = w.y;
+  trackState(ws, w.id, store);
+  await sleep(350);
+
+  // buy 5 Standard caches → 5 Standard items (deterministic rarity)
+  for (let i = 0; i < 5; i++) {
+    ws.send(JSON.stringify({ t: "buy", sku: "cache_standard" }));
+    await sleep(240);
+  }
+  await sleep(400);
+  const bought = store.inventory.slice();
+  const boughtCaches = bought.length >= 5 && bought.slice(0, 5).every((it) => it.rarity === "standard");
+
+  // UPGRADE bought[0] → +1 ilvl; credits AND cores both deducted
+  const up0 = bought[0];
+  const c0 = store.credits, k0 = store.cores;
+  ws.send(JSON.stringify({ t: "craft", action: "upgrade", itemId: up0.id }));
+  await sleep(450);
+  const up0After = store.inventory.find((it) => it.id === up0.id);
+  const upgradeApplied = !!up0After && (up0After.ilvl || 0) === 1 && store.credits < c0 && store.cores < k0;
+
+  // REFORGE bought[1] → re-rolled mods (cost proves it ran; item stays)
+  const rf = bought[1];
+  const rfBefore = JSON.stringify(rf.mods);
+  const c1 = store.credits, k1 = store.cores;
+  ws.send(JSON.stringify({ t: "craft", action: "reforge", itemId: rf.id }));
+  await sleep(450);
+  const rfAfter = store.inventory.find((it) => it.id === rf.id);
+  const reforgeApplied = !!rfAfter && store.credits < c1 && store.cores < k1 && JSON.stringify(rfAfter.mods) !== rfBefore;
+
+  // SALVAGE bought[2] → item gone, cores credited
+  const sv = bought[2];
+  const k2 = store.cores;
+  ws.send(JSON.stringify({ t: "craft", action: "salvage", itemId: sv.id }));
+  await sleep(450);
+  const salvageYielded = !store.inventory.some((it) => it.id === sv.id) && store.cores > k2;
+
+  // FUSE bought[3]+bought[4] (both Standard) → one Tuned; both inputs consumed
+  const fa = bought[3], fb = bought[4];
+  ws.send(JSON.stringify({ t: "craft", action: "fuse", itemId: fa.id, itemId2: fb.id }));
+  await sleep(500);
+  const inputsGone = !store.inventory.some((it) => it.id === fa.id) && !store.inventory.some((it) => it.id === fb.id);
+  const fuseMergedUp = inputsGone && store.inventory.some((it) => it.rarity === "tuned");
+
+  // ANTI-CHEAT: a broke craft is rejected (drain cores, then try to upgrade)
+  // up0 is now +1; spam upgrades until cores run dry, then assert the next is refused.
+  let guarded = false;
+  for (let i = 0; i < 40 && store.cores > 0; i++) {
+    const before = store.credits + store.cores;
+    ws.send(JSON.stringify({ t: "craft", action: "upgrade", itemId: up0.id }));
+    await sleep(180);
+    if (store.credits + store.cores === before) break; // a refusal (no spend) — done draining
+  }
+  const lvlNow = store.inventory.find((it) => it.id === up0.id)?.ilvl || 0;
+  ws.send(JSON.stringify({ t: "craft", action: "upgrade", itemId: up0.id }));
+  await sleep(350);
+  const lvlAfter = store.inventory.find((it) => it.id === up0.id)?.ilvl || 0;
+  guarded = lvlAfter === lvlNow; // couldn't upgrade further without funds
+
+  ws.close();
+  await sleep(700);
+
+  // PERSISTENCE — reconnect; the upgrade level survives relogin (D1 round-trip)
+  const ws2 = await connect();
+  const store2 = { inventory: [] };
+  ws2.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "inv") store2.inventory = m.items;
+  });
+  await login(ws2, "crafter", 0);
+  await sleep(450);
+  const ilvlPersisted = (store2.inventory.find((it) => it.id === up0.id)?.ilvl || 0) >= 1;
+  ws2.close();
+
+  const checks = { boughtCaches, upgradeApplied, reforgeApplied, salvageYielded, fuseMergedUp, brokeCraftRejected: guarded, ilvlPersisted };
+  await sleep(200);
+  report(
+    "CRAFT — gear forge: upgrade/reforge/salvage/fuse (server-validated + persisted)",
+    {
+      bag: store.inventory.length,
+      up0Level: store.inventory.find((it) => it.id === up0.id)?.ilvl ?? null,
+      cores: store.cores,
+      credits: store.credits,
+      lastSys: store.sys.slice(-3),
+    },
+    Object.values(checks).every(Boolean),
+    checks,
+  );
+}
+
 async function shop() {
   const ws = await connect();
   const store = { x: 0, y: 0, enemies: [], inventory: [], credits: 0 };
@@ -1455,6 +1557,7 @@ try {
   else if (mode === "auth") await auth();
   else if (mode === "boss") await boss();
   else if (mode === "equip") await equip();
+  else if (mode === "craft") await craft();
   else if (mode === "shop") await shop();
   else if (mode === "bestiary") await bestiary();
   else if (mode === "safehouse") await safehouse();

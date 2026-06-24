@@ -48,7 +48,17 @@ import {
 } from "../../src/net/sim";
 import { buildGrid, spawnPoint, isWall, buildSafehouse, SAFEHOUSE_SPAWN, type TileGrid } from "../../src/world/district";
 import { DISTRICTS } from "../../src/game/districts";
-import { rollItem, type Item, type Slot, type Rarity } from "../../src/game/items";
+import { rollItem, rollModsFor, effectiveMods, nextRarity, SLOTS, type Item, type Slot, type Rarity } from "../../src/game/items";
+import {
+  upgradeCost,
+  reforgeCost,
+  salvageYield,
+  fuseCost,
+  canUpgrade,
+  canFuse,
+  UPGRADE_MAX,
+  type Cost,
+} from "../../src/game/crafting";
 import { addMods, ZERO_MODS, type ModBag } from "../../src/game/stats";
 import { verifyWalletLogin } from "./auth";
 
@@ -66,10 +76,10 @@ function parseInventory(raw: string | null | undefined): Item[] {
   }
 }
 
-/** Aggregate the mods of every equipped item into one ModBag. */
+/** Aggregate the EFFECTIVE (forge-upgraded) mods of every equipped item into one ModBag. */
 function deriveMods(equipped: Partial<Record<Slot, Item>>): ModBag {
   let bag = ZERO_MODS;
-  for (const it of Object.values(equipped)) if (it) bag = addMods(bag, it.mods);
+  for (const it of Object.values(equipped)) if (it) bag = addMods(bag, effectiveMods(it));
   return bag;
 }
 
@@ -555,6 +565,7 @@ export class WorldDO {
     if (msg.t === "fire") return this.onFire(ws, msg);
     if (msg.t === "equip") return this.onEquip(ws, msg);
     if (msg.t === "unequip") return this.onUnequip(ws, msg);
+    if (msg.t === "craft") return this.onCraft(ws, msg);
     if (msg.t === "buy") return this.onBuy(ws, msg);
     if (msg.t === "chat") return this.onChat(ws, msg);
     if (msg.t === "party") return this.onParty(ws, msg);
@@ -1100,6 +1111,87 @@ export class WorldDO {
       this.send(ws, { t: "sys", text: `bought ${sku.label}` });
     }
     p.dirty = true; // credits change rides the next snapshot
+  }
+
+  /** Find an item by id whether it's loose in the bag or currently equipped. */
+  private locateItem(p: PlayerState, id: string): { item: Item; slot?: Slot } | null {
+    const i = p.inventory.findIndex((it) => it.id === id);
+    if (i >= 0) return { item: p.inventory[i] };
+    for (const s of SLOTS) {
+      const it = p.equipped[s];
+      if (it && it.id === id) return { item: it, slot: s };
+    }
+    return null;
+  }
+
+  /**
+   * Gear forge — server-authoritative upgrade / reforge / fuse / salvage. The server
+   * validates legality, deducts credits + cores (a dual sink), mutates the item, and
+   * recomputes combat stats when an EQUIPPED piece changes — so a client can never
+   * conjure power it didn't pay for. Pushes the fresh bag + loadout afterward.
+   */
+  private onCraft(ws: WebSocket, msg: Extract<ClientMsg, { t: "craft" }>) {
+    const p = this.playerFor(ws);
+    if (!p) return;
+    const fail = (text: string) => this.send(ws, { t: "sys", text });
+    const afford = (c: Cost) => p.credits >= c.credits && p.cores >= c.cores;
+    const pay = (c: Cost) => {
+      p.credits -= c.credits;
+      p.cores -= c.cores;
+    };
+
+    if (msg.action === "upgrade") {
+      const loc = this.locateItem(p, msg.itemId);
+      if (!loc) return;
+      if (!canUpgrade(loc.item)) return fail(`already at max upgrade (+${UPGRADE_MAX})`);
+      const c = upgradeCost(loc.item);
+      if (!afford(c)) return fail(`forge: need ₵${c.credits} + ${c.cores}◈ to upgrade`);
+      pay(c);
+      loc.item.ilvl = (loc.item.ilvl ?? 0) + 1;
+      if (loc.slot) this.recomputeStats(p);
+      fail(`▲ upgraded ${loc.item.name} to +${loc.item.ilvl}`);
+    } else if (msg.action === "reforge") {
+      const loc = this.locateItem(p, msg.itemId);
+      if (!loc) return;
+      const c = reforgeCost(loc.item);
+      if (!afford(c)) return fail(`forge: need ₵${c.credits} + ${c.cores}◈ to reforge`);
+      pay(c);
+      loc.item.mods = rollModsFor(loc.item.slot, loc.item.rarity, p.level);
+      if (loc.slot) this.recomputeStats(p);
+      fail(`↻ reforged ${loc.item.name}`);
+    } else if (msg.action === "salvage") {
+      const i = p.inventory.findIndex((it) => it.id === msg.itemId);
+      if (i < 0) return fail("can only salvage items in the bag (unequip first)");
+      const it = p.inventory[i];
+      const y = salvageYield(it);
+      p.inventory.splice(i, 1);
+      p.credits += y.credits;
+      p.cores += y.cores;
+      fail(`✂ salvaged ${it.name} → +${y.cores}◈ +₵${y.credits}`);
+    } else if (msg.action === "fuse") {
+      const i = p.inventory.findIndex((it) => it.id === msg.itemId);
+      const j = p.inventory.findIndex((it) => it.id === msg.itemId2);
+      if (i < 0 || j < 0 || i === j) return fail("fuse needs two different bag items");
+      const a = p.inventory[i];
+      const b = p.inventory[j];
+      if (!canFuse(a, b)) return fail("fuse needs two items of the SAME rarity (not Singular)");
+      const c = fuseCost(a);
+      if (!afford(c)) return fail(`forge: need ₵${c.credits} + ${c.cores}◈ to fuse`);
+      const up = nextRarity(a.rarity)!;
+      pay(c);
+      // splice the higher index first so the second index stays valid
+      const [hi, lo] = i > j ? [i, j] : [j, i];
+      p.inventory.splice(hi, 1);
+      p.inventory.splice(lo, 1);
+      const out = rollItem(p.level, 0, up);
+      p.inventory.push(out);
+      if (p.inventory.length > INVENTORY_CAP) p.inventory.shift();
+      fail(`✦ fused → ${out.rarity} ${out.name}`);
+    } else return;
+
+    p.dirty = true;
+    this.send(ws, { t: "inv", items: p.inventory });
+    this.sendLoadout(ws, p);
   }
 
   private onFire(ws: WebSocket, msg: Extract<ClientMsg, { t: "fire" }>) {

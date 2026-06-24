@@ -136,6 +136,10 @@ export default class NetClient {
   buy(sku: string) {
     this.ws?.send(JSON.stringify({ t: "buy", sku } satisfies ClientMsg));
   }
+  /** Gear forge — server validates + deducts credits/cores, then pushes inv + loadout. */
+  craft(action: "upgrade" | "reforge" | "salvage" | "fuse", itemId: string, itemId2?: string) {
+    this.ws?.send(JSON.stringify({ t: "craft", action, itemId, itemId2 } satisfies ClientMsg));
+  }
 
   connect() {
     const ws = new WebSocket(this.url);

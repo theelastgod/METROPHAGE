@@ -38,9 +38,13 @@ export interface Item {
   name: string;
   slot: Slot;
   rarity: Rarity;
-  mods: Partial<ModBag>;
+  mods: Partial<ModBag>; // BASE roll — the forge scales these into effective mods (see effectiveMods)
   weaponId?: string; // weapon-slot items carry a weapon — equipping it overrides your fire
+  ilvl?: number; // forge upgrade level (0/undefined = base); scales effective mods by UPGRADE_PER_LVL each
 }
+
+/** Per-level effective-stat multiplier the gear forge grants when you UPGRADE an item. */
+export const UPGRADE_PER_LVL = 0.08;
 
 interface StatDef {
   key: keyof ModBag;
@@ -68,6 +72,54 @@ const STAT_DEFS: StatDef[] = [
 let counter = 0;
 const randInt = (a: number, b: number) => a + Math.floor(Math.random() * (b - a + 1));
 
+/** Roll a fresh set of mod lines for a given slot+rarity at a level. Factored out so
+ *  both fresh drops (rollItem) and the forge's REFORGE re-roll share one source. */
+export function rollModsFor(slot: Slot, rarity: Rarity, level = 1): Partial<ModBag> {
+  const def = RARITIES[rarity];
+  const budget = def.budget * (1 + level * 0.04);
+  const pool = STAT_DEFS.filter((s) => s.slots.includes(slot));
+  const lines = Math.min(pool.length, randInt(def.lines[0], def.lines[1]));
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  const chosen = pool.slice(0, lines);
+  const mods: Partial<ModBag> = {};
+  for (const sd of chosen) {
+    const pts = (budget / lines) * (0.85 + Math.random() * 0.3);
+    const raw = sd.perPoint * pts;
+    mods[sd.key] = sd.pct ? Math.round(raw * 100) / 100 : Math.max(1, Math.round(raw));
+  }
+  return mods;
+}
+
+const RARITY_ORDER_IDX = (r: Rarity) => RARITY_ORDER.indexOf(r);
+/** 0..3 rank (standard→singular). */
+export function rarityRank(r: Rarity): number {
+  return RARITY_ORDER_IDX(r);
+}
+/** The rarity one tier above, or null at the top (singular). Drives the forge FUSE path. */
+export function nextRarity(r: Rarity): Rarity | null {
+  const i = RARITY_ORDER_IDX(r);
+  return i >= 0 && i < RARITY_ORDER.length - 1 ? RARITY_ORDER[i + 1] : null;
+}
+
+/** Effective (post-upgrade) mods: BASE mods scaled by the item's forge level. Percentage
+ *  lines keep 2 decimals; flat lines round to an int (min 1). Single source used by BOTH
+ *  the server combat pipeline (deriveMods) and the client stat-line display. */
+export function effectiveMods(item: Item): Partial<ModBag> {
+  const lvl = item.ilvl ?? 0;
+  if (lvl <= 0) return item.mods;
+  const k = 1 + UPGRADE_PER_LVL * lvl;
+  const out: Partial<ModBag> = {};
+  for (const key of Object.keys(item.mods) as (keyof ModBag)[]) {
+    const v = item.mods[key] ?? 0;
+    const sd = STAT_DEFS.find((s) => s.key === key);
+    out[key] = sd && !sd.pct ? Math.max(1, Math.round(v * k)) : Math.round(v * k * 100) / 100;
+  }
+  return out;
+}
+
 /** Pick a rarity. `boost` (0..) skews toward higher rarities (Purge Units drop better). */
 export function pickRarity(boost = 0): Rarity {
   const weights = RARITY_ORDER.map((id, i) => RARITIES[id].weight * (i === 0 ? 1 : 1 + boost * i));
@@ -83,23 +135,7 @@ export function rollItem(level = 1, rarityBoost = 0, forceRarity?: Rarity): Item
   const rarity = forceRarity ?? pickRarity(rarityBoost);
   const def = RARITIES[rarity];
   const slot = SLOTS[randInt(0, SLOTS.length - 1)];
-  const budget = def.budget * (1 + level * 0.04);
-
-  const pool = STAT_DEFS.filter((s) => s.slots.includes(slot));
-  const lines = Math.min(pool.length, randInt(def.lines[0], def.lines[1]));
-  // shuffle pool
-  for (let i = pool.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [pool[i], pool[j]] = [pool[j], pool[i]];
-  }
-  const chosen = pool.slice(0, lines);
-
-  const mods: Partial<ModBag> = {};
-  for (const sd of chosen) {
-    const pts = (budget / lines) * (0.85 + Math.random() * 0.3);
-    const raw = sd.perPoint * pts;
-    mods[sd.key] = sd.pct ? Math.round(raw * 100) / 100 : Math.max(1, Math.round(raw));
-  }
+  const mods = rollModsFor(slot, rarity, level);
 
   // A weapon-slot drop IS a weapon: pick a type, name it by rarity + weapon.
   let weaponId: string | undefined;
@@ -161,23 +197,25 @@ const RARITY_BASE: Record<Rarity, number> = {
   singular: 400,
 };
 
-/** Buy price (also the basis for sell value). */
+/** Buy price (also the basis for sell value). Forge upgrades raise it. */
 export function itemValue(item: Item): number {
-  return RARITY_BASE[item.rarity] + Object.keys(item.mods).length * 15;
+  return Math.round((RARITY_BASE[item.rarity] + Object.keys(item.mods).length * 15) * (1 + (item.ilvl ?? 0) * 0.12));
 }
 export function sellValue(item: Item): number {
   return Math.max(5, Math.floor(itemValue(item) * 0.4));
 }
 
-/** Human-readable stat lines for tooltips/UI. */
+/** Human-readable stat lines for tooltips/UI — shows EFFECTIVE (post-upgrade) values. */
 export function itemStatLines(item: Item): string[] {
-  const lines = (Object.keys(item.mods) as (keyof ModBag)[]).map((key) => {
+  const eff = effectiveMods(item);
+  const lines = (Object.keys(eff) as (keyof ModBag)[]).map((key) => {
     const sd = STAT_DEFS.find((s) => s.key === key)!;
-    const v = item.mods[key] ?? 0;
+    const v = eff[key] ?? 0;
     const val = sd.pct ? `${Math.round(v * 100)}%` : `${v}`;
     return `${sd.good}${val} ${sd.label}`;
   });
   const w = getWeapon(item.weaponId);
   if (w) lines.unshift(`◈ ${w.klass} — ${w.desc}`);
+  if ((item.ilvl ?? 0) > 0) lines.unshift(`▲ +${item.ilvl}`);
   return lines;
 }
