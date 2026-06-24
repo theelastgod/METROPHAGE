@@ -210,7 +210,7 @@ export default class DiveScene extends Phaser.Scene implements EnemyHost {
     const p = cam.getPostPipeline("Neon") as NeonPipeline;
     const neon = Array.isArray(p) ? p[0] : p;
     if (neon) {
-      neon.heat = 0.4; // dives run hot and tense
+      neon.heat = 0.2; // dives run tense — but keep the readout text legible
       neon.tint = [0.16, 0.9, 1]; // ICE-cyan signature
       neon.tintAmt = 0.25;
     }
@@ -568,7 +568,7 @@ export default class DiveScene extends Phaser.Scene implements EnemyHost {
       .setScrollFactor(0)
       .setDepth(2000)
       .setAlpha(0);
-    t.setShadow(0, 0, "#ff2bd6", 18, true, true);
+    t.setShadow(0, 0, "#ff2bd6", 6, true, true);
     this.tweens.add({ targets: t, alpha: 1, scale: { from: 1.4, to: 1 }, duration: 500, yoyo: true, hold: 700, onComplete: () => t.destroy() });
   }
 
@@ -596,7 +596,7 @@ export default class DiveScene extends Phaser.Scene implements EnemyHost {
       .setOrigin(0.5)
       .setScrollFactor(0)
       .setDepth(2000);
-    msg.setShadow(0, 0, "#00e5ff", 18, true, true);
+    msg.setShadow(0, 0, "#00e5ff", 6, true, true);
     if (success) juiceFlash(this, 300, 40, 200, 160);
     juiceShake(this, 300, 0.008);
 

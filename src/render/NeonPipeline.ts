@@ -21,10 +21,11 @@ varying vec2 outTexCoord;
 
 float rand(vec2 c) { return fract(sin(dot(c, vec2(12.9898, 78.233))) * 43758.5453); }
 
-// Bright-pass a sample: keep only the emissive (neon) energy above a soft knee.
+// Bright-pass a sample: keep only the emissive (neon) energy above a soft knee. The
+// knee sits high so only genuinely emissive neon blooms — ordinary UI text doesn't.
 vec3 brightPass(vec3 s) {
   float bright = max(s.r, max(s.g, s.b));
-  return s * smoothstep(0.45, 0.95, bright);
+  return s * smoothstep(0.62, 0.99, bright);
 }
 
 void main() {
@@ -46,7 +47,7 @@ void main() {
   if (uLowFx > 0.5) {
     col = texture2D(uMainSampler, uv).rgb;
   } else {
-    float ca = (0.0012 + uHeat * 0.0065 + uGlitch * 0.012) * (0.4 + dist);
+    float ca = (0.0005 + uHeat * 0.006 + uGlitch * 0.012) * (0.4 + dist);
     float r = texture2D(uMainSampler, uv - dir * ca).r;
     float g = texture2D(uMainSampler, uv).g;
     float b = texture2D(uMainSampler, uv + dir * ca).b;
@@ -74,16 +75,17 @@ void main() {
     bloom += brightPass(texture2D(uMainSampler, uv + vec2( out2.x, -out2.y)).rgb) * 0.22;
     bloom += brightPass(texture2D(uMainSampler, uv + vec2(-out2.x, -out2.y)).rgb) * 0.22;
     bloom /= 4.7; // normalize by total weight
-    col += bloom * (0.95 + uHeat * 1.7 + uGlitch * 1.6);
+    col += bloom * (0.5 + uHeat * 1.7 + uGlitch * 1.6);
   }
 
   // saturation lift with heat
   float l = dot(col, vec3(0.299, 0.587, 0.114));
   col = mix(vec3(l), col, 1.05 + uHeat * 0.7 + uGlitch * 0.6);
 
-  // fine scanlines + a slow rolling brightness band (CRT feel), stronger with heat
-  float scan = 0.92 + 0.08 * sin(uv.y * uResolution.y * 1.6 + uTime * 3.0);
-  col *= mix(1.0, scan, 0.26 + uHeat * 0.3);
+  // fine scanlines + a slow rolling brightness band (CRT feel), stronger with heat.
+  // Kept light at rest so it doesn't stripe small UI text; ramps up in hot combat.
+  float scan = 0.94 + 0.06 * sin(uv.y * uResolution.y * 1.6 + uTime * 3.0);
+  col *= mix(1.0, scan, 0.08 + uHeat * 0.28);
   float roll = 0.985 + 0.015 * sin(uv.y * 5.0 - uTime * 1.4);
   col *= roll;
 

@@ -840,7 +840,7 @@ export default class CityScene extends Phaser.Scene {
       })
       .setScrollFactor(0)
       .setDepth(1000)
-      .setShadow(0, 0, "#ff2bd6", 10, true, true);
+      .setShadow(0, 0, "#ff2bd6", 5, true, true);
     this.add
       .text(14, 34, this.mode === "interior" ? "WASD move  ·  ESC / exit door to leave" : "WASD move  ·  walk into a door to enter  ·  ESC leave", {
         fontFamily: "Courier New, monospace",

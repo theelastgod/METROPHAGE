@@ -50,7 +50,7 @@ export default class Prologue extends Phaser.Scene {
         fontStyle: "bold",
       })
       .setOrigin(0.5)
-      .setShadow(0, 0, "#00e5ff", 16, true, true);
+      .setShadow(0, 0, "#00e5ff", 6, true, true);
 
     this.body = this.add
       .text(VIEW_W / 2, VIEW_H / 2, "", {
@@ -125,7 +125,7 @@ export default class Prologue extends Phaser.Scene {
         .setOrigin(0.5)
         .setAlpha(0)
         .setInteractive({ useHandCursor: true });
-      t.setShadow(0, 0, color, 12, true, true);
+      t.setShadow(0, 0, color, 5, true, true);
       const s = this.add
         .text(VIEW_W / 2, y + 24, sub, { fontFamily: "Courier New, monospace", fontSize: "12px", color: "#9aa3b2" })
         .setOrigin(0.5)
@@ -161,7 +161,7 @@ export default class Prologue extends Phaser.Scene {
     const p = cam.getPostPipeline("Neon");
     const neon = (Array.isArray(p) ? p[0] : p) as NeonPipeline | undefined;
     if (neon) {
-      neon.heat = 0.12;
+      neon.heat = 0.06; // narrative screen — keep the prose crisp
       neon.tint = [0, 0.9, 1];
       neon.tintAmt = 0.16;
     }

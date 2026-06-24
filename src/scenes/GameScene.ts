@@ -556,7 +556,7 @@ export default class GameScene
       .setDepth(2000)
       .setAlpha(0)
       .setScale(0.6);
-    banner.setShadow(0, 0, "#ff2bd6", 20, true, true);
+    banner.setShadow(0, 0, "#ff2bd6", 7, true, true);
     const sub = this.add
       .text(cx, cy + 40, "+5 HP   +2% DMG   +1 SKILL POINT  ·  press K to spend", {
         fontFamily: "Courier New, monospace",
@@ -1830,7 +1830,7 @@ export default class GameScene
           .setScrollFactor(0)
           .setDepth(1003)
           .setAlpha(0);
-        txt.setShadow(0, 0, def.hex, 10, true, true);
+        txt.setShadow(0, 0, def.hex, 5, true, true);
         this.tweens.add({ targets: txt, alpha: 1, y: 110, duration: 400 });
         this.tweens.add({ targets: txt, alpha: 0, delay: 1450, duration: 500, onComplete: () => txt.destroy() });
       });
@@ -1958,7 +1958,7 @@ export default class GameScene
     const num = mk(h / 2 - 30, `DISTRICT ${this.city.index + 1} / ${DISTRICTS.length}`, "16px", "#9aa3b2");
     const name = mk(h / 2 + 4, next.name, "40px", next.accentHex);
     const sub = mk(h / 2 + 42, next.subtitle, "13px", "#00e5ff");
-    name.setShadow(0, 0, "#00e5ff", 18, true, true);
+    name.setShadow(0, 0, "#00e5ff", 6, true, true);
     this.tweens.add({ targets: [num, name, sub], alpha: 1, duration: 500, delay: 420 });
 
     this.time.delayedCall(2000, () => {
@@ -2005,7 +2005,7 @@ export default class GameScene
       .setScrollFactor(0)
       .setDepth(2000)
       .setAlpha(0);
-    title.setShadow(0, 0, "#00e5ff", 26, true, true);
+    title.setShadow(0, 0, "#00e5ff", 7, true, true);
     this.tweens.add({
       targets: title,
       alpha: 1,
@@ -2579,7 +2579,7 @@ export default class GameScene
       .setScrollFactor(0)
       .setDepth(2000)
       .setAlpha(0);
-    t.setShadow(0, 0, "#00e5ff", 16, true, true);
+    t.setShadow(0, 0, "#00e5ff", 6, true, true);
     this.tweens.add({
       targets: t,
       alpha: 1,

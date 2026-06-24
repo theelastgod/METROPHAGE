@@ -84,7 +84,7 @@ export default class CustomizeScene extends Phaser.Scene {
         fontStyle: "bold",
       })
       .setOrigin(0.5)
-      .setShadow(0, 0, "#ff2bd6", 12, true, true);
+      .setShadow(0, 0, "#ff2bd6", 5, true, true);
     this.add
       .text(VIEW_W / 2, 54, `${this.classDef.name} · ${this.classDef.primaryName}`, {
         fontFamily: "Courier New, monospace",
@@ -475,7 +475,7 @@ export default class CustomizeScene extends Phaser.Scene {
     const p = cam.getPostPipeline("Neon");
     this.neon = (Array.isArray(p) ? p[0] : p) as NeonPipeline;
     if (this.neon) {
-      this.neon.heat = 0.3;
+      this.neon.heat = 0.08; // keep the menu cool so option text stays crisp
       this.neon.tint = [0, 0.9, 1];
       this.neon.tintAmt = 0.12;
     }

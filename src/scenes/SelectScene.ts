@@ -38,7 +38,7 @@ export default class SelectScene extends Phaser.Scene {
         fontStyle: "bold",
       })
       .setOrigin(0.5)
-      .setShadow(0, 0, "#00e5ff", 16, true, true)
+      .setShadow(0, 0, "#00e5ff", 6, true, true)
       .setAlpha(0);
     // Entrance + a recurring broadcast-interference flicker on the neon title.
     this.tweens.add({
@@ -258,7 +258,7 @@ export default class SelectScene extends Phaser.Scene {
     const p = cam.getPostPipeline("Neon");
     this.neon = (Array.isArray(p) ? p[0] : p) as NeonPipeline;
     if (this.neon) {
-      this.neon.heat = 0.46; // steady title glow, still legible
+      this.neon.heat = 0.1; // gentle title glow — keep the menu text crisp
       this.neon.tint = [1, 0.17, 0.84];
       this.neon.tintAmt = 0.16;
     }
