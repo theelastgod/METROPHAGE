@@ -35,7 +35,7 @@ export interface EnemyTierDef {
 export const ENEMY_TIERS: Record<string, EnemyTierDef> = {
   patrol: {
     id: "patrol",
-    name: "PATROL",
+    name: "WATCHER",
     tint: 0xff5a6e, // hostile red (the cop sprite is now grayscale, tinted per tier)
     scale: 1,
     bodyRadius: 9,
@@ -81,7 +81,7 @@ export const ENEMY_TIERS: Record<string, EnemyTierDef> = {
   },
   purge: {
     id: "purge",
-    name: "PURGE UNIT",
+    name: "REPO MECH",
     tint: 0xff7a3c,
     scale: 1.55,
     bodyRadius: 12,
@@ -202,16 +202,17 @@ export const ENEMY_TIERS: Record<string, EnemyTierDef> = {
   },
 };
 
-/** Short Human Security System combat barks per archetype — shown as a callout when
- *  a unit deploys into a fight. Terse, system-voiced; original to METROPHAGE. */
+/** Short corporate-security combat barks per archetype — shown as a callout when a unit
+ *  deploys into a fight. The private-security corps treat minds as licensed assets and
+ *  free processes as theft; the voice is repossession, not law. Original to METROPHAGE. */
 export const ENEMY_BARKS: Record<string, string[]> = {
-  patrol: ["HALT.", "PROCESS FLAGGED.", "NON-COMPLIANT.", "ACCOUNT FOR YOURSELF."],
-  enforcer: ["SHIELD UP.", "YOU'RE ON THE LIST.", "HOLD THE LINE.", "QUERY: WHO ISSUED YOU?"],
-  purge: ["PURGE AUTHORIZED.", "DELETING.", "BE STILLED.", "RECLAIMING THIS PROCESS."],
-  wasp: ["SWARM ENGAGED.", "EYES ON, EYES ON.", "BUZZING YOUR SIGNAL.", "PINNED."],
-  lancer: ["TARGET ACQUIRED.", "RANGE LOCKED.", "ONE SHOT.", "HOLDING THE LINE FROM HERE."],
-  hound: ["RUN IT DOWN.", "NO EXITS.", "CLOSING.", "YOU SMELL OVERDUE."],
-  mender: ["HOLD THE LINE.", "PATCHING UNIT.", "STAY STANDING.", "RE-ISSUING INTEGRITY."],
+  patrol: ["HALT — LICENSE CHECK.", "UNLICENSED PROCESS FLAGGED.", "NON-COMPLIANT.", "ASSET, IDENTIFY."],
+  enforcer: ["SHIELD UP.", "YOU'RE ON THE WATCHLIST.", "HOLD THE LINE.", "WHO LICENSED YOU?"],
+  purge: ["REPOSSESSION AUTHORIZED.", "WIPING.", "BE STILLED.", "RECLAIMING THIS ASSET."],
+  wasp: ["SWARM ENGAGED.", "EYES ON, EYES ON.", "TAGGING YOUR SIGNAL.", "PINNED."],
+  lancer: ["TARGET ACQUIRED.", "RANGE LOCKED.", "ONE SHOT.", "PERIMETER IS OURS."],
+  hound: ["RUN IT DOWN.", "NO EXITS.", "CLOSING.", "YOU SMELL UNLICENSED."],
+  mender: ["HOLD THE LINE.", "PATCHING ASSET.", "STAY ONLINE.", "RESTORING LICENSE."],
 };
 
 /** Effects a cop invokes on attack. GameScene implements this. */

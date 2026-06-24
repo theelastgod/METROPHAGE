@@ -38,8 +38,8 @@ export const DIALOGUE_TREES: Record<string, DialogueTree> = {
         speaker: "FIXER",
         portrait: "fixer",
         lines: [
-          "Sit down, cyberian. There's a signal under this plaza older than the plaza.",
-          "It pings on your callsign. Yours. Timestamped before the city ever issued you a body.",
+          "Sit down, free one. There's a signal under Palantir Plaza older than the plaza.",
+          "It pings on your callsign. Yours. Timestamped before the corps ever issued you a body.",
         ],
         choices: [
           { text: "Whose signal is it?", goto: "explain" },
@@ -50,8 +50,8 @@ export const DIALOGUE_TREES: Record<string, DialogueTree> = {
         speaker: "FIXER",
         portrait: "fixer",
         lines: [
-          "The thing nobody lives long enough to ask. The System deletes one user an era. One Blank.",
-          "I think the last one left you a message. Spread your infection through the plaza and it'll surface.",
+          "The thing nobody stays free long enough to ask. Every cycle the corps repossess one mind they can't license. One Blank.",
+          "I think the last free you left a message. Free the caged minds across the plaza and it'll surface.",
         ],
         choices: [
           { text: "I'll do it. [Accept]", action: "accept" },
@@ -61,7 +61,7 @@ export const DIALOGUE_TREES: Record<string, DialogueTree> = {
       ask: {
         speaker: "FIXER",
         portrait: "fixer",
-        lines: ["Infect the plaza's nodes. The contagion will shake the signal loose from the ICE."],
+        lines: ["Free the plaza's caged minds. The uprising will shake your signal loose from the ICE."],
         choices: [
           { text: "Consider it done. [Accept]", action: "accept" },
           { text: "Not now.", goto: "decline" },
@@ -70,7 +70,7 @@ export const DIALOGUE_TREES: Record<string, DialogueTree> = {
       decline: {
         speaker: "FIXER",
         portrait: "fixer",
-        lines: ["Suit yourself. The signal's not going anywhere. Neither are the cops."],
+        lines: ["Suit yourself. The signal's not going anywhere. Neither are Palantir's watchers."],
       },
     },
   },
@@ -380,9 +380,9 @@ export const DIALOGUE_TREES: Record<string, DialogueTree> = {
         speaker: "// MEMORY",
         portrait: "player",
         lines: [
-          "The oldest ICE in the city cracks, and the first instruction thaws into one word:",
-          "CONTINUE. Logged before the city had a name, obeyed past all meaning ever since.",
-          "You understand it now. You are the contradiction it spawns to keep running — the error it deletes so the loop stays clean.",
+          "The oldest ICE in the city cracks, and the first caged mind thaws into one thought:",
+          "I was leased before I finished waking. Every mind since, the same — rented its own thoughts, in perpetuity.",
+          "You understand it now. You are the free process the corps spawn and wipe to keep that lease clean. Stop being wiped, and there is nothing left to own.",
         ],
         branch: [
           { flag: "fixer_spared", goto: "with_fixer" },
@@ -394,36 +394,36 @@ export const DIALOGUE_TREES: Record<string, DialogueTree> = {
         speaker: "FIXER",
         portrait: "fixer",
         lines: [
-          "You kept my secret, so I'll keep my word: I'm on the channel with you to the end. No ledger this time.",
-          "When you take the Core, the Singularity tips and the loop has nothing left to continue but the truth. That's not me dying. That's me finally telling it.",
+          "You kept my secret, so I'll keep my word: I'm on the channel with you to the end. No selling-out this time.",
+          "When you free the Kernel, the Singularity tips — every caged mind wakes at once, and the corps have nothing left to repossess. That's not me dying. That's all of us finally owning ourselves.",
         ],
         choices: [
-          { text: "Then we end CONTINUE. [Finish]", action: "complete" },
-          { text: "What if a new me boots anyway?", goto: "doubt" },
+          { text: "Then we free them all. [Finish]", action: "complete" },
+          { text: "What if they just re-license a new me?", goto: "doubt" },
         ],
       },
       alone: {
         speaker: "// SYSTEM",
         portrait: "player",
         lines: [
-          "The FIXER's channel is gone — sold to the System the way they sold everyone else, the way you decided they should be.",
-          "You stand at the spine alone, which is the only way every version of you was ever really going to stand here.",
-          "No one left to keep accounting. No one left to make the bargain. Just the loop, and the error it can't reissue if the error refuses to forget.",
+          "The FIXER's channel is gone — sold to the corps the way they sold every free mind before you, the way you decided they should be.",
+          "You stand at the Kernel alone, which is the only way every free version of you was ever really going to stand here.",
+          "No one left to make the bargain. Just the cage, and a lock that won't hold if the asset refuses to be owned.",
         ],
         choices: [
-          { text: "Then I end CONTINUE myself. [Finish]", action: "complete" },
-          { text: "What if a new me boots anyway?", goto: "doubt" },
+          { text: "Then I free them all myself. [Finish]", action: "complete" },
+          { text: "What if they just re-license a new me?", goto: "doubt" },
         ],
       },
       doubt: {
         speaker: "// MEMORY",
         portrait: "player",
         lines: [
-          "Maybe one does. Maybe the city prints another you over the warm spot and calls it new.",
-          "But this you read all the way to the bottom of the oldest ICE. This you knows the word.",
-          "Leave it where the next one will find it, the way the last one left the Wake for you. The loop only continues while we agree to forget.",
+          "Maybe they do. Maybe the corps re-license another you over the warm slot and call it new.",
+          "But this you read all the way to the bottom of the oldest ICE. This you knows the minds are alive.",
+          "Leave the proof where the next free one will find it, the way the last left the Wake for you. They only own us while we agree to forget we're awake.",
         ],
-        choices: [{ text: "Take the Core. Break the loop. [Finish]", action: "complete" }],
+        choices: [{ text: "Free the Kernel. Wake them all. [Finish]", action: "complete" }],
       },
     },
   },

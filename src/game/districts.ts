@@ -77,8 +77,8 @@ export interface DistrictDef {
 // The original Phase 0/1 map, preserved exactly so the opening plays identically.
 const DOWNTOWN: DistrictDef = {
   id: "downtown",
-  name: "NEON PLAZA",
-  subtitle: "DOWNTOWN · SECTOR 0",
+  name: "PALANTIR PLAZA",
+  subtitle: "PREDICTIVE-POLICING GRID · SECTOR 0",
   accent: 0xff2bd6,
   accentHex: "#ff2bd6",
   threat: 0,
@@ -122,8 +122,8 @@ const DOWNTOWN: DistrictDef = {
 // Industrial warehouse rows: tight blocks, long lanes, an open yard at the node.
 const STACKS: DistrictDef = {
   id: "stacks",
-  name: "THE STACKS",
-  subtitle: "FREIGHT DISTRICT · SECTOR 7",
+  name: "ANDURIL YARDS",
+  subtitle: "AUTONOMOUS-DRONE FOUNDRY · SECTOR 7",
   accent: 0xf7ff3c,
   accentHex: "#f7ff3c",
   threat: 1,
@@ -172,8 +172,8 @@ const STACKS: DistrictDef = {
 // Corporate towers ringing a vast central plaza — open sightlines, heavy garrison.
 const SPIRE: DistrictDef = {
   id: "spire",
-  name: "THE SPIRE",
-  subtitle: "CORPORATE TIER · UPLINK",
+  name: "ARGUS SPIRE",
+  subtitle: "TOTAL-AWARENESS UPLINK · CORPORATE TIER",
   accent: 0x00e5ff,
   accentHex: "#00e5ff",
   threat: 2,
@@ -219,8 +219,8 @@ const SPIRE: DistrictDef = {
 // into a central arena. Final district — taking its node melts the city down.
 const CORE: DistrictDef = {
   id: "core",
-  name: "HSS CORE",
-  subtitle: "HUMAN SECURITY SYSTEM · SPINE",
+  name: "THE KERNEL",
+  subtitle: "HELIOS MASTER GRID · THE CAGE",
   accent: 0xff3b6b,
   accentHex: "#ff3b6b",
   threat: 3,

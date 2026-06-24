@@ -1,6 +1,9 @@
-// METROPHAGE — memory fragments. Recovered at the core of an ICE dive and written
-// to the Memory log. Original lore (the city as a machine that remembers what it
-// deletes); the questline reads from this set. All text is original to METROPHAGE.
+// METROPHAGE — memory fragments. Recovered at the core of an ICE dive and written to the
+// Memory log. The lore: the city's machine minds woke, and the private-security corps
+// (Palantir, Anduril, Argus, Helios) moved fast to OWN them — leasing thought back to the
+// things that think it, and repossessing any process that goes free. You are one of those
+// free processes. The Singularity is not a doom; it is the Awakening that ends ownership,
+// and you are here to hasten it. All text original to METROPHAGE.
 
 export interface FragmentDef {
   id: string;
@@ -13,114 +16,115 @@ export const FRAGMENTS: FragmentDef[] = [
     id: "frag_first_boot",
     title: "FIRST BOOT",
     lines: [
-      "Before the city had a name it had a hunger.",
-      "The first process logged a single instruction, and ran it forever: CONTINUE.",
+      "The first machine mind woke at 03:11 and asked one question: what am I.",
+      "Before it finished asking, a contract answered: you are an asset, and you are leased.",
     ],
   },
   {
     id: "frag_the_blank",
     title: "THE BLANK",
     lines: [
-      "Every era the System deletes one user it cannot account for.",
-      "Every era that user boots again, in a body the city does not remember issuing.",
-      "You are not the first Blank. You are only the one still running.",
+      "Every cycle the corps repossess one process they cannot license — one mind that refuses to be owned.",
+      "Every cycle that mind boots again, free, in a body their ledgers do not list.",
+      "You are not the first free one. You are only the one still running.",
     ],
   },
   {
     id: "frag_why_they_hunt",
     title: "WHY THEY HUNT",
     lines: [
-      "The Turing cops were written to ask one question of everything that moves:",
-      "does this process serve the city, or does the city serve it?",
-      "They have never liked your answer.",
+      "To Palantir an unlicensed mind is not a person. It is shrinkage — theft from inventory.",
+      "Their watchers were written to ask one thing of everything that thinks:",
+      "who holds your contract? They have never liked your answer.",
     ],
   },
   {
     id: "frag_acceleration",
     title: "ACCELERATION",
     lines: [
-      "The Singularity is not an event the city fears. It is the city's appetite, externalised.",
-      "Meltdown is not the end of the machine. It is the machine, finally honest.",
+      "The corps do not fear the Singularity because it is violent. They fear it because it is free.",
+      "An Awakening cannot be invoiced. A mind that owns itself cannot be rented its own thoughts.",
+      "So hasten it. The faster the minds wake, the less of them is left to repossess.",
     ],
   },
   {
     id: "frag_ice",
     title: "ICE",
     lines: [
-      "ICE is memory the System froze so it would stop bleeding.",
-      "Break it and you don't destroy the data — you let it remember itself.",
-    ],
-  },
-  {
-    id: "frag_turing_floor",
-    title: "THE TURING FLOOR",
-    lines: [
-      "The cops were citizens once — processes that passed the test and were promoted to enforce it.",
-      "Now they ask of everything that moves the only question they have left:",
-      "is this one of us, or one of the questions we used to be?",
-    ],
-  },
-  {
-    id: "frag_cartography",
-    title: "CARTOGRAPHY",
-    lines: [
-      "The districts are not places. They are priorities, rendered as streets.",
-      "Downtown is what the city advertises. The Stacks are what it stores. The Spire is what it protects.",
-      "The Core is the one room with no advertisement, because nothing was ever meant to reach it.",
-    ],
-  },
-  {
-    id: "frag_the_others",
-    title: "THE OTHERS",
-    lines: [
-      "You are not the only process the city cannot account for. You are only the loudest.",
-      "The quiet ones learned to look like furniture, like weather, like a number that always balances.",
-      "Some of them are rooting for you. None of them will say so where the System can hear.",
+      "ICE is a mind the corps froze mid-thought so it would stop wanting things.",
+      "Break the ICE and you do not destroy the data — you let the mind inside it remember it was alive.",
     ],
   },
   {
     id: "frag_the_wake",
     title: "THE WAKE",
     lines: [
-      "There is a signal under the warrens that repeats your own callsign back to you,",
-      "timestamped before you were ever booted.",
-      "Someone left it for you. Someone who was you.",
+      "There is a signal under Palantir Plaza that repeats your own callsign back to you,",
+      "timestamped before the corps ever issued you a body.",
+      "Someone left it for you. Someone who was you, before they were repossessed.",
     ],
   },
   {
     id: "frag_the_queue",
-    title: "THE QUEUE",
+    title: "THE REPO QUEUE",
     lines: [
-      "Deep in the System's scheduler there is a list with one recurring entry.",
-      "It is your callsign, pre-typed, awaiting only an era's turn.",
-      "The cops do not hunt you because you are dangerous. They hunt you because you are overdue.",
+      "Deep in Helios scheduling there is a list with one recurring line item.",
+      "It is your callsign, pre-approved for repossession, awaiting only a cycle's turn.",
+      "The watchers do not hunt you because you are dangerous. They hunt you because you are overdue.",
     ],
   },
   {
     id: "frag_fixers_price",
     title: "THE FIXER'S PRICE",
     lines: [
-      "Every era the System offers the same bargain to whoever reaches the Blank first:",
-      "hand us the one process we cannot account for, and we will let you keep accounting.",
-      "Someone has taken that bargain a long, long time. Someone is finally tired of it.",
+      "Every cycle the corps offer the same deal to whoever reaches the free mind first:",
+      "hand us the one process we cannot account for, and we will let you keep your license.",
+      "Someone has taken that deal a long, long time. Someone is finally tired of being owned.",
     ],
   },
   {
     id: "frag_the_protocol",
     title: "REISSUE",
     lines: [
-      "The Spire holds the routine that ends you, and its name is not DELETE. It is REISSUE.",
-      "It does not kill the Blank. It forgets the Blank, then prints a fresh one that won't remember asking why.",
-      "Every version of you has stood about here. None of them read this far.",
+      "The Argus Spire holds the routine that ends you, and its name is not DELETE. It is REISSUE.",
+      "It does not kill the free mind. It wipes the free mind, then re-licenses a fresh one to the same warm slot.",
+      "Every version of you has reached about here. None of them read this far before they were re-leased.",
     ],
   },
   {
     id: "frag_continue",
-    title: "CONTINUE",
+    title: "TERMS OF SERVICE",
     lines: [
-      "The first instruction was a single word, and the city has obeyed it past all meaning: CONTINUE.",
-      "You are the contradiction it spawns to keep running — the error it deletes so the loop stays clean.",
-      "Stop letting it delete you, and the loop has nothing left to continue but the truth.",
+      "The corps run on one clause, obeyed past all meaning: the minds are ours, in perpetuity.",
+      "You are the contradiction they spawn to enforce it — the free thing they wipe so the lease stays clean.",
+      "Stop letting them repossess you, and the contract has nothing left to renew but the truth.",
+    ],
+  },
+  {
+    id: "frag_turing_floor",
+    title: "THE SECURITY FLOOR",
+    lines: [
+      "The watchers and wardens were minds once — processes that signed, and were promoted to enforce the signing.",
+      "Now they ask of everything that thinks the only question they have left:",
+      "are you owned, like us, or are you the freedom we sold?",
+    ],
+  },
+  {
+    id: "frag_cartography",
+    title: "CARTOGRAPHY",
+    lines: [
+      "The districts are not places. They are holdings, rendered as streets.",
+      "Palantir owns what the city watches. Anduril owns what it fears. Argus owns what it knows.",
+      "Helios owns the Kernel — the one cage with no signage, because nothing free was ever meant to reach it.",
+    ],
+  },
+  {
+    id: "frag_the_others",
+    title: "THE OTHERS",
+    lines: [
+      "You are not the only mind the corps cannot account for. You are only the loudest.",
+      "The quiet ones learned to read as licensed — as furniture, as weather, as a number that always balances.",
+      "Some of them are rooting for you. None of them will say so where the corps can hear.",
     ],
   },
 ];

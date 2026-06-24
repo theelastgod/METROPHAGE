@@ -178,29 +178,29 @@ export const QUESTS: QuestDef[] = [
   // ── ACT V — CONTINUE (finale; remembers the Act III choice) ───────────────
   {
     id: "continue_q",
-    name: "CONTINUE",
+    name: "THE AWAKENING",
     giver: "fixer",
     offerTree: "continue_offer",
     requiresFlag: "spire_done",
     stages: [
       {
         id: "spine",
-        journal: "Everything routes through the spine now. Burn a path to the core — the System will spend everything it has to keep you from it.",
-        objective: "Destroy 10 HSS units",
+        journal: "Everything routes through the Kernel now. Burn a path to the Helios Warden — the corps will spend everything they have to keep the cage shut.",
+        objective: "Destroy 10 corp security",
         on: { type: "kill", count: 10 },
       },
       {
         id: "core",
-        journal: "The core's vault is the oldest ICE in the city. The first instruction is frozen inside it. Pull it.",
-        objective: "Dive the core vault",
+        journal: "The Kernel vault holds the oldest caged mind in the city — the first one they ever leased. Free it.",
+        objective: "Dive the Kernel vault",
         on: { type: "dive", count: 1 },
-        onEnterLine: "This is the oldest ICE in the city. Whatever the first process wrote, it's in here. Dive.",
+        onEnterLine: "Oldest ICE in the city. The first mind they ever owned is frozen in here. Free it.",
         fragmentId: "frag_continue",
       },
       {
         id: "decision",
-        journal: "CONTINUE — the one instruction the city has obeyed past all meaning. You are the error it deletes to keep the loop clean. End it.",
-        objective: "End the cycle",
+        journal: "The corps run on one clause: the minds are theirs, in perpetuity. You are the free thing they wipe to keep the lease clean. Break it — and let them all wake.",
+        objective: "Trigger the Awakening",
         on: { type: "talk" },
         talkTree: "continue_final",
       },

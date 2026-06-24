@@ -974,12 +974,12 @@ export default class GameScene
       {
         speaker: "// SYSTEM",
         portrait: me,
-        text: "Cyberian online. You are a process the city cannot account for.",
+        text: "Free process online. You are a mind the corps could not license — and they want you back.",
       },
       {
         speaker: "// SYSTEM",
         portrait: me,
-        text: "Burn the Turing cops. Infect the district node, then reach the extraction gate. Take every district and the Human Security System melts down.",
+        text: "The private-security corps cage this city's minds and rent thought back to them. Cut down their security, FREE the caged minds at each node, reach the extraction gate. Liberate every holding and the Awakening tips.",
       },
       {
         speaker: "// SYSTEM",
@@ -995,17 +995,17 @@ export default class GameScene
       {
         speaker: "FIXER",
         portrait: fixer,
-        text: "You actually showed. Most cyberians flatline before they reach the plaza.",
+        text: "You actually showed. Most free ones get repossessed before they reach the plaza.",
       },
       {
         speaker: "FIXER",
         portrait: fixer,
-        text: "That node down the street pipes straight into the city's spine. Channel it and the meltdown does the rest.",
+        text: "That node down the street is a caged mind, wired into the corp grid. Free it and the Awakening spreads itself.",
       },
       {
         speaker: "FIXER",
         portrait: fixer,
-        text: "Keep your Heat up — the hotter you run, the harder you hit. Just don't let the cops box you in.",
+        text: "Keep your Heat up — the hotter you run, the harder you hit. Just don't let the watchers box you in.",
       },
     ];
   }
@@ -1016,12 +1016,12 @@ export default class GameScene
       {
         speaker: "// SYSTEM",
         portrait: me,
-        text: "You're inside the spine. Every Turing cop in the city routes through the kernel ahead.",
+        text: "You're inside the Kernel. Every caged mind in the city is wired through the Helios Warden ahead.",
       },
       {
         speaker: "// SYSTEM",
         portrait: me,
-        text: "WINTERMUTE sees you now. Kill the OVERMIND and the Human Security System has no floor left to stand on.",
+        text: "HELIOS sees you now. Break the Warden, free the Kernel, and the corps have no lease left to enforce.",
       },
     ];
   }
@@ -1832,7 +1832,7 @@ export default class GameScene
     this.contracts.onInfect();
     this.fireQuestTrigger("infect");
     this.floatText(
-      `NODE ${this.territory.infectedCount}/${this.territory.total} INFECTED`,
+      `MIND ${this.territory.infectedCount}/${this.territory.total} FREED`,
       this.district.accentHex,
     );
     this.autosave(true);
@@ -1847,7 +1847,7 @@ export default class GameScene
     this.fireQuestTrigger("secure");
     this.gate = new ExtractionGate(this, this.spawn.x, this.spawn.y, this.district.accent);
     this.gate.activate();
-    this.floatText("DISTRICT SECURED — EXTRACT", "#39ff88");
+    this.floatText("HOLDING LIBERATED — EXTRACT", "#39ff88");
     this.autosave(true);
   }
 
@@ -1938,9 +1938,9 @@ export default class GameScene
     const cy = this.scale.height / 2;
 
     const title = this.add
-      .text(cx, cy - 8, "MELTDOWN", {
+      .text(cx, cy - 8, "AWAKENING", {
         fontFamily: "Courier New, monospace",
-        fontSize: "76px",
+        fontSize: "68px",
         color: "#ff2bd6",
         fontStyle: "bold",
       })
@@ -1963,13 +1963,13 @@ export default class GameScene
       // payoff rather than a generic loss — and nods to the Act III choice.
       const brokeLoop = this.quests.hasFlag("continue_done");
       const subText = brokeLoop
-        ? "THE LOOP HAS NOTHING LEFT TO CONTINUE BUT THE TRUTH"
-        : "THE CITY HAS ACCELERATED PAST ESCAPE";
+        ? "THE LEASE HAS NOTHING LEFT TO RENEW BUT THE TRUTH"
+        : "THE MINDS ARE WAKING FASTER THAN THE CORPS CAN CAGE THEM";
       const tail = brokeLoop
         ? this.quests.hasFlag("fixer_spared")
-          ? "·  the next you wakes, and the FIXER is still on the channel"
-          : "·  the next you wakes alone, and remembers everything"
-        : "·  the city reboots, harder";
+          ? "·  the next free mind wakes, and the FIXER is still on the channel"
+          : "·  the next free mind wakes alone, and remembers everything"
+        : "·  the corps re-cage what they can — harder";
       const sub = this.add
         .text(cx, cy + 52, subText, {
           fontFamily: "Courier New, monospace",
