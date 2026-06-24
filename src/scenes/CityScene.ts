@@ -9,6 +9,7 @@ import DialogueBox from "../ui/DialogueBox";
 import { KEY_NPCS, CITIZENS } from "../game/cityNpcs";
 import { CityQuests, type TalkResult } from "../game/cityQuests";
 import NeonPipeline from "../render/NeonPipeline";
+import Atmosphere from "../render/Atmosphere";
 import { getClass } from "../game/classes";
 import { sanitizeCustomization, bakeCustomPlayer, PLAYER_CUSTOM_KEY, type Customization } from "../game/customization";
 
@@ -35,6 +36,7 @@ export default class CityScene extends Phaser.Scene {
   private lastDir = new Phaser.Math.Vector2(0, 1);
 
   private mode: "city" | "interior" = "city";
+  private atmosphere?: Atmosphere;
   private doors = new Map<string, CityBuilding>();
   private exitTile?: [number, number];
   private returnTile?: [number, number];
@@ -112,6 +114,7 @@ export default class CityScene extends Phaser.Scene {
     this.cameras.main.startFollow(this.player, true, 0.12, 0.12);
 
     this.applyNeon();
+    this.createAtmosphere(worldW, worldH);
     this.buildHud(title);
     this.cameras.main.fadeIn(300, 4, 2, 10);
 
@@ -266,7 +269,8 @@ export default class CityScene extends Phaser.Scene {
     }
   }
 
-  update() {
+  update(_time: number, delta: number) {
+    this.atmosphere?.update(this.time.now, delta, 0.15); // weather/fog/holos animate always
     if (this.transitioning) return;
     if (this.dialogue.isOpen) {
       this.player.setVelocity(0, 0);
@@ -354,6 +358,25 @@ export default class CityScene extends Phaser.Scene {
       })
       .setScrollFactor(0)
       .setDepth(1000);
+  }
+
+  /** City rain + drifting fog + holographic shop-signage over the storefronts.
+   *  City mode only — interiors stay dry. */
+  private createAtmosphere(worldW: number, worldH: number) {
+    if (this.mode !== "city" || !this.cityMap) return;
+    this.atmosphere = new Atmosphere(this, {
+      weather: "rain",
+      accent: COLORS.neonCyan,
+      worldW,
+      worldH,
+    });
+    const accents = [COLORS.neonMagenta, COLORS.neonCyan, COLORS.neonYellow, COLORS.neonGreen];
+    let h = 0;
+    for (const b of this.cityMap.buildings) {
+      if (!b.door || h >= 10) continue;
+      this.atmosphere.addHologram(b.door[0] * TILE + TILE / 2, b.door[1] * TILE + TILE / 2 - 6, accents[h % accents.length]);
+      h++;
+    }
   }
 
   private applyNeon() {
