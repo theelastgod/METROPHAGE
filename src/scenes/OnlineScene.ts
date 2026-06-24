@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { installUiCamera } from "../render/cameras";
 import { shadeWalls } from "../render/wallShade";
 import Atmosphere from "../render/Atmosphere";
+import OnlineInventory from "../ui/OnlineInventory";
 import { COLORS, TILE } from "../config";
 import { TILESET_KEY, PLAYER_KEY, COP_KEY, BULLET_KEY, GLOW_KEY, NODE_KEY } from "../assets/manifest";
 import { driveChar } from "../assets/anim";
@@ -81,6 +82,7 @@ export default class OnlineScene extends Phaser.Scene {
   private meltdownFx!: Phaser.GameObjects.Rectangle;
   private meltdownText!: Phaser.GameObjects.Text;
   private atmosphere?: Atmosphere; // rich ambient layer, shared with the SP city
+  private inv!: OnlineInventory; // bottom hotbar + openable bag, fed by the server
   private lastSeason = -1;
   private chatLogText!: Phaser.GameObjects.Text;
   private chatInput!: Phaser.GameObjects.Text;
@@ -171,6 +173,8 @@ export default class OnlineScene extends Phaser.Scene {
       this.cameras.main.startFollow(this.me, true, 0.18, 0.18);
       setOnlinePlayer(this.net.id); // let the $METRO bridge panel address this player
     };
+    this.inv = new OnlineInventory(this);
+    this.net.onInventory = () => this.inv.setItems(this.net.inventory);
     this.net.connect();
 
     this.keys = this.input.keyboard!.addKeys("W,A,S,D,UP,DOWN,LEFT,RIGHT") as Record<
@@ -339,6 +343,14 @@ export default class OnlineScene extends Phaser.Scene {
       }
       if (this.emoteWheelOpen) {
         if (e.key === "Escape" || e.key === "v" || e.key === "V") this.closeWheel();
+        return;
+      }
+      if (e.key === "i" || e.key === "I") {
+        this.inv.toggle();
+        return;
+      }
+      if (this.inv.open && e.key === "Escape") {
+        this.inv.close(); // ESC closes the bag first, before it exits the scene
         return;
       }
       if (e.key === "v" || e.key === "V") {
