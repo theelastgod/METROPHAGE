@@ -22,7 +22,7 @@ import { buildGrid } from "../world/district";
 import { DISTRICTS } from "../game/districts";
 import { ENEMY_BARKS } from "../game/enemies";
 import { WORLD_W, WORLD_H } from "../net/sim";
-import NetClient from "../net/NetClient";
+import NetClient, { type NetEnemy } from "../net/NetClient";
 import NeonPipeline from "../render/NeonPipeline";
 import { QUESTLINE } from "../net/quest";
 import { setOnlinePlayer } from "../economy/session";
@@ -73,6 +73,7 @@ export default class OnlineScene extends Phaser.Scene {
   private remoteSprites = new Map<string, Phaser.GameObjects.Sprite>();
   private remoteLabels = new Map<string, Phaser.GameObjects.Text>();
   private enemySprites = new Map<number, Phaser.GameObjects.Sprite>();
+  private bossOverlays = new Map<number, { name: Phaser.GameObjects.Text; bar: Phaser.GameObjects.Graphics }>();
   private shotSprites = new Map<number, Phaser.GameObjects.Image>();
   private pickupSprites = new Map<number, Phaser.GameObjects.Image>();
   private nodeSprites = new Map<number, Phaser.GameObjects.Sprite>();
@@ -120,6 +121,7 @@ export default class OnlineScene extends Phaser.Scene {
     this.emoteWheelOpen = false; // reset transient UI across scene.restart (travel)
     this.wheelObjs = [];
     this.lastEmoteShownAt = 0;
+    this.bossOverlays.clear(); // GO destroyed on shutdown; drop stale refs before re-create
 
     // Zone = which district this client is in. Travel hands off to another DO.
     this.districtIndex = this.parseZone(data?.zone);
@@ -546,7 +548,13 @@ export default class OnlineScene extends Phaser.Scene {
         this.enemySprites.set(id, s);
         this.maybeEnemyBark(e.x, e.y, e.kind); // deploy bark on first appearance
       }
-      if (s.getData("kind") !== e.kind) {
+      if (e.boss) {
+        if (!s.getData("boss")) {
+          s.setData("boss", true);
+          s.setScale(2.6).setDepth(9).setTint(e.tint ?? COLORS.enemy); // a looming, named commander
+        }
+        this.updateBossOverlay(id, e);
+      } else if (s.getData("kind") !== e.kind) {
         s.setTint(ENEMY_KIND_TINT[e.kind] ?? COLORS.enemy);
         s.setData("kind", e.kind);
       }
@@ -559,6 +567,12 @@ export default class OnlineScene extends Phaser.Scene {
       if (!this.net.enemies.has(id)) {
         s.destroy();
         this.enemySprites.delete(id);
+        const o = this.bossOverlays.get(id); // a slain boss leaves the snapshot → drop its overlay
+        if (o) {
+          o.name.destroy();
+          o.bar.destroy();
+          this.bossOverlays.delete(id);
+        }
       }
 
     // projectiles (server-simulated)
@@ -710,6 +724,34 @@ export default class OnlineScene extends Phaser.Scene {
 
   /** Floating HSS deploy bark above a newly-seen online enemy (throttled), tinted to
    *  its archetype — matches the singleplayer feel. */
+  /** World-space boss decoration: a name plate + an HP bar floating above the commander. */
+  private updateBossOverlay(id: number, e: NetEnemy) {
+    let o = this.bossOverlays.get(id);
+    const hex = "#" + ((e.tint ?? 0xffffff) & 0xffffff).toString(16).padStart(6, "0");
+    if (!o) {
+      const name = this.add
+        .text(e.x, e.y - 58, e.name ?? "HSS COMMANDER", {
+          fontFamily: "Courier New, monospace",
+          fontSize: "12px",
+          color: hex,
+          fontStyle: "bold",
+          align: "center",
+        })
+        .setOrigin(0.5)
+        .setDepth(20);
+      name.setShadow(0, 0, "#02030a", 5, true, true);
+      const bar = this.add.graphics().setDepth(20);
+      o = { name, bar };
+      this.bossOverlays.set(id, o);
+    }
+    o.name.setPosition(e.x, e.y - 58);
+    const w = 90;
+    const hpn = e.hpMax ? Phaser.Math.Clamp(e.hp / e.hpMax, 0, 1) : 1;
+    o.bar.clear();
+    o.bar.fillStyle(0x140a1e, 0.9).fillRect(e.x - w / 2, e.y - 46, w, 6);
+    o.bar.fillStyle(e.tint ?? COLORS.enemy, 1).fillRect(e.x - w / 2 + 1, e.y - 45, (w - 2) * hpn, 4);
+  }
+
   private maybeEnemyBark(x: number, y: number, kind: number) {
     const now = this.time.now;
     if (now < this.nextEnemyBarkAt || Math.random() > 0.4) return;

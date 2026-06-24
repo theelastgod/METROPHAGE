@@ -96,6 +96,11 @@ export interface EnemySnap {
   y: number;
   hp: number;
   kind: number; // HSS archetype: 0 patrol · 1 wasp · 2 lancer · 3 hound
+  // world boss (a named, tougher enemy that respawns) — extra render data:
+  boss?: boolean;
+  name?: string;
+  tint?: number; // boss accent colour (corp identity)
+  hpMax?: number; // full HP, for the boss health bar
 }
 export interface ShotSnap {
   id: number;

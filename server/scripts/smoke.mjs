@@ -452,6 +452,70 @@ async function auth() {
   );
 }
 
+async function boss() {
+  const WW = 1280;
+  const WH = 960;
+  const ws = await connect();
+  const w = await login(ws, "bosshunter");
+  const store = { x: w.x, y: w.y, enemies: [], hp: 100 };
+  trackState(ws, w.id, store);
+  await sleep(300);
+  const findBoss = () => store.enemies.find((e) => e.boss);
+
+  // 1) trek toward the far corner until the boss (parked at the deepest post) is in view
+  const tgt = { x: store.x < WW / 2 ? WW - 64 : 64, y: store.y < WH / 2 ? WH - 64 : 64 };
+  let seq = 0;
+  const tFind = Date.now();
+  while (!findBoss() && Date.now() - tFind < 18000) {
+    const dx = tgt.x - store.x, dy = tgt.y - store.y, d = Math.hypot(dx, dy) || 1;
+    seq++;
+    ws.send(JSON.stringify({ t: "input", seq, mx: dx / d, my: dy / d }));
+    await sleep(60);
+  }
+  const b0 = findBoss();
+  const spawned = !!b0 && !!b0.name && (b0.hpMax || 0) > 100;
+
+  // 2) hammer it until it drops out of the live snapshot (hp<=0 → server stops sending it)
+  let killed = false;
+  const tKill = Date.now();
+  while (spawned && Date.now() - tKill < 45000) {
+    const b = findBoss();
+    if (!b) {
+      killed = true;
+      break;
+    }
+    const dx = b.x - store.x, dy = b.y - store.y, d = Math.hypot(dx, dy) || 1;
+    seq++;
+    ws.send(JSON.stringify({ t: "input", seq, mx: d > 80 ? dx / d : 0, my: d > 80 ? dy / d : 0 }));
+    ws.send(JSON.stringify({ t: "fire", seq, aim: Math.atan2(dy, dx) }));
+    await sleep(45);
+  }
+
+  // 3) wait out the respawn timer; confirm it reforms at (near) full HP, at its lair
+  let reformed = false, reformedHp = 0;
+  if (killed) {
+    const tWait = Date.now();
+    while (Date.now() - tWait < 40000) {
+      const b = findBoss();
+      if (b && b.hpMax && b.hp >= b.hpMax * 0.9) {
+        reformed = true;
+        reformedHp = b.hp;
+        break;
+      }
+      await sleep(250);
+    }
+  }
+  ws.close();
+  await sleep(300);
+  const checks = { bossSpawned: spawned, bossKilled: killed, bossRespawned: reformed };
+  report(
+    "BOSS — a world boss spawns, is killable, and respawns at full HP for others",
+    { name: b0?.name ?? null, hpMax: b0?.hpMax ?? null, reformedHp },
+    Object.values(checks).every(Boolean),
+    checks,
+  );
+}
+
 async function mp() {
   const AOI = 720;
   const a = await connect();
@@ -1167,6 +1231,7 @@ try {
   else if (mode === "inventory") await inventory();
   else if (mode === "lookpersist") await lookpersist();
   else if (mode === "auth") await auth();
+  else if (mode === "boss") await boss();
   else if (mode === "mp") await mp();
   else if (mode === "zones") await zones();
   else if (mode === "territory") await territory();

@@ -21,6 +21,10 @@ export interface NetEnemy {
   ty: number;
   hp: number;
   kind: number; // HSS archetype (tints the sprite client-side)
+  boss?: boolean; // a named world boss — rendered bigger, with a name + HP bar
+  name?: string;
+  tint?: number;
+  hpMax?: number;
 }
 
 export interface NetShot {
@@ -243,6 +247,10 @@ export default class NetClient {
         ne.ty = e.y;
         ne.hp = e.hp;
         ne.kind = e.kind;
+        ne.boss = e.boss;
+        ne.name = e.name;
+        ne.tint = e.tint;
+        ne.hpMax = e.hpMax;
         this.enemies.set(e.id, ne);
       }
       for (const id of [...this.enemies.keys()]) if (!liveE.has(id)) this.enemies.delete(id);

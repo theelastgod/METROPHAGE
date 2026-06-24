@@ -198,9 +198,13 @@ interface Enemy {
   ox: number; // origin (respawn) position
   oy: number;
   hp: number;
+  maxHp: number; // full HP (= arch.hp for regulars; the boss pool for bosses) — drives revive + the client HP bar
   respawnTick: number;
   lastFireTick: number;
   kind: number; // index into ENEMY_ARCHES
+  boss?: boolean; // a named world boss: tougher, hits harder, long respawn, broadcast kill
+  name?: string;
+  tint?: number; // boss accent colour (corp identity), for the client
 }
 
 /**
@@ -226,6 +230,24 @@ const ENEMY_ARCHES: EnemyArch[] = [
   { hp: 60, speed: 88, fireRange: 430, fireMs: 1850, dmg: 24, projSpeed: 520 },
   // 3 HOUND — fast rusher, gets point-blank then hammers
   { hp: 80, speed: 200, fireRange: 95, fireMs: 1000, dmg: 16, projSpeed: 300 },
+];
+
+/** World bosses: tough, named HSS commanders (real surveillance corps). One per zone,
+ *  parked at the deepest post; killing one drops guaranteed gear and broadcasts, then it
+ *  reforms after BOSS_RESPAWN_MS so other players keep finding + fighting it. */
+const BOSS_RESPAWN_MS = 30000;
+const BOSS_DMG_MULT = 2.2; // boss shots hit harder than the base archetype
+const BOSS_KIND = 2; // borrow the lancer's sturdy long-range AI
+interface WorldBoss {
+  name: string;
+  tint: number;
+  hp: number;
+}
+const BOSS_ROSTER: WorldBoss[] = [
+  { name: "THE GUTTER KING", tint: 0x8bff6a, hp: 460 },
+  { name: "ANDURIL SENTINEL", tint: 0xff7a3c, hp: 560 },
+  { name: "HELIOS WARDEN", tint: 0xffe08a, hp: 680 },
+  { name: "PALANTIR ORACLE", tint: 0x4d8cff, hp: 600 },
 ];
 
 interface Shot {
@@ -336,8 +358,39 @@ export class WorldDO {
       const y = ty * TILE + TILE / 2;
       const id = this.nextEnemyId++;
       const kind = pattern[i++ % pattern.length];
-      this.enemies.set(id, { id, x, y, ox: x, oy: y, hp: ENEMY_ARCHES[kind].hp, respawnTick: 0, lastFireTick: 0, kind });
+      this.enemies.set(id, { id, x, y, ox: x, oy: y, hp: ENEMY_ARCHES[kind].hp, maxHp: ENEMY_ARCHES[kind].hp, respawnTick: 0, lastFireTick: 0, kind });
     }
+    // World boss — a named HSS commander at the post farthest from the player spawn, so it
+    // reads as a destination. It reforms on its own timer after a kill (see the kill handler).
+    const boss = BOSS_ROSTER[this.districtIndex % BOSS_ROSTER.length];
+    let lair = { x: WORLD_W - this.spawn.x, y: WORLD_H - this.spawn.y }; // fallback: opposite end
+    let far = -1;
+    for (const [tx, ty] of def.copPosts) {
+      if (isWall(this.grid[ty]?.[tx])) continue;
+      const wx = tx * TILE + TILE / 2;
+      const wy = ty * TILE + TILE / 2;
+      const dd = (wx - this.spawn.x) ** 2 + (wy - this.spawn.y) ** 2;
+      if (dd > far) {
+        far = dd;
+        lair = { x: wx, y: wy };
+      }
+    }
+    const bid = this.nextEnemyId++;
+    this.enemies.set(bid, {
+      id: bid,
+      x: lair.x,
+      y: lair.y,
+      ox: lair.x,
+      oy: lair.y,
+      hp: boss.hp,
+      maxHp: boss.hp,
+      respawnTick: 0,
+      lastFireTick: 0,
+      kind: BOSS_KIND,
+      boss: true,
+      name: boss.name,
+      tint: boss.tint,
+    });
   }
 
   async fetch(req: Request): Promise<Response> {
@@ -415,6 +468,11 @@ export class WorldDO {
     } catch {
       /* socket gone */
     }
+  }
+
+  /** Send a message to every connected socket in this zone (boss kill feed, era flips, …). */
+  private broadcast(msg: unknown) {
+    for (const sock of this.sessions.keys()) this.send(sock, msg);
   }
 
   private async handle(ws: WebSocket, raw: string) {
@@ -1023,7 +1081,7 @@ export class WorldDO {
         if (this.tick >= e.respawnTick) {
           e.x = e.ox;
           e.y = e.oy;
-          e.hp = arch.hp;
+          e.hp = e.maxHp; // bosses reform at full boss HP; regulars at arch HP (maxHp === arch.hp)
         }
         continue;
       }
@@ -1047,7 +1105,7 @@ export class WorldDO {
           dieTick: this.tick + ticks(ENEMY_PROJ_TTL_MS),
           team: 1,
           owner: String(e.id),
-          dmg: arch.dmg,
+          dmg: e.boss ? Math.round(arch.dmg * BOSS_DMG_MULT) : arch.dmg,
         });
       }
     }
@@ -1081,26 +1139,33 @@ export class WorldDO {
             e.hp -= dmg;
             consumed = true;
             if (e.hp <= 0) {
-              e.respawnTick = this.tick + ticks(4000);
+              const isBoss = !!e.boss;
+              // A boss reforms slowly (so others can find + fight it); a grunt fast.
+              e.respawnTick = this.tick + ticks(isBoss ? BOSS_RESPAWN_MS : 4000);
               const killer = owner;
               if (killer) {
-                killer.credits += CREDITS_PER_KILL; // server-authoritative currency
-                killer.xp += XP_PER_KILL; // server-authoritative progression
+                const mult = isBoss ? 12 : 1; // a boss pays out like a dozen grunts
+                killer.credits += CREDITS_PER_KILL * mult; // server-authoritative currency
+                killer.xp += XP_PER_KILL * mult; // server-authoritative progression
                 killer.level = levelForXp(killer.xp);
                 killer.dirty = true;
-                this.bumpMeta("f" + killer.faction, 1); // faction contribution from combat
+                this.bumpMeta("f" + killer.faction, isBoss ? 10 : 1); // faction contribution
                 this.questEvent(killer, "kill");
-                // item loot — the server rolls gear straight into the killer's
-                // inventory (FIFO-capped), then pushes the change to that client only.
-                if (Math.random() < LOOT_DROP_CHANCE) {
-                  killer.inventory.push(rollItem(killer.level));
+                // item loot — a boss ALWAYS drops, rarity-boosted; a grunt rolls the chance.
+                // Pushed (FIFO-capped) to the killer's client only.
+                if (isBoss || Math.random() < LOOT_DROP_CHANCE) {
+                  killer.inventory.push(rollItem(killer.level, isBoss ? 2.5 : 0));
                   if (killer.inventory.length > INVENTORY_CAP) killer.inventory.shift();
                   this.sendTo(killer.id, { t: "inv", items: killer.inventory });
+                }
+                // Zone-wide kill feed so everyone knows the boss fell (and will be back).
+                if (isBoss) {
+                  this.broadcast({ t: "sys", text: `▲ ${killer.name} slew ${e.name} — it will reform soon` });
                 }
               }
               // shared meta: every kill (any player, ANY zone) pushes the server-wide
               // Singularity. Optimistic local bump now; flushed/synced to D1 on persist.
-              this.bumpMeta("singularity", SING_PER_KILL, SING_MAX);
+              this.bumpMeta("singularity", isBoss ? SING_PER_KILL * 8 : SING_PER_KILL, SING_MAX);
               // loot roll — server decides the drop
               if (Math.random() < LOOT_DROP_CHANCE) {
                 const kind = Math.random() < 0.25 ? PICKUP_CORE : PICKUP_CREDIT;
@@ -1262,7 +1327,15 @@ export class WorldDO {
     }
     const enemies = [];
     for (const e of this.enemies.values()) {
-      if (e.hp > 0 && near(e.x, e.y)) enemies.push({ id: e.id, x: round2(e.x), y: round2(e.y), hp: Math.round(e.hp), kind: e.kind });
+      if (e.hp > 0 && near(e.x, e.y))
+        enemies.push({
+          id: e.id,
+          x: round2(e.x),
+          y: round2(e.y),
+          hp: Math.round(e.hp),
+          kind: e.kind,
+          ...(e.boss ? { boss: true, name: e.name, tint: e.tint, hpMax: Math.round(e.maxHp) } : {}),
+        });
     }
     const shots = [];
     for (const s of this.shots) {
