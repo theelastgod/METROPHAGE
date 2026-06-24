@@ -60,7 +60,7 @@ function makeTileset(scene: Phaser.Scene) {
 
     // Paneled ground: base + recessed inner panel + edge seams (tiles grid up) +
     // corner rivets + faint grime. Clean — the play surface should read.
-    const ground = (i: number, base: number, panel: number, seam: number, rivet: number, grime = base) => {
+    const ground = (i: number, base: number, panel: number, seam: number, rivet: number, grime = base, wet = false) => {
       const ox = cellX(i);
       const oy = cellY(i);
       px(ox, oy, 32, 32, base);
@@ -71,6 +71,15 @@ function makeTileset(scene: Phaser.Scene) {
       for (const [dx, dy] of [[4, 4], [27, 4], [4, 27], [27, 27]]) px(ox + dx, oy + dy, 1, 1, rivet, 0.7);
       for (let y = 4; y < 30; y++)
         for (let x = 4; x < 30; x++) if (h(ox + x * 1.7, oy + y * 1.3) > 0.975) px(ox + x, oy + y, 1, 1, grime, 1);
+      // Rain-slicked: scattered specular glints + faint neon reflections bleeding down.
+      if (wet) {
+        for (let y = 3; y < 31; y++)
+          for (let x = 3; x < 31; x++) if (h(ox + x * 2.3, oy + y * 1.1) > 0.985) px(ox + x, oy + y, 1, 1, 0x8a9bc0, 0.55);
+        px(ox + 8, oy + 5, 1, 8, 0x29e7ff, 0.06); // reflected cyan sign
+        px(ox + 9, oy + 5, 1, 8, 0x29e7ff, 0.03);
+        px(ox + 22, oy + 17, 1, 7, 0xff2bd6, 0.06); // reflected magenta sign
+        px(ox + 16, oy + 9, 1, 10, 0xffffff, 0.03); // gloss streak
+      }
     };
 
     // Building ROOF (top-down): a solid dark mass with a lit parapet on top/left and
@@ -106,8 +115,8 @@ function makeTileset(scene: Phaser.Scene) {
     };
 
     // ── floors ──────────────────────────────────────────────────────────────
-    // 0 concrete — the default play surface
-    ground(0, 0x0c1120, 0x0e1424, 0x1d3a55, 0x2a4d6a, 0x080b14);
+    // 0 concrete — the default play surface (rain-slicked)
+    ground(0, 0x0c1120, 0x0e1424, 0x1d3a55, 0x2a4d6a, 0x080b14, true);
 
     // 1 sidewalk — paler paving slabs (2-slab grid) + curb edge + a manhole
     {
@@ -141,10 +150,16 @@ function makeTileset(scene: Phaser.Scene) {
       px(rx + 8, ry + 14, 6, 4, 0x05070c, 0.6); // oil stain
       for (let k = 0; k < 6; k++)
         px(rx + 4 + ((h(rx + k, ry) * 24) | 0), ry + 4 + ((h(rx, ry + k) * 24) | 0), 2, 1, 0x12161f);
+      // wet asphalt — specular glints + faint neon reflections streaking down
+      for (let y = 2; y < 31; y++)
+        for (let x = 2; x < 31; x++) if (h(rx + x * 2.7, ry + y * 1.4) > 0.987) px(rx + x, ry + y, 1, 1, 0x4a5878, 0.55);
+      px(rx + 6, ry + 2, 1, 9, 0x29e7ff, 0.07); // reflected cyan sign
+      px(rx + 25, ry + 18, 1, 8, 0xff2bd6, 0.07); // reflected magenta sign
+      px(rx + 16, ry, 1, 12, 0xffffff, 0.04); // centre gloss
     }
 
-    // 3 plaza — neon tile floor, magenta grout + a glowing diamond inlay
-    ground(3, 0x130a20, 0x160c26, 0x4a2060, 0x6a2e84, 0x0e0718);
+    // 3 plaza — neon tile floor, magenta grout + a glowing diamond inlay (rain-slicked)
+    ground(3, 0x130a20, 0x160c26, 0x4a2060, 0x6a2e84, 0x0e0718, true);
     {
       const pxo = cellX(3);
       const pyo = cellY(3);
