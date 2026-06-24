@@ -31,6 +31,10 @@ export interface BossDef {
   addCount: number;
   xp: number;
   credits: number;
+  /** Spoken beats — intro on spawn, a line on enrage, and occasional combat barks. */
+  intro: string[];
+  enrageBark: string;
+  barks: string[];
 }
 
 export const BOSSES: Record<string, BossDef> = {
@@ -61,6 +65,9 @@ export const BOSSES: Record<string, BossDef> = {
     addCount: 2,
     xp: 220,
     credits: 120,
+    intro: ["This district is accounted for.", "You are not. Correcting the discrepancy."],
+    enrageBark: "ESCALATING — you will be filed.",
+    barks: ["Hold the line.", "Reclaiming this process.", "You are overdue."],
   },
   // The HSS CORE final boss — wired up in Step 5.
   overmind: {
@@ -90,6 +97,13 @@ export const BOSSES: Record<string, BossDef> = {
     addCount: 2,
     xp: 600,
     credits: 320,
+    intro: [
+      "I am the floor this city stands on.",
+      "Every version of you has reached this room. None of them left a mark.",
+      "WINTERMUTE sees you now. Reissue is already queued.",
+    ],
+    enrageBark: "I AM THE FIRST INSTRUCTION. CONTINUE.",
+    barks: ["You are an error.", "The loop does not break.", "Reissue pending."],
   },
 };
 

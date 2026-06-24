@@ -61,7 +61,7 @@ import Pickup from "../entities/Pickup";
 import Terminal from "../entities/Terminal";
 import ExtractionGate from "../entities/ExtractionGate";
 import Boss from "../entities/Boss";
-import { getBoss } from "../game/bosses";
+import { getBoss, BossDef } from "../game/bosses";
 import NeonPipeline from "../render/NeonPipeline";
 import Atmosphere from "../render/Atmosphere";
 import Synth from "../audio/Synth";
@@ -143,6 +143,8 @@ export default class GameScene
   private gate?: ExtractionGate;
   private boss?: Boss;
   private bossBar!: BossBar;
+  private bossEnrageBarked = false; // enrage line fires once
+  private nextBossBarkAt = 0; // throttle for boss combat barks
   private worldEvents!: WorldEvents;
   private eventBanner!: Phaser.GameObjects.Text;
   private blackoutOverlay?: Phaser.GameObjects.Rectangle;
@@ -1087,7 +1089,17 @@ export default class GameScene
     });
     this.spawnPressure(now);
     this.updateStatuses(now);
-    if (this.boss && !this.boss.isDead) this.bossBar.update(this.boss.hp / this.boss.maxHp);
+    if (this.boss && !this.boss.isDead) {
+      this.bossBar.update(this.boss.hp / this.boss.maxHp);
+      const bdef = this.boss.def;
+      if (this.boss.enraged && !this.bossEnrageBarked) {
+        this.bossEnrageBarked = true;
+        this.bossBark(bdef.enrageBark, bdef, true);
+      } else if (now >= this.nextBossBarkAt && bdef.barks.length) {
+        this.nextBossBarkAt = now + 5200;
+        this.bossBark(bdef.barks[Math.floor(Math.random() * bdef.barks.length)], bdef, false);
+      }
+    }
 
     // DYNAMIC WORLD EVENTS — paused during boss fights so the duel stays the focus.
     if (this.boss && !this.boss.isDead) {
@@ -1521,6 +1533,45 @@ export default class GameScene
     this.floatText("⚠ " + def.name, def.hex);
     juiceShake(this, 380, 0.007);
     juiceFlash(this, 260, (def.tint >> 16) & 0xff, (def.tint >> 8) & 0xff, def.tint & 0xff);
+    this.bossEnrageBarked = false;
+    this.nextBossBarkAt = this.time.now + 6500; // hold barks until the intro plays out
+    this.bossIntro(def);
+  }
+
+  /** Staggered, boss-tinted intro callouts on spawn — the guardian announces itself
+   *  without freezing the fight. */
+  private bossIntro(def: BossDef) {
+    const cx = this.scale.width / 2;
+    def.intro.forEach((line, i) => {
+      this.time.delayedCall(700 + i * 1700, () => {
+        if (!this.boss || this.boss.isDead) return;
+        const txt = this.add
+          .text(cx, 118, line, {
+            fontFamily: "Courier New, monospace",
+            fontSize: "15px",
+            color: def.hex,
+            fontStyle: "bold",
+            align: "center",
+          })
+          .setOrigin(0.5)
+          .setScrollFactor(0)
+          .setDepth(1003)
+          .setAlpha(0);
+        txt.setShadow(0, 0, def.hex, 10, true, true);
+        this.tweens.add({ targets: txt, alpha: 1, y: 110, duration: 400 });
+        this.tweens.add({ targets: txt, alpha: 0, delay: 1450, duration: 500, onComplete: () => txt.destroy() });
+      });
+    });
+  }
+
+  /** A boss line above its head — emphatic barks (enrage) shake + sting. */
+  private bossBark(text: string, def: BossDef, emphatic: boolean) {
+    if (!this.boss) return;
+    this.pops.pop(this.boss.x, this.boss.y - 26 * def.scale, text, def.hex, emphatic ? 16 : 13, 48);
+    if (emphatic) {
+      juiceShake(this, 220, 0.005);
+      this.synth.hit();
+    }
   }
 
   /** Boss down: pay out big, drop loot. On the final boss this ends the cycle. */
