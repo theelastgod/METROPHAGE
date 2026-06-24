@@ -35,9 +35,20 @@ export interface PlayerLook {
   strap: boolean;
 }
 
+/**
+ * The exact message a client signs with its Solana wallet to prove identity at login.
+ * Shared by the client (signs) and the server (verifies) so the bytes always match.
+ * The timestamp bounds replay; the server additionally checks freshness.
+ */
+export function loginMessage(wallet: string, ts: number): string {
+  return `METROPHAGE login\nwallet: ${wallet}\nts: ${ts}`;
+}
+
 // client -> server
 export type ClientMsg =
-  | { t: "login"; name: string; faction?: number; look?: PlayerLook }
+  // login: a signed wallet (wallet+sig+ts) is a durable identity; without one the
+  // server falls back to a guest id derived from the callsign (dev / no-wallet play).
+  | { t: "login"; name: string; faction?: number; look?: PlayerLook; wallet?: string; sig?: string; ts?: number }
   | { t: "input"; seq: number; mx: number; my: number }
   | { t: "fire"; seq: number; aim: number } // aim in radians; server validates rate
   | { t: "chat"; ch: "zone" | "party" | "whisper"; to?: string; text: string }

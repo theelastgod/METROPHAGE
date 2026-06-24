@@ -396,6 +396,62 @@ async function lookpersist() {
   );
 }
 
+async function auth() {
+  const { ed25519 } = await import("@noble/curves/ed25519");
+  const bs58 = (await import("bs58")).default;
+  // must match protocol.loginMessage
+  const loginMessage = (wallet, ts) => `METROPHAGE login\nwallet: ${wallet}\nts: ${ts}`;
+
+  const priv = ed25519.utils.randomPrivateKey();
+  const wallet = bs58.encode(ed25519.getPublicKey(priv));
+
+  const signedLogin = (ws, opts = {}) =>
+    new Promise((resolve) => {
+      const ts = opts.ts ?? Date.now();
+      const to = setTimeout(() => resolve({ ok: false, reason: "no welcome" }), 4000);
+      const onMsg = (ev) => {
+        const m = JSON.parse(ev.data);
+        if (m.t === "welcome") {
+          clearTimeout(to);
+          ws.removeEventListener("message", onMsg);
+          resolve({ ok: true, id: m.id });
+        } else if (m.t === "sys" && /sign-in failed/i.test(m.text || "")) {
+          clearTimeout(to);
+          ws.removeEventListener("message", onMsg);
+          resolve({ ok: false, reason: "rejected" });
+        }
+      };
+      ws.addEventListener("message", onMsg);
+      // tamper = sign a DIFFERENT message than the ts we send, so the signature won't verify
+      const signedTs = opts.tamper ? ts + 1 : ts;
+      const sig = bs58.encode(ed25519.sign(new TextEncoder().encode(loginMessage(wallet, signedTs)), priv));
+      ws.send(JSON.stringify({ t: "login", name: "walletuser", wallet, sig, ts }));
+    });
+
+  const a = await connect();
+  const r1 = await signedLogin(a); // valid → durable wallet id
+  a.close();
+  const b = await connect();
+  const r2 = await signedLogin(b, { tamper: true }); // bad signature → rejected
+  b.close();
+  const c = await connect();
+  const r3 = await signedLogin(c, { ts: Date.now() - 5 * 60_000 }); // stale → rejected
+  c.close();
+  await sleep(300);
+
+  const checks = {
+    verifiedIdentity: r1.ok && r1.id === "w:" + wallet,
+    rejectsBadSignature: !r2.ok,
+    rejectsStaleTimestamp: !r3.ok,
+  };
+  report(
+    "AUTH — signed Solana wallet login → durable wallet id; bad/stale rejected",
+    { id: r1.id, badSig: r2.reason, stale: r3.reason },
+    Object.values(checks).every(Boolean),
+    checks,
+  );
+}
+
 async function mp() {
   const AOI = 720;
   const a = await connect();
@@ -1110,6 +1166,7 @@ try {
   else if (mode === "combat") await combat();
   else if (mode === "inventory") await inventory();
   else if (mode === "lookpersist") await lookpersist();
+  else if (mode === "auth") await auth();
   else if (mode === "mp") await mp();
   else if (mode === "zones") await zones();
   else if (mode === "territory") await territory();

@@ -49,6 +49,7 @@ import {
 import { buildGrid, spawnPoint, isWall, type TileGrid } from "../../src/world/district";
 import { DISTRICTS } from "../../src/game/districts";
 import { rollItem, type Item } from "../../src/game/items";
+import { verifyWalletLogin } from "./auth";
 
 /** Inventory is capped so the persisted JSON stays bounded; oldest drops out (FIFO). */
 const INVENTORY_CAP = 24;
@@ -423,7 +424,12 @@ export class WorldDO {
     } catch {
       return;
     }
-    if (msg.t === "login") return this.onLogin(ws, msg.name, msg.faction, msg.look);
+    if (msg.t === "login")
+      return this.onLogin(ws, msg.name, msg.faction, msg.look, {
+        wallet: msg.wallet,
+        sig: msg.sig,
+        ts: msg.ts,
+      });
     if (msg.t === "input") return this.onInput(ws, msg);
     if (msg.t === "fire") return this.onFire(ws, msg);
     if (msg.t === "chat") return this.onChat(ws, msg);
@@ -724,9 +730,36 @@ export class WorldDO {
     this.metaDelta[key] = (this.metaDelta[key] ?? 0) + delta;
   }
 
-  private async onLogin(ws: WebSocket, rawName: string, faction?: number, look?: PlayerLook) {
+  private async onLogin(
+    ws: WebSocket,
+    rawName: string,
+    faction?: number,
+    look?: PlayerLook,
+    proof?: { wallet?: string; sig?: string; ts?: number },
+  ) {
     const name = (rawName || "").trim().slice(0, 16) || "blank";
-    const id = name.toLowerCase().replace(/[^a-z0-9_-]/g, "") || "blank";
+    // Identity: a signature-verified Solana wallet is the durable id; otherwise a guest
+    // id derived from the callsign (dev / no-wallet play). A claimed-but-unverified
+    // wallet is rejected so a stranger can't assume someone else's account.
+    let id: string;
+    if (proof?.wallet || proof?.sig) {
+      const wid =
+        proof.wallet && proof.sig && Number.isFinite(proof.ts)
+          ? verifyWalletLogin({ wallet: proof.wallet, sig: proof.sig, ts: proof.ts! })
+          : null;
+      if (!wid) {
+        this.send(ws, { t: "sys", text: "wallet sign-in failed — bad signature or stale request" });
+        try {
+          ws.close(4001, "auth");
+        } catch {
+          /* already closing */
+        }
+        return;
+      }
+      id = wid;
+    } else {
+      id = name.toLowerCase().replace(/[^a-z0-9_-]/g, "") || "blank";
+    }
     const fac = Number.isInteger(faction) && faction! >= 0 && faction! < FACTION_COUNT ? faction! : 0;
     const p = this.players.get(id) ?? (await this.loadPlayer(id, name, fac));
     p.faction = fac;
