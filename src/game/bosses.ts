@@ -35,6 +35,9 @@ export interface BossDef {
   intro: string[];
   enrageBark: string;
   barks: string[];
+  /** Arena hazard the fight periodically inflicts. frost = lingering slow/DoT pools;
+   *  kernel = expanding damage rings from the boss. */
+  hazard: "frost" | "kernel";
 }
 
 export const BOSSES: Record<string, BossDef> = {
@@ -68,6 +71,7 @@ export const BOSSES: Record<string, BossDef> = {
     intro: ["This district is accounted for.", "You are not. Correcting the discrepancy."],
     enrageBark: "ESCALATING — you will be filed.",
     barks: ["Hold the line.", "Reclaiming this process.", "You are overdue."],
+    hazard: "frost",
   },
   // The HSS CORE final boss — wired up in Step 5.
   overmind: {
@@ -104,6 +108,7 @@ export const BOSSES: Record<string, BossDef> = {
     ],
     enrageBark: "I AM THE FIRST INSTRUCTION. CONTINUE.",
     barks: ["You are an error.", "The loop does not break.", "Reissue pending."],
+    hazard: "kernel",
   },
 };
 

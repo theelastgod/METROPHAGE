@@ -149,6 +149,9 @@ export default class GameScene
   private bossBar!: BossBar;
   private bossEnrageBarked = false; // enrage line fires once
   private nextBossBarkAt = 0; // throttle for boss combat barks
+  private bossHazardAt = 0; // next arena-hazard trigger
+  // Lingering FROST pools (boss arena hazard) — slow + chip the player while inside.
+  private hazardZones: Array<{ x: number; y: number; r: number; until: number; nextTick: number; g: Phaser.GameObjects.Arc }> = [];
   private worldEvents!: WorldEvents;
   private eventBanner!: Phaser.GameObjects.Text;
   private blackoutOverlay?: Phaser.GameObjects.Rectangle;
@@ -211,6 +214,9 @@ export default class GameScene
     this.overdriveUntil = 0;
     this.nextSpawnAt = 0;
     this.statuses.clear();
+    this.hazardZones.forEach((z) => z.g.destroy());
+    this.hazardZones = [];
+    this.bossHazardAt = 0;
     this.physics.world.resume();
     this.heat = new Heat();
     this.nextAutosaveAt = 0;
@@ -1158,7 +1164,7 @@ export default class GameScene
       }
     }
 
-    this.player.speedMult = this.spdMult;
+    this.player.speedMult = this.spdMult * this.updateHazards(now); // frost pools slow + chip
     this.player.tickShield(now, delta);
 
     const input = this.readInput();
@@ -1189,6 +1195,10 @@ export default class GameScene
       } else if (now >= this.nextBossBarkAt && bdef.barks.length) {
         this.nextBossBarkAt = now + 5200;
         this.bossBark(bdef.barks[Math.floor(Math.random() * bdef.barks.length)], bdef, false);
+      }
+      if (now >= this.bossHazardAt) {
+        this.bossHazardAt = now + (this.boss.enraged ? 3200 : 4600);
+        this.triggerBossHazard(bdef);
       }
     }
 
@@ -1626,7 +1636,94 @@ export default class GameScene
     juiceFlash(this, 260, (def.tint >> 16) & 0xff, (def.tint >> 8) & 0xff, def.tint & 0xff);
     this.bossEnrageBarked = false;
     this.nextBossBarkAt = this.time.now + 6500; // hold barks until the intro plays out
+    this.bossHazardAt = this.time.now + 7000; // first arena hazard after the intro
     this.bossIntro(def);
+  }
+
+  /** Boss arena hazard, fired on a timer during the fight. FROST drops lingering
+   *  slow/DoT pools near the player; KERNEL pulses an expanding damage ring from the
+   *  boss. Both telegraph before they bite. */
+  private triggerBossHazard(def: BossDef) {
+    if (def.hazard === "frost") {
+      const n = this.boss?.enraged ? 4 : 3;
+      for (let i = 0; i < n; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const rad = 40 + Math.random() * 150;
+        const x = Phaser.Math.Clamp(this.player.x + Math.cos(a) * rad, TILE, WORLD_W - TILE);
+        const y = Phaser.Math.Clamp(this.player.y + Math.sin(a) * rad, TILE, WORLD_H - TILE);
+        this.spawnFrostZone(x, y);
+      }
+    } else {
+      this.spawnKernelPulse();
+    }
+  }
+
+  /** A telegraphed frost pool that lingers as a slow/DoT zone (tracked in hazardZones). */
+  private spawnFrostZone(x: number, y: number) {
+    const r = 52;
+    const tell = this.add.circle(x, y, r, 0x6ad6ff, 0.1).setStrokeStyle(2, 0x6ad6ff, 0.7).setDepth(3);
+    this.tweens.add({ targets: tell, alpha: { from: 0.1, to: 0.35 }, yoyo: true, repeat: 2, duration: 220 });
+    this.time.delayedCall(720, () => {
+      tell.destroy();
+      const g = this.add.circle(x, y, r, 0x6ad6ff, 0.16).setStrokeStyle(1, 0x9af0ff, 0.5).setDepth(2);
+      this.hazardZones.push({ x, y, r, until: this.time.now + 3600, nextTick: 0, g });
+    });
+  }
+
+  /** An expanding kernel ring from the boss — telegraph, then a damaging sweep. */
+  private spawnKernelPulse() {
+    const boss = this.boss;
+    if (!boss) return;
+    const x = boss.x;
+    const y = boss.y;
+    const maxR = 220;
+    const ring = this.add.circle(x, y, 12, 0xff3b6b, 0).setStrokeStyle(3, 0xff3b6b, 0.9).setDepth(6);
+    this.synth.hit();
+    let hit = false;
+    this.tweens.add({
+      targets: ring,
+      radius: maxR,
+      duration: 620,
+      ease: "Quad.out",
+      onUpdate: () => {
+        if (hit || this.player.invulnerable) return;
+        const d = Phaser.Math.Distance.Between(this.player.x, this.player.y, x, y);
+        // the damaging band is the ring's leading edge (±16px)
+        if (Math.abs(d - ring.radius) <= 16) {
+          hit = true;
+          const died = this.player.applyDamage(20);
+          this.onPlayerHurt();
+          if (died) this.respawnPlayer();
+        }
+      },
+      onComplete: () => {
+        this.tweens.add({ targets: ring, alpha: 0, duration: 160, onComplete: () => ring.destroy() });
+      },
+    });
+  }
+
+  /** Per-frame hazard upkeep: expire frost pools, and return the player's slow factor
+   *  (chip damage applied here too). 1 = unaffected. */
+  private updateHazards(now: number): number {
+    let slow = 1;
+    for (let i = this.hazardZones.length - 1; i >= 0; i--) {
+      const z = this.hazardZones[i];
+      if (now >= z.until) {
+        z.g.destroy();
+        this.hazardZones.splice(i, 1);
+        continue;
+      }
+      if (Phaser.Math.Distance.Between(this.player.x, this.player.y, z.x, z.y) <= z.r) {
+        slow = 0.5; // chilled in the pool
+        if (now >= z.nextTick && !this.player.invulnerable) {
+          z.nextTick = now + 450;
+          const died = this.player.applyDamage(5);
+          this.onPlayerHurt();
+          if (died) this.respawnPlayer();
+        }
+      }
+    }
+    return slow;
   }
 
   /** Staggered, boss-tinted intro callouts on spawn — the guardian announces itself
