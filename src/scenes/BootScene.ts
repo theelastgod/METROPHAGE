@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { ASSETS } from "../assets/manifest";
 import { generatePlaceholders } from "../assets/textures";
+import { ensureItemIcons } from "../assets/itemIcons";
 import NeonPipeline from "../render/NeonPipeline";
 
 /**
@@ -32,6 +33,7 @@ export default class BootScene extends Phaser.Scene {
 
   create() {
     generatePlaceholders(this);
+    ensureItemIcons(this); // bake procedural item icons (weapons / gear / consumables)
 
     // Register the neon post-FX pipeline once (WebGL only).
     if (this.renderer.type === Phaser.WEBGL) {

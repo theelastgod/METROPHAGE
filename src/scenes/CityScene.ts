@@ -20,8 +20,9 @@ import { KEY_NPCS, CITIZENS } from "../game/cityNpcs";
 import { CityQuests, type TalkResult } from "../game/cityQuests";
 import { loadSave, writeSave } from "../systems/Save";
 import Inventory from "../systems/Inventory";
-import { rollItem, makeExoticWeaponItem } from "../game/items";
+import { rollItem, makeWeaponItem } from "../game/items";
 import { getWeapon } from "../game/weapons";
+import { CONSUMABLES } from "../game/consumables";
 import { fmtMetro } from "../economy/metro";
 import BlackMarketPanel from "../ui/BlackMarketPanel";
 import NeonPipeline from "../render/NeonPipeline";
@@ -263,7 +264,8 @@ export default class CityScene extends Phaser.Scene {
 
     this.market = new BlackMarketPanel(this, {
       getMetro: () => loadSave()?.progress.metro ?? 0,
-      buy: (weaponId) => this.buyExotic(weaponId),
+      buyWeapon: (id) => this.buyWeapon(id),
+      buyConsumable: (id) => this.buyConsumableMetro(id),
     });
 
     // persistent corner hint so it's discoverable even before you find the stall
@@ -273,23 +275,41 @@ export default class CityScene extends Phaser.Scene {
       .setDepth(1000);
   }
 
-  /** Buy an exotic against the shared save: deduct $METRO, drop the weapon in the bag. */
-  private buyExotic(weaponId: string): "ok" | "poor" | "full" | "nochar" {
+  /** Buy a weapon against the shared save: deduct $METRO, drop the weapon in the bag. */
+  private buyWeapon(weaponId: string): "ok" | "poor" | "full" | "nochar" {
     const save = loadSave();
     if (!save) return "nochar";
-    const price = getWeapon(weaponId)?.metro ?? 0;
+    const w = getWeapon(weaponId);
+    if (!w) return "nochar";
     const metro = save.progress.metro ?? 0;
-    if (metro < price) return "poor";
+    if (metro < w.metro) return "poor";
     const inv = new Inventory();
     inv.load(save.inventory);
     if (inv.full) return "full";
-    const item = makeExoticWeaponItem(weaponId, save.progress.level ?? 1);
+    const item = makeWeaponItem(weaponId, save.progress.level ?? 1);
     if (!inv.add(item)) return "full";
-    save.progress.metro = metro - price;
+    save.progress.metro = metro - w.metro;
     save.inventory = inv.toData();
     writeSave(save);
     this.refreshWallet();
     this.toast(`◈ ${item.name} → bag`);
+    return "ok";
+  }
+
+  /** Buy a consumable against the shared save: deduct $METRO, add to the kit. */
+  private buyConsumableMetro(id: string): "ok" | "poor" | "nochar" {
+    const save = loadSave();
+    if (!save) return "nochar";
+    const c = CONSUMABLES.find((x) => x.id === id);
+    if (!c) return "nochar";
+    const metro = save.progress.metro ?? 0;
+    if (metro < c.metro) return "poor";
+    save.progress.metro = metro - c.metro;
+    save.progress.consumables = save.progress.consumables ?? {};
+    save.progress.consumables[id] = (save.progress.consumables[id] ?? 0) + 1;
+    writeSave(save);
+    this.refreshWallet();
+    this.toast(`◈ ${c.name} → kit`);
     return "ok";
   }
 

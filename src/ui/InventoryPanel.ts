@@ -2,11 +2,21 @@ import Phaser from "phaser";
 import { VIEW_W, VIEW_H } from "../config";
 import Inventory from "../systems/Inventory";
 import { Item, Slot, SLOTS, SLOT_NAMES, RARITIES, itemStatLines } from "../game/items";
+import { getWeapon } from "../game/weapons";
+import { iconKey } from "../assets/itemIcons";
 import { ModBag } from "../game/stats";
 import { drawPanelFrame } from "./panelChrome";
 
 const COLS = 6;
 const ROWS = 4;
+const SLOT_ICON: Record<string, string> = { weapon: "WEAPON-MOD", implant: "IMPLANT", armor: "ARMOR", chip: "CHIP" };
+
+/** Icon texture + tint for an inventory item (weapon → its type icon, else the slot icon). */
+function itemIcon(it: Item): { key: string; tint: number } {
+  const w = getWeapon(it.weaponId);
+  if (w) return { key: iconKey(w.klass), tint: w.tint };
+  return { key: iconKey(SLOT_ICON[it.slot] ?? "CHIP"), tint: RARITIES[it.rarity].color };
+}
 
 /**
  * Inventory overlay (toggle I): 4 equip slots + a bag grid. Click a bag item to
@@ -19,7 +29,9 @@ export default class InventoryPanel {
   private onChange: () => void;
   private g: Phaser.GameObjects.Graphics;
   private cellTexts: Phaser.GameObjects.Text[] = [];
+  private cellIcons: Phaser.GameObjects.Image[] = [];
   private slotTexts: Phaser.GameObjects.Text[] = [];
+  private slotIcons: Phaser.GameObjects.Image[] = [];
   private header!: Phaser.GameObjects.Text;
   private summary!: Phaser.GameObjects.Text;
   private detail!: Phaser.GameObjects.Text;
@@ -48,7 +60,10 @@ export default class InventoryPanel {
     SLOTS.forEach((slot, i) => {
       const by = this.slotY(i);
       this.text(this.x + 22, by + 5, SLOT_NAMES[slot], "#9aa3b2", "9px", D);
-      this.slotTexts.push(this.text(this.x + 22, by + 22, "—", "#5a6172", "10px", D + 1));
+      this.slotTexts.push(this.text(this.x + 44, by + 22, "—", "#5a6172", "10px", D + 1));
+      this.slotIcons.push(
+        scene.add.image(this.x + 30, by + 25, iconKey(SLOT_ICON[slot])).setDisplaySize(26, 26).setScrollFactor(0).setDepth(D + 1).setVisible(false),
+      );
       const z = scene.add
         .zone(this.x + 16, by, 156, 46)
         .setOrigin(0)
@@ -62,8 +77,11 @@ export default class InventoryPanel {
     // Bag grid (right).
     for (let i = 0; i < COLS * ROWS; i++) {
       const { cx, cy } = this.cellPos(i);
+      this.cellIcons.push(
+        scene.add.image(cx + this.cellW / 2, cy + this.cellH / 2, iconKey("PISTOL")).setDisplaySize(32, 32).setScrollFactor(0).setDepth(D + 1).setVisible(false),
+      );
       this.cellTexts.push(
-        this.text(cx + this.cellW / 2, cy + this.cellH / 2, "", "#eafdff", "13px", D + 1).setOrigin(0.5),
+        this.text(cx + this.cellW - 6, cy + this.cellH - 4, "", "#eafdff", "8px", D + 2).setOrigin(1, 1),
       );
       const z = scene.add
         .zone(cx, cy, this.cellW, this.cellH)
@@ -149,6 +167,11 @@ export default class InventoryPanel {
       const col = it ? RARITIES[it.rarity].color : 0x3a3350;
       g.fillStyle(0x0c0a18, 0.92).fillRect(this.x + 16, by, 156, 46);
       g.lineStyle(2, col, it ? 1 : 0.6).strokeRect(this.x + 16, by, 156, 46);
+      const sIcon = this.slotIcons[i];
+      if (it) {
+        const ic = itemIcon(it);
+        sIcon.setVisible(true).setTexture(ic.key).setTint(ic.tint);
+      } else sIcon.setVisible(false);
       this.slotTexts[i]
         .setText(it ? it.name : "—")
         .setColor(it ? RARITIES[it.rarity].hex : "#5a6172");
@@ -161,9 +184,15 @@ export default class InventoryPanel {
       const col = it ? RARITIES[it.rarity].color : 0x241d3a;
       g.fillStyle(it ? 0x14102a : 0x0c0a18, 0.92).fillRect(cx, cy, this.cellW, this.cellH);
       g.lineStyle(1, col, it ? 1 : 0.5).strokeRect(cx, cy, this.cellW, this.cellH);
-      this.cellTexts[i]
-        .setText(it ? SLOT_NAMES[it.slot][0] : "")
-        .setColor(it ? RARITIES[it.rarity].hex : "#5a6172");
+      const icon = this.cellIcons[i];
+      if (it) {
+        const ic = itemIcon(it);
+        icon.setVisible(true).setTexture(ic.key).setTint(ic.tint);
+        this.cellTexts[i].setText(SLOT_NAMES[it.slot][0]).setColor(RARITIES[it.rarity].hex);
+      } else {
+        icon.setVisible(false);
+        this.cellTexts[i].setText("");
+      }
     }
   }
 
@@ -189,6 +218,10 @@ export default class InventoryPanel {
     this.header.setVisible(v);
     this.summary.setVisible(v);
     this.detail.setVisible(v);
+    if (!v) {
+      this.cellIcons.forEach((i) => i.setVisible(false));
+      this.slotIcons.forEach((i) => i.setVisible(false));
+    }
   }
 
   private text(x: number, y: number, s: string, color: string, size: string, depth: number) {

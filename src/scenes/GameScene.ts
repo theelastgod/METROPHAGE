@@ -1001,6 +1001,8 @@ export default class GameScene
       kb.addKey(Phaser.Input.Keyboard.KeyCodes.ONE),
       kb.addKey(Phaser.Input.Keyboard.KeyCodes.TWO),
       kb.addKey(Phaser.Input.Keyboard.KeyCodes.THREE),
+      kb.addKey(Phaser.Input.Keyboard.KeyCodes.FOUR),
+      kb.addKey(Phaser.Input.Keyboard.KeyCodes.FIVE),
     ];
     kb.on("keydown-ESC", () => {
       this.skillPanel?.close();
@@ -1535,11 +1537,11 @@ export default class GameScene
 
   private useConsumable(index: number) {
     const id = CONSUMABLE_KEYS[index];
-    if (!this.progression.useConsumable(id)) return;
-    if (id === "repair") this.player.hp = Math.min(this.player.maxHp, this.player.hp + 40);
-    else if (id === "shield") this.player.shield = this.player.maxShield;
-    else if (id === "heatcharge") this.heat.add(40, this.time.now);
+    if (!id || !this.progression.useConsumable(id)) return;
     const def = CONSUMABLES.find((c) => c.id === id)!;
+    if (def.heal) this.player.hp = Math.min(this.player.maxHp, this.player.hp + (def.heal === Infinity ? this.player.maxHp : def.heal));
+    if (def.shield) this.player.shield = this.player.maxShield;
+    if (def.heat) this.heat.add(def.heat, this.time.now);
     this.floatText(def.name, def.hex);
     this.synth.infect();
     this.autosave(true);
