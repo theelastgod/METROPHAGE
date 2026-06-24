@@ -531,10 +531,55 @@ export default class GameScene
     const gained = this.progression.addXp(tierXp);
     if (gained > 0) {
       this.recomputeStats();
-      this.floatText(`LEVEL ${this.progression.level}`, "#f7ff3c");
-      this.synth.levelUp();
-      this.spark(this.player.x, this.player.y, 0xf7ff3c, 4);
+      this.celebrateLevelUp();
     }
+  }
+
+  /** A proper RPG level-up beat: banner + the stat gains + a nudge to spend the point. */
+  private celebrateLevelUp() {
+    const lv = this.progression.level;
+    this.synth.levelUp();
+    this.spark(this.player.x, this.player.y, 0xf7ff3c, 7);
+    juiceFlash(this, 300, 70, 60, 0);
+    juiceShake(this, 200, 0.006);
+    const cx = this.scale.width / 2;
+    const cy = this.scale.height / 2 - 36;
+    const banner = this.add
+      .text(cx, cy, `◢ LEVEL ${lv} ◣`, {
+        fontFamily: "Courier New, monospace",
+        fontSize: "42px",
+        color: "#f7ff3c",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(2000)
+      .setAlpha(0)
+      .setScale(0.6);
+    banner.setShadow(0, 0, "#ff2bd6", 20, true, true);
+    const sub = this.add
+      .text(cx, cy + 40, "+5 HP   +2% DMG   +1 SKILL POINT  ·  press K to spend", {
+        fontFamily: "Courier New, monospace",
+        fontSize: "13px",
+        color: "#eafdff",
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(2000)
+      .setAlpha(0);
+    this.tweens.add({ targets: banner, alpha: 1, scale: 1, duration: 360, ease: "Back.out" });
+    this.tweens.add({ targets: sub, alpha: 1, duration: 400, delay: 180 });
+    this.tweens.add({
+      targets: [banner, sub],
+      alpha: 0,
+      y: "-=26",
+      delay: 1500,
+      duration: 700,
+      onComplete: () => {
+        banner.destroy();
+        sub.destroy();
+      },
+    });
   }
 
   /** Crossing up a Heat tier — pop + swell + brief accent flash. */
@@ -1063,7 +1108,10 @@ export default class GameScene
       overdriveActive: this.inOverdrive,
       level: this.progression.level,
       xpNorm: this.progression.atCap ? 1 : this.progression.xp / this.progression.nextLevelXp,
+      xpInto: this.progression.xp,
+      xpNext: this.progression.atCap ? 0 : this.progression.nextLevelXp,
       credits: this.progression.currency,
+      metro: this.progression.metro,
       skillPoints: this.progression.skillPoints,
       shield: this.player.shield,
       shieldMax: this.player.maxShield,
@@ -1400,7 +1448,7 @@ export default class GameScene
       if (!q) return;
       this.progression.addCurrency(q.reward.currency);
       this.progression.addMetro(40);
-      this.progression.addXp(q.reward.xp);
+      const gainedLv = this.progression.addXp(q.reward.xp);
       for (let i = 0; i < q.reward.loot; i++) {
         const item = rollItem(this.progression.level, q.reward.lootBoost);
         if (!this.inventory.add(item)) {
@@ -1408,6 +1456,7 @@ export default class GameScene
         }
       }
       this.recomputeStats();
+      if (gainedLv > 0) this.celebrateLevelUp();
       this.journalPanel.refresh();
       juiceFlash(this, 360, 60, 0, 90);
       this.floatText(`${q.name} — COMPLETE`, "#8a5cff");
@@ -1470,7 +1519,7 @@ export default class GameScene
       }
     }
     this.recomputeStats();
-    if (gained > 0) this.floatText(`LEVEL ${this.progression.level}`, "#f7ff3c");
+    if (gained > 0) this.celebrateLevelUp();
     if (res.fragmentId) this.recoverFragment(res.fragmentId);
     else this.floatText("DIVE COMPLETE", "#29e7ff");
     this.fireQuestTrigger("dive");
@@ -1588,7 +1637,7 @@ export default class GameScene
     this.progression.addMetro(15);
     const gained = this.progression.addXp(def.reward.xp);
     this.recomputeStats();
-    if (gained > 0) this.floatText(`LEVEL ${this.progression.level}`, "#f7ff3c");
+    if (gained > 0) this.celebrateLevelUp();
     else this.floatText(`${def.name} SURVIVED  +${def.reward.xp} XP`, "#39ff88");
     this.synth.infect();
     this.autosave(true);
@@ -1821,8 +1870,8 @@ export default class GameScene
     // Guardian down → core exposed. On the HSS CORE this is the OVERMIND: take the
     // core to push the Singularity to 100 and melt the city down.
     this.territory.setCoreLocked(false);
-    if (gained > 0) this.floatText(`LEVEL ${this.progression.level}`, "#f7ff3c");
-    else this.floatText(`${boss.def.name} DOWN — CORE EXPOSED`, "#39ff88");
+    if (gained > 0) this.celebrateLevelUp();
+    this.floatText(`${boss.def.name} DOWN — CORE EXPOSED`, "#39ff88");
     this.synth.meltdown();
     this.autosave(true);
   }

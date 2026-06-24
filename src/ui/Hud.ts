@@ -19,7 +19,10 @@ export interface HudState {
   overdriveActive: boolean;
   level: number;
   xpNorm: number; // 0..1
+  xpInto: number; // raw XP into the current level
+  xpNext: number; // XP needed to reach the next level (0 = at cap)
   credits: number;
+  metro: number; // $METRO premium balance
   skillPoints: number;
   shield: number;
   shieldMax: number;
@@ -192,7 +195,8 @@ export default class Hud {
     );
 
     this.callsignText.setText(s.callsign ? `▸ ${s.callsign}` : "").setColor(hex(s.classColor));
-    this.metaText.setText(`LV ${s.level}   ₵ ${s.credits}`);
+    const xpLine = s.xpNext > 0 ? `XP ${s.xpInto}/${s.xpNext}` : "XP ▲MAX";
+    this.metaText.setText(`LV ${s.level}   ₵ ${s.credits}   ◈ ${s.metro}\n${xpLine}`);
     this.contractText.setText(s.contract ? `◢ ${s.contract}` : "");
     this.questText.setText(s.quest ? `◆ ${s.quest}` : "");
     this.consumeText.setText(s.consumables);
