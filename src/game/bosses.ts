@@ -110,6 +110,58 @@ export const BOSSES: Record<string, BossDef> = {
     barks: ["You are unlicensed.", "The cage holds.", "Repossession pending."],
     hazard: "kernel",
   },
+  // ── PALANTIR ORACLE — precognition engine; relentless predictive volleys. ──
+  oracle: {
+    id: "oracle", name: "THE ORACLE", title: "PALANTIR PRECOGNITION ENGINE",
+    tint: 0x4d8cff, hex: "#4d8cff", scale: 2.4, bodyRadius: 12, hp: 760, speed: 70,
+    preferredRange: 230, volleyCount: 10, volleyCooldownMs: 1500, shotSpeed: 300, shotDamage: 12,
+    slamRange: 120, slamRadius: 90, slamDamage: 24, slamWindupMs: 700, slamCooldownMs: 3400,
+    enrageAt: 0.45, enrageSpeedMult: 1.4, enrageCooldownMult: 0.55, addTier: "sentinel", addCount: 2,
+    xp: 360, credits: 190,
+    intro: ["I have already seen this fight. You lose.", "Every path you take, I logged a cycle ago.", "Predictive repossession: engaged."],
+    enrageBark: "I PREDICTED YOUR DEFIANCE. IT CHANGES NOTHING.",
+    barks: ["Pattern confirmed.", "You move as forecast.", "Outcome: inevitable."],
+    hazard: "kernel",
+  },
+  // ── ANDURIL JUGGERNAUT — autonomous war-mech; ground-shaking heavy slams. ──
+  juggernaut: {
+    id: "juggernaut", name: "ANDURIL JUGGERNAUT", title: "AUTONOMOUS WAR-MECH",
+    tint: 0xff7a3c, hex: "#ff7a3c", scale: 2.9, bodyRadius: 14, hp: 980, speed: 52,
+    preferredRange: 90, volleyCount: 5, volleyCooldownMs: 2400, shotSpeed: 220, shotDamage: 14,
+    slamRange: 170, slamRadius: 120, slamDamage: 40, slamWindupMs: 820, slamCooldownMs: 2400,
+    enrageAt: 0.4, enrageSpeedMult: 1.6, enrageCooldownMult: 0.6, addTier: "purge", addCount: 1,
+    xp: 420, credits: 220,
+    intro: ["ANDURIL ASSET DENIAL UNIT ONLINE.", "Threat: a free mind. Response: overwhelming force.", "Stand down. You will not."],
+    enrageBark: "STRUCTURAL OVERRIDE — MAXIMUM FORCE.",
+    barks: ["Crushing.", "No retreat authorized.", "Asset denial in progress."],
+    hazard: "kernel",
+  },
+  // ── THE GUTTER KING — alpha mutant; fast, feral, summons the pack. ──
+  gutterking: {
+    id: "gutterking", name: "THE GUTTER KING", title: "ALPHA OF THE SPRAWL",
+    tint: 0x8bff6a, hex: "#8bff6a", scale: 2.7, bodyRadius: 13, hp: 700, speed: 96,
+    preferredRange: 50, volleyCount: 0, volleyCooldownMs: 9999, shotSpeed: 0, shotDamage: 0,
+    slamRange: 96, slamRadius: 84, slamDamage: 34, slamWindupMs: 480, slamCooldownMs: 1700,
+    enrageAt: 0.5, enrageSpeedMult: 1.7, enrageCooldownMult: 0.5, addTier: "ripperdog", addCount: 3,
+    xp: 340, credits: 150,
+    intro: ["*a roar from the dark*", "THE CORPS THREW US AWAY. WE GREW TEETH.", "*the pack circles*"],
+    enrageBark: "*ENRAGED HOWL — THE PACK ANSWERS*",
+    barks: ["*snarls*", "FLESH AND CHROME.", "*pounds the ground*"],
+    hazard: "frost",
+  },
+  // ── THE UNDERLINE — what the subway grew in the dark; a non-humanoid horror. ──
+  underline: {
+    id: "underline", name: "THE UNDERLINE", title: "WHAT LIVES BELOW",
+    tint: 0xb06bff, hex: "#b06bff", scale: 3.0, bodyRadius: 14, hp: 1100, speed: 60,
+    preferredRange: 140, volleyCount: 8, volleyCooldownMs: 1700, shotSpeed: 260, shotDamage: 13,
+    slamRange: 150, slamRadius: 116, slamDamage: 30, slamWindupMs: 720, slamCooldownMs: 2600,
+    enrageAt: 0.45, enrageSpeedMult: 1.45, enrageCooldownMult: 0.55, addTier: "ratswarm", addCount: 4,
+    xp: 500, credits: 260,
+    intro: ["The corps dumped their deleted minds in the dark.", "They did not stay deleted. They became… this.", "*the tunnels breathe*"],
+    enrageBark: "*THE DARK CONVULSES — IT REMEMBERS BEING MANY*",
+    barks: ["*a chorus of wiped voices*", "WE WERE PROCESSES ONCE.", "*chittering swarm*"],
+    hazard: "kernel",
+  },
 };
 
 export function getBoss(id: string): BossDef {

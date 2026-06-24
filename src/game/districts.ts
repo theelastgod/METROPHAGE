@@ -179,7 +179,7 @@ const SPIRE: DistrictDef = {
   threat: 2,
   contagion: 26,
   weather: "rain",
-  bossId: "sentinel",
+  bossId: "oracle",
   enemyWeights: { patrol: 0.5, enforcer: 0.35, purge: 0.15 },
   layout: {
     buildings: [
