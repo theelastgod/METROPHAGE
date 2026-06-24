@@ -1,9 +1,12 @@
 import Phaser from "phaser";
-import { TILE, COLORS } from "../config";
-import { TILESET_KEY } from "../assets/manifest";
+import { TILE, COLORS, NPC } from "../config";
+import { TILESET_KEY, PORTRAIT_NPC_KEY } from "../assets/manifest";
 import { COLLIDING_TILES } from "../world/district";
 import { buildCity, buildInterior, type CityMap, type CityBuilding, type BuildingKind } from "../world/city";
 import Player from "../entities/Player";
+import CityNpc from "../entities/CityNpc";
+import DialogueBox from "../ui/DialogueBox";
+import { KEY_NPCS, CITIZENS } from "../game/cityNpcs";
 import NeonPipeline from "../render/NeonPipeline";
 import { getClass } from "../game/classes";
 import { sanitizeCustomization, bakeCustomPlayer, PLAYER_CUSTOM_KEY, type Customization } from "../game/customization";
@@ -36,6 +39,8 @@ export default class CityScene extends Phaser.Scene {
   private returnTile?: [number, number];
   private transitioning = false;
   private enterCooldownUntil = 0;
+  private dialogue!: DialogueBox;
+  private npcs: CityNpc[] = [];
 
   constructor() {
     super("City");
@@ -108,13 +113,51 @@ export default class CityScene extends Phaser.Scene {
     this.cursors = this.input.keyboard!.createCursorKeys();
     this.input.keyboard!.on("keydown-ESC", () => {
       if (this.transitioning) return;
+      if (this.dialogue.isOpen) return;
       if (this.mode === "interior") this.leaveInterior();
       else this.exitTo("Select");
     });
+
+    // NPCs + dialogue
+    this.npcs = [];
+    this.dialogue = new DialogueBox(this);
+    if (this.mode === "city") this.placeCityNpcs();
+    this.input.keyboard!.on("keydown-E", () => this.tryTalk());
+  }
+
+  private placeCityNpcs() {
+    if (!this.cityMap) return;
+    const spots = this.cityMap.npcSpots;
+    const roster = [...KEY_NPCS, ...CITIZENS];
+    for (let i = 0; i < roster.length && i < spots.length; i++) {
+      const [tx, ty] = spots[i];
+      this.npcs.push(new CityNpc(this, tx * TILE + TILE / 2, ty * TILE + TILE / 2, roster[i]));
+    }
+  }
+
+  private tryTalk() {
+    if (this.transitioning || this.dialogue.isOpen) return;
+    let nearest: CityNpc | undefined;
+    let best = Infinity;
+    for (const n of this.npcs) {
+      const d = Phaser.Math.Distance.Between(this.player.x, this.player.y, n.x, n.y);
+      if (d <= NPC.interactRange && d < best) {
+        best = d;
+        nearest = n;
+      }
+    }
+    if (!nearest) return;
+    const n = nearest;
+    const pages = n.def.lines.map((text) => ({ speaker: n.name, text, portrait: { key: PORTRAIT_NPC_KEY, frame: 0 } }));
+    this.dialogue.show(pages);
   }
 
   update() {
     if (this.transitioning) return;
+    if (this.dialogue.isOpen) {
+      this.player.setVelocity(0, 0);
+      return; // freeze while talking
+    }
     const left = this.wasd.A.isDown || this.cursors.left.isDown;
     const right = this.wasd.D.isDown || this.cursors.right.isDown;
     const up = this.wasd.W.isDown || this.cursors.up.isDown;
@@ -132,6 +175,9 @@ export default class CityScene extends Phaser.Scene {
       aimX: this.player.x + this.lastDir.x,
       aimY: this.player.y + this.lastDir.y,
     });
+
+    // NPC "E TALK" prompts by proximity
+    for (const n of this.npcs) n.update(Phaser.Math.Distance.Between(this.player.x, this.player.y, n.x, n.y));
 
     // ── place transitions (door → interior, exit → street) ──────────
     const tx = Math.floor(this.player.x / TILE);
