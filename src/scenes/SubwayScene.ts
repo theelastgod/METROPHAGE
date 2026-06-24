@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { installUiCamera } from "../render/cameras";
 import { TILE, COLORS, BULLET, ENEMY_BULLET } from "../config";
 import { getClass, ClassDef, PrimaryDef } from "../game/classes";
 import { ENEMY_TIERS, EnemyHost } from "../game/enemies";
@@ -174,6 +175,7 @@ export default class SubwayScene extends Phaser.Scene implements EnemyHost {
     const cam = this.cameras.main;
     cam.setBounds(0, 0, AW * TILE, AH * TILE);
     cam.startFollow(this.player, true, 0.12, 0.12);
+    installUiCamera(this, 1);
   }
 
   private setupPostFX() {

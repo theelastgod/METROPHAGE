@@ -11,14 +11,25 @@ export const WORLD_W = GRID_W * TILE;
 export const WORLD_H = GRID_H * TILE;
 
 /**
- * Logical render size. The canvas scales to fit the window (Phaser.Scale.FIT).
- * The camera stays at zoom 1 (scroll-fixed UI would be displaced by camera zoom),
- * so this resolution IS the fidelity ceiling for the post-FX, text, and emissive
- * glows. Bumped 720×405 → 960×540 (+78% pixels) for a sharper neon-noir image; the
- * UI is anchored to these constants / `scale.width`, so it re-layouts cleanly.
+ * Render/backing resolution. The canvas scales to fit the window (Phaser.Scale.FIT),
+ * so this IS the fidelity ceiling — below the window size Phaser nearest-neighbour
+ * upscales it (blocky). Supersampled from the 960×540 design size up to 1600×900
+ * (RENDER_SCALE) for a crisp neon-noir image at modern window sizes.
+ *
+ * Framing is preserved, not changed: each world camera zooms by RENDER_SCALE (see
+ * render/cameras.ts → installUiCamera), so the world is still authored/played in the
+ * 960×540 logical space but drawn into the bigger buffer. Screen-space UI
+ * (scrollFactor 0) rides a separate zoom-1 UI camera, so it stays put + escapes the
+ * world post-FX. The UI anchors to these constants / `scale.width`, so it re-layouts
+ * cleanly at the new size.
  */
-export const VIEW_W = 960;
-export const VIEW_H = 540;
+/** Original logical design size — the world + UI are still authored at this scale. */
+const DESIGN_W = 960;
+/** Backing buffer (exact integers — these are the real canvas dimensions). */
+export const VIEW_W = 1600;
+export const VIEW_H = 900;
+/** Supersample factor: each world camera zooms by this to keep the 960×540 framing. */
+export const RENDER_SCALE = VIEW_W / DESIGN_W; // 5/3
 
 /** Player tuning. */
 export const PLAYER = {

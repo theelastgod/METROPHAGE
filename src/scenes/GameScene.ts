@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { installUiCamera } from "../render/cameras";
 import {
   TILE,
   WORLD_W,
@@ -1025,8 +1026,9 @@ export default class GameScene
     const cam = this.cameras.main;
     cam.setBounds(0, 0, WORLD_W, WORLD_H);
     cam.startFollow(this.player, true, 0.12, 0.12);
-    // Zoom stays at 1: the close feel comes from the small logical resolution
-    // (Scale.FIT upscales). Zooming here would displace scroll-fixed HUD/dialogue.
+    // Supersampled render: the world camera zooms by RENDER_SCALE to keep the original
+    // framing in the bigger buffer; the HUD/dialogue ride a separate zoom-1 UI camera.
+    installUiCamera(this, 1);
   }
 
   private setupInput() {

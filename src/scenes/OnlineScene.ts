@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { installUiCamera } from "../render/cameras";
 import { COLORS, TILE } from "../config";
 import { TILESET_KEY, PLAYER_KEY, COP_KEY, BULLET_KEY, GLOW_KEY, NODE_KEY } from "../assets/manifest";
 import { driveChar } from "../assets/anim";
@@ -126,6 +127,7 @@ export default class OnlineScene extends Phaser.Scene {
     const tileset = map.addTilesetImage(TILESET_KEY, TILESET_KEY, TILE, TILE)!;
     map.createLayer(0, tileset, 0, 0)!;
     this.cameras.main.setBounds(0, 0, WORLD_W, WORLD_H);
+    installUiCamera(this, 1);
     this.applyNeon();
     this.drawPvpZones(); // mark the free-for-all arenas (server enforces the damage)
 

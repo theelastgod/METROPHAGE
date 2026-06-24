@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { installUiCamera } from "../render/cameras";
 import { TILE, COLORS, NPC } from "../config";
 import { TILESET_KEY, PORTRAIT_NPC_KEY, GLOW_KEY } from "../assets/manifest";
 import { COLLIDING_TILES, isWall } from "../world/district";
@@ -147,11 +148,11 @@ export default class CityScene extends Phaser.Scene {
     // City clamps the camera to the big map; a small interior centres + zooms in, so the
     // room fills the frame (reads as "indoors") rather than clamping to a corner.
     if (this.mode === "city") {
-      this.cameras.main.setZoom(1);
       this.cameras.main.setBounds(0, 0, worldW, worldH);
+      installUiCamera(this, 1);
     } else {
       this.cameras.main.removeBounds();
-      this.cameras.main.setZoom(1.35);
+      installUiCamera(this, 1.35); // interiors zoom in so the room fills the frame
     }
     this.cameras.main.startFollow(this.player, true, 0.12, 0.12);
 
