@@ -20,7 +20,7 @@ import {
 import Player from "../entities/Player";
 import CityNpc from "../entities/CityNpc";
 import DialogueBox from "../ui/DialogueBox";
-import { AMBIENT_NPCS, INTERIOR_PLAN, keeperFor, npcDef } from "../game/cityNpcs";
+import { AMBIENT_NPCS, INTERIOR_PLAN, keeperFor, npcDef, SUBWAY_WARDEN } from "../game/cityNpcs";
 import { CityQuests, type TalkResult } from "../game/cityQuests";
 import { loadSave, writeSave } from "../systems/Save";
 import Inventory from "../systems/Inventory";
@@ -187,6 +187,7 @@ export default class CityScene extends Phaser.Scene {
       this.spawnCollectibles();
       this.setupBlackMarket();
       this.setupEnvPlate();
+      this.checkSubwayCleared();
     } else {
       this.drawInteriorFurniture();
       this.populateInterior();
@@ -490,15 +491,25 @@ export default class CityScene extends Phaser.Scene {
   private placeCityNpcs() {
     if (!this.cityMap) return;
     const spots = this.cityMap.npcSpots;
-    // Any named NPC without a building goes first (central spots), then the ambient crowd.
+    // The Transit Warden (subway quest-giver) takes the most central spot; then any named
+    // NPC without a building; then the ambient crowd.
     const homeless = ((this.registry.get("cityHomeless") as string[]) ?? [])
       .map((id) => npcDef(id))
       .filter((d): d is NonNullable<typeof d> => !!d);
+    const placed = [SUBWAY_WARDEN, ...homeless];
     for (let i = 0; i < spots.length; i++) {
-      const def = i < homeless.length ? homeless[i] : AMBIENT_NPCS[(i - homeless.length) % AMBIENT_NPCS.length];
+      const def = i < placed.length ? placed[i] : AMBIENT_NPCS[(i - placed.length) % AMBIENT_NPCS.length];
       const [tx, ty] = spots[i];
       this.npcs.push(new CityNpc(this, tx * TILE + TILE / 2, ty * TILE + TILE / 2, def));
     }
+  }
+
+  /** Returning from the subway with THE UNDERLINE cleared → advance the quest. */
+  private checkSubwayCleared() {
+    if (!this.registry.get("subwayCleared")) return;
+    this.registry.set("subwayCleared", false);
+    const name = this.quests.clearObjective("subway");
+    if (name) this.toast(`${name}: THE UNDERLINE is dead — report to the TRANSIT WARDEN`);
   }
 
   /** Assign each named NPC to the nearest enterable building of their kind (cached in the
@@ -725,6 +736,7 @@ export default class CityScene extends Phaser.Scene {
         const b = this.doors.get(tx + "," + ty);
         if (b?.door) {
           if (b.kind === "subway") this.launchSubway(b);
+          else if (b.kind === "stadium") this.launchArena();
           else this.enterInterior(b);
         }
       }
@@ -746,6 +758,13 @@ export default class CityScene extends Phaser.Scene {
     const back: [number, number] | undefined = b.door ? [b.door[0], b.door[1] + 1] : undefined;
     this.cameras.main.fadeOut(260, 2, 2, 8);
     this.cameras.main.once("camerafadeoutcomplete", () => this.scene.start("Subway", { returnTile: back }));
+  }
+
+  /** THE CRUCIBLE — step in to fight other players in the online arena. */
+  private launchArena() {
+    this.transitioning = true;
+    this.cameras.main.fadeOut(260, 2, 2, 8);
+    this.cameras.main.once("camerafadeoutcomplete", () => this.scene.start("Online"));
   }
 
   /** Put the right people in the room: the building's named residents (quest-givers /

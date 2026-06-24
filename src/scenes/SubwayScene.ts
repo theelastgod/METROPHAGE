@@ -498,6 +498,7 @@ export default class SubwayScene extends Phaser.Scene implements EnemyHost {
     save.progress.metro = (save.progress.metro ?? 0) + 120;
     save.progress.hp = Math.max(1, Math.round(this.player.hp)); // carry your wounds back up
     writeSave(save);
+    this.registry.set("subwayCleared", true); // advances the "Into the Underline" city quest
   }
 
   /** End the run: grant loot on a win, persist HP, and fade back to the City. */

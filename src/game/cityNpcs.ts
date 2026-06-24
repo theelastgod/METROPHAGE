@@ -148,7 +148,16 @@ export const AMBIENT_NPCS: CityNpcDef[] = [
   { id: "amb_vendor", name: "NOODLE COOK", look: look({ color: 0xff7a18, skin: 0xa9794a, hair: "bun", hairColor: 0x1b1820 }), lines: ["Hot synth-noodles! Two credits!", "Eat. You look like static."] },
 ];
 
-export const ALL_NPCS: CityNpcDef[] = [...KEY_NPCS, ...CITIZENS, ...AMBIENT_NPCS, ...Object.values(KEEPERS)];
+/** Stands by the plaza and sends you down into THE UNDERLINE (the subway dungeon). */
+export const SUBWAY_WARDEN: CityNpcDef = {
+  id: "subway_warden",
+  name: "TRANSIT WARDEN",
+  quest: "into_underline",
+  look: look({ color: 0x29e7ff, head: "cap", visor: "wide", skin: 0x7c4f30, hair: "buzz", hairColor: 0x1b1820 }),
+  lines: ["Mind the gap. And the things in it.", "Down the tunnels? Bring teeth."],
+};
+
+export const ALL_NPCS: CityNpcDef[] = [...KEY_NPCS, ...CITIZENS, ...AMBIENT_NPCS, SUBWAY_WARDEN, ...Object.values(KEEPERS)];
 
 export function npcDef(id: string): CityNpcDef | undefined {
   return ALL_NPCS.find((n) => n.id === id);

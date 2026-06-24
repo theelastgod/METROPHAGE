@@ -6,13 +6,15 @@
 
 export interface QStage {
   label: string; // journal objective text
-  kind: "collect" | "talk";
+  kind: "collect" | "talk" | "clear";
   // collect:
   item?: string; // collectible id spawned in the city
   count?: number;
   // talk:
   target?: string; // npc id to talk to
   targetLine?: string[]; // what the target says (advances the stage)
+  // clear: advances when an external objective (e.g. a cleared dungeon) reports `flag`
+  flag?: string;
   // shown by the GIVER while this stage is active:
   reminder?: string[];
 }
@@ -198,6 +200,28 @@ export const CITY_QUESTS: CityQuestDef[] = [
     complete: ["He got it. Then the network holds another cycle. Loud or quiet, runner — you did right by us. Take these. You'll need them more than I will."],
     reward: { xp: 300, credits: 260, loot: 2, lootBoost: 1.4 },
   },
+
+  // ── Subway dungeon quest — sends you down into THE UNDERLINE ──────────────────
+  {
+    id: "into_underline",
+    name: "Into the Underline",
+    giver: "subway_warden",
+    offer: [
+      "The corps dumped their deleted minds down the old metro lines. Something grew out of them.",
+      "It's killing my crews. Go down THE UNDERLINE and put it down — whatever it's become.",
+    ],
+    accepted: ["The platform's signed METRO — THE UNDERLINE. Bring teeth. And come back up."],
+    stages: [
+      {
+        label: "Descend the subway and destroy THE UNDERLINE",
+        kind: "clear",
+        flag: "subway",
+        reminder: ["It's still down there. Find the subway — METRO — THE UNDERLINE — and end it."],
+      },
+    ],
+    complete: ["You came back up. And it didn't. …Take this — salvage from the dark. You earned the dark."],
+    reward: { xp: 320, credits: 280, loot: 1, lootBoost: 1.4 },
+  },
 ];
 
 export function questDef(id: string): CityQuestDef | undefined {
@@ -249,6 +273,21 @@ export class CityQuests {
       s.stage = 0;
       s.progress = 0;
     }
+  }
+
+  /** Report an external objective (e.g. a cleared dungeon) by `flag`. Advances any active
+   *  quest whose current stage is a matching "clear" stage. Returns the quest name if so. */
+  clearObjective(flag: string): string | null {
+    for (const def of CITY_QUESTS) {
+      const s = this.states.get(def.id);
+      if (!s || s.status !== "active") continue;
+      const stage = def.stages[s.stage];
+      if (stage?.kind === "clear" && stage.flag === flag) {
+        this.advance(def, s);
+        return def.name;
+      }
+    }
+    return null;
   }
 
   /** The collectible item id the active collect-stage needs (or null). */
