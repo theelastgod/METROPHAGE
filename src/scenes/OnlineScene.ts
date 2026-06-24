@@ -1,5 +1,7 @@
 import Phaser from "phaser";
 import { installUiCamera } from "../render/cameras";
+import { shadeWalls } from "../render/wallShade";
+import Atmosphere from "../render/Atmosphere";
 import { COLORS, TILE } from "../config";
 import { TILESET_KEY, PLAYER_KEY, COP_KEY, BULLET_KEY, GLOW_KEY, NODE_KEY } from "../assets/manifest";
 import { driveChar } from "../assets/anim";
@@ -78,6 +80,7 @@ export default class OnlineScene extends Phaser.Scene {
   private deadText!: Phaser.GameObjects.Text;
   private meltdownFx!: Phaser.GameObjects.Rectangle;
   private meltdownText!: Phaser.GameObjects.Text;
+  private atmosphere?: Atmosphere; // rich ambient layer, shared with the SP city
   private lastSeason = -1;
   private chatLogText!: Phaser.GameObjects.Text;
   private chatInput!: Phaser.GameObjects.Text;
@@ -126,6 +129,24 @@ export default class OnlineScene extends Phaser.Scene {
     const map = this.make.tilemap({ data: grid, tileWidth: TILE, tileHeight: TILE });
     const tileset = map.addTilesetImage(TILESET_KEY, TILESET_KEY, TILE, TILE)!;
     map.createLayer(0, tileset, 0, 0)!;
+    // Rich static world: the same building-silhouette pass + atmospheric layer the
+    // single-player city uses, so the authoritative shared world reads as the neon city
+    // (step 1 of unifying SP + MP on one world) rather than a flat tile grid. Both are
+    // pure ambiance — no collision, no server state — and the grid already matches what
+    // the server simulates against.
+    shadeWalls(this, grid);
+    this.atmosphere = new Atmosphere(this, {
+      weather: def.weather,
+      accent: def.accent,
+      worldW: WORLD_W,
+      worldH: WORLD_H,
+    });
+    for (let i = 0; i < def.layout.buildings.length; i += 2) {
+      const b = def.layout.buildings[i];
+      const cx = ((b.x1 + b.x2) / 2) * TILE + TILE / 2;
+      const cy = ((b.y1 + b.y2) / 2) * TILE + TILE / 2;
+      this.atmosphere.addHologram(cx, cy, def.accent);
+    }
     this.cameras.main.setBounds(0, 0, WORLD_W, WORLD_H);
     installUiCamera(this, 1);
     this.applyNeon();
@@ -412,6 +433,8 @@ export default class OnlineScene extends Phaser.Scene {
     this.net.setIntent(mx, my);
     this.net.update(dt);
     this.processEmotes();
+    // Drift fog + flicker the holo-signage; the shared singularity swells the haze.
+    this.atmosphere?.update(this.time.now, dt, Phaser.Math.Clamp(this.net.singularity / SING_MAX, 0, 1));
 
     if (this.net.connected) {
       this.me.setPosition(this.net.pred.x, this.net.pred.y);
