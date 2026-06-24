@@ -8,6 +8,7 @@ import OnlineForge from "../ui/OnlineForge";
 import OnlineBoard from "../ui/OnlineBoard";
 import OnlineGuild from "../ui/OnlineGuild";
 import OnlineMarket from "../ui/OnlineMarket";
+import OnlineContracts from "../ui/OnlineContracts";
 import { COLORS, TILE, VIEW_W, VIEW_H } from "../config";
 import { TILESET_KEY, PLAYER_KEY, COP_KEY, BULLET_KEY, GLOW_KEY, NODE_KEY } from "../assets/manifest";
 import { driveChar } from "../assets/anim";
@@ -99,6 +100,7 @@ export default class OnlineScene extends Phaser.Scene {
   private board!: OnlineBoard; // achievements + cross-zone leaderboards (D1-backed, HTTP)
   private guildPanel!: OnlineGuild; // guild ("Cell") bank/roster/level (D1-backed)
   private market!: OnlineMarket; // auction house — cross-zone player market (D1-backed)
+  private contracts!: OnlineContracts; // daily contracts + reputation track (D1-backed)
   private lastSeason = -1;
   private chatLogText!: Phaser.GameObjects.Text;
   private chatInput!: Phaser.GameObjects.Text;
@@ -239,6 +241,11 @@ export default class OnlineScene extends Phaser.Scene {
     this.net.onMarket = () => {
       if (this.market.open) this.market.setState(this.net.marketListings, this.net.inventory, this.net.id, this.net.credits);
     };
+    this.contracts = new OnlineContracts(this);
+    this.net.onContracts = () => {
+      if (this.contracts.open) this.contracts.setState(this.net.contracts, this.net.rep);
+      this.shop.setRep(this.net.repTier); // higher vendor caches unlock with reputation
+    };
     // World-boss locator: a status banner + a screen-edge arrow toward an off-screen boss.
     this.bossBanner = this.add
       .text(VIEW_W / 2, 46, "", {
@@ -280,7 +287,7 @@ export default class OnlineScene extends Phaser.Scene {
       .text(
         this.scale.width / 2,
         this.scale.height - 12,
-        `WASD · CLICK fire · I bag · G forge · B vendor · K market · C cell · L board · H safehouse · V emote · ENTER chat · [1-${DISTRICTS.length}] travel`,
+        `WASD · CLICK fire · I bag · G forge · B vendor · K market · J jobs · C cell · L board · H safehouse · V emote · ENTER chat · [1-${DISTRICTS.length}]`,
         { fontFamily: "Courier New, monospace", fontSize: "11px", color: "#6b7184" },
       )
       .setOrigin(0.5, 1)
@@ -478,6 +485,14 @@ export default class OnlineScene extends Phaser.Scene {
       }
       if (this.market.open && e.key === "Escape") {
         this.market.close();
+        return;
+      }
+      if (e.key === "j" || e.key === "J") {
+        this.contracts.toggle(this.net.contracts, this.net.rep);
+        return;
+      }
+      if (this.contracts.open && e.key === "Escape") {
+        this.contracts.close();
         return;
       }
       if (e.key === "h" || e.key === "H") {

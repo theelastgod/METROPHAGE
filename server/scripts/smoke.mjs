@@ -953,6 +953,102 @@ async function market() {
   );
 }
 
+async function daily() {
+  // PART A — daily contracts. Fresh player; the guaranteed daily (index 0) is a kill bounty.
+  const name = "drun_" + Math.random().toString(36).slice(2, 7);
+  const ws = await connect();
+  const store = { x: 0, y: 0, enemies: [], credits: 0, contracts: [], rep: 0, repTier: 0, sys: [] };
+  ws.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "contracts") {
+      store.contracts = m.list;
+      store.rep = m.rep;
+      store.repTier = m.repTier;
+    }
+    if (m.t === "sys") store.sys.push(m.text);
+  });
+  const w = await login(ws, name, 0);
+  store.x = w.x;
+  store.y = w.y;
+  trackState(ws, w.id, store);
+  await sleep(450);
+  const loaded = store.contracts.length === 3;
+  const killDaily = store.contracts[0];
+  const idxKill = !!killDaily && killDaily.objective === "kill";
+  const repBefore = store.rep;
+
+  const nearest = () => {
+    let b = null, bd = 1e9;
+    for (const e of store.enemies) {
+      const d = Math.hypot(e.x - store.x, e.y - store.y);
+      if (d < bd) { bd = d; b = e; }
+    }
+    return b;
+  };
+  let seq = 0;
+  const t0 = Date.now();
+  while (Date.now() - t0 < 55000 && !(store.contracts[0] && store.contracts[0].done)) {
+    const e = nearest();
+    if (e) {
+      const dx = e.x - store.x, dy = e.y - store.y, d = Math.hypot(dx, dy) || 1;
+      seq++;
+      ws.send(JSON.stringify({ t: "input", seq, mx: d > 110 ? dx / d : 0, my: d > 110 ? dy / d : 0 }));
+      ws.send(JSON.stringify({ t: "fire", seq, aim: Math.atan2(dy, dx) }));
+    }
+    await sleep(45);
+  }
+  const advanced = !!store.contracts[0] && store.contracts[0].progress > 0;
+  const completed = !!store.contracts[0] && store.contracts[0].done;
+  const repRose = store.rep > repBefore;
+  ws.close();
+  await sleep(800);
+
+  // persistence — reconnect; the completed daily reloads as done
+  const ws2 = await connect();
+  const store2 = { contracts: [] };
+  ws2.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "contracts") store2.contracts = m.list;
+  });
+  await login(ws2, name, 0);
+  await sleep(550);
+  const persisted = !!store2.contracts[0] && store2.contracts[0].id === killDaily?.id && store2.contracts[0].done === true;
+  ws2.close();
+  await sleep(300);
+
+  // PART B — reputation gates vendor tiers (harness pre-seeds: repvip rep=300 [tier1], credits=5000)
+  const V = await connect();
+  const sv = { inventory: [], credits: 0, sys: [], repTier: 0 };
+  V.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "inv") sv.inventory = m.items;
+    if (m.t === "sys") sv.sys.push(m.text);
+    if (m.t === "contracts") sv.repTier = m.repTier;
+  });
+  const wv = await login(V, "repvip", 0);
+  trackState(V, wv.id, sv);
+  await sleep(550);
+  const tier1 = sv.repTier >= 1;
+  const invBefore = sv.inventory.length;
+  V.send(JSON.stringify({ t: "buy", sku: "cache_blackice" })); // repReq 1 → allowed at tier 1
+  await sleep(550);
+  const blackiceBought = sv.inventory.length === invBefore + 1 && sv.inventory[sv.inventory.length - 1]?.rarity === "blackice";
+  const invMid = sv.inventory.length;
+  V.send(JSON.stringify({ t: "buy", sku: "cache_singular" })); // repReq 2 → gated at tier 1
+  await sleep(550);
+  const singularGated = sv.inventory.length === invMid && sv.sys.some((t) => /reputation tier 2/i.test(t));
+  V.close();
+  await sleep(200);
+
+  const checks = { loaded, idxKill, advanced, completed, repRose, persisted, repTier1: tier1, blackiceBought, singularGated };
+  report(
+    "DAILY — day-seeded contracts grant credits+rep, persist; rep gates vendor tiers",
+    { killContract: killDaily ? `${killDaily.name} ${store.contracts[0]?.progress}/${killDaily.count}` : null, rep: store.rep, repTier: sv.repTier },
+    Object.values(checks).every(Boolean),
+    checks,
+  );
+}
+
 async function shop() {
   const ws = await connect();
   const store = { x: 0, y: 0, enemies: [], inventory: [], credits: 0 };
@@ -1816,6 +1912,7 @@ try {
   else if (mode === "achv") await achv();
   else if (mode === "guild") await guild();
   else if (mode === "market") await market();
+  else if (mode === "daily") await daily();
   else if (mode === "shop") await shop();
   else if (mode === "bestiary") await bestiary();
   else if (mode === "safehouse") await safehouse();

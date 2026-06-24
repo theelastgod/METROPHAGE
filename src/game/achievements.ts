@@ -3,7 +3,7 @@
 // client (renders the grid, marking which are unlocked). Stats are the cross-zone counters
 // in D1 player_stats; the leaderboards ORDER BY the same stats. Add a milestone = add a row.
 
-export type StatKey = "kills" | "bosses" | "captures" | "credits" | "pvp" | "deepest";
+export type StatKey = "kills" | "bosses" | "captures" | "credits" | "pvp" | "deepest" | "rep";
 
 export interface Achievement {
   id: string;
@@ -22,10 +22,11 @@ export const STAT_LABELS: Record<StatKey, string> = {
   credits: "CREDITS EARNED",
   pvp: "ARENA KILLS",
   deepest: "DEEPEST DISTRICT",
+  rep: "REPUTATION",
 };
 
 /** Stats a leaderboard can rank by (in display order). */
-export const BOARD_STATS: StatKey[] = ["kills", "bosses", "captures", "pvp", "credits", "deepest"];
+export const BOARD_STATS: StatKey[] = ["kills", "bosses", "captures", "pvp", "credits", "rep", "deepest"];
 
 export const ACHIEVEMENTS: Achievement[] = [
   { id: "first_blood", name: "FIRST BLOOD", desc: "Purge your first HSS unit", stat: "kills", threshold: 1, reward: 25 },

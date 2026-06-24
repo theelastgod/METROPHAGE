@@ -5,12 +5,12 @@ import { VIEW_W, VIEW_H, COLORS } from "../config";
 // roll an item of a guaranteed rarity into your bag. The server validates + deducts
 // credits (authoritative); this panel just lists the catalogue and fires buy requests.
 // SKUs mirror the server SHOP table in world.ts.
-const SKUS: { sku: string; label: string; price: number; desc: string; color: string }[] = [
+const SKUS: { sku: string; label: string; price: number; desc: string; color: string; repReq?: number }[] = [
   { sku: "heal", label: "FIELD PATCH", price: 40, desc: "restore to full HP", color: "#39ff88" },
   { sku: "cache_standard", label: "SALVAGE CACHE", price: 60, desc: "a Standard gear roll", color: "#9aa3b2" },
   { sku: "cache_tuned", label: "TUNED CACHE", price: 180, desc: "a Tuned gear roll", color: "#39ff88" },
-  { sku: "cache_blackice", label: "BLACK-ICE CACHE", price: 480, desc: "a Black-ICE gear roll", color: "#29e7ff" },
-  { sku: "cache_singular", label: "SINGULAR CACHE", price: 1200, desc: "a Singular gear roll", color: "#ff2bd6" },
+  { sku: "cache_blackice", label: "BLACK-ICE CACHE", price: 480, desc: "a Black-ICE gear roll", color: "#29e7ff", repReq: 1 },
+  { sku: "cache_singular", label: "SINGULAR CACHE", price: 1200, desc: "a Singular gear roll", color: "#ff2bd6", repReq: 2 },
 ];
 
 export default class OnlineShop {
@@ -19,9 +19,15 @@ export default class OnlineShop {
   private scene: Phaser.Scene;
   private objs: Phaser.GameObjects.GameObject[] = [];
   private creditsText?: Phaser.GameObjects.Text;
+  private repTier = 0; // reputation tier — gates the higher caches (set by the scene)
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
+  }
+
+  setRep(tier: number) {
+    this.repTier = tier;
+    if (this.open) this.build();
   }
 
   toggle() {
@@ -96,36 +102,45 @@ export default class OnlineShop {
 
     SKUS.forEach((s, i) => {
       const ry = y + 52 + i * 54;
-      g.fillStyle(0x12102a, 0.92).fillRect(x + 16, ry, w - 32, 46);
-      g.lineStyle(1.5, Phaser.Display.Color.HexStringToColor(s.color).color, 0.9).strokeRect(x + 16, ry, w - 32, 46);
+      const locked = !!s.repReq && this.repTier < s.repReq; // rep gate (vendor tiers)
+      const strokeCol = locked ? 0x3a3350 : Phaser.Display.Color.HexStringToColor(s.color).color;
+      g.fillStyle(0x12102a, locked ? 0.6 : 0.92).fillRect(x + 16, ry, w - 32, 46);
+      g.lineStyle(1.5, strokeCol, locked ? 0.4 : 0.9).strokeRect(x + 16, ry, w - 32, 46);
       add(
         scene.add
-          .text(x + 28, ry + 7, s.label, { fontFamily: "Courier New, monospace", fontSize: "13px", color: s.color, fontStyle: "bold" })
+          .text(x + 28, ry + 7, s.label, { fontFamily: "Courier New, monospace", fontSize: "13px", color: locked ? "#5a6172" : s.color, fontStyle: "bold" })
           .setScrollFactor(0)
           .setDepth(D + 2),
       );
       add(
         scene.add
-          .text(x + 28, ry + 26, s.desc, { fontFamily: "Courier New, monospace", fontSize: "10px", color: "#9aa3b2" })
+          .text(x + 28, ry + 26, s.desc, { fontFamily: "Courier New, monospace", fontSize: "10px", color: locked ? "#4a5266" : "#9aa3b2" })
           .setScrollFactor(0)
           .setDepth(D + 2),
       );
       add(
         scene.add
-          .text(x + w - 28, ry + 16, `₵ ${s.price}  ▸ BUY`, { fontFamily: "Courier New, monospace", fontSize: "13px", color: "#f7ff3c", fontStyle: "bold" })
+          .text(x + w - 28, ry + 16, locked ? `🔒 REP TIER ${s.repReq}` : `₵ ${s.price}  ▸ BUY`, {
+            fontFamily: "Courier New, monospace",
+            fontSize: "13px",
+            color: locked ? "#5a6172" : "#f7ff3c",
+            fontStyle: "bold",
+          })
           .setOrigin(1, 0)
           .setScrollFactor(0)
           .setDepth(D + 2),
       );
-      const z = add(
-        scene.add
-          .zone(x + 16, ry, w - 32, 46)
-          .setOrigin(0)
-          .setScrollFactor(0)
-          .setInteractive({ useHandCursor: true })
-          .setDepth(D + 3),
-      );
-      z.on("pointerdown", () => this.onBuy?.(s.sku));
+      if (!locked) {
+        const z = add(
+          scene.add
+            .zone(x + 16, ry, w - 32, 46)
+            .setOrigin(0)
+            .setScrollFactor(0)
+            .setInteractive({ useHandCursor: true })
+            .setDepth(D + 3),
+        );
+        z.on("pointerdown", () => this.onBuy?.(s.sku));
+      }
     });
 
     add(

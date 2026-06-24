@@ -114,6 +114,11 @@ export default class NetClient {
   onGuildUpdate?: () => void;
   marketListings: Array<{ id: number; seller: string; sellerName: string; item: Item; price: number; currency: string }> = [];
   onMarket?: () => void;
+  contracts: Array<{ id: string; name: string; desc: string; objective: string; count: number; progress: number; done: boolean; rewardCredits: number; rewardRep: number }> = [];
+  rep = 0;
+  repTier = 0;
+  contractsDay = 0;
+  onContracts?: () => void;
   story: { act: string; title: string; text: string; done: boolean; at: number } | null = null;
   lastError = 0;
   reconciles = 0;
@@ -338,6 +343,12 @@ export default class NetClient {
       this.equipped = msg.items;
       this.maxHp = msg.maxHp;
       this.onInventory?.(); // refresh the bag (equipped marks) + HUD
+    } else if (msg.t === "contracts") {
+      this.contracts = msg.list;
+      this.rep = msg.rep;
+      this.repTier = msg.repTier;
+      this.contractsDay = msg.day;
+      this.onContracts?.();
     } else if (msg.t === "market") {
       this.marketListings = msg.listings;
       this.onMarket?.();

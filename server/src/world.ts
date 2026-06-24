@@ -63,6 +63,7 @@ import { addMods, ZERO_MODS, type ModBag } from "../../src/game/stats";
 import { achievementsForStat, type StatKey } from "../../src/game/achievements";
 import { GUILD_CREATE_COST, guildLevel, guildPerkPct, validateGuild } from "../../src/game/guilds";
 import { listingFee, MIN_PRICE, MAX_PRICE } from "../../src/game/market";
+import { dailyContracts, getDaily, currentDay, repTier, type DailyObjective } from "../../src/game/dailies";
 import { verifyWalletLogin } from "./auth";
 
 /** Inventory is capped so the persisted JSON stays bounded; oldest drops out (FIFO). */
@@ -202,6 +203,10 @@ interface PlayerState {
   guildId: number; // 0 = none
   guildRank: string; // leader | officer | member | ""
   guildBonus: number; // credit-find perk fraction from the cell level
+  // daily contracts (reputation lives in stats['rep']) — per-day progress, persisted to D1
+  dailyDay: number; // the UTC day these contracts belong to
+  dailies: Array<{ id: string; progress: number; done: boolean }>;
+  dailyDirty: boolean;
   // appearance (relayed to other clients so they render this player's customization)
   look?: PlayerLook;
 }
@@ -311,13 +316,14 @@ interface ShopItem {
   label: string;
   rarity?: Rarity; // a gear cache of this rarity
   heal?: boolean; // restore to full HP instead
+  repReq?: number; // minimum reputation tier required (vendor tiers unlocked by rep)
 }
 const SHOP: Record<string, ShopItem> = {
   heal: { price: 40, label: "FIELD PATCH", heal: true },
   cache_standard: { price: 60, label: "SALVAGE CACHE", rarity: "standard" },
   cache_tuned: { price: 180, label: "TUNED CACHE", rarity: "tuned" },
-  cache_blackice: { price: 480, label: "BLACK-ICE CACHE", rarity: "blackice" },
-  cache_singular: { price: 1200, label: "SINGULAR CACHE", rarity: "singular" },
+  cache_blackice: { price: 480, label: "BLACK-ICE CACHE", rarity: "blackice", repReq: 1 },
+  cache_singular: { price: 1200, label: "SINGULAR CACHE", rarity: "singular", repReq: 2 },
 };
 
 interface Shot {
@@ -1306,6 +1312,7 @@ export class WorldDO {
     this.send(ws, { t: "achv", ids: [...p.achv] }); // hydrate the unlocked achievement set
     await this.sendGuild(ws, p); // hydrate cell membership/bank/roster (cross-zone, D1)
     await this.drainMail(p); // collect any auction proceeds that arrived while away
+    this.sendContracts(ws, p); // hydrate today's daily contracts + reputation
     this.ensureTick();
     await this.ensureSupervisor();
   }
@@ -1394,6 +1401,23 @@ export class WorldDO {
     } catch {
       /* tables may not exist before migration */
     }
+    // daily contracts — today's day-seeded set, merged with any saved per-player progress
+    const dailyDay = currentDay();
+    const dailies = dailyContracts(dailyDay).map((c) => ({ id: c.id, progress: 0, done: false }));
+    try {
+      const dres = await this.env.DB.prepare("SELECT contract_id, progress, done FROM player_dailies WHERE player = ? AND day = ?")
+        .bind(id, dailyDay)
+        .all<{ contract_id: string; progress: number; done: number }>();
+      for (const r of dres.results ?? []) {
+        const d = dailies.find((x) => x.id === r.contract_id);
+        if (d) {
+          d.progress = r.progress;
+          d.done = !!r.done;
+        }
+      }
+    } catch {
+      /* table may not exist before migration */
+    }
     const mods = deriveMods(equipped);
     const maxHp = PLAYER_HP + Math.round(mods.hpAdd);
     return {
@@ -1436,6 +1460,9 @@ export class WorldDO {
       guildId,
       guildRank,
       guildBonus,
+      dailyDay,
+      dailies,
+      dailyDirty: false,
       look,
     };
   }
@@ -1507,6 +1534,57 @@ export class WorldDO {
     }
   }
 
+  // ── daily contracts + reputation (rep is the cross-zone stats['rep'] counter) ──
+  private repOf(p: PlayerState): number {
+    return p.stats["rep"] ?? 0;
+  }
+
+  private sendContracts(ws: WebSocket, p: PlayerState) {
+    const rep = this.repOf(p);
+    const list = p.dailies.map((d) => {
+      const c = getDaily(d.id)!;
+      return {
+        id: d.id,
+        name: c.name,
+        desc: c.desc,
+        objective: c.objective,
+        count: c.count,
+        progress: d.progress,
+        done: d.done,
+        rewardCredits: c.rewardCredits,
+        rewardRep: c.rewardRep,
+      };
+    });
+    this.send(ws, { t: "contracts", day: p.dailyDay, rep, repTier: repTier(rep), list });
+  }
+  private pushContracts(p: PlayerState) {
+    for (const [sock, id] of this.sessions) if (id === p.id) this.sendContracts(sock, p);
+  }
+
+  /** Advance any active daily matching an objective; auto-grant credits + rep on completion. */
+  private contractEvent(p: PlayerState, objective: DailyObjective, n = 1) {
+    let changed = false;
+    for (const d of p.dailies) {
+      if (d.done) continue;
+      const c = getDaily(d.id);
+      if (!c || c.objective !== objective) continue;
+      d.progress += n;
+      changed = true;
+      if (d.progress >= c.count) {
+        d.done = true;
+        p.credits += c.rewardCredits; // server-authoritative reward
+        this.bumpStat(p, "credits", c.rewardCredits);
+        this.bumpStat(p, "rep", c.rewardRep); // reputation track (cross-zone, persisted)
+        p.dirty = true;
+        this.sendTo(p.id, { t: "sys", text: `✔ CONTRACT — ${c.name} (+₵${c.rewardCredits} +${c.rewardRep} rep)` });
+      }
+    }
+    if (changed) {
+      p.dailyDirty = true;
+      this.pushContracts(p);
+    }
+  }
+
   private onInput(ws: WebSocket, msg: Extract<ClientMsg, { t: "input" }>) {
     const p = this.playerFor(ws);
     if (!p) return;
@@ -1565,6 +1643,10 @@ export class WorldDO {
     if (!p) return;
     const sku = SHOP[msg.sku];
     if (!sku) return;
+    if (sku.repReq && repTier(this.repOf(p)) < sku.repReq) {
+      this.send(ws, { t: "sys", text: `${sku.label} needs reputation tier ${sku.repReq} — run contracts` });
+      return;
+    }
     if (p.credits < sku.price) {
       this.send(ws, { t: "sys", text: `not enough credits for ${sku.label} (${sku.price})` });
       return;
@@ -1860,6 +1942,9 @@ export class WorldDO {
                 this.bumpStat(killer, "kills", 1);
                 if (isBoss) this.bumpStat(killer, "bosses", 1);
                 this.bumpStat(killer, "credits", gained);
+                // daily contracts
+                this.contractEvent(killer, "kill", 1);
+                if (isBoss) this.contractEvent(killer, "boss", 1);
                 // item loot — a boss ALWAYS drops, rarity-boosted; a grunt rolls the chance.
                 // Pushed (FIFO-capped) to the killer's client only.
                 if (isBoss || Math.random() < arch.loot.chance) {
@@ -1968,6 +2053,7 @@ export class WorldDO {
             if (!pl.dead && pl.faction === node.by && dist2(pl.x, pl.y, node.x, node.y) <= CR2) {
               this.questEvent(pl, "capture");
               this.bumpStat(pl, "captures", 1);
+              this.contractEvent(pl, "capture", 1);
             }
           }
         }
@@ -2204,8 +2290,27 @@ export class WorldDO {
         await this.upsert(p.id, p.name, p.x, p.y, p.credits, p.xp, p.cores, p.questStep, p.inventory, p.look, p.equipped);
       }
       await this.flushStats(p); // lifetime counters / achievements may change without `dirty`
+      await this.flushDailies(p);
     }
     await this.syncMeta();
+  }
+
+  /** Persist a player's daily-contract progress for the current day. */
+  private async flushDailies(p: PlayerState) {
+    if (!p.dailyDirty) return;
+    p.dailyDirty = false;
+    try {
+      for (const d of p.dailies) {
+        await this.env.DB.prepare(
+          "INSERT INTO player_dailies (player, day, contract_id, progress, done) VALUES (?,?,?,?,?) " +
+            "ON CONFLICT(player,day,contract_id) DO UPDATE SET progress=excluded.progress, done=excluded.done",
+        )
+          .bind(p.id, p.dailyDay, d.id, d.progress, d.done ? 1 : 0)
+          .run();
+      }
+    } catch {
+      /* table may not exist before migration */
+    }
   }
 
   /** Flush a player's queued stat increments + deepest-district + new achievements to the
@@ -2304,6 +2409,7 @@ export class WorldDO {
       this.pendingInvites.delete(p.id);
       await this.upsert(p.id, p.name, p.x, p.y, p.credits, p.xp, p.cores, p.questStep, p.inventory, p.look, p.equipped);
       await this.flushStats(p);
+      await this.flushDailies(p);
       await this.syncMeta();
       this.players.delete(id);
     }

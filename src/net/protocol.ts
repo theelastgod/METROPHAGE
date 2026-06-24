@@ -177,6 +177,24 @@ export type ServerMsg =
   | { t: "equipped"; items: Item[]; maxHp: number } // owning client's equipped gear + derived max HP
   | { t: "achv"; ids: string[] } // full unlocked achievement set (sent on login)
   | { t: "ach"; id: string; name: string; reward: number } // a freshly-unlocked achievement
+  // daily contracts + reputation — pushed on login + whenever progress changes
+  | {
+      t: "contracts";
+      day: number;
+      rep: number;
+      repTier: number;
+      list: Array<{
+        id: string;
+        name: string;
+        desc: string;
+        objective: string;
+        count: number;
+        progress: number;
+        done: boolean;
+        rewardCredits: number;
+        rewardRep: number;
+      }>;
+    }
   // auction house — open listings (browse result), refreshed on any market change
   | {
       t: "market";
