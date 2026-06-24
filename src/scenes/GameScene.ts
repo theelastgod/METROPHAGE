@@ -77,6 +77,7 @@ import VendorPanel from "../ui/VendorPanel";
 import CityMapPanel from "../ui/CityMapPanel";
 import JournalPanel from "../ui/JournalPanel";
 import OptionsPanel from "../ui/OptionsPanel";
+import StatsPanel, { StatLine } from "../ui/StatsPanel";
 import Quests from "../systems/Quests";
 import { DIALOGUE_TREES } from "../game/dialogue";
 import BossBar from "../ui/BossBar";
@@ -122,6 +123,7 @@ export default class GameScene
   private cityMapPanel!: CityMapPanel;
   private journalPanel!: JournalPanel;
   private optionsPanel!: OptionsPanel;
+  private statsPanel!: StatsPanel;
   private quests!: Quests;
   private memory!: Memory;
   private terminal!: Terminal;
@@ -176,6 +178,7 @@ export default class GameScene
   private mapKey!: Phaser.Input.Keyboard.Key;
   private journalKey!: Phaser.Input.Keyboard.Key;
   private optionsKey!: Phaser.Input.Keyboard.Key;
+  private statsKey!: Phaser.Input.Keyboard.Key;
 
   constructor() {
     super("Game");
@@ -308,6 +311,7 @@ export default class GameScene
     this.cityMapPanel = new CityMapPanel(this, this.city, (i) => this.travelTo(i));
     this.journalPanel = new JournalPanel(this, this.memory, this.quests);
     this.optionsPanel = new OptionsPanel(this, () => this.synth.applyVolumes());
+    this.statsPanel = new StatsPanel(this, () => this.statLines());
     this.recomputeStats();
     this.maybeSpawnBoss();
     this.worldEvents = new WorldEvents(this);
@@ -336,6 +340,38 @@ export default class GameScene
     this.player.setMaxHp(this.classDef.maxHp + this.mods.hpAdd);
     this.player.setMaxShield(this.mods.shieldAdd);
     this.player.bonusSpeedMult = 1 + this.mods.movePct;
+  }
+
+  /** Effective derived stats for the character sheet (StatsPanel). */
+  private statLines(): StatLine[] {
+    const m = this.mods;
+    const pos = (v: number) => `+${Math.round(v * 100)}%`;
+    const neg = (v: number) => `-${Math.round(v * 100)}%`;
+    const el = this.classDef.element ? this.classDef.element.toUpperCase() : "PHYSICAL";
+    const elColor =
+      this.classDef.element === "burn"
+        ? "#ff7a3c"
+        : this.classDef.element === "chill"
+          ? "#6ad6ff"
+          : this.classDef.element === "shock"
+            ? "#f7ff3c"
+            : "#9aa3b2";
+    return [
+      { label: "CLASS", value: this.classDef.name, color: this.classDef.hex },
+      { label: "LEVEL", value: String(this.progression.level) },
+      { label: "MAX HP", value: String(Math.round(this.player.maxHp)), color: "#39ff88" },
+      { label: "MAX SHIELD", value: String(Math.round(this.player.maxShield)), color: "#6ab0ff" },
+      { label: "DAMAGE", value: pos(m.dmgPct) },
+      { label: "CRIT CHANCE", value: pos(m.critPct), color: "#f7ff3c" },
+      { label: "LIFESTEAL", value: pos(m.lifestealPct), color: "#ff79c6" },
+      { label: "MOVE SPEED", value: pos(m.movePct) },
+      { label: "ABILITY COOLDOWN", value: neg(m.cdReducePct) },
+      { label: "INFECTION", value: pos(m.infectPct) },
+      { label: "HACK / SHIELD-BREAK", value: pos(m.hackPct) },
+      { label: "HEAT GAIN", value: pos(m.heatGainPct) },
+      { label: "HEAT DECAY", value: neg(m.heatDecayPct) },
+      { label: "ELEMENT", value: el, color: elColor },
+    ];
   }
 
   private autosave(force = false) {
@@ -844,6 +880,7 @@ export default class GameScene
     this.mapKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.M);
     this.journalKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.J);
     this.optionsKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.O);
+    this.statsKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.C);
     this.consumeKeys = [
       kb.addKey(Phaser.Input.Keyboard.KeyCodes.ONE),
       kb.addKey(Phaser.Input.Keyboard.KeyCodes.TWO),
@@ -857,6 +894,7 @@ export default class GameScene
       this.cityMapPanel?.close();
       this.journalPanel?.close();
       this.optionsPanel?.close();
+      this.statsPanel?.close();
     });
     this.input.mouse?.disableContextMenu();
   }
@@ -877,7 +915,7 @@ export default class GameScene
       {
         speaker: "// SYSTEM",
         portrait: me,
-        text: "WASD move · MOUSE aim · CLICK fire · SPACE dash · E talk · M map · J journal. Heat fuels you — and lights the sky.",
+        text: "WASD move · MOUSE aim · CLICK fire · SPACE dash · E talk · K skills · C character · M map · J journal. Heat fuels you — and lights the sky.",
       },
     ];
   }
@@ -1007,7 +1045,16 @@ export default class GameScene
       this.inventoryPanel.close();
       this.cityMapPanel.close();
       this.journalPanel.close();
+      this.statsPanel.close();
       this.optionsPanel.toggle();
+    }
+    if (Phaser.Input.Keyboard.JustDown(this.statsKey)) {
+      this.skillPanel.close();
+      this.inventoryPanel.close();
+      this.cityMapPanel.close();
+      this.journalPanel.close();
+      this.optionsPanel.close();
+      this.statsPanel.toggle();
     }
 
     this.updateHud();
@@ -1021,7 +1068,8 @@ export default class GameScene
       this.vendorPanel.isOpen ||
       this.cityMapPanel.isOpen ||
       this.journalPanel.isOpen ||
-      this.optionsPanel.isOpen
+      this.optionsPanel.isOpen ||
+      this.statsPanel.isOpen
     )
       return; // menu open: freeze sim
     if (this.dialogue.isOpen) return; // freeze the sim while a dialogue is up
