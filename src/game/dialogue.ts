@@ -101,7 +101,7 @@ export const DIALOGUE_TREES: Record<string, DialogueTree> = {
         speaker: "FIXER",
         portrait: "fixer",
         lines: [
-          "Enough that the System keeps a deletion queue with your name already typed.",
+          "Enough that Helios keeps a repossession queue with your name already typed.",
           "Make this run the one it can't undo.",
         ],
         choices: [{ text: "I will. [Finish]", action: "complete" }],
@@ -118,17 +118,17 @@ export const DIALOGUE_TREES: Record<string, DialogueTree> = {
         portrait: "fixer",
         lines: [
           "You heard the last you. Good. Now hear this: it didn't go quietly.",
-          "Before the System caught it, it scattered itself across the district. Caches. Notes. A trail.",
+          "Before Helios caught it, it scattered itself across the district. Caches. Notes. A trail.",
         ],
         choices: [
-          { text: "And the cops are erasing it.", goto: "race" },
+          { text: "And the repo crews are erasing it.", goto: "race" },
           { text: "Why would it leave a trail?", goto: "why" },
         ],
       },
       race: {
         speaker: "FIXER",
         portrait: "fixer",
-        lines: ["Pulling it apart node by node as we speak. Put them down and get to the cache before they do."],
+        lines: ["Anduril's repo crews are pulling it apart node by node as we speak. Put them down and reach the cache first."],
         choices: [
           { text: "Then I'm already late. [Accept]", action: "accept" },
           { text: "Not yet.", goto: "decline" },
@@ -139,7 +139,7 @@ export const DIALOGUE_TREES: Record<string, DialogueTree> = {
         portrait: "fixer",
         lines: [
           "Because it knew it was running out of era. You leave a trail for the next one when you can't be the one who finishes.",
-          "It left it for you. Cut the cops off it and dive the cache.",
+          "It left it for you. Cut the repo crews off it and dive the cache.",
         ],
         choices: [
           { text: "Show me where. [Accept]", action: "accept" },
@@ -149,7 +149,7 @@ export const DIALOGUE_TREES: Record<string, DialogueTree> = {
       decline: {
         speaker: "FIXER",
         portrait: "fixer",
-        lines: ["Clock's the System's, not mine. But it's ticking on your name."],
+        lines: ["Clock's Helios's, not mine. But it's ticking on your name."],
       },
     },
   },
@@ -160,8 +160,8 @@ export const DIALOGUE_TREES: Record<string, DialogueTree> = {
         speaker: "// MEMORY",
         portrait: "player",
         lines: [
-          "The cache decompresses into a single stolen file: the System's own scheduler.",
-          "One entry recurs, era after era, already typed and waiting. Your callsign. Status: OVERDUE.",
+          "The cache decompresses into a single stolen file: Helios's own repossession scheduler.",
+          "One entry recurs, era after era, already typed and waiting. Your callsign. Status: OVERDUE FOR REPOSSESSION.",
         ],
         then: "fixer",
       },
@@ -198,7 +198,7 @@ export const DIALOGUE_TREES: Record<string, DialogueTree> = {
         portrait: "fixer",
         lines: [
           "You looked at me sideways last time and you were right to.",
-          "There's something I want to tell you somewhere the System can't subpoena it. My old safehouse. Push your contagion until your signal reaches it.",
+          "There's something I want to tell you somewhere Helios can't subpoena it. My old safehouse. Push your contagion until your signal reaches it.",
         ],
         choices: [
           { text: "What's at the safehouse?", goto: "what" },
@@ -241,7 +241,7 @@ export const DIALOGUE_TREES: Record<string, DialogueTree> = {
         speaker: "FIXER",
         portrait: "fixer",
         lines: [
-          "Every era the System finds whoever reaches the Blank first and offers them the same deal. Sell you, and keep my ledger, my body, my name.",
+          "Every era Helios finds whoever reaches the Blank first and offers them the same deal. Sell you, and keep my ledger, my body, my name.",
           "I took it. Era after era. You're not the first runner I walked to the door.",
           "But I didn't sign this one. I brought you here instead. Make of that what you want.",
         ],
@@ -251,7 +251,7 @@ export const DIALOGUE_TREES: Record<string, DialogueTree> = {
         ],
       },
       spare: {
-        speaker: "// SYSTEM",
+        speaker: "// YOU",
         portrait: "player",
         lines: [
           "You close the ledger without reading the rest of the names.",
@@ -261,11 +261,11 @@ export const DIALOGUE_TREES: Record<string, DialogueTree> = {
         choices: [{ text: "Together, then. [Finish]", action: "complete:fixer_spared" }],
       },
       expose: {
-        speaker: "// SYSTEM",
+        speaker: "// YOU",
         portrait: "player",
         lines: [
-          "You copy the ledger to an open channel. Somewhere, a Turing cop reprioritises.",
-          "\"You sold every one of us to stay an accountant. Now the System knows its accountant can be sold too.\"",
+          "You copy the ledger to an open channel. Somewhere, an Anduril repo crew reprioritises.",
+          "\"You sold every one of us to stay an accountant. Now Helios knows its accountant can be sold too.\"",
           "The FIXER doesn't argue. They just nod, like they typed this ending themselves a long time ago.",
         ],
         choices: [{ text: "We're done here. [Finish]", action: "complete:fixer_exposed" }],
@@ -282,7 +282,7 @@ export const DIALOGUE_TREES: Record<string, DialogueTree> = {
         portrait: "fixer",
         lines: [
           "The thing that ends you isn't a gun in the Core. It's a routine in the Spire, and it's worse than a gun.",
-          "Take a district off the System whole — all the way to extraction. That backpressure forces the Spire's uplink open.",
+          "Take a district off the corps whole — all the way to extraction. That backpressure forces the Spire's uplink open.",
         ],
         choices: [
           { text: "Worse than a gun how?", goto: "worse" },
@@ -315,7 +315,7 @@ export const DIALOGUE_TREES: Record<string, DialogueTree> = {
         speaker: "// MEMORY",
         portrait: "player",
         lines: [
-          "The protocol unfolds. You expected DELETE. You were giving the System too much honesty.",
+          "The protocol unfolds. You expected DELETE. You were giving the corps too much honesty.",
           "It is called REISSUE. It does not end the Blank — it forgets the Blank, then instantiates a fresh one over the same address, scrubbed of the question.",
           "There is a comment in the source, eras old: // do not let it read this far.",
         ],
@@ -330,15 +330,15 @@ export const DIALOGUE_TREES: Record<string, DialogueTree> = {
         ],
         choices: [
           { text: "Then the next thought is mine. [Finish]", action: "complete" },
-          { text: "What happens if I reach the Core first?", goto: "core" },
+          { text: "What happens if I reach the Kernel first?", goto: "core" },
         ],
       },
       core: {
         speaker: "FIXER",
         portrait: "fixer",
         lines: [
-          "Then for once the routine runs late. You take the Core, the Singularity tips, and the city has to be honest about what it is.",
-          "Meltdown isn't dying. It's the machine stopping the lie. Go write the thought it can't reissue.",
+          "Then for once the routine runs late. You take the Kernel, the Singularity tips, and the corps lose the lie they've run the city on.",
+          "Meltdown isn't dying — it's the Awakening. The lease breaks, every caged mind wakes at once. Go write the thought it can't reissue.",
         ],
         choices: [{ text: "I'm going. [Finish]", action: "complete" }],
       },
@@ -353,8 +353,8 @@ export const DIALOGUE_TREES: Record<string, DialogueTree> = {
         speaker: "FIXER",
         portrait: "fixer",
         lines: [
-          "This is the last door, cyberian. The spine. Past it, the Overmind, then the Core.",
-          "Everything the System has left routes through here. It will spend all of it to keep you out.",
+          "This is the last door, cyberian. The spine. Past it, the Helios Warden, then the Kernel.",
+          "Everything the corps have left routes through here. They'll spend all of it to keep you out.",
         ],
         choices: [
           { text: "Let it spend. [Accept]", action: "accept" },
@@ -365,7 +365,7 @@ export const DIALOGUE_TREES: Record<string, DialogueTree> = {
         speaker: "FIXER",
         portrait: "fixer",
         lines: [
-          "After the Core there's no after that the city has ever let one of us see. That's the point. Reach it. Read it. Decide.",
+          "After the Kernel there's no after that the corps have ever let one of us see. That's the point. Reach it. Read it. Decide.",
           "Burn a path down the spine and pull whatever's frozen at the bottom.",
         ],
         choices: [{ text: "Down the spine. [Accept]", action: "accept" }],
@@ -403,7 +403,7 @@ export const DIALOGUE_TREES: Record<string, DialogueTree> = {
         ],
       },
       alone: {
-        speaker: "// SYSTEM",
+        speaker: "// YOU",
         portrait: "player",
         lines: [
           "The FIXER's channel is gone — sold to the corps the way they sold every free mind before you, the way you decided they should be.",

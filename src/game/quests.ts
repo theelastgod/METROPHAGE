@@ -12,7 +12,7 @@ export interface QuestStage {
   objective: string; // short objective label
   on: { type: QuestTriggerType; count?: number };
   talkTree?: string; // for talk stages — dialogue tree to run at the giver
-  onEnterLine?: string; // a "// SYSTEM" line shown when this stage begins
+  onEnterLine?: string; // a "// UPLINK" line shown when this stage begins
   fragmentId?: string; // dive stages: the specific memory fragment this dive surfaces
 }
 
@@ -83,8 +83,8 @@ export const QUESTS: QuestDef[] = [
     stages: [
       {
         id: "trail",
-        journal: "The last you scattered itself across the district before the System caught up. The cops are picking the trail clean — get there first.",
-        objective: "Destroy 8 HSS units",
+        journal: "The last you scattered itself across the district before Helios caught up. Anduril's repo crews are picking the trail clean — get there first.",
+        objective: "Wreck 8 corp enforcers",
         on: { type: "kill", count: 8 },
       },
       {
@@ -97,7 +97,7 @@ export const QUESTS: QuestDef[] = [
       },
       {
         id: "report",
-        journal: "The cache held a scheduler list: your callsign, pre-typed, overdue for deletion. The FIXER needs to see this.",
+        journal: "The cache held Helios's repossession scheduler: your callsign, pre-typed, overdue for the wipe. The FIXER needs to see this.",
         objective: "Return to the FIXER",
         on: { type: "talk" },
         talkTree: "reckoning_final",
@@ -117,7 +117,7 @@ export const QUESTS: QuestDef[] = [
     stages: [
       {
         id: "signal",
-        journal: "The FIXER wants to talk where the System can't listen. Spread your contagion until your signal reaches their old safehouse.",
+        journal: "The FIXER wants to talk where Helios can't listen. Spread your contagion until your signal reaches their old safehouse.",
         objective: "Infect 3 nodes",
         on: { type: "infect", count: 3 },
       },
@@ -131,7 +131,7 @@ export const QUESTS: QuestDef[] = [
       },
       {
         id: "judgment",
-        journal: "The vault held the FIXER's bargain: every era, they trade a Blank to the System to keep accounting. You were next. Decide what that's worth.",
+        journal: "The vault held the FIXER's bargain: every era, they hand a freed mind back to the corps for repossession to keep their own license clean. You were next. Decide what that's worth.",
         objective: "Confront the FIXER",
         on: { type: "talk" },
         talkTree: "debt_final",
@@ -151,7 +151,7 @@ export const QUESTS: QuestDef[] = [
     stages: [
       {
         id: "ascent",
-        journal: "The routine that ends you lives in the Spire. Take a district from the System whole — that forces the uplink open.",
+        journal: "The routine that ends you lives in the Argus Spire. Take a district from the corps whole — that forces the uplink open.",
         objective: "Secure a district",
         on: { type: "secure", count: 1 },
       },
@@ -165,7 +165,7 @@ export const QUESTS: QuestDef[] = [
       },
       {
         id: "decrypt",
-        journal: "It isn't called DELETE. It's called REISSUE — the System forgets you, then prints a fresh you that won't ask why. Bring it to the FIXER.",
+        journal: "It isn't called DELETE. It's called REISSUE — the corps forget you, then print a fresh you that won't ask why. Bring it to the FIXER.",
         objective: "Decrypt REISSUE with the FIXER",
         on: { type: "talk" },
         talkTree: "spire_final",

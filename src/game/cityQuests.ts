@@ -72,7 +72,7 @@ export const CITY_QUESTS: CityQuestDef[] = [
         reminder: ["Marek's east, in the slums. Don't keep him waiting."],
       },
     ],
-    complete: ["He took it? Good. The proud ones are the ones you lose. Here — you earned this. Salvaged it off a cop; should fit you."],
+    complete: ["He took it? Good. The proud ones are the ones you lose. Here — you earned this. Salvaged it off an enforcer; should fit you."],
     reward: { xp: 180, credits: 140, loot: 1, lootBoost: 1 },
   },
   {
@@ -117,8 +117,8 @@ export const CITY_QUESTS: CityQuestDef[] = [
     giver: "kessler",
     requires: "word_street",
     offer: [
-      "You brought VEX her whisper, so you can carry one of mine: the System's tightening curfew before the cycle.",
-      "Cops sweep the plaza by dark. Warn the ones who won't read the net — JUNO and SABLE — before they get scooped.",
+      "You brought VEX her whisper, so you can carry one of mine: Helios is tightening curfew before the cycle.",
+      "Repo crews sweep the plaza by dark. Warn the ones who won't read the net — JUNO and SABLE — before they get scooped.",
     ],
     accepted: ["Quietly. You're a courier tonight, not a hero. Find them."],
     stages: [
@@ -139,10 +139,10 @@ export const CITY_QUESTS: CityQuestDef[] = [
           "Figures. The Feral Cat closes early then — no sense pouring for an empty room.",
           "You're alright. Go on, before they tag you too.",
         ],
-        reminder: ["JUNO and SABLE. Before dark. The cops don't knock."],
+        reminder: ["JUNO and SABLE. Before dark. The repo crews don't knock."],
       },
     ],
-    complete: ["Both of them off the street. Good. The cycle takes enough without the cops helping. Here — corp-grade, took it off a curfew van."],
+    complete: ["Both of them off the street. Good. The cycle takes enough without the repo crews helping. Here — corp-grade, took it off a curfew van."],
     reward: { xp: 240, credits: 200, loot: 1, lootBoost: 1.2 },
   },
   {
@@ -190,7 +190,7 @@ export const CITY_QUESTS: CityQuestDef[] = [
         targetLine: [
           "The furniture's still standing. …Then GHOST is still with us. Good.",
           "I outlasted every tower that called me obsolete, runner. You know how? I let them think I was already gone.",
-          "Whatever you do at the Core — burn it or break it — leave a chair for the next quiet one. Some of us are rooting for you.",
+          "Whatever you do at the Kernel — burn it or break it — leave a chair for the next quiet one. Some of us are rooting for you.",
         ],
         reminder: ["OLD MAREK's east, in the slums. He's expecting GHOST's word."],
       },

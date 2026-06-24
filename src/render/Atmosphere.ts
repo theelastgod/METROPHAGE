@@ -31,7 +31,7 @@ function ensureTextures(scene: Phaser.Scene) {
 const cssHex = (c: number) => "#" + (c & 0xffffff).toString(16).padStart(6, "0");
 
 /** Holographic glyphs — terse cyberpunk signage drifting above the rooftops. */
-const HOLO_GLYPHS = ["システム", "0x7F", "▲HSS", "株式", "NEON", "デ", "SEC//", "監視", "未来", "ナ"];
+const HOLO_GLYPHS = ["システム", "0x7F", "▲HELIOS", "株式", "PALANTIR", "デ", "SEC//", "監視", "未来", "ナ"];
 
 /** A single floating holographic billboard: a projector dot, a beam, a flickering
  *  panel with a glyph + scanlines. Animated (flicker + scanline scroll). */

@@ -45,8 +45,8 @@ export const WORLD_EVENTS: WorldEventDef[] = [
   },
   {
     id: "purge_wave",
-    name: "SYSTEM PURGE WAVE",
-    tagline: "HSS reinforcements inbound",
+    name: "REPO PURGE WAVE",
+    tagline: "corp reinforcements inbound",
     color: 0xff3b6b,
     hex: "#ff3b6b",
     telegraphMs: 2800,

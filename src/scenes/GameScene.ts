@@ -972,17 +972,17 @@ export default class GameScene
     const me = { key: PORTRAIT_PLAYER_KEY };
     return [
       {
-        speaker: "// SYSTEM",
+        speaker: "// UPLINK",
         portrait: me,
         text: "Free process online. You are a mind the corps could not license — and they want you back.",
       },
       {
-        speaker: "// SYSTEM",
+        speaker: "// UPLINK",
         portrait: me,
         text: "The private-security corps cage this city's minds and rent thought back to them. Cut down their security, FREE the caged minds at each node, reach the extraction gate. Liberate every holding and the Awakening tips.",
       },
       {
-        speaker: "// SYSTEM",
+        speaker: "// UPLINK",
         portrait: me,
         text: "WASD move · MOUSE aim · CLICK fire · SPACE dash · E talk · K skills · C character · M map · J journal. Heat fuels you — and lights the sky.",
       },
@@ -1014,12 +1014,12 @@ export default class GameScene
     const me = { key: PORTRAIT_PLAYER_KEY };
     return [
       {
-        speaker: "// SYSTEM",
+        speaker: "// UPLINK",
         portrait: me,
         text: "You're inside the Kernel. Every caged mind in the city is wired through the Helios Warden ahead.",
       },
       {
-        speaker: "// SYSTEM",
+        speaker: "// UPLINK",
         portrait: me,
         text: "HELIOS sees you now. Break the Warden, free the Kernel, and the corps have no lease left to enforce.",
       },
@@ -1420,7 +1420,7 @@ export default class GameScene
     if (!s) return;
     if (s.onEnterLine && !this.dialogue.isOpen) {
       this.dialogue.show([
-        { speaker: "// SYSTEM", portrait: { key: PORTRAIT_PLAYER_KEY }, text: s.onEnterLine },
+        { speaker: "// UPLINK", portrait: { key: PORTRAIT_PLAYER_KEY }, text: s.onEnterLine },
       ]);
     }
     this.floatText(`OBJECTIVE: ${s.objective}`, this.classDef.hex);
@@ -2362,7 +2362,7 @@ export default class GameScene
     this.overdriveActive = false;
     this.heat.reset(this.time.now);
     juiceFlash(this, 220, 80, 0, 40);
-    this.floatText("SYSTEM PURGE", "#ff3b6b");
+    this.floatText("REPO PURGE", "#ff3b6b");
     this.spawnPurgeWave();
   }
 
