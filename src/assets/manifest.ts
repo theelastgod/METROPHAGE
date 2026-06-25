@@ -35,6 +35,9 @@ export const CRATE_KEY = "crate";
 export const STREETLIGHT_KEY = "streetlight";
 export const GLOW_KEY = "glow";
 export const SPARK_KEY = "spark";
+// Real combat FX sliced from the "Comprehensive" Special-effects atlas.
+export const FX_MUZZLE_KEY = "fx_muzzle";
+export const FX_IMPACT_KEY = "fx_impact";
 
 // Real top-down street props (sliced from the CyberPunk environment pack) — scattered as
 // non-colliding decals in the online districts (see OnlineScene).
@@ -94,6 +97,8 @@ export const ASSETS: Record<string, AssetEntry[]> = {
   fx: [
     { key: GLOW_KEY, file: null }, // code-authored radial glow
     { key: SPARK_KEY, file: null }, // code-authored hit star
+    { key: FX_MUZZLE_KEY, file: "assets/fx/fx_muzzle.png" }, // real muzzle flash (pack)
+    { key: FX_IMPACT_KEY, file: "assets/fx/fx_impact.png" }, // real kill explosion (pack)
   ],
   portraits: [
     { key: PORTRAIT_PLAYER_KEY, file: null }, // code-authored cyberian bust

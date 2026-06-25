@@ -2350,6 +2350,7 @@ export default class GameScene
     }
     this.heat.add(dmg * HEAT.perDamage * heatGain, this.time.now);
     if (killed) {
+      this.particles.burst(cop.x, cop.y, cop instanceof Boss ? 2.4 : 1); // real pack explosion
       this.heat.add(HEAT.perKill * heatGain, this.time.now);
       this.city.addSingularity(SINGULARITY.perKill);
       if (cop instanceof Boss) {
@@ -2777,6 +2778,8 @@ export default class GameScene
 
   private muzzleFlash(x: number, y: number) {
     this.particles.flash(x, y, COLORS.bullet);
+    // Real pack muzzle flame, oriented along the shot (x,y is muzzleAt(angle) from the player).
+    this.particles.muzzle(x, y, Math.atan2(y - this.player.y, x - this.player.x));
   }
 
   private spark(x: number, y: number, color: number, scale: number) {
