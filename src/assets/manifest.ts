@@ -41,6 +41,16 @@ export const SPARK_KEY = "spark";
 export const PROP_STREETLIGHT_KEY = "prop_streetlight";
 export const PROP_VENDING_KEY = "prop_vending";
 export const PROP_AC_KEY = "prop_ac";
+// Real top-down props sliced from the "Comprehensive" cyberpunk pack (atlas auto-slicer,
+// tools/atlas-slice.mjs). Curated + downscaled to game scale in /public/assets/objects/.
+export const PROP_BIN_KEY = "prop_bin";
+export const PROP_HYDRANT_KEY = "prop_hydrant";
+export const PROP_PLANTER_KEY = "prop_planter";
+export const PROP_BARRIER_KEY = "prop_barrier";
+export const PROP_TAXI_KEY = "prop_taxi";
+export const PROP_CAR_KEY = "prop_car";
+// Holographic projectors (Signs & holograms atlas) — standing emitter decals for plazas.
+export const HOLO_KEYS = ["holo_spiral", "holo_cube", "holo_net", "holo_emit"];
 
 export const PORTRAIT_PLAYER_KEY = "portrait_player";
 export const PORTRAIT_NPC_KEY = "portrait_npc";
@@ -103,6 +113,13 @@ export const ASSETS: Record<string, AssetEntry[]> = {
     { key: PROP_STREETLIGHT_KEY, file: "assets/objects/prop_streetlight.png" },
     { key: PROP_VENDING_KEY, file: "assets/objects/prop_vending.png" },
     { key: PROP_AC_KEY, file: "assets/objects/prop_ac.png" },
+    { key: PROP_BIN_KEY, file: "assets/objects/prop_bin.png" },
+    { key: PROP_HYDRANT_KEY, file: "assets/objects/prop_hydrant.png" },
+    { key: PROP_PLANTER_KEY, file: "assets/objects/prop_planter.png" },
+    { key: PROP_BARRIER_KEY, file: "assets/objects/prop_barrier.png" },
+    { key: PROP_TAXI_KEY, file: "assets/objects/prop_taxi.png" },
+    { key: PROP_CAR_KEY, file: "assets/objects/prop_car.png" },
+    ...HOLO_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
   ],
   // Real garment icons (apparel pack) for the cosmetics wardrobe — keyed "cos_<id>".
   cosIcons: COSMETICS.map((c) => ({ key: "cos_" + c.id, file: "assets/icons/cos_" + c.id + ".png" })),

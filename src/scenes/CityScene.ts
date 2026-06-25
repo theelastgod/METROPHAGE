@@ -1,7 +1,18 @@
 import Phaser from "phaser";
 import { installUiCamera } from "../render/cameras";
 import { TILE, COLORS, NPC } from "../config";
-import { TILESET_KEY, PORTRAIT_NPC_KEY, GLOW_KEY } from "../assets/manifest";
+import {
+  TILESET_KEY,
+  PORTRAIT_NPC_KEY,
+  GLOW_KEY,
+  PROP_PLANTER_KEY,
+  PROP_BIN_KEY,
+  PROP_STREETLIGHT_KEY,
+  PROP_HYDRANT_KEY,
+  PROP_TAXI_KEY,
+  PROP_CAR_KEY,
+  HOLO_KEYS,
+} from "../assets/manifest";
 import { COLLIDING_TILES, isWall } from "../world/district";
 import {
   buildCity,
@@ -366,6 +377,43 @@ export default class CityScene extends Phaser.Scene {
       const env = envAt(d.x, d.y, this.cityMap.w, this.cityMap.h);
       this.spawnProp(d.kind, d.x * TILE + TILE / 2, d.y * TILE + TILE / 2, ENV_IDENTITY[env].accent);
     }
+    // Real top-down vehicles (pack) parked in open streets + hydrants tucked against
+    // buildings — deterministic + sparse so the city reads as lived-in. Non-colliding decals.
+    const grid = this.cityMap.grid;
+    const hash = (x: number, y: number) => ((x * 73856093) ^ (y * 19349663)) >>> 0;
+    const wall = (x: number, y: number) => isWall(grid[y]?.[x]);
+    const adjWall = (x: number, y: number) => wall(x - 1, y) || wall(x + 1, y) || wall(x, y - 1) || wall(x, y + 1);
+    let cars = 0;
+    let hyd = 0;
+    for (let ty = 2; ty < grid.length - 2; ty++) {
+      for (let tx = 2; tx < grid[ty].length - 2; tx++) {
+        if (wall(tx, ty)) continue;
+        const h = hash(tx, ty);
+        const px = tx * TILE + TILE / 2;
+        const py = ty * TILE + TILE / 2;
+        if (!adjWall(tx, ty) && h % 37 === 0 && cars < 6) {
+          this.add.image(px, py, h % 2 ? PROP_TAXI_KEY : PROP_CAR_KEY).setOrigin(0.5, 0.55).setDepth(4);
+          cars++;
+        } else if (adjWall(tx, ty) && h % 211 === 0 && hyd < 8) {
+          this.add.image(px, py + 4, PROP_HYDRANT_KEY).setOrigin(0.5, 0.9).setDepth(4);
+          hyd++;
+        }
+      }
+    }
+    // Holographic projectors at plaza centres (open civic spaces) — a projection-pool glow
+    // + a slow hover. Plaza-anchored so they always land in open ground, spread across the map.
+    const HOLO_TINT = [0xff2bd6, 0xffb13c, 0x39ff88, 0x39ff88]; // matches HOLO_KEYS order
+    this.cityMap.plazas.slice(0, 6).forEach((p, i) => {
+      const cx = Math.floor((p.x1 + p.x2) / 2);
+      const cy = Math.floor((p.y1 + p.y2) / 2);
+      if (wall(cx, cy)) return;
+      const px = cx * TILE + TILE / 2;
+      const py = cy * TILE + TILE / 2;
+      const k = i % HOLO_KEYS.length;
+      this.add.image(px, py, GLOW_KEY).setTint(HOLO_TINT[k]).setBlendMode(Phaser.BlendModes.ADD).setDepth(3).setScale(0.6).setAlpha(0.22);
+      const holo = this.add.image(px, py + 3, HOLO_KEYS[k]).setOrigin(0.5, 0.92).setDepth(5);
+      this.tweens.add({ targets: holo, y: holo.y - 2, yoyo: true, repeat: -1, duration: 1500 + i * 130, ease: "Sine.inOut" });
+    });
   }
 
   /** Draw one decorative prop (procedural). Glowy props (fire/lantern) pulse. */
@@ -386,9 +434,8 @@ export default class CityScene extends Phaser.Scene {
         glow(accent, 0.9, 0.4);
         break;
       case "planter":
-        g.fillStyle(0x1a2235, 1).fillRect(x - 8, y - 2, 16, 8);
-        g.lineStyle(1, 0x39ff88, 0.6).strokeRect(x - 8, y - 2, 16, 8);
-        g.fillStyle(0x2fbf5a, 1).fillRect(x - 6, y - 6, 12, 4);
+        // Real pack planter (overrides the procedural box).
+        this.add.image(x, y + 4, PROP_PLANTER_KEY).setOrigin(0.5, 0.9).setDepth(D);
         break;
       case "stall":
         g.fillStyle(0x2a1c10, 1).fillRect(x - 10, y - 2, 20, 8);
@@ -396,9 +443,9 @@ export default class CityScene extends Phaser.Scene {
         g.fillStyle(0x0a0e1a, 1).fillRect(x - 10, y - 4, 2, 10).fillRect(x + 8, y - 4, 2, 10);
         break;
       case "lantern":
-        g.fillStyle(0x0a0e1a, 1).fillRect(x - 1, y - 14, 2, 16);
-        g.fillStyle(accent, 1).fillCircle(x, y - 16, 4);
-        glow(accent, 0.7, 0.55, true);
+        // Real pack streetlight (overrides the procedural lamp-on-pole) + a soft ground pool.
+        this.add.image(x, y + 4, PROP_STREETLIGHT_KEY).setOrigin(0.5, 1).setDepth(D);
+        glow(accent, 0.6, 0.32, true);
         break;
       case "pipe":
         g.lineStyle(5, 0x4a5468, 1).lineBetween(x - 12, y, x + 12, y);
@@ -417,9 +464,8 @@ export default class CityScene extends Phaser.Scene {
         glow(0xff6a2c, 0.95, 0.7, true);
         break;
       case "trash":
-        g.fillStyle(0x1a1d26, 1).fillTriangle(x - 10, y + 4, x + 10, y + 4, x, y - 8);
-        g.fillStyle(0x2a2030, 1).fillRect(x - 4, y - 2, 6, 6);
-        g.fillStyle(0x39ff88, 0.15).fillCircle(x + 2, y + 2, 4);
+        // Real pack bin (overrides the procedural trash heap).
+        this.add.image(x, y + 4, PROP_BIN_KEY).setOrigin(0.5, 0.9).setDepth(D);
         break;
       case "tree":
         g.fillStyle(0x3a2a18, 1).fillRect(x - 2, y - 4, 4, 10);
