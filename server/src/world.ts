@@ -66,6 +66,7 @@ import { listingFee, MIN_PRICE, MAX_PRICE } from "../../src/game/market";
 import { dailyContracts, getDaily, currentDay, repTier, type DailyObjective } from "../../src/game/dailies";
 import { RAID_SCRIPT, phaseForHp, raidHpScale } from "../../src/game/raid";
 import { getCosmetic, applyCosmetic } from "../../src/game/cosmetics";
+import { bountyById, type BountyObjective } from "../../src/game/bounties";
 import { verifyWalletLogin } from "./auth";
 
 /** Inventory is capped so the persisted JSON stays bounded; oldest drops out (FIFO). */
@@ -221,6 +222,8 @@ interface PlayerState {
   // cosmetics / transmog — owned set + equipped override (zero power), persisted to D1
   cosmeticsOwned: Set<string>;
   cosmeticEquipped: string | null;
+  // authored NPC bounty — one active at a time (in-memory; reward + count persist)
+  bounty: { id: string; progress: number } | null;
   // appearance (relayed to other clients so they render this player's customization)
   look?: PlayerLook;
 }
@@ -798,6 +801,7 @@ export class WorldDO {
     if (msg.t === "guild") return this.onGuild(ws, msg);
     if (msg.t === "market") return this.onMarket(ws, msg);
     if (msg.t === "cosmetic") return this.onCosmetic(ws, msg);
+    if (msg.t === "bounty") return this.onBounty(ws, msg);
     if (msg.t === "party") return this.onParty(ws, msg);
     if (msg.t === "mute") return this.onMute(ws, msg);
     if (msg.t === "emote") return this.onEmote(ws, msg);
@@ -1570,6 +1574,7 @@ export class WorldDO {
     await this.drainMail(p); // collect any auction proceeds that arrived while away
     this.sendContracts(ws, p); // hydrate today's daily contracts + reputation
     this.sendCosmetics(ws, p); // hydrate owned cosmetics + equipped transmog
+    this.sendBounty(ws, p); // hydrate any active NPC bounty
     this.ensureTick();
     await this.ensureSupervisor();
   }
@@ -1736,6 +1741,7 @@ export class WorldDO {
       dailyDirty: false,
       cosmeticsOwned,
       cosmeticEquipped,
+      bounty: null,
       look,
     };
   }
@@ -1856,6 +1862,51 @@ export class WorldDO {
       p.dailyDirty = true;
       this.pushContracts(p);
     }
+  }
+
+  // ── authored NPC bounties (one active at a time; in-memory, auto-rewarded) ──────
+  private sendBounty(ws: WebSocket, p: PlayerState) {
+    const b = p.bounty ? bountyById(p.bounty.id) : undefined;
+    this.send(ws, {
+      t: "bounty",
+      active: b ? { id: b.id, name: b.name, desc: b.desc, objective: b.objective, count: b.count, progress: p.bounty!.progress } : null,
+    });
+  }
+  private pushBounty(p: PlayerState) {
+    for (const [sock, id] of this.sessions) if (id === p.id) this.sendBounty(sock, p);
+  }
+
+  private onBounty(ws: WebSocket, msg: Extract<ClientMsg, { t: "bounty" }>) {
+    const p = this.playerFor(ws);
+    if (!p) return;
+    if (msg.action === "accept") {
+      if (p.bounty) {
+        this.send(ws, { t: "sys", text: "finish your current job first" });
+        return;
+      }
+      const b = bountyById(msg.id);
+      if (!b) return;
+      p.bounty = { id: b.id, progress: 0 };
+      this.send(ws, { t: "sys", text: `accepted: ${b.name}` });
+      this.pushBounty(p);
+    }
+  }
+
+  /** Advance the active NPC bounty on a matching event; auto-grant credits + rep on completion. */
+  private bountyEvent(p: PlayerState, objective: BountyObjective, n = 1) {
+    if (!p.bounty) return;
+    const b = bountyById(p.bounty.id);
+    if (!b || b.objective !== objective) return;
+    p.bounty.progress += n;
+    if (p.bounty.progress >= b.count) {
+      p.credits += b.rewardCredits; // server-authoritative reward
+      this.bumpStat(p, "credits", b.rewardCredits);
+      this.bumpStat(p, "rep", b.rewardRep);
+      p.dirty = true;
+      this.sendTo(p.id, { t: "sys", text: `✔ BOUNTY — ${b.name} (+₵${b.rewardCredits} +${b.rewardRep} rep)` });
+      p.bounty = null;
+    }
+    this.pushBounty(p);
   }
 
   private onInput(ws: WebSocket, msg: Extract<ClientMsg, { t: "input" }>) {
@@ -2229,9 +2280,13 @@ export class WorldDO {
                 this.bumpStat(killer, "kills", 1);
                 if (isBoss) this.bumpStat(killer, "bosses", 1);
                 this.bumpStat(killer, "credits", gained);
-                // daily contracts
+                // daily contracts + NPC bounties
                 this.contractEvent(killer, "kill", 1);
-                if (isBoss) this.contractEvent(killer, "boss", 1);
+                this.bountyEvent(killer, "kill", 1);
+                if (isBoss) {
+                  this.contractEvent(killer, "boss", 1);
+                  this.bountyEvent(killer, "boss", 1);
+                }
                 // item loot — a boss ALWAYS drops, rarity-boosted; a grunt rolls the chance.
                 // Pushed (FIFO-capped) to the killer's client only.
                 if (isBoss || Math.random() < arch.loot.chance) {
@@ -2329,6 +2384,7 @@ export class WorldDO {
             p.xp += 8;
             p.level = levelForXp(p.xp);
             this.questEvent(p, "collect");
+            this.bountyEvent(p, "collect", 1);
           } else {
             p.credits += 6;
           }

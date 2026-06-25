@@ -34,6 +34,7 @@ import { QUESTLINE } from "../net/quest";
 import OnlineCosmetics from "../ui/OnlineCosmetics";
 import { applyCosmetic } from "../game/cosmetics";
 import { npcDef, AMBIENT_NPCS, INTERIOR_PLAN, keeperFor } from "../game/cityNpcs";
+import { bountyForNpc } from "../game/bounties";
 import type { PlayerLook } from "../net/protocol";
 import { setOnlinePlayer } from "../economy/session";
 import { connectedWallet, signWalletLogin } from "../economy/wallet";
@@ -156,6 +157,7 @@ export default class OnlineScene extends Phaser.Scene {
   private tradeText!: Phaser.GameObjects.Text;
   private questText!: Phaser.GameObjects.Text;
   private dailyText!: Phaser.GameObjects.Text; // active daily contract — the immediate objective
+  private bountyText!: Phaser.GameObjects.Text; // active authored NPC bounty
   private storyPanel!: Phaser.GameObjects.Text;
   private chatOpen = false;
   private chatBuffer = "";
@@ -176,8 +178,8 @@ export default class OnlineScene extends Phaser.Scene {
   private pvpWarn!: Phaser.GameObjects.Text;
   // zone interactables — service operatives (open a system), authored citizens (flavour),
   // and doors (travel into a building interior)
-  private npcs: { kind: "service" | "talk" | "door"; svc?: string; dest?: string; name: string; lines?: string[]; lineIdx?: number; x: number; y: number }[] = [];
-  private nearNpc: { kind: "service" | "talk" | "door"; svc?: string; dest?: string; name: string; lines?: string[]; lineIdx?: number; x: number; y: number } | null = null;
+  private npcs: { kind: "service" | "talk" | "door"; svc?: string; dest?: string; npcId?: string; name: string; lines?: string[]; lineIdx?: number; x: number; y: number }[] = [];
+  private nearNpc: { kind: "service" | "talk" | "door"; svc?: string; dest?: string; npcId?: string; name: string; lines?: string[]; lineIdx?: number; x: number; y: number } | null = null;
   private interactPrompt?: Phaser.GameObjects.Text;
   private speechBubble?: Phaser.GameObjects.Text;
   private pvpTag!: Phaser.GameObjects.Text;
@@ -276,7 +278,7 @@ export default class OnlineScene extends Phaser.Scene {
         // ambient regulars for life
         for (const c of SAFEHOUSE_CITIZENS) {
           const cdef = npcDef(c.id);
-          if (cdef) this.makeTalkNpc(cdef.name, cdef.look, cdef.lines, c.tile[0] * TILE + TILE / 2, c.tile[1] * TILE + TILE / 2);
+          if (cdef) this.makeTalkNpc(cdef.name, cdef.look, cdef.lines, c.tile[0] * TILE + TILE / 2, c.tile[1] * TILE + TILE / 2, cdef.id);
         }
       } else {
         // a building interior — seat its authored occupants (keeper + residents)
@@ -284,7 +286,7 @@ export default class OnlineScene extends Phaser.Scene {
         const occupants = [keeperFor(this.zone), ...residents.map((id) => npcDef(id)).filter((d): d is NonNullable<typeof d> => !!d)];
         occupants.forEach((o, i) => {
           const [tx, ty] = INTERIOR_NPC_TILES[i % INTERIOR_NPC_TILES.length];
-          this.makeTalkNpc(o.name, o.look, o.lines, tx * TILE + TILE / 2, ty * TILE + TILE / 2);
+          this.makeTalkNpc(o.name, o.look, o.lines, tx * TILE + TILE / 2, ty * TILE + TILE / 2, o.id);
         });
       }
     } else if (this.isSubway) {
@@ -317,7 +319,7 @@ export default class OnlineScene extends Phaser.Scene {
         if (placed >= 3) break;
         if (isWall(grid[ty]?.[tx])) continue;
         const adef = AMBIENT_NPCS[(this.districtIndex * 3 + placed) % AMBIENT_NPCS.length];
-        this.makeTalkNpc(adef.name, adef.look, adef.lines, tx * TILE + TILE / 2, ty * TILE + TILE / 2);
+        this.makeTalkNpc(adef.name, adef.look, adef.lines, tx * TILE + TILE / 2, ty * TILE + TILE / 2, adef.id);
         placed++;
       }
     }
@@ -570,6 +572,16 @@ export default class OnlineScene extends Phaser.Scene {
       .setOrigin(0.5, 0)
       .setScrollFactor(0)
       .setDepth(1000);
+    this.bountyText = this.add
+      .text(this.scale.width / 2, 42, "", {
+        fontFamily: "Courier New, monospace",
+        fontSize: "11px",
+        color: "#f7ff3c",
+        align: "center",
+      })
+      .setOrigin(0.5, 0)
+      .setScrollFactor(0)
+      .setDepth(1000);
     this.storyPanel = this.add
       .text(this.scale.width / 2, this.scale.height / 2 - 40, "", {
         fontFamily: "Courier New, monospace",
@@ -626,7 +638,7 @@ export default class OnlineScene extends Phaser.Scene {
         if (this.nearNpc) {
           if (this.nearNpc.kind === "service" && this.nearNpc.svc) this.openService(this.nearNpc.svc);
           else if (this.nearNpc.kind === "door" && this.nearNpc.dest) this.enterZone(this.nearNpc.dest);
-          else this.sayLine(this.nearNpc);
+          else this.talkNpc(this.nearNpc);
         }
         return;
       }
@@ -847,18 +859,42 @@ export default class OnlineScene extends Phaser.Scene {
     }
   }
 
-  /** Build an authored, talkable citizen at a world position (baked from its PlayerLook). */
-  private makeTalkNpc(name: string, look: PlayerLook, lines: string[], px: number, py: number) {
+  /** Build an authored, talkable citizen at a world position (baked from its PlayerLook).
+   *  Pass the npc id so quest-givers can offer their bounty on interact. */
+  private makeTalkNpc(name: string, look: PlayerLook, lines: string[], px: number, py: number, npcId?: string) {
     const key = lookKey(look);
     bakeRemoteLook(this, key, look);
-    const npc = { kind: "talk" as const, name, lines, lineIdx: 0, x: px, y: py };
+    const npc = { kind: "talk" as const, npcId, name, lines, lineIdx: 0, x: px, y: py };
     const spr = this.add.sprite(px, py, key, 0).setDepth(9).setInteractive({ useHandCursor: true });
-    spr.on("pointerdown", () => this.sayLine(npc));
+    spr.on("pointerdown", () => this.talkNpc(npc));
+    const givesBounty = npcId && bountyForNpc(npcId);
     this.add
-      .text(px, py - 26, name, { fontFamily: "Courier New, monospace", fontSize: "9px", color: "#9aa3b2" })
+      .text(px, py - 26, givesBounty ? `${name} ◈` : name, { fontFamily: "Courier New, monospace", fontSize: "9px", color: givesBounty ? "#f7ff3c" : "#9aa3b2" })
       .setOrigin(0.5)
       .setDepth(9);
     this.npcs.push(npc);
+  }
+
+  /** Interact with a citizen: a quest-giver offers/updates their bounty, others bark flavour. */
+  private talkNpc(npc: { npcId?: string; name: string; lines?: string[]; lineIdx?: number; x: number; y: number }) {
+    const b = npc.npcId ? bountyForNpc(npc.npcId) : undefined;
+    if (b) {
+      const active = this.net.bounty;
+      if (active && active.id === b.id) this.showBubble(npc.x, npc.y, `${npc.name}: still on it — ${active.progress}/${active.count}.`);
+      else if (active) this.showBubble(npc.x, npc.y, `${npc.name}: finish your current job first.`);
+      else {
+        this.net.bountyAccept(b.id);
+        this.showBubble(npc.x, npc.y, `${npc.name}: ${b.offer}`);
+      }
+    } else this.sayLine(npc);
+  }
+
+  /** Show a floating speech bubble above a world point (auto-fades). */
+  private showBubble(x: number, y: number, text: string) {
+    if (!this.speechBubble) return;
+    this.speechBubble.setText(text).setPosition(x, y - 34).setVisible(true).setAlpha(1);
+    this.tweens.killTweensOf(this.speechBubble);
+    this.tweens.add({ targets: this.speechBubble, alpha: 0, delay: 3200, duration: 700, onComplete: () => this.speechBubble?.setVisible(false) });
   }
 
   /** A door into a building interior — a glowing portal you enter with E (or click). */
@@ -886,12 +922,10 @@ export default class OnlineScene extends Phaser.Scene {
 
   /** Speak an authored citizen's next flavour line in a floating bubble (cycles their lines). */
   private sayLine(npc: { name: string; lines?: string[]; lineIdx?: number; x: number; y: number }) {
-    if (!this.speechBubble || !npc.lines || npc.lines.length === 0) return;
+    if (!npc.lines || npc.lines.length === 0) return;
     const line = npc.lines[(npc.lineIdx ?? 0) % npc.lines.length];
     npc.lineIdx = (npc.lineIdx ?? 0) + 1;
-    this.speechBubble.setText(`${npc.name}: ${line}`).setPosition(npc.x, npc.y - 34).setVisible(true).setAlpha(1);
-    this.tweens.killTweensOf(this.speechBubble);
-    this.tweens.add({ targets: this.speechBubble, alpha: 0, delay: 3200, duration: 700, onComplete: () => this.speechBubble?.setVisible(false) });
+    this.showBubble(npc.x, npc.y, `${npc.name}: ${line}`);
   }
 
   /** Retint the LOCAL avatar to the equipped transmog (remotes get it via the relayed look). */
@@ -1210,6 +1244,10 @@ export default class OnlineScene extends Phaser.Scene {
     } else {
       this.dailyText.setVisible(false);
     }
+    // authored NPC bounty (accepted from a quest-giver)
+    const bty = this.net.bounty;
+    if (bty) this.bountyText.setVisible(true).setText(`◈ BOUNTY — ${bty.name}  ${Math.min(bty.progress, bty.count)}/${bty.count}`);
+    else this.bountyText.setVisible(false);
     const story = this.net.story;
     if (story && performance.now() - story.at < 8000) {
       this.storyPanel.setVisible(true).setText(`◢ ${story.act} — ${story.title} ◣\n\n${story.text}`);

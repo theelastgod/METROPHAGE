@@ -123,6 +123,8 @@ export default class NetClient {
   cosmeticsOwned: string[] = [];
   cosmeticEquipped: string | null = null;
   onCosmetics?: () => void;
+  bounty: { id: string; name: string; desc: string; objective: string; count: number; progress: number } | null = null;
+  onBounty?: () => void;
   story: { act: string; title: string; text: string; done: boolean; at: number } | null = null;
   lastError = 0;
   reconciles = 0;
@@ -355,6 +357,9 @@ export default class NetClient {
       this.repTier = msg.repTier;
       this.contractsDay = msg.day;
       this.onContracts?.();
+    } else if (msg.t === "bounty") {
+      this.bounty = msg.active;
+      this.onBounty?.();
     } else if (msg.t === "cosmetics") {
       this.cosmeticsOwned = msg.owned;
       this.cosmeticEquipped = msg.equipped;
@@ -430,6 +435,10 @@ export default class NetClient {
   /** Cosmetics / transmog — server owns ownership + the equipped override (zero power). */
   cosmeticAction(action: "buy" | "equip" | "unequip" | "list", id?: string) {
     this.sendMsg({ t: "cosmetic", action, id });
+  }
+  /** Accept an authored NPC bounty (server validates one-at-a-time + grants on completion). */
+  bountyAccept(id: string) {
+    this.sendMsg({ t: "bounty", action: "accept", id });
   }
   /** Guild ("Cell") action — server validates rank/balance + owns the shared bank (D1). */
   guildAction(

@@ -1229,6 +1229,64 @@ async function cosmetic() {
   );
 }
 
+async function bounty() {
+  // AUTHORED NPC BOUNTIES — accept a quest-giver's job (one at a time), auto-rewarded on done.
+  const ws = await connect();
+  const store = { x: 0, y: 0, enemies: [], bounty: null, sys: [] };
+  ws.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "bounty") store.bounty = m.active;
+    if (m.t === "sys") store.sys.push(m.text);
+  });
+  const w = await login(ws, "hunter_" + Math.random().toString(36).slice(2, 6));
+  store.x = w.x;
+  store.y = w.y;
+  trackState(ws, w.id, store);
+  await sleep(400);
+
+  ws.send(JSON.stringify({ t: "bounty", action: "accept", id: "rin_sweep" })); // kill 12
+  await sleep(400);
+  const accepted = !!store.bounty && store.bounty.id === "rin_sweep";
+
+  ws.send(JSON.stringify({ t: "bounty", action: "accept", id: "doc_cores" })); // already have one
+  await sleep(400);
+  const secondRejected = !!store.bounty && store.bounty.id === "rin_sweep" && store.sys.some((t) => /finish your current/i.test(t));
+
+  const nearest = () => {
+    let b = null, bd = 1e9;
+    for (const e of store.enemies) {
+      const d = Math.hypot(e.x - store.x, e.y - store.y);
+      if (d < bd) { bd = d; b = e; }
+    }
+    return b;
+  };
+  let seq = 0, maxProg = 0;
+  const t0 = Date.now();
+  while (Date.now() - t0 < 65000 && store.bounty) {
+    const e = nearest();
+    if (e) {
+      const dx = e.x - store.x, dy = e.y - store.y, d = Math.hypot(dx, dy) || 1;
+      seq++;
+      ws.send(JSON.stringify({ t: "input", seq, mx: d > 110 ? dx / d : 0, my: d > 110 ? dy / d : 0 }));
+      ws.send(JSON.stringify({ t: "fire", seq, aim: Math.atan2(dy, dx) }));
+    }
+    if (store.bounty) maxProg = Math.max(maxProg, store.bounty.progress);
+    await sleep(45);
+  }
+  const progressed = maxProg > 0;
+  const completed = store.bounty === null && store.sys.some((t) => /BOUNTY —/.test(t));
+
+  ws.close();
+  await sleep(200);
+  const checks = { accepted, secondRejected, progressed, completed };
+  report(
+    "BOUNTY — accept an NPC job (one at a time), progress on kills, auto-reward on completion",
+    { maxProgress: maxProg, lastSys: store.sys.slice(-2) },
+    Object.values(checks).every(Boolean),
+    checks,
+  );
+}
+
 async function shop() {
   const ws = await connect();
   const store = { x: 0, y: 0, enemies: [], inventory: [], credits: 0 };
@@ -2191,6 +2249,7 @@ try {
   else if (mode === "safehouse") await safehouse();
   else if (mode === "interior") await interior();
   else if (mode === "subway") await subway();
+  else if (mode === "bounty") await bounty();
   else if (mode === "mp") await mp();
   else if (mode === "zones") await zones();
   else if (mode === "territory") await territory();

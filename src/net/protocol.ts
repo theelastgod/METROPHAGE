@@ -72,6 +72,8 @@ export type ClientMsg =
   | { t: "market"; action: "list" | "cancel" | "buy" | "browse"; id?: number; itemId?: string; price?: number; currency?: "credits" | "metro" }
   // cosmetics / transmog — appearance overrides (zero power); NFT tier gated server-side
   | { t: "cosmetic"; action: "buy" | "equip" | "unequip" | "list"; id?: string }
+  // authored NPC bounties — accept a quest-giver's repeatable job (server validates + grants)
+  | { t: "bounty"; action: "accept"; id: string }
   | { t: "buy"; sku: string } // vendor purchase (heal / gear cache), priced + validated server-side
   | { t: "emote"; kind: number; ping: boolean; x: number; y: number } // emote (above avatar) or world ping
   | {
@@ -212,6 +214,8 @@ export type ServerMsg =
     }
   // cosmetics — owned set + the equipped transmog (sent on login + on change)
   | { t: "cosmetics"; owned: string[]; equipped: string | null }
+  // authored NPC bounty — the player's active job (or null), sent on login + on change
+  | { t: "bounty"; active: { id: string; name: string; desc: string; objective: string; count: number; progress: number } | null }
   // guild ("Cell") state — full summary + roster, or "none" when not in a cell
   | {
       t: "guild";
