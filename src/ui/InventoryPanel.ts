@@ -14,9 +14,9 @@ const SLOT_ICON: Record<string, string> = { weapon: "WEAPON-MOD", implant: "IMPL
 /** Icon texture + tint for an inventory item (weapon → its type icon, else the slot icon). */
 function itemIcon(it: Item): { key: string; tint: number } {
   const w = getWeapon(it.weaponId);
-  // real colour icons render untinted (rarity reads from the cell border)
+  // weapons = full-colour gun art (untinted); gear/consumables = monochrome glyphs, rarity-tinted
   if (w) return { key: iconKey(w.klass), tint: 0xffffff };
-  return { key: iconKey(SLOT_ICON[it.slot] ?? "CHIP"), tint: 0xffffff };
+  return { key: iconKey(SLOT_ICON[it.slot] ?? "CHIP"), tint: RARITIES[it.rarity].color };
 }
 
 /**

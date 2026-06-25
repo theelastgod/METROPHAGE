@@ -13,9 +13,9 @@ import { upgradeCost, reforgeCost, salvageYield, fuseCost, canUpgrade, canFuse, 
 const SLOT_ICON: Record<Slot, string> = { weapon: "WEAPON-MOD", implant: "IMPLANT", armor: "ARMOR", chip: "CHIP" };
 function itemIcon(it: Item): { key: string; tint: number } {
   const w = it.weaponId ? getWeapon(it.weaponId) : undefined;
-  // real colour icons render untinted (0xffffff); rarity reads from the cell border
+  // weapons = full-colour gun art (untinted); gear/consumables = monochrome glyphs, rarity-tinted
   if (w) return { key: iconKey(w.klass), tint: 0xffffff };
-  return { key: iconKey(SLOT_ICON[it.slot]), tint: 0xffffff };
+  return { key: iconKey(SLOT_ICON[it.slot]), tint: RARITIES[it.rarity].color };
 }
 
 type CraftAction = "upgrade" | "reforge" | "salvage" | "fuse";
