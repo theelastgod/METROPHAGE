@@ -204,7 +204,7 @@ export default class SelectScene extends Phaser.Scene {
     onlineBtn.on("pointerdown", () => {
       if (this.options?.isOpen) return;
       this.cameras.main.fadeOut(250, 2, 2, 8);
-      this.cameras.main.once("camerafadeoutcomplete", () => this.scene.start("Online"));
+      this.cameras.main.once("camerafadeoutcomplete", () => this.scene.start("Online", { zone: "safe" }));
     });
 
     // THE CITY — the big walkable hub (buildings to enter, NPCs, single-player quests).

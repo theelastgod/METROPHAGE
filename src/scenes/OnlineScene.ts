@@ -126,6 +126,7 @@ export default class OnlineScene extends Phaser.Scene {
   private rosterText!: Phaser.GameObjects.Text;
   private tradeText!: Phaser.GameObjects.Text;
   private questText!: Phaser.GameObjects.Text;
+  private dailyText!: Phaser.GameObjects.Text; // active daily contract — the immediate objective
   private storyPanel!: Phaser.GameObjects.Text;
   private chatOpen = false;
   private chatBuffer = "";
@@ -449,6 +450,16 @@ export default class OnlineScene extends Phaser.Scene {
         fontFamily: "Courier New, monospace",
         fontSize: "12px",
         color: "#b06bff",
+        align: "center",
+      })
+      .setOrigin(0.5, 0)
+      .setScrollFactor(0)
+      .setDepth(1000);
+    this.dailyText = this.add
+      .text(this.scale.width / 2, 26, "", {
+        fontFamily: "Courier New, monospace",
+        fontSize: "11px",
+        color: "#39ff88",
         align: "center",
       })
       .setOrigin(0.5, 0)
@@ -1031,6 +1042,15 @@ export default class OnlineScene extends Phaser.Scene {
         ? `◈ ${qs.act} — ${qs.title}   [${this.net.questProgress}/${qs.count}]`
         : "◈ THE BLANK — the cycle is yours",
     );
+    // immediate objective: the first unfinished daily contract (or a done/empty state)
+    const active = this.net.contracts.find((c) => !c.done);
+    if (active) {
+      this.dailyText.setVisible(true).setText(`◇ CONTRACT — ${active.name}  ${Math.min(active.progress, active.count)}/${active.count}`);
+    } else if (this.net.contracts.length > 0) {
+      this.dailyText.setVisible(true).setText("◇ daily contracts complete — see THE FIXER tomorrow");
+    } else {
+      this.dailyText.setVisible(false);
+    }
     const story = this.net.story;
     if (story && performance.now() - story.at < 8000) {
       this.storyPanel.setVisible(true).setText(`◢ ${story.act} — ${story.title} ◣\n\n${story.text}`);
