@@ -104,12 +104,42 @@ export default class MusicDirector {
       const snd = this.mgr.add(t.key, { loop: true, volume: 0 });
       this.setVol(snd, 0); // belt-and-braces: never let a bed blare for a frame pre-fade
       snd.play();
+      this.trimLoop(snd); // make the loop sample-accurate (strip codec padding)
       this.current = snd;
       this.fadeTo(snd, this.target(env), FADE_MS, false);
     };
     // Browsers block audio until a user gesture; Phaser fires UNLOCKED on the first.
     if (this.mgr.locked) this.mgr.once(Phaser.Sound.Events.UNLOCKED, begin);
     else begin();
+  }
+
+  /**
+   * Trim leading/trailing codec padding from the loop region so the native loop is
+   * sample-accurate (truly seamless) on any browser — with NO tempo drift (unlike a
+   * crossfade loop). Compressed beds (AAC/MP3) decode with a few ms of silence at the
+   * ends; we set the source's loopStart/loopEnd to the first/last real sample so the
+   * loop wraps exactly on the composed boundary. WAV beds have no padding → no-op.
+   */
+  private trimLoop(snd: Phaser.Sound.BaseSound) {
+    try {
+      const s = snd as unknown as { audioBuffer?: AudioBuffer; source?: AudioBufferSourceNode };
+      const buf = s.audioBuffer;
+      const src = s.source;
+      if (!buf || !src) return; // HTML5-audio fallback / not ready — Phaser's whole-buffer loop stands
+      const sr = buf.sampleRate;
+      const ch = buf.getChannelData(0);
+      const n = ch.length;
+      const thr = 0.003; // ~ -50 dB: silence, not music
+      const maxPad = Math.floor(sr * 0.08); // only ever strip codec padding, never real music
+      let lead = 0;
+      while (lead < maxPad && Math.abs(ch[n > 1 ? lead : 0]) < thr) lead++;
+      let trail = 0;
+      while (trail < maxPad && Math.abs(ch[n - 1 - trail]) < thr) trail++;
+      src.loopStart = lead / sr;
+      src.loopEnd = (n - trail) / sr;
+    } catch {
+      /* leave Phaser's default whole-buffer loop in place */
+    }
   }
 
   private target(env: MusicEnv): number {
