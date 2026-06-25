@@ -5,6 +5,7 @@ import { CLASSES, getClass } from "../game/classes";
 import { loadSave } from "../systems/Save";
 import OptionsPanel from "../ui/OptionsPanel";
 import NeonPipeline from "../render/NeonPipeline";
+import MusicDirector from "../audio/MusicDirector";
 
 /**
  * Class-select screen. Boot -> Select -> Game. Picks a ClassDef, stashes its id in
@@ -28,6 +29,7 @@ export default class SelectScene extends Phaser.Scene {
 
     this.cameras.main.setBackgroundColor(COLORS.bgVoid);
     this.cameras.main.fadeIn(500, 2, 2, 8);
+    MusicDirector.for(this)?.play("menu", this); // title theme (shared across the menu flow)
     this.applyNeon();
 
     const title = this.add
@@ -178,7 +180,7 @@ export default class SelectScene extends Phaser.Scene {
       .setOrigin(0.5);
 
     // Options / accessibility (top-right).
-    this.options = new OptionsPanel(this);
+    this.options = new OptionsPanel(this, () => MusicDirector.for(this)?.applyVolumes());
     const optBtn = this.add
       .text(VIEW_W - 16, 14, "⚙ OPTIONS", {
         fontFamily: "Courier New, monospace",

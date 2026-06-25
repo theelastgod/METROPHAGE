@@ -12,6 +12,7 @@ import TuringCop from "../entities/TuringCop";
 import NeonPipeline from "../render/NeonPipeline";
 import { juiceShake, juiceFlash } from "../systems/juice";
 import Synth from "../audio/Synth";
+import MusicDirector from "../audio/MusicDirector";
 import Particles from "../render/Particles";
 
 const TILE_FLOOR = 0;
@@ -78,6 +79,7 @@ export default class DiveScene extends Phaser.Scene implements EnemyHost {
     this.dive = data.dive;
     this.cycleMult = data.cycleMult ?? 1;
     this.synth = this.registry.get("synth") as Synth | undefined;
+    MusicDirector.for(this)?.play("dive", this); // cyberspace bed (GameScene re-asserts on return)
     this.particles = new Particles(this);
     this.coreHp = this.coreMaxHp = Math.round(220 + data.level * 12);
     this.coreUnlocked = false;

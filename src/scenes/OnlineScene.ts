@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { installUiCamera } from "../render/cameras";
 import { shadeWalls } from "../render/wallShade";
 import Atmosphere from "../render/Atmosphere";
+import MusicDirector from "../audio/MusicDirector";
 import OnlineInventory from "../ui/OnlineInventory";
 import OnlineShop from "../ui/OnlineShop";
 import OnlineForge from "../ui/OnlineForge";
@@ -200,7 +201,6 @@ export default class OnlineScene extends Phaser.Scene {
     this.wheelObjs = [];
     this.lastEmoteShownAt = 0;
     this.bossOverlays.clear(); // GO destroyed on shutdown; drop stale refs before re-create
-
     // Zone = which district (or the safehouse interior) this client is in. Travel hands off
     // to another DO by reconnecting with a new zone.
     // named zones (interiors + the subway dungeon) pass through by name; else a district
@@ -216,6 +216,14 @@ export default class OnlineScene extends Phaser.Scene {
     this.npcs = [];
     this.nearNpc = null;
     const def = DISTRICTS[this.districtIndex];
+
+    // Score the zone: district zones (d0–d3) get their matching district bed; the
+    // subway dungeon its transit bed; the safehouse hub + building interiors the
+    // social/online bed. (Re-asserted on every travel since scene.start re-runs create.)
+    MusicDirector.for(this)?.play(
+      this.isSubway ? "subway" : this.interior ? "online" : MusicDirector.districtEnv(def.id),
+      this,
+    );
 
     this.cameras.main.setBackgroundColor(COLORS.bgVoid);
 

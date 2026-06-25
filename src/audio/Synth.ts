@@ -28,6 +28,7 @@ export default class Synth {
   private noiseBuf?: AudioBuffer;
 
   private started = false;
+  private musicEnabled = true; // false = real ElevenLabs bed plays instead (SFX stay on)
   private intensity = 0;
   private bpm = 84;
   private step = 0;
@@ -64,6 +65,17 @@ export default class Synth {
     this.intensity = clamp01(v);
   }
 
+  /** Enable/mute the procedural MUSIC layer (lead/bass/hats) without touching SFX.
+   *  The MusicDirector mutes this when a real ElevenLabs bed is playing for the
+   *  current environment, and re-enables it as the fallback when no bed exists.
+   *  Safe to call before the audio graph is built (the flag is applied on start). */
+  setMusicEnabled(on: boolean) {
+    if (this.musicEnabled === on) return;
+    this.musicEnabled = on;
+    if (!this.ctx || !this.musicBus) return;
+    this.musicBus.gain.setTargetAtTime(on ? getSettings().music : 0, this.ctx.currentTime, 0.12);
+  }
+
   dispose() {
     if (this.timer) window.clearInterval(this.timer);
     this.ctx?.close?.();
@@ -92,7 +104,7 @@ export default class Synth {
     this.musicDuck.gain.value = 1;
     this.musicDuck.connect(this.master);
     this.musicBus = ctx.createGain();
-    this.musicBus.gain.value = s.music;
+    this.musicBus.gain.value = this.musicEnabled ? s.music : 0;
     this.musicBus.connect(this.musicDuck);
     this.sfxBus = ctx.createGain();
     this.sfxBus.gain.value = s.sfx;
@@ -121,7 +133,7 @@ export default class Synth {
     const s = getSettings();
     const t = this.ctx.currentTime;
     this.master?.gain.setTargetAtTime(MASTER_BASE * s.master, t, 0.05);
-    this.musicBus?.gain.setTargetAtTime(s.music, t, 0.05);
+    this.musicBus?.gain.setTargetAtTime(this.musicEnabled ? s.music : 0, t, 0.05);
     this.sfxBus?.gain.setTargetAtTime(s.sfx, t, 0.05);
   }
 

@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { VIEW_W, VIEW_H, COLORS } from "../config";
 import NeonPipeline from "../render/NeonPipeline";
 import { getClass } from "../game/classes";
+import MusicDirector from "../audio/MusicDirector";
 
 /**
  * Prologue — the narrative open. Instead of dropping a fresh run straight into combat,
@@ -34,6 +35,7 @@ export default class Prologue extends Phaser.Scene {
     this.acting = false;
     this.cameras.main.setBackgroundColor(COLORS.bgVoid);
     this.cameras.main.fadeIn(500, 2, 2, 8);
+    MusicDirector.for(this)?.play("menu", this); // carry the title bed into the prologue
     this.applyNeon();
 
     // faint city grid backdrop

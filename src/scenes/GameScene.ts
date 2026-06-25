@@ -69,6 +69,7 @@ import NeonPipeline from "../render/NeonPipeline";
 import Atmosphere from "../render/Atmosphere";
 import { shadeWalls } from "../render/wallShade";
 import Synth from "../audio/Synth";
+import MusicDirector from "../audio/MusicDirector";
 import Pops from "../render/Pops";
 import Particles from "../render/Particles";
 import { juiceShake, juiceFlash } from "../systems/juice";
@@ -265,6 +266,9 @@ export default class GameScene
     this.input.once("pointerdown", () => this.synth.ensureStarted());
     this.input.keyboard?.once("keydown", () => this.synth.ensureStarted());
     this.registry.set("synth", this.synth); // shared with the DiveScene
+    // Score this district (crossfades the environment bed; falls back to the
+    // procedural Synth if its track hasn't been generated yet).
+    MusicDirector.for(this)?.play(MusicDirector.districtEnv(this.district.id), this);
 
     this.buildDistrict();
     this.spawnPlayer();
@@ -324,7 +328,10 @@ export default class GameScene
     this.vendorPanel = new VendorPanel(this, this.vendor, this.progression, this.inventory, onLoadoutChange);
     this.cityMapPanel = new CityMapPanel(this, this.city, (i) => this.travelTo(i));
     this.journalPanel = new JournalPanel(this, this.memory, this.quests);
-    this.optionsPanel = new OptionsPanel(this, () => this.synth.applyVolumes());
+    this.optionsPanel = new OptionsPanel(this, () => {
+      this.synth.applyVolumes();
+      MusicDirector.for(this)?.applyVolumes();
+    });
     this.statsPanel = new StatsPanel(this, () => this.statLines());
     this.recomputeStats();
     // Restore persisted HP — wounds carry across districts (-1 = full). Heal at a
@@ -339,7 +346,11 @@ export default class GameScene
     this.cameras.main.fadeIn(450, 4, 2, 10);
 
     // Apply dive payouts when control returns from a launched DiveScene.
-    const onResume = () => this.onDiveReturn();
+    const onResume = () => {
+      // Back from a launched dive — restore this district's bed (the dive swapped it).
+      MusicDirector.for(this)?.play(MusicDirector.districtEnv(this.district.id), this);
+      this.onDiveReturn();
+    };
     this.events.on("resume", onResume);
 
     // Persist on tab close / hide.
@@ -1265,6 +1276,7 @@ export default class GameScene
     this.atmosphere.update(now, delta, this.heat.normalized); // weather/fog/holos animate always
     this.autosave();
     this.synth.setDialogueDuck(this.dialogue.isOpen); // duck music under dialogue
+    MusicDirector.for(this)?.duck(this.dialogue.isOpen); // …and the real bed too
     if (
       this.skillPanel.isOpen ||
       this.inventoryPanel.isOpen ||
@@ -2046,9 +2058,14 @@ export default class GameScene
     this.player.setVelocity(0, 0);
     this.synth.meltdown();
     this.synth.setIntensity(1);
+    // Swell into the meltdown bed (falls back to the procedural Synth if absent).
+    const music = MusicDirector.for(this);
+    music?.play("meltdown", this);
     // Optional ElevenLabs VO stinger (build-time generated); sting plays regardless.
     if (this.cache.audio.exists(VO_MELTDOWN_KEY)) {
+      music?.duck(true); // drop the bed under the spoken line
       this.time.delayedCall(650, () => this.sound.play(VO_MELTDOWN_KEY, { volume: 0.9 }));
+      this.time.delayedCall(8000, () => music?.duck(false));
     }
 
     juiceShake(this, 800, 0.014);

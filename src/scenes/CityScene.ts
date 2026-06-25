@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import { installUiCamera } from "../render/cameras";
+import MusicDirector from "../audio/MusicDirector";
 import { TILE, COLORS, NPC } from "../config";
 import {
   TILESET_KEY,
@@ -106,6 +107,7 @@ export default class CityScene extends Phaser.Scene {
   create(data?: CityEnter) {
     this.transitioning = false;
     this.doors.clear();
+    MusicDirector.for(this)?.play("city", this); // overworld hub bed
     const classDef = getClass(this.registry.get("classId") as string | undefined);
     const cust = sanitizeCustomization(
       this.registry.get("customization") as Partial<Customization> | undefined,

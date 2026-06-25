@@ -1,4 +1,5 @@
 import { COSMETICS } from "../game/cosmetics";
+import { MUSIC_TRACKS } from "../audio/musicTracks";
 
 // METROPHAGE — logical asset registry.
 //
@@ -108,9 +109,15 @@ export const ASSETS: Record<string, AssetEntry[]> = {
     { key: UI_FRAME_KEY, file: null }, // code-authored neon terminal/screen frame
     { key: UI_GUN_KEY, file: null }, // code-authored weapon icon
   ],
-  // Build-time generated VO (ElevenLabs). Optional flavour; the procedural
-  // meltdown sting plays regardless. See tools/gen-vo.sh + ART_NOTES.md.
-  audio: [{ key: VO_MELTDOWN_KEY, file: "assets/audio/meltdown_vo.mp3" }],
+  // Build-time generated VO + the per-environment music beds (ElevenLabs). The
+  // beds are OPTIONAL: only those whose mp3 actually exists in src/assets/music/
+  // get a `url` (resolved by import.meta.glob in musicTracks.ts) and are listed
+  // here — so nothing 404s / mis-decodes, and any missing environment falls back
+  // to the procedural Synth. See tools/gen-vo.sh, tools/gen-music.mjs + ART_NOTES.md.
+  audio: [
+    { key: VO_MELTDOWN_KEY, file: "assets/audio/meltdown_vo.mp3" },
+    ...MUSIC_TRACKS.filter((t) => t.url).map((t) => ({ key: t.key, file: t.url! })),
+  ],
   // Real item icons — load before the procedural bake so they win (see ICON_NAMES above).
   icons: ICON_NAMES.map((n) => ({ key: "icon_" + n, file: "assets/icons/" + n + ".png" })),
   // Real street props (CyberPunk pack) — non-colliding decals placed in the online districts.

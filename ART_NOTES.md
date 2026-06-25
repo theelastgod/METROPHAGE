@@ -80,3 +80,41 @@ top-down gameplay. `image/Present_image2.png` = color/vibe reference only.
   key never ships to the browser). It plays on the meltdown and is fully optional —
   the procedural meltdown sting plays regardless, and the game runs fine if the mp3
   is absent (load is guarded). Re-generate with `bash tools/gen-vo.sh`.
+
+### Environment music beds (ElevenLabs)
+
+Each environment gets its own looping bed, crossfaded by the **MusicDirector**
+(`src/audio/MusicDirector.ts`, one game-level instance created in `BootScene`). A bed
+plays on top of the procedural SFX; the procedural *music* layer
+(`Synth.setMusicEnabled`) is muted while a real bed plays and re-enabled as the
+fallback when a bed is missing — so **there is always music** and adding a bed is a
+zero-code upgrade.
+
+| env                 | file (`src/assets/music/`) | where it plays                         |
+| ------------------- | -------------------------- | -------------------------------------- |
+| `menu`              | `menu.mp3`                 | title / customize / prologue           |
+| `city`              | `city.mp3`                 | overworld hub (`CityScene`)            |
+| `subway`            | `subway.mp3`               | inter-district transit (`SubwayScene`) |
+| `dive`              | `dive.mp3`                 | ICE dive — cyberspace (`DiveScene`)    |
+| `online`            | `online.mp3`               | multiplayer safehouse hub + interiors  |
+| `district_downtown` | `downtown.mp3`             | Palantir Plaza (magenta, rain)         |
+| `district_stacks`   | `stacks.mp3`               | Anduril Yards (yellow, smog)           |
+| `district_spire`    | `spire.mp3`                | Argus Spire (cyan, surveillance)       |
+| `district_core`     | `core.mp3`                 | The Kernel (red, embers, final)        |
+| `meltdown`          | `meltdown.mp3`             | city-meltdown climax                    |
+
+- **Online zones reuse beds:** in `OnlineScene`, district zones (`d0`–`d3`) play their
+  matching `district_*` bed, the subway dungeon plays `subway`, and the safehouse hub +
+  building interiors play `online`. So the multiplayer city sounds like its single-player
+  counterpart, zone for zone.
+- **Generate:** `npm run gen:music` (all missing beds) or `node tools/gen-music.mjs
+  --force` (regenerate). Subset: `node tools/gen-music.mjs menu dive core`. Reads the
+  key from `$ELEVENLABS_API_KEY` or gitignored `.env`; the key never ships to the
+  browser. Prompts (one tuned per environment) live in `tools/gen-music.mjs`.
+- **Detection:** beds live in `src/assets/music/` (not `public/`) so `import.meta.glob`
+  in `src/audio/musicTracks.ts` resolves the URL of every bed that **actually exists** —
+  missing beds simply aren't referenced (no 404 / mis-decode), and each falls back to
+  the procedural Synth. Drop a generated mp3 in and reload; it auto-registers.
+- **Mix:** per-bed `gain` in `musicTracks.ts`, then scaled live by the master + music
+  sliders (Options menu) and ducked under dialogue / the meltdown VO.
+- **No copyrighted music** — these are AI-generated originals (see line 49).

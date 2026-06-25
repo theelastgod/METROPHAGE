@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { VIEW_W, VIEW_H, COLORS } from "../config";
 import { getClass, ClassDef } from "../game/classes";
+import MusicDirector from "../audio/MusicDirector";
 import {
   Customization,
   defaultCustomization,
@@ -74,6 +75,7 @@ export default class CustomizeScene extends Phaser.Scene {
 
     this.cameras.main.setBackgroundColor(COLORS.bgVoid);
     this.cameras.main.fadeIn(350, 2, 2, 8);
+    MusicDirector.for(this)?.play("menu", this); // same bed as the title flow
     this.applyNeon();
 
     this.add

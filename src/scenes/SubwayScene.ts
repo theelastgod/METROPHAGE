@@ -17,6 +17,7 @@ import { loadSave, writeSave } from "../systems/Save";
 import NeonPipeline from "../render/NeonPipeline";
 import { juiceShake, juiceFlash } from "../systems/juice";
 import Synth from "../audio/Synth";
+import MusicDirector from "../audio/MusicDirector";
 import Particles from "../render/Particles";
 
 const TILE_FLOOR = 11; // grate — reads as a subway platform
@@ -86,6 +87,7 @@ export default class SubwayScene extends Phaser.Scene implements EnemyHost {
     this.level = save?.progress.level ?? 1;
     this.returnTile = data?.returnTile;
     this.synth = this.registry.get("synth") as Synth | undefined;
+    MusicDirector.for(this)?.play("subway", this); // transit bed
     this.particles = new Particles(this);
     this.waveIndex = 0;
     this.waveActive = false;
