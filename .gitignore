@@ -12,3 +12,6 @@ art-source/
 
 # raw asset packs (staging only — license forbids redistributing raw files)
 asset-drop/
+
+# generated audio: ship the small .m4a (afconvert); ignore the big raw .wav
+src/assets/music/*.wav

@@ -9,7 +9,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "gen:music": "node tools/gen-music.mjs"
+    "gen:music": "node tools/gen-music.mjs",
+    "gen:music:local": "node tools/gen-music-local.mjs"
   },
   "dependencies": {
     "phaser": "^3.90.0"
