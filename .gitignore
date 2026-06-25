@@ -9,3 +9,6 @@ dist-ssr
 .env.*
 !.env.example
 art-source/
+
+# raw asset packs (staging only — license forbids redistributing raw files)
+asset-drop/

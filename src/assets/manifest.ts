@@ -46,6 +46,16 @@ const CHAR: Pick<AssetEntry, "frameWidth" | "frameHeight"> = {
   frameHeight: 32,
 };
 
+// Real 32×32 item icons (CraftPix). Keyed to match iconKey(klass) = "icon_" + sanitized
+// klass, so they load BEFORE the procedural bake (textures.ts) and win — the inventory /
+// forge / market render these instead of the generated silhouettes. Drop a file here named
+// <KLASS>.png to override that klass's icon.
+const ICON_NAMES = [
+  "PISTOL", "REVOLVER", "SMG", "MACHINEPISTOL", "SHOTGUN", "BURSTRIFLE", "MARKSMAN", "LMG",
+  "RAILGUN", "FLAK", "LAUNCHER", "ARC", "FLAME", "BLADE", "KATANA", "WEAPONMOD",
+  "IMPLANT", "ARMOR", "CHIP", "MEDKIT", "SHIELD", "STIM", "HEAT",
+];
+
 export const ASSETS: Record<string, AssetEntry[]> = {
   // 256×64 image, sliced into sixteen 32×32 cells by addTilesetImage.
   tilesets: [{ key: TILESET_KEY, file: null }], // code-authored tileset (textures.ts)
@@ -78,6 +88,8 @@ export const ASSETS: Record<string, AssetEntry[]> = {
   // Build-time generated VO (ElevenLabs). Optional flavour; the procedural
   // meltdown sting plays regardless. See tools/gen-vo.sh + ART_NOTES.md.
   audio: [{ key: VO_MELTDOWN_KEY, file: "assets/audio/meltdown_vo.mp3" }],
+  // Real item icons — load before the procedural bake so they win (see ICON_NAMES above).
+  icons: ICON_NAMES.map((n) => ({ key: "icon_" + n, file: "assets/icons/" + n + ".png" })),
 };
 
 /** Face-by-direction frame for the top-down sheets: 0=down 1=left 2=right 3=up. */

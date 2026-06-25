@@ -171,13 +171,13 @@ export default class BlackMarketPanel {
       if (e.kind === "weapon") {
         const w = e.w;
         const afford = metro >= w.metro;
-        icon.setVisible(true).setTexture(iconKey(w.klass)).setTint(w.tint).setAlpha(afford ? 1 : 0.4);
+        icon.setVisible(true).setTexture(iconKey(w.klass)).setTint(0xffffff).setAlpha(afford ? 1 : 0.4);
         title.setText(`${w.name}   ·   ${w.klass}`).setColor(afford ? TIER_HEX[w.tier] : "#5a6172");
         sub.setText(`${w.desc}   ⚔ ${w.primary.damage}            ◈ ${fmtMetro(w.metro)}`).setColor("#7a8295");
       } else {
         const c = e.c;
         const afford = metro >= c.metro;
-        icon.setVisible(true).setTexture(iconKey(c.klass)).setTint(Phaser.Display.Color.HexStringToColor(c.hex).color).setAlpha(afford ? 1 : 0.4);
+        icon.setVisible(true).setTexture(iconKey(c.klass)).setTint(0xffffff).setAlpha(afford ? 1 : 0.4);
         title.setText(`${c.name}`).setColor(afford ? c.hex : "#5a6172");
         sub.setText(`${c.desc}            ◈ ${fmtMetro(c.metro)}`).setColor("#7a8295");
       }
