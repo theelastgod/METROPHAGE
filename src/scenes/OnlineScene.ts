@@ -10,7 +10,7 @@ import OnlineGuild from "../ui/OnlineGuild";
 import OnlineMarket from "../ui/OnlineMarket";
 import OnlineContracts from "../ui/OnlineContracts";
 import { COLORS, TILE, VIEW_W, VIEW_H } from "../config";
-import { TILESET_KEY, PLAYER_KEY, COP_KEY, BULLET_KEY, GLOW_KEY, NODE_KEY } from "../assets/manifest";
+import { TILESET_KEY, PLAYER_KEY, COP_KEY, BULLET_KEY, GLOW_KEY, NODE_KEY, PROP_STREETLIGHT_KEY, PROP_VENDING_KEY, PROP_AC_KEY } from "../assets/manifest";
 import { driveChar } from "../assets/anim";
 import {
   PLAYER_HP,
@@ -238,6 +238,26 @@ export default class OnlineScene extends Phaser.Scene {
         const cx = ((b.x1 + b.x2) / 2) * TILE + TILE / 2;
         const cy = ((b.y1 + b.y2) / 2) * TILE + TILE / 2;
         this.atmosphere.addHologram(cx, cy, def.accent);
+      }
+      // CyberPunk street props — non-colliding client decals on walkable tiles set against
+      // a building, deterministically scattered (sparse) so the streets read as lived-in.
+      const hash = (x: number, y: number) => ((x * 73856093) ^ (y * 19349663)) >>> 0;
+      const adjWall = (x: number, y: number) =>
+        isWall(grid[y]?.[x - 1]) || isWall(grid[y]?.[x + 1]) || isWall(grid[y - 1]?.[x]) || isWall(grid[y + 1]?.[x]);
+      let placed = 0;
+      for (let ty = 1; ty < grid.length - 1 && placed < 16; ty++) {
+        for (let tx = 1; tx < grid[ty].length - 1; tx++) {
+          if (isWall(grid[ty][tx]) || !adjWall(tx, ty)) continue;
+          const h = hash(tx, ty);
+          if (h % 6 !== 0) continue; // sparse
+          const px = tx * TILE + TILE / 2;
+          const py = ty * TILE + TILE / 2;
+          const pick = h % 3;
+          const key = pick === 0 ? PROP_STREETLIGHT_KEY : pick === 1 ? PROP_VENDING_KEY : PROP_AC_KEY;
+          const tall = key === PROP_STREETLIGHT_KEY;
+          this.add.image(px, py + TILE / 2, key).setOrigin(0.5, tall ? 1 : 0.85).setDepth(4);
+          placed++;
+        }
       }
     }
     this.cameras.main.setBounds(0, 0, WORLD_W, WORLD_H);

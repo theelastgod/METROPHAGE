@@ -34,6 +34,12 @@ export const STREETLIGHT_KEY = "streetlight";
 export const GLOW_KEY = "glow";
 export const SPARK_KEY = "spark";
 
+// Real top-down street props (sliced from the CyberPunk environment pack) — scattered as
+// non-colliding decals in the online districts (see OnlineScene).
+export const PROP_STREETLIGHT_KEY = "prop_streetlight";
+export const PROP_VENDING_KEY = "prop_vending";
+export const PROP_AC_KEY = "prop_ac";
+
 export const PORTRAIT_PLAYER_KEY = "portrait_player";
 export const PORTRAIT_NPC_KEY = "portrait_npc";
 export const UI_FRAME_KEY = "ui_frame";
@@ -90,6 +96,12 @@ export const ASSETS: Record<string, AssetEntry[]> = {
   audio: [{ key: VO_MELTDOWN_KEY, file: "assets/audio/meltdown_vo.mp3" }],
   // Real item icons — load before the procedural bake so they win (see ICON_NAMES above).
   icons: ICON_NAMES.map((n) => ({ key: "icon_" + n, file: "assets/icons/" + n + ".png" })),
+  // Real street props (CyberPunk pack) — non-colliding decals placed in the online districts.
+  props: [
+    { key: PROP_STREETLIGHT_KEY, file: "assets/objects/prop_streetlight.png" },
+    { key: PROP_VENDING_KEY, file: "assets/objects/prop_vending.png" },
+    { key: PROP_AC_KEY, file: "assets/objects/prop_ac.png" },
+  ],
 };
 
 /** Face-by-direction frame for the top-down sheets: 0=down 1=left 2=right 3=up. */
