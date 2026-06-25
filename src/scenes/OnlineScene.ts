@@ -32,6 +32,7 @@ import NetClient, { type NetEnemy } from "../net/NetClient";
 import NeonPipeline from "../render/NeonPipeline";
 import { QUESTLINE } from "../net/quest";
 import OnlineCosmetics from "../ui/OnlineCosmetics";
+import OnlineMap from "../ui/OnlineMap";
 import { applyCosmetic } from "../game/cosmetics";
 import { npcDef, AMBIENT_NPCS, INTERIOR_PLAN, keeperFor } from "../game/cityNpcs";
 import { bountyForNpc } from "../game/bounties";
@@ -149,6 +150,7 @@ export default class OnlineScene extends Phaser.Scene {
   private market!: OnlineMarket; // auction house — cross-zone player market (D1-backed)
   private contracts!: OnlineContracts; // daily contracts + reputation track (D1-backed)
   private cosmetics!: OnlineCosmetics; // wardrobe / transmog (cosmetic-only, wallet-owned)
+  private mapPanel!: OnlineMap; // fast-travel map with per-account discovery fog
   private baseLook?: PlayerLook; // your base appearance (cosmetics merge on top for rendering)
   private lastSeason = -1;
   private chatLogText!: Phaser.GameObjects.Text;
@@ -407,6 +409,11 @@ export default class OnlineScene extends Phaser.Scene {
       if (this.cosmetics.open) this.cosmetics.setState(this.net.cosmeticsOwned, this.net.cosmeticEquipped, this.net.credits);
       this.applyLocalCosmetic(); // retint your own avatar to match the equipped transmog
     };
+    this.mapPanel = new OnlineMap(this);
+    this.mapPanel.onTravel = (zone) => this.fastTravel(zone);
+    this.net.onDiscovered = () => {
+      if (this.mapPanel.open) this.mapPanel.setState(this.net.discovered, this.zone);
+    };
     // World-boss locator: a status banner + a screen-edge arrow toward an off-screen boss.
     this.bossBanner = this.add
       .text(VIEW_W / 2, 46, "", {
@@ -448,7 +455,7 @@ export default class OnlineScene extends Phaser.Scene {
       .text(
         this.scale.width / 2,
         this.scale.height - 12,
-        `WASD · CLICK fire · I bag · G forge · B vendor · K market · J jobs · Y style · C cell · L board · H safehouse · V emote · ENTER chat`,
+        `WASD · CLICK fire · I bag · G forge · B vendor · K market · J jobs · Y style · C cell · L board · M map · H safehouse · V emote · ENTER chat`,
         { fontFamily: "Courier New, monospace", fontSize: "11px", color: "#6b7184" },
       )
       .setOrigin(0.5, 1)
@@ -692,6 +699,14 @@ export default class OnlineScene extends Phaser.Scene {
         this.cosmetics.close();
         return;
       }
+      if (e.key === "m" || e.key === "M") {
+        this.mapPanel.toggle(this.net.discovered, this.zone);
+        return;
+      }
+      if (this.mapPanel.open && e.key === "Escape") {
+        this.mapPanel.close();
+        return;
+      }
       if (e.key === "h" || e.key === "H") {
         // H enters the safehouse (a no-combat hub) from a district, and returns to where
         // you came from. Travel = reconnect to the destination zone's DO.
@@ -918,6 +933,13 @@ export default class OnlineScene extends Phaser.Scene {
   private enterZone(dest: string) {
     this.net.disconnect();
     this.scene.restart({ zone: dest, from: this.zone });
+  }
+
+  /** Fast travel to a discovered zone from the map — reconnect to that zone's DO. */
+  private fastTravel(zone: string) {
+    if (zone === this.zone) return;
+    this.net.disconnect();
+    this.scene.restart({ zone });
   }
 
   /** Speak an authored citizen's next flavour line in a floating bubble (cycles their lines). */

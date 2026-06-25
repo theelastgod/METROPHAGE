@@ -1575,6 +1575,7 @@ export class WorldDO {
     this.sendContracts(ws, p); // hydrate today's daily contracts + reputation
     this.sendCosmetics(ws, p); // hydrate owned cosmetics + equipped transmog
     this.sendBounty(ws, p); // hydrate any active NPC bounty
+    await this.markDiscovered(ws, id); // arriving here unlocks this zone for fast travel
     this.ensureTick();
     await this.ensureSupervisor();
   }
@@ -1874,6 +1875,17 @@ export class WorldDO {
   }
   private pushBounty(p: PlayerState) {
     for (const [sock, id] of this.sessions) if (id === p.id) this.sendBounty(sock, p);
+  }
+
+  /** Mark this zone discovered for the player (arriving here), then send their full set. */
+  private async markDiscovered(ws: WebSocket, id: string) {
+    try {
+      await this.env.DB.prepare("INSERT OR IGNORE INTO player_discovered (player, zone, at) VALUES (?,?,?)").bind(id, this.zoneName, Date.now()).run();
+      const { results } = await this.env.DB.prepare("SELECT zone FROM player_discovered WHERE player = ?").bind(id).all<{ zone: string }>();
+      this.send(ws, { t: "discovered", zones: (results ?? []).map((r) => r.zone) });
+    } catch {
+      this.send(ws, { t: "discovered", zones: [this.zoneName] }); // pre-migration: at least here
+    }
   }
 
   private onBounty(ws: WebSocket, msg: Extract<ClientMsg, { t: "bounty" }>) {

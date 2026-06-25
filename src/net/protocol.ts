@@ -216,6 +216,8 @@ export type ServerMsg =
   | { t: "cosmetics"; owned: string[]; equipped: string | null }
   // authored NPC bounty — the player's active job (or null), sent on login + on change
   | { t: "bounty"; active: { id: string; name: string; desc: string; objective: string; count: number; progress: number } | null }
+  // map discovery — the set of zones this account has arrived at (drives fast travel), on login
+  | { t: "discovered"; zones: string[] }
   // guild ("Cell") state — full summary + roster, or "none" when not in a cell
   | {
       t: "guild";

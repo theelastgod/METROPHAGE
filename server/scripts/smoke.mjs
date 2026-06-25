@@ -1520,6 +1520,40 @@ async function subway() {
   );
 }
 
+async function discover() {
+  // MAP DISCOVERY — arriving at a zone unlocks it for fast travel; persists per account.
+  const name = "explorer_" + Math.random().toString(36).slice(2, 6);
+  const arrive = async (zone) => {
+    const ws = await connect(WS_URL + (WS_URL.includes("?") ? "&" : "?") + "zone=" + zone);
+    const s = { disc: [] };
+    ws.addEventListener("message", (ev) => {
+      const m = JSON.parse(ev.data);
+      if (m.t === "discovered") s.disc = m.zones;
+    });
+    await login(ws, name, 0);
+    await sleep(550);
+    ws.close();
+    await sleep(350);
+    return s.disc;
+  };
+
+  const afterD0 = await arrive("d0");
+  const startsLocal = afterD0.includes("d0") && !afterD0.includes("d1"); // only where you've been
+  const afterD1 = await arrive("d1");
+  const discoversOnArrival = afterD1.includes("d1") && afterD1.includes("d0"); // d0 persisted, d1 added
+  const afterSafe = await arrive("safe");
+  const interiorDiscovered = afterSafe.includes("safe");
+  const persists = afterSafe.includes("d0") && afterSafe.includes("d1") && afterSafe.includes("safe");
+
+  const checks = { startsLocal, discoversOnArrival, interiorDiscovered, persists };
+  report(
+    "DISCOVER — arriving unlocks a zone for fast travel; discovery persists per account",
+    { afterD0, afterD1, afterSafe },
+    Object.values(checks).every(Boolean),
+    checks,
+  );
+}
+
 async function mp() {
   const AOI = 720;
   const a = await connect();
@@ -2250,6 +2284,7 @@ try {
   else if (mode === "interior") await interior();
   else if (mode === "subway") await subway();
   else if (mode === "bounty") await bounty();
+  else if (mode === "discover") await discover();
   else if (mode === "mp") await mp();
   else if (mode === "zones") await zones();
   else if (mode === "territory") await territory();

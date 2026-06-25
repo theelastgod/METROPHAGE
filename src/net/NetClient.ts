@@ -125,6 +125,8 @@ export default class NetClient {
   onCosmetics?: () => void;
   bounty: { id: string; name: string; desc: string; objective: string; count: number; progress: number } | null = null;
   onBounty?: () => void;
+  discovered: string[] = []; // zones this account has arrived at (fast-travel unlocks)
+  onDiscovered?: () => void;
   story: { act: string; title: string; text: string; done: boolean; at: number } | null = null;
   lastError = 0;
   reconciles = 0;
@@ -360,6 +362,9 @@ export default class NetClient {
     } else if (msg.t === "bounty") {
       this.bounty = msg.active;
       this.onBounty?.();
+    } else if (msg.t === "discovered") {
+      this.discovered = msg.zones;
+      this.onDiscovered?.();
     } else if (msg.t === "cosmetics") {
       this.cosmeticsOwned = msg.owned;
       this.cosmeticEquipped = msg.equipped;
