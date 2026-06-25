@@ -46,7 +46,7 @@ import {
   NODE_HOLD_SCORE_PER_SEC,
   inPvpZone,
 } from "../../src/net/sim";
-import { buildGrid, spawnPoint, isWall, buildSafehouse, SAFEHOUSE_SPAWN, type TileGrid } from "../../src/world/district";
+import { buildGrid, spawnPoint, isWall, buildSafehouse, SAFEHOUSE_SPAWN, buildSubway, SUBWAY_SPAWN, type TileGrid } from "../../src/world/district";
 import { DISTRICTS } from "../../src/game/districts";
 import { rollItem, rollModsFor, effectiveMods, nextRarity, SLOTS, type Item, type Slot, type Rarity } from "../../src/game/items";
 import {
@@ -153,6 +153,8 @@ export const parseZone = (z: string | null): number => {
  *  own DO, reuses the safehouse room grid, and runs no enemies/boss/territory/PvP. Shared with
  *  the Worker router so these zone names pass through instead of collapsing to a district. */
 export const INTERIOR_ZONES = new Set(["safe", "clinic", "bar", "den", "shop"]);
+/** All named (non-district) zones the Worker routes by name — interiors + the subway dungeon. */
+export const NAMED_ZONES = new Set([...INTERIOR_ZONES, "subway"]);
 
 export interface Env {
   WORLD: DurableObjectNamespace;
@@ -438,6 +440,19 @@ export class WorldDO {
   private initZone(zone: string | null) {
     if (this.zoneReady) return;
     this.zoneReady = true;
+    // THE UNDERLINE — the subway dungeon: an indoor COMBAT zone (no PvP/weather via the
+    // interior flag, but it DOES populate a tough HSS garrison + a boss).
+    if (zone === "subway") {
+      this.interior = true; // indoor: no PvP, client skips weather
+      this.zoneName = "subway";
+      this.districtIndex = 0;
+      this.grid = buildSubway();
+      this.spawn = SUBWAY_SPAWN;
+      this.nodes = [];
+      this.spawnSubway();
+      void this.state.storage.put("zone", "subway");
+      return;
+    }
     // INTERIORS (safehouse hub + building interiors) — a no-combat room: NO enemies/boss/
     // territory. All reuse the safehouse grid; only the client decorates them differently.
     if (zone && INTERIOR_ZONES.has(zone)) {
@@ -516,6 +531,53 @@ export class WorldDO {
       kind: BOSS_KIND,
       boss: true,
       name: boss.name,
+      tint: boss.tint,
+      baseMaxHp: boss.hp,
+      phaseIdx: 0,
+      engagedTick: 0,
+      lastAoeTick: 0,
+      enraged: false,
+    });
+  }
+
+  /** Seed THE UNDERLINE: a tough HSS garrison along the platforms + a named subway boss. */
+  private spawnSubway() {
+    const posts: [number, number][] = [
+      [14, 7],
+      [26, 8],
+      [14, 15],
+      [26, 16],
+      [14, 23],
+      [26, 24],
+      [34, 15],
+    ];
+    const pattern = [4, 5, 6, 2, 3, 6, 4]; // ENFORCER/SNIPER/WRAITH/LANCER/HOUND — deep-tier
+    let i = 0;
+    for (const [tx, ty] of posts) {
+      if (isWall(this.grid[ty]?.[tx])) continue;
+      const x = tx * TILE + TILE / 2;
+      const y = ty * TILE + TILE / 2;
+      const kind = pattern[i++ % pattern.length];
+      const id = this.nextEnemyId++;
+      this.enemies.set(id, { id, x, y, ox: x, oy: y, hp: ENEMY_ARCHES[kind].hp, maxHp: ENEMY_ARCHES[kind].hp, respawnTick: 0, lastFireTick: 0, kind });
+    }
+    const boss = BOSS_ROSTER[1];
+    const bx = 34 * TILE + TILE / 2;
+    const by = 23 * TILE + TILE / 2;
+    const bid = this.nextEnemyId++;
+    this.enemies.set(bid, {
+      id: bid,
+      x: bx,
+      y: by,
+      ox: bx,
+      oy: by,
+      hp: boss.hp,
+      maxHp: boss.hp,
+      respawnTick: 0,
+      lastFireTick: 0,
+      kind: BOSS_KIND,
+      boss: true,
+      name: "UNDERLINE WARDEN",
       tint: boss.tint,
       baseMaxHp: boss.hp,
       phaseIdx: 0,

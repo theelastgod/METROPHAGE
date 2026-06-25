@@ -24,7 +24,7 @@ import {
   PVP_ZONES,
   inPvpZone,
 } from "../net/sim";
-import { buildGrid, buildSafehouse, isWall } from "../world/district";
+import { buildGrid, buildSafehouse, buildSubway, isWall } from "../world/district";
 import { DISTRICTS } from "../game/districts";
 import { ENEMY_BARKS } from "../game/enemies";
 import { WORLD_W, WORLD_H } from "../net/sim";
@@ -87,6 +87,7 @@ const HUB_DOORS: { dest: string; label: string; tile: [number, number]; color: n
   { dest: "shop", label: "MARKET", tile: [27, 6], color: 0x00e5ff },
   { dest: "bar", label: "THE FERAL CAT", tile: [13, 24], color: 0xff79c6 },
   { dest: "den", label: "THE DEN", tile: [27, 24], color: 0xff2bd6 },
+  { dest: "subway", label: "▼ THE UNDERLINE", tile: [10, 15], color: 0xff3b6b }, // combat dungeon
 ];
 
 /** Central tiles to seat a building interior's occupants. */
@@ -163,7 +164,8 @@ export default class OnlineScene extends Phaser.Scene {
   private callsign = "runner";
   private zone = "d0";
   private districtIndex = 0;
-  private interior = false; // true when this is the safehouse zone
+  private interior = false; // true in a no-combat interior (hub / building)
+  private isSubway = false; // THE UNDERLINE — an indoor COMBAT dungeon zone
   private fromZone = "d0"; // district to return to when leaving the safehouse
   private meDir = new Phaser.Math.Vector2(0, 1); // last facing for the local avatar
   private nextEnemyBarkAt = 0; // throttle for online HSS barks
@@ -196,10 +198,12 @@ export default class OnlineScene extends Phaser.Scene {
 
     // Zone = which district (or the safehouse interior) this client is in. Travel hands off
     // to another DO by reconnecting with a new zone.
-    // interior zones (safehouse hub + building interiors) pass through by name; else a district
+    // named zones (interiors + the subway dungeon) pass through by name; else a district
     const rawZone = data?.zone ?? "d0";
-    this.zone = INTERIOR_TITLES[rawZone] ? rawZone : "d" + this.parseZone(data?.zone);
-    this.interior = !!INTERIOR_TITLES[this.zone];
+    const named = !!INTERIOR_TITLES[rawZone] || rawZone === "subway";
+    this.zone = named ? rawZone : "d" + this.parseZone(data?.zone);
+    this.interior = !!INTERIOR_TITLES[this.zone]; // no-combat interior (NOT the subway)
+    this.isSubway = this.zone === "subway"; // indoor combat dungeon
     this.fromZone = data?.from ?? "d0"; // where 'H' returns to from inside an interior
     this.districtIndex = this.interior ? 0 : this.parseZone(data?.zone);
     // scene.start reuses the instance (field initializers don't re-run) — reset per-zone
@@ -211,14 +215,14 @@ export default class OnlineScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor(COLORS.bgVoid);
 
     // Real world — same grid + tileset the server simulates against (or the safehouse room).
-    const grid = this.interior ? buildSafehouse() : buildGrid(def);
+    const grid = this.isSubway ? buildSubway() : this.interior ? buildSafehouse() : buildGrid(def);
     const map = this.make.tilemap({ data: grid, tileWidth: TILE, tileHeight: TILE });
     const tileset = map.addTilesetImage(TILESET_KEY, TILESET_KEY, TILE, TILE)!;
     map.createLayer(0, tileset, 0, 0)!;
     // Building-silhouette pass (also shades the interior walls). The atmospheric weather is
     // outdoors-only — the safehouse is a calm, indoor social hub.
     shadeWalls(this, grid);
-    if (!this.interior) {
+    if (!this.interior && !this.isSubway) {
       this.atmosphere = new Atmosphere(this, {
         weather: def.weather,
         accent: def.accent,
@@ -235,7 +239,7 @@ export default class OnlineScene extends Phaser.Scene {
     this.cameras.main.setBounds(0, 0, WORLD_W, WORLD_H);
     installUiCamera(this, 1);
     this.applyNeon();
-    if (!this.interior) this.drawPvpZones(); // no PvP arena inside the safehouse
+    if (!this.interior && !this.isSubway) this.drawPvpZones(); // no PvP arena indoors
     if (this.interior) {
       const isHub = this.zone === "safe";
       this.add
@@ -283,6 +287,20 @@ export default class OnlineScene extends Phaser.Scene {
           this.makeTalkNpc(o.name, o.look, o.lines, tx * TILE + TILE / 2, ty * TILE + TILE / 2);
         });
       }
+    } else if (this.isSubway) {
+      // THE UNDERLINE — a combat dungeon: just a title; enemies + boss come from the server.
+      this.add
+        .text(WORLD_W / 2, 4 * TILE, "▼ THE UNDERLINE", { fontFamily: "Courier New, monospace", fontSize: "20px", color: "#ff3b6b", fontStyle: "bold" })
+        .setOrigin(0.5)
+        .setDepth(6);
+      this.add
+        .text(WORLD_W / 2, 4 * TILE + 26, "the subway dark — purge what nests here · H to surface", {
+          fontFamily: "Courier New, monospace",
+          fontSize: "11px",
+          color: "#9aa3b2",
+        })
+        .setOrigin(0.5)
+        .setDepth(6);
     } else {
       // district ambient life — a few authored citizens near the entrance so the world
       // outside the hub feels inhabited (cosmetic fixtures; HSS + player shots ignore them).
@@ -665,8 +683,10 @@ export default class OnlineScene extends Phaser.Scene {
       if (e.key === "h" || e.key === "H") {
         // H enters the safehouse (a no-combat hub) from a district, and returns to where
         // you came from. Travel = reconnect to the destination zone's DO.
-        const dest = this.interior ? this.fromZone : "safe";
-        const from = this.interior ? undefined : this.zone;
+        // indoors (interior or the subway) → return to where you entered; a district → the hub
+        const indoors = this.interior || this.isSubway;
+        const dest = indoors ? this.fromZone : "safe";
+        const from = indoors ? undefined : this.zone;
         this.net.disconnect();
         this.scene.restart({ zone: dest, from });
         return;
@@ -968,7 +988,7 @@ export default class OnlineScene extends Phaser.Scene {
     this.me.setVisible(this.net.connected && !this.net.dead);
 
     // PvP arena state — warn on enter/exit; the SERVER enforces the actual damage.
-    const inPvp = this.net.connected && !this.interior && inPvpZone(this.net.pred.x, this.net.pred.y);
+    const inPvp = this.net.connected && !this.interior && !this.isSubway && inPvpZone(this.net.pred.x, this.net.pred.y);
     if (inPvp !== this.wasInPvp) {
       this.wasInPvp = inPvp;
       this.pvpWarn
@@ -1137,7 +1157,7 @@ export default class OnlineScene extends Phaser.Scene {
     const war = FACTION_NAMES.map((nm, i) => `${nm[0]}:${this.net.factions[i]}`).join("  ");
     this.hud.setText([
       st.connected
-        ? `◢ ONLINE  ${this.callsign}  ·  ${this.interior ? "▣ SAFEHOUSE" : `${this.zone.toUpperCase()} ${DISTRICTS[this.districtIndex].name}`}`
+        ? `◢ ONLINE  ${this.callsign}  ·  ${this.interior ? INTERIOR_TITLES[this.zone] ?? "▣ INTERIOR" : this.isSubway ? "▼ THE UNDERLINE" : `${this.zone.toUpperCase()} ${DISTRICTS[this.districtIndex].name}`}`
         : "connecting to server…",
       `CELL ${FACTION_NAMES[this.net.faction]}   ·   DISTRICT CONTROL: ${ctrl}`,
       `players: ${st.players}   enemies: ${this.net.enemies.size}   nodes: ${this.net.nodes.size}`,

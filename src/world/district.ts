@@ -146,6 +146,30 @@ export const SAFEHOUSE_SPAWN = {
   y: Math.floor(GRID_H / 2) * TILE + TILE / 2,
 };
 
+/**
+ * THE UNDERLINE — the subway dungeon as an online COMBAT interior: three parallel platforms
+ * joined by vertical connectors (a subway-track feel), walls elsewhere. Shared by the client
+ * (renders it) and the server (sims zone "subway" with a tough HSS garrison + a boss).
+ */
+export function buildSubway(): TileGrid {
+  const g: TileGrid = [];
+  for (let y = 0; y < GRID_H; y++) {
+    const row: number[] = [];
+    for (let x = 0; x < GRID_W; x++) row.push(TILE_INNER_WALL);
+    g.push(row);
+  }
+  const carveRow = (ry: number, x0: number, x1: number) => {
+    for (let x = x0; x <= x1; x++) g[ry][x] = TILE_INNER_FLOOR;
+  };
+  const carveCol = (cx: number, y0: number, y1: number) => {
+    for (let y = y0; y <= y1; y++) g[y][cx] = TILE_INNER_FLOOR;
+  };
+  for (const ry of [7, 8, 15, 16, 23, 24]) carveRow(ry, 3, 36); // three platforms
+  for (const cx of [8, 9, 20, 21, 32, 33]) carveCol(cx, 7, 24); // connectors
+  return g;
+}
+export const SUBWAY_SPAWN = { x: 4 * TILE + TILE / 2, y: 7 * TILE + TILE / 2 };
+
 /** Player start in world (pixel) coordinates, at tile center, from the district def. */
 export function spawnPoint(grid: TileGrid, def: DistrictDef = DISTRICTS[0]): { x: number; y: number } {
   const [sx, sy] = def.spawnTile;

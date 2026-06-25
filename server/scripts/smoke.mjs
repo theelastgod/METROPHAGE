@@ -1409,6 +1409,59 @@ async function interior() {
   );
 }
 
+async function subway() {
+  // THE UNDERLINE — an indoor COMBAT dungeon zone: tough HSS garrison + a named boss,
+  // PvP off (indoor). Verify it routes as combat (enemies + boss) and combat is live.
+  const ws = await connect(WS_URL + (WS_URL.includes("?") ? "&" : "?") + "zone=subway");
+  const store = { x: 0, y: 0, enemies: [], boss: null, hp: 100, credits: 0 };
+  const w = await login(ws, "delver_" + Math.random().toString(36).slice(2, 6));
+  store.x = w.x;
+  store.y = w.y;
+  trackState(ws, w.id, store);
+  ws.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "state") store.boss = m.boss || null;
+  });
+  await sleep(600);
+  const isCombatZone = store.enemies.length > 0;
+  const subwayBoss = !!store.boss && /UNDERLINE/.test(store.boss.name || "");
+
+  const nearest = () => {
+    let b = null, bd = 1e9;
+    for (const e of store.enemies) {
+      const d = Math.hypot(e.x - store.x, e.y - store.y);
+      if (d < bd) { bd = d; b = e; }
+    }
+    return b;
+  };
+  let seq = 0, minHp = 999, tookDamage = false, maxCred = 0;
+  const t0 = Date.now();
+  while (Date.now() - t0 < 10000) {
+    const e = nearest();
+    if (e) {
+      const dx = e.x - store.x, dy = e.y - store.y, d = Math.hypot(dx, dy) || 1;
+      seq++;
+      ws.send(JSON.stringify({ t: "input", seq, mx: d > 100 ? dx / d : 0, my: d > 100 ? dy / d : 0 }));
+      ws.send(JSON.stringify({ t: "fire", seq, aim: Math.atan2(dy, dx) }));
+      minHp = Math.min(minHp, e.hp);
+    }
+    if ((store.hp ?? 100) < 100) tookDamage = true;
+    maxCred = Math.max(maxCred, store.credits || 0);
+    await sleep(45);
+  }
+  const combatLive = tookDamage || maxCred > 0 || minHp < 200; // we dealt or took damage
+
+  ws.close();
+  await sleep(200);
+  const checks = { isCombatZone, subwayBoss, combatLive };
+  report(
+    "SUBWAY — THE UNDERLINE routes as an indoor combat dungeon (enemies + boss + live fight)",
+    { enemies: store.enemies.length, boss: store.boss?.name ?? null, minEnemyHp: minHp === 999 ? null : minHp, tookDamage, credits: maxCred },
+    Object.values(checks).every(Boolean),
+    checks,
+  );
+}
+
 async function mp() {
   const AOI = 720;
   const a = await connect();
@@ -2137,6 +2190,7 @@ try {
   else if (mode === "bestiary") await bestiary();
   else if (mode === "safehouse") await safehouse();
   else if (mode === "interior") await interior();
+  else if (mode === "subway") await subway();
   else if (mode === "mp") await mp();
   else if (mode === "zones") await zones();
   else if (mode === "territory") await territory();

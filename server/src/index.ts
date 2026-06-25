@@ -1,4 +1,4 @@
-import { WorldDO, parseZone, INTERIOR_ZONES, type Env } from "./world";
+import { WorldDO, parseZone, NAMED_ZONES, type Env } from "./world";
 import { getAccount, quote, withdraw, deposit, simSettlement, type Settlement } from "./metro";
 
 export { WorldDO };
@@ -95,7 +95,7 @@ export default {
     // Ops: forward a per-zone metrics probe to that zone's DO.
     if (url.pathname === "/stats") {
       const raw = url.searchParams.get("zone");
-      const zone = raw && INTERIOR_ZONES.has(raw) ? raw : "d" + parseZone(raw);
+      const zone = raw && NAMED_ZONES.has(raw) ? raw : "d" + parseZone(raw);
       const stub = env.WORLD.get(env.WORLD.idFromName(zone));
       return stub.fetch(new Request(`https://world/stats?zone=${zone}`));
     }
@@ -106,7 +106,7 @@ export default {
 
     if (url.pathname === "/ws") {
       const raw = url.searchParams.get("zone");
-      const zone = raw && INTERIOR_ZONES.has(raw) ? raw : "d" + parseZone(raw); // canonical; interiors pass through
+      const zone = raw && NAMED_ZONES.has(raw) ? raw : "d" + parseZone(raw); // canonical; interiors pass through
       const stub = env.WORLD.get(env.WORLD.idFromName(zone));
       return stub.fetch(req);
     }
