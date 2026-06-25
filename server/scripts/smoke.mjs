@@ -1371,6 +1371,44 @@ async function safehouse() {
   );
 }
 
+async function interior() {
+  // Building interiors (clinic/bar/den/shop) are their own no-combat DOs, reusing the
+  // safehouse room. Verify the server routes one + hosts it like the hub.
+  const Z = WS_URL + (WS_URL.includes("?") ? "&" : "?") + "zone=bar";
+  const a = await connect(Z);
+  const sa = { x: 0, y: 0, enemies: [], players: [] };
+  const wa = await login(a, "barfly_" + Math.random().toString(36).slice(2, 6));
+  sa.x = wa.x;
+  sa.y = wa.y;
+  trackState(a, wa.id, sa);
+  const b = await connect(Z);
+  const wb = await login(b, "barfly2_" + Math.random().toString(36).slice(2, 6));
+  await sleep(700);
+  const routedAsInterior = sa.enemies.length === 0; // a district would have a garrison
+  const sharedPresence = (sa.players || []).some((p) => p.id === wb.id);
+
+  const startX = sa.x;
+  let seq = 0;
+  for (let i = 0; i < 40; i++) {
+    seq++;
+    a.send(JSON.stringify({ t: "input", seq, mx: 1, my: 0 }));
+    await sleep(45);
+  }
+  await sleep(200);
+  const canWalk = Math.abs(sa.x - startX) > 15 && sa.enemies.length === 0;
+
+  a.close();
+  b.close();
+  await sleep(200);
+  const checks = { routedAsInterior, sharedPresence, canWalk };
+  report(
+    "INTERIOR — a building interior zone (bar) is no-combat, shared + walkable",
+    { enemies: sa.enemies.length, players: (sa.players || []).length, movedDx: Math.round(sa.x - startX) },
+    Object.values(checks).every(Boolean),
+    checks,
+  );
+}
+
 async function mp() {
   const AOI = 720;
   const a = await connect();
@@ -2098,6 +2136,7 @@ try {
   else if (mode === "shop") await shop();
   else if (mode === "bestiary") await bestiary();
   else if (mode === "safehouse") await safehouse();
+  else if (mode === "interior") await interior();
   else if (mode === "mp") await mp();
   else if (mode === "zones") await zones();
   else if (mode === "territory") await territory();

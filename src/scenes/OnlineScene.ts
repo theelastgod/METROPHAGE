@@ -33,7 +33,7 @@ import NeonPipeline from "../render/NeonPipeline";
 import { QUESTLINE } from "../net/quest";
 import OnlineCosmetics from "../ui/OnlineCosmetics";
 import { applyCosmetic } from "../game/cosmetics";
-import { npcDef, AMBIENT_NPCS } from "../game/cityNpcs";
+import { npcDef, AMBIENT_NPCS, INTERIOR_PLAN, keeperFor } from "../game/cityNpcs";
 import type { PlayerLook } from "../net/protocol";
 import { setOnlinePlayer } from "../economy/session";
 import { connectedWallet, signWalletLogin } from "../economy/wallet";
@@ -65,17 +65,32 @@ const SAFEHOUSE_NPCS: { svc: string; name: string; tag: string; color: number; t
   { svc: "guild", name: "ORGANIZER", tag: "CELL", color: 0x6b9bff, tile: [7, 24] },
 ];
 
-/** Authored citizens (from the single-player city) who give the safehouse town life + lore.
- *  Rendered from their PlayerLook (like remotes), talkable for flavour — bringing the
- *  campaign's characters into the shared online world. */
+/** Ambient regulars who linger in the safehouse hub for life (the quest-giver citizens
+ *  RIN/DOC/VEX/SABLE now live in their own building interiors below). */
 const SAFEHOUSE_CITIZENS: { id: string; tile: [number, number] }[] = [
-  { id: "rin", tile: [16, 12] },
-  { id: "doc", tile: [24, 12] },
-  { id: "vex", tile: [16, 18] },
-  { id: "marek", tile: [24, 18] },
-  { id: "sable", tile: [20, 11] },
-  { id: "amb_synth", tile: [20, 19] },
+  { id: "marek", tile: [16, 13] },
+  { id: "amb_synth", tile: [24, 17] },
 ];
+
+/** Titles shown atop each interior zone. */
+const INTERIOR_TITLES: Record<string, string> = {
+  safe: "▣ SAFEHOUSE",
+  clinic: "✚ THE CLINIC",
+  bar: "▦ THE FERAL CAT",
+  den: "◈ THE DEN",
+  shop: "▣ MARKET STALL",
+};
+
+/** Doors in the hub that open into building interiors (each its own no-combat zone). */
+const HUB_DOORS: { dest: string; label: string; tile: [number, number]; color: number }[] = [
+  { dest: "clinic", label: "CLINIC", tile: [13, 6], color: 0x39ff88 },
+  { dest: "shop", label: "MARKET", tile: [27, 6], color: 0x00e5ff },
+  { dest: "bar", label: "THE FERAL CAT", tile: [13, 24], color: 0xff79c6 },
+  { dest: "den", label: "THE DEN", tile: [27, 24], color: 0xff2bd6 },
+];
+
+/** Central tiles to seat a building interior's occupants. */
+const INTERIOR_NPC_TILES: [number, number][] = [[20, 12], [15, 15], [25, 15], [20, 18]];
 
 /** HSS archetype tints (index = enemy kind), matching the singleplayer reads. */
 // 0 patrol · 1 wasp · 2 lancer · 3 hound · 4 enforcer · 5 sniper · 6 wraith
@@ -157,9 +172,10 @@ export default class OnlineScene extends Phaser.Scene {
   private lastEmoteShownAt = 0; // newest relayed emote already rendered
   private wasInPvp = false; // last-frame PvP-arena state (for enter/exit warnings)
   private pvpWarn!: Phaser.GameObjects.Text;
-  // safehouse occupants — service operatives (open a system) + authored citizens (flavour)
-  private npcs: { kind: "service" | "talk"; svc?: string; name: string; lines?: string[]; lineIdx?: number; x: number; y: number }[] = [];
-  private nearNpc: { kind: "service" | "talk"; svc?: string; name: string; lines?: string[]; lineIdx?: number; x: number; y: number } | null = null;
+  // zone interactables — service operatives (open a system), authored citizens (flavour),
+  // and doors (travel into a building interior)
+  private npcs: { kind: "service" | "talk" | "door"; svc?: string; dest?: string; name: string; lines?: string[]; lineIdx?: number; x: number; y: number }[] = [];
+  private nearNpc: { kind: "service" | "talk" | "door"; svc?: string; dest?: string; name: string; lines?: string[]; lineIdx?: number; x: number; y: number } | null = null;
   private interactPrompt?: Phaser.GameObjects.Text;
   private speechBubble?: Phaser.GameObjects.Text;
   private pvpTag!: Phaser.GameObjects.Text;
@@ -180,10 +196,16 @@ export default class OnlineScene extends Phaser.Scene {
 
     // Zone = which district (or the safehouse interior) this client is in. Travel hands off
     // to another DO by reconnecting with a new zone.
-    this.zone = data?.zone === "safe" ? "safe" : "d" + this.parseZone(data?.zone);
-    this.interior = this.zone === "safe";
-    this.fromZone = data?.from ?? "d0"; // where 'H' returns to from inside the safehouse
+    // interior zones (safehouse hub + building interiors) pass through by name; else a district
+    const rawZone = data?.zone ?? "d0";
+    this.zone = INTERIOR_TITLES[rawZone] ? rawZone : "d" + this.parseZone(data?.zone);
+    this.interior = !!INTERIOR_TITLES[this.zone];
+    this.fromZone = data?.from ?? "d0"; // where 'H' returns to from inside an interior
     this.districtIndex = this.interior ? 0 : this.parseZone(data?.zone);
+    // scene.start reuses the instance (field initializers don't re-run) — reset per-zone
+    // interactables so NPCs/doors don't accumulate across travel between zones.
+    this.npcs = [];
+    this.nearNpc = null;
     const def = DISTRICTS[this.districtIndex];
 
     this.cameras.main.setBackgroundColor(COLORS.bgVoid);
@@ -215,39 +237,51 @@ export default class OnlineScene extends Phaser.Scene {
     this.applyNeon();
     if (!this.interior) this.drawPvpZones(); // no PvP arena inside the safehouse
     if (this.interior) {
+      const isHub = this.zone === "safe";
       this.add
-        .text(WORLD_W / 2, 4 * TILE, "▣ SAFEHOUSE", { fontFamily: "Courier New, monospace", fontSize: "20px", color: "#39ff88", fontStyle: "bold" })
+        .text(WORLD_W / 2, 4 * TILE, INTERIOR_TITLES[this.zone] ?? "▣ INTERIOR", { fontFamily: "Courier New, monospace", fontSize: "20px", color: "#39ff88", fontStyle: "bold" })
         .setOrigin(0.5)
         .setDepth(6);
       this.add
-        .text(WORLD_W / 2, 4 * TILE + 26, "a quiet hold — no combat · walk to an operative + press E · H to leave", {
+        .text(WORLD_W / 2, 4 * TILE + 26, isHub ? "the safehouse — no combat · operatives + doors · press E · H to deploy" : "no combat · talk: E · H to return to the safehouse", {
           fontFamily: "Courier New, monospace",
           fontSize: "11px",
           color: "#9aa3b2",
         })
         .setOrigin(0.5)
         .setDepth(6);
-      // Service operatives — each opens one online system (walk up + E, or click).
-      for (const def of SAFEHOUSE_NPCS) {
-        const px = def.tile[0] * TILE + TILE / 2;
-        const py = def.tile[1] * TILE + TILE / 2;
-        this.add.image(px, py + 8, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(def.color).setDepth(8).setScale(0.6).setAlpha(0.45);
-        const spr = this.add.sprite(px, py, PLAYER_KEY, 0).setTint(def.color).setDepth(9).setInteractive({ useHandCursor: true });
-        spr.on("pointerdown", () => this.openService(def.svc));
-        this.add
-          .text(px, py - 28, def.name, { fontFamily: "Courier New, monospace", fontSize: "10px", color: "#cfe8ff", fontStyle: "bold" })
-          .setOrigin(0.5)
-          .setDepth(9);
-        this.add
-          .text(px, py + 20, "▸ " + def.tag, { fontFamily: "Courier New, monospace", fontSize: "9px", color: "#" + (def.color & 0xffffff).toString(16).padStart(6, "0") })
-          .setOrigin(0.5)
-          .setDepth(9);
-        this.npcs.push({ kind: "service", svc: def.svc, name: `${def.name} · ${def.tag}`, x: px, y: py });
-      }
-      // authored citizens — looked + voiced, bringing the campaign's characters into the hub
-      for (const c of SAFEHOUSE_CITIZENS) {
-        const cdef = npcDef(c.id);
-        if (cdef) this.makeTalkNpc(cdef.name, cdef.look, cdef.lines, c.tile[0] * TILE + TILE / 2, c.tile[1] * TILE + TILE / 2);
+      if (isHub) {
+        // Service operatives — each opens one online system (walk up + E, or click).
+        for (const def of SAFEHOUSE_NPCS) {
+          const px = def.tile[0] * TILE + TILE / 2;
+          const py = def.tile[1] * TILE + TILE / 2;
+          this.add.image(px, py + 8, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(def.color).setDepth(8).setScale(0.6).setAlpha(0.45);
+          const spr = this.add.sprite(px, py, PLAYER_KEY, 0).setTint(def.color).setDepth(9).setInteractive({ useHandCursor: true });
+          spr.on("pointerdown", () => this.openService(def.svc));
+          this.add
+            .text(px, py - 28, def.name, { fontFamily: "Courier New, monospace", fontSize: "10px", color: "#cfe8ff", fontStyle: "bold" })
+            .setOrigin(0.5)
+            .setDepth(9);
+          this.add
+            .text(px, py + 20, "▸ " + def.tag, { fontFamily: "Courier New, monospace", fontSize: "9px", color: "#" + (def.color & 0xffffff).toString(16).padStart(6, "0") })
+            .setOrigin(0.5)
+            .setDepth(9);
+          this.npcs.push({ kind: "service", svc: def.svc, name: `${def.name} · ${def.tag}`, x: px, y: py });
+        }
+        for (const door of HUB_DOORS) this.makeDoor(door); // doors into the building interiors
+        // ambient regulars for life
+        for (const c of SAFEHOUSE_CITIZENS) {
+          const cdef = npcDef(c.id);
+          if (cdef) this.makeTalkNpc(cdef.name, cdef.look, cdef.lines, c.tile[0] * TILE + TILE / 2, c.tile[1] * TILE + TILE / 2);
+        }
+      } else {
+        // a building interior — seat its authored occupants (keeper + residents)
+        const residents = INTERIOR_PLAN[this.zone]?.[0] ?? [];
+        const occupants = [keeperFor(this.zone), ...residents.map((id) => npcDef(id)).filter((d): d is NonNullable<typeof d> => !!d)];
+        occupants.forEach((o, i) => {
+          const [tx, ty] = INTERIOR_NPC_TILES[i % INTERIOR_NPC_TILES.length];
+          this.makeTalkNpc(o.name, o.look, o.lines, tx * TILE + TILE / 2, ty * TILE + TILE / 2);
+        });
       }
     } else {
       // district ambient life — a few authored citizens near the entrance so the world
@@ -573,6 +607,7 @@ export default class OnlineScene extends Phaser.Scene {
       if (e.key === "e" || e.key === "E") {
         if (this.nearNpc) {
           if (this.nearNpc.kind === "service" && this.nearNpc.svc) this.openService(this.nearNpc.svc);
+          else if (this.nearNpc.kind === "door" && this.nearNpc.dest) this.enterZone(this.nearNpc.dest);
           else this.sayLine(this.nearNpc);
         }
         return;
@@ -806,6 +841,29 @@ export default class OnlineScene extends Phaser.Scene {
     this.npcs.push(npc);
   }
 
+  /** A door into a building interior — a glowing portal you enter with E (or click). */
+  private makeDoor(door: { dest: string; label: string; tile: [number, number]; color: number }) {
+    const px = door.tile[0] * TILE + TILE / 2;
+    const py = door.tile[1] * TILE + TILE / 2;
+    const g = this.add.graphics().setDepth(8);
+    g.fillStyle(door.color, 0.16).fillRect(px - 18, py - 24, 36, 48);
+    g.lineStyle(2, door.color, 0.9).strokeRect(px - 18, py - 24, 36, 48);
+    this.add.image(px, py, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(door.color).setDepth(8).setScale(0.5).setAlpha(0.4);
+    this.add
+      .text(px, py - 36, door.label, { fontFamily: "Courier New, monospace", fontSize: "10px", color: "#" + (door.color & 0xffffff).toString(16).padStart(6, "0"), fontStyle: "bold" })
+      .setOrigin(0.5)
+      .setDepth(9);
+    const z = this.add.zone(px - 18, py - 24, 36, 48).setOrigin(0).setInteractive({ useHandCursor: true }).setDepth(9);
+    z.on("pointerdown", () => this.enterZone(door.dest));
+    this.npcs.push({ kind: "door", dest: door.dest, name: door.label, x: px, y: py });
+  }
+
+  /** Travel into another zone (door/interior) — reconnect to that zone's DO, like H-travel. */
+  private enterZone(dest: string) {
+    this.net.disconnect();
+    this.scene.restart({ zone: dest, from: this.zone });
+  }
+
   /** Speak an authored citizen's next flavour line in a floating bubble (cycles their lines). */
   private sayLine(npc: { name: string; lines?: string[]; lineIdx?: number; x: number; y: number }) {
     if (!this.speechBubble || !npc.lines || npc.lines.length === 0) return;
@@ -934,7 +992,7 @@ export default class OnlineScene extends Phaser.Scene {
         }
       }
       this.nearNpc = near;
-      const label = near ? (near.kind === "service" ? near.name : `talk to ${near.name}`) : "";
+      const label = near ? (near.kind === "service" ? near.name : near.kind === "door" ? `enter ${near.name}` : `talk to ${near.name}`) : "";
       this.interactPrompt.setText(near ? `▸ E — ${label}` : "").setVisible(!!near);
     }
 

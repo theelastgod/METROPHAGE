@@ -149,6 +149,11 @@ export const parseZone = (z: string | null): number => {
   return n >= 0 && n < DISTRICTS.length ? n : 0;
 };
 
+/** No-combat interior zones (the safehouse hub + enterable building interiors). Each is its
+ *  own DO, reuses the safehouse room grid, and runs no enemies/boss/territory/PvP. Shared with
+ *  the Worker router so these zone names pass through instead of collapsing to a district. */
+export const INTERIOR_ZONES = new Set(["safe", "clinic", "bar", "den", "shop"]);
+
 export interface Env {
   WORLD: DurableObjectNamespace;
   DB: D1Database;
@@ -433,15 +438,16 @@ export class WorldDO {
   private initZone(zone: string | null) {
     if (this.zoneReady) return;
     this.zoneReady = true;
-    // SAFEHOUSE — a no-combat social interior: build the room, NO enemies/boss/territory.
-    if (zone === "safe") {
+    // INTERIORS (safehouse hub + building interiors) — a no-combat room: NO enemies/boss/
+    // territory. All reuse the safehouse grid; only the client decorates them differently.
+    if (zone && INTERIOR_ZONES.has(zone)) {
       this.interior = true;
-      this.zoneName = "safe";
+      this.zoneName = zone;
       this.districtIndex = 0;
       this.grid = buildSafehouse();
       this.spawn = SAFEHOUSE_SPAWN;
       this.nodes = [];
-      void this.state.storage.put("zone", "safe"); // a wake re-binds the safehouse
+      void this.state.storage.put("zone", zone); // a wake re-binds this interior
       return;
     }
     this.districtIndex = parseZone(zone);
