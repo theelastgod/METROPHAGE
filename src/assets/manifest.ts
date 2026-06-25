@@ -1,3 +1,5 @@
+import { COSMETICS } from "../game/cosmetics";
+
 // METROPHAGE — logical asset registry.
 //
 // Real art drops into /public/assets/<category>/ and is referenced here by path.
@@ -102,6 +104,8 @@ export const ASSETS: Record<string, AssetEntry[]> = {
     { key: PROP_VENDING_KEY, file: "assets/objects/prop_vending.png" },
     { key: PROP_AC_KEY, file: "assets/objects/prop_ac.png" },
   ],
+  // Real garment icons (apparel pack) for the cosmetics wardrobe — keyed "cos_<id>".
+  cosIcons: COSMETICS.map((c) => ({ key: "cos_" + c.id, file: "assets/icons/cos_" + c.id + ".png" })),
 };
 
 /** Face-by-direction frame for the top-down sheets: 0=down 1=left 2=right 3=up. */

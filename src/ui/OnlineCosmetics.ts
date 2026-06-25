@@ -91,9 +91,13 @@ export default class OnlineCosmetics {
       const locked = !!c.nft && !METRO_MAINNET_ARMED;
       g.fillStyle(isEq ? 0x231a3a : 0x12102a, 0.92).fillRect(x + 16, ry, w - 32, 48);
       g.lineStyle(isEq ? 2 : 1.4, isEq ? 0x39ff88 : c.swatch, locked ? 0.4 : 1).strokeRect(x + 16, ry, w - 32, 48);
-      // swatch chip
-      g.fillStyle(c.swatch, locked ? 0.4 : 1).fillRect(x + 26, ry + 12, 24, 24);
-      g.lineStyle(1, 0xffffff, 0.3).strokeRect(x + 26, ry + 12, 24, 24);
+      // garment icon (real apparel art) on an accent-tinted chip; falls back to a swatch
+      g.fillStyle(c.swatch, locked ? 0.18 : 0.35).fillRect(x + 26, ry + 12, 24, 24);
+      g.lineStyle(1, c.swatch, locked ? 0.4 : 0.9).strokeRect(x + 26, ry + 12, 24, 24);
+      const cosKey = "cos_" + c.id;
+      if (scene.textures.exists(cosKey)) {
+        add(scene.add.image(x + 38, ry + 24, cosKey).setDisplaySize(22, 22).setScrollFactor(0).setDepth(D + 2).setAlpha(locked ? 0.4 : 1));
+      }
       tx(`${isEq ? "✓ " : ""}${c.name}`, x + 62, ry + 8, 13, locked ? "#5a6172" : "#" + (c.swatch & 0xffffff).toString(16).padStart(6, "0"), true);
       tx(c.desc, x + 62, ry + 27, 10, locked ? "#4a5266" : "#9aa3b2");
 
