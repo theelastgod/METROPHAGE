@@ -64,6 +64,7 @@ import { achievementsForStat, type StatKey } from "../../src/game/achievements";
 import { GUILD_CREATE_COST, guildLevel, guildPerkPct, validateGuild } from "../../src/game/guilds";
 import { listingFee, MIN_PRICE, MAX_PRICE } from "../../src/game/market";
 import { dailyContracts, getDaily, currentDay, repTier, type DailyObjective } from "../../src/game/dailies";
+import { RAID_SCRIPT, phaseForHp, raidHpScale } from "../../src/game/raid";
 import { verifyWalletLogin } from "./auth";
 
 /** Inventory is capped so the persisted JSON stays bounded; oldest drops out (FIFO). */
@@ -256,6 +257,25 @@ interface Enemy {
   boss?: boolean; // a named world boss: tougher, hits harder, long respawn, broadcast kill
   name?: string;
   tint?: number; // boss accent colour (corp identity), for the client
+  add?: boolean; // a boss-summoned add (cleaned up when the boss falls/reforms)
+  // raid runtime (bosses only)
+  baseMaxHp?: number; // roster HP before player-count scaling
+  phaseIdx?: number; // current raid phase
+  engagedTick?: number; // tick of first damage (0 = not yet engaged); arms scaling + enrage
+  lastAoeTick?: number; // last hazard telegraph
+  enraged?: boolean; // soft enrage tripped by the timer
+}
+
+/** A telegraphed boss AoE — a growing ring that detonates after a wind-up, damaging
+ *  anyone still inside. Broadcast (AOI) so clients render the dodge window. */
+interface Hazard {
+  id: number;
+  x: number;
+  y: number;
+  r: number;
+  castTick: number;
+  detonateTick: number;
+  dmg: number;
 }
 
 /**
@@ -355,9 +375,11 @@ export class WorldDO {
   private grid: TileGrid;
   private spawn: { x: number; y: number };
   private pickups = new Map<number, Pickup>();
+  private hazards: Hazard[] = []; // telegraphed boss AoE zones
   private nextEnemyId = 1;
   private nextShotId = 1;
   private nextPickupId = 1;
+  private nextHazardId = 1;
   // Server-wide shared meta (D1-synced across all zones): "singularity", "f0".."f3".
   private meta: Record<string, number> = {};
   private metaDelta: Record<string, number> = {};
@@ -483,7 +505,118 @@ export class WorldDO {
       boss: true,
       name: boss.name,
       tint: boss.tint,
+      baseMaxHp: boss.hp,
+      phaseIdx: 0,
+      engagedTick: 0,
+      lastAoeTick: 0,
+      enraged: false,
     });
+  }
+
+  /** Raid-tier boss tick: HP-gated phase escalation, telegraphed AoE, summoned adds, enrage. */
+  private updateBoss(e: Enemy, arch: EnemyArch, meltdown: boolean) {
+    // dead → reform on the long timer, resetting all raid state + the player-count scaling
+    if (e.hp <= 0) {
+      if (this.tick >= e.respawnTick) {
+        e.x = e.ox;
+        e.y = e.oy;
+        e.maxHp = e.baseMaxHp ?? e.maxHp;
+        e.hp = e.maxHp;
+        e.phaseIdx = 0;
+        e.engagedTick = 0;
+        e.lastAoeTick = 0;
+        e.enraged = false;
+      }
+      return;
+    }
+    const target = this.nearestLivePlayer(e.x, e.y, ENEMY_AGGRO * 1.5);
+    if (!target) return; // idles at its lair until someone engages
+    const script = RAID_SCRIPT;
+    // The full raid kit (AoE / adds / phase escalation / enrage) only engages for a GROUP.
+    // Solo, it fights as the classic single-target boss — fair to whittle down alone.
+    let nearCount = 0;
+    const ar2 = (ENEMY_AGGRO * 2) ** 2;
+    for (const p of this.players.values()) if (!p.dead && dist2(e.x, e.y, p.x, p.y) <= ar2) nearCount++;
+    const raid = nearCount >= 2;
+    const dx = target.x - e.x;
+    const dy = target.y - e.y;
+    const d = Math.hypot(dx, dy) || 1;
+    let fireMs = arch.fireMs;
+    let dmgMult = 1;
+    let speed = arch.speed;
+    if (raid) {
+      // phase from HP fraction; crossing into a deeper phase summons adds + announces
+      const ph = phaseForHp(script, e.hp / (e.maxHp || 1));
+      if (ph > (e.phaseIdx ?? 0)) {
+        e.phaseIdx = ph;
+        const np = script.phases[ph];
+        if (np.summonOnEnter > 0) this.summonAdds(e, np.summonOnEnter, np.summonKind);
+        this.broadcastSys(`▲ ${e.name} enters ${np.name}`);
+      }
+      const phase = script.phases[e.phaseIdx ?? 0];
+      // enrage (armed at first engage) — a soft DPS check
+      if (!e.enraged && e.engagedTick && (this.tick - e.engagedTick) * NET_TICK_MS >= script.enrageMs) {
+        e.enraged = true;
+        this.broadcastSys(`☠ ${e.name} ENRAGES`);
+      }
+      const enr = e.enraged ? script.enrage : null;
+      fireMs = enr ? enr.fireMs : phase.fireMs;
+      dmgMult = enr ? enr.dmgMult : phase.dmgMult;
+      speed = arch.speed * phase.speedMult;
+      // telegraph an AoE hazard on a random nearby player (the dodge window)
+      const aoeEvery = enr ? enr.aoeEveryMs : phase.aoeEveryMs;
+      if (e.engagedTick && aoeEvery > 0 && (this.tick - (e.lastAoeTick ?? 0)) * NET_TICK_MS >= aoeEvery) {
+        e.lastAoeTick = this.tick;
+        const victim = this.randomLivePlayer(e.x, e.y, ENEMY_AGGRO * 2) ?? target;
+        this.hazards.push({
+          id: this.nextHazardId++,
+          x: victim.x,
+          y: victim.y,
+          r: enr ? enr.aoeRadius : phase.aoeRadius,
+          castTick: this.tick,
+          detonateTick: this.tick + ticks(enr ? enr.aoeWindupMs : phase.aoeWindupMs),
+          dmg: enr ? enr.aoeDmg : phase.aoeDmg,
+        });
+      }
+    }
+    // chase
+    if (meltdown) speed *= MELTDOWN_ENEMY_SPEED_MULT;
+    stepMove(e, { mx: dx / d, my: dy / d }, this.grid, NET_TICK_MS, speed);
+    // fire
+    if (d <= arch.fireRange * 1.3 && (this.tick - e.lastFireTick) * NET_TICK_MS >= fireMs) {
+      e.lastFireTick = this.tick;
+      const aim = Math.atan2(dy, dx);
+      this.shots.push({
+        id: this.nextShotId++,
+        x: e.x,
+        y: e.y,
+        vx: Math.cos(aim) * arch.projSpeed,
+        vy: Math.sin(aim) * arch.projSpeed,
+        dieTick: this.tick + ticks(ENEMY_PROJ_TTL_MS),
+        team: 1,
+        owner: String(e.id),
+        dmg: Math.round(arch.dmg * BOSS_DMG_MULT * dmgMult),
+      });
+    }
+  }
+
+  /** Spawn N boss adds in a ring around the boss (flagged so they clear when it falls). */
+  private summonAdds(boss: Enemy, n: number, kind: number) {
+    const a = ENEMY_ARCHES[kind] ?? ENEMY_ARCHES[1];
+    for (let i = 0; i < n; i++) {
+      const ang = (i / n) * Math.PI * 2;
+      const x = boss.x + Math.cos(ang) * 64;
+      const y = boss.y + Math.sin(ang) * 64;
+      const id = this.nextEnemyId++;
+      this.enemies.set(id, { id, x, y, ox: x, oy: y, hp: a.hp, maxHp: a.hp, respawnTick: 0, lastFireTick: 0, kind, add: true });
+    }
+  }
+
+  private randomLivePlayer(x: number, y: number, range: number): PlayerState | null {
+    const r2 = range * range;
+    const pool: PlayerState[] = [];
+    for (const p of this.players.values()) if (!p.dead && dist2(x, y, p.x, p.y) <= r2) pool.push(p);
+    return pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
   }
 
   async fetch(req: Request): Promise<Response> {
@@ -1862,6 +1995,10 @@ export class WorldDO {
     // 2) enemies — chase nearest player, fire in range
     for (const e of this.enemies.values()) {
       const arch = ENEMY_ARCHES[e.kind] ?? ENEMY_ARCHES[0];
+      if (e.boss) {
+        this.updateBoss(e, arch, meltdown);
+        continue;
+      }
       if (e.hp <= 0) {
         if (this.tick >= e.respawnTick) {
           e.x = e.ox;
@@ -1921,6 +2058,16 @@ export class WorldDO {
                 owner.hp = Math.min(owner.maxHp, owner.hp + dmg * lifesteal);
               }
             }
+            // raid: the first hit on a boss arms the fight — lock its HP to the raid size
+            // (and start the enrage clock). More players present → a bigger HP pool.
+            if (e.boss && !e.engagedTick) {
+              e.engagedTick = this.tick;
+              let live = 0;
+              for (const pl of this.players.values()) if (!pl.dead) live++;
+              e.baseMaxHp = e.baseMaxHp ?? e.maxHp;
+              e.maxHp = Math.round(e.baseMaxHp * raidHpScale(RAID_SCRIPT, live));
+              e.hp = e.maxHp; // refill to the scaled pool (the fight has only just begun)
+            }
             e.hp -= dmg;
             consumed = true;
             if (e.hp <= 0) {
@@ -1956,6 +2103,11 @@ export class WorldDO {
                 if (isBoss) {
                   this.broadcast({ t: "sys", text: `▲ ${killer.name} slew ${e.name} — it will reform soon` });
                 }
+              }
+              // raid cleanup: a felled boss clears its summoned adds + any pending hazards
+              if (isBoss) {
+                for (const [aid, ae] of this.enemies) if (ae.add) this.enemies.delete(aid);
+                this.hazards = [];
               }
               // shared meta: every kill (any player, ANY zone) pushes the server-wide
               // Singularity. Optimistic local bump now; flushed/synced to D1 on persist.
@@ -1998,6 +2150,29 @@ export class WorldDO {
       if (!consumed) alive.push(s);
     }
     this.shots = alive;
+
+    // 3b) boss hazards — telegraphed AoE detonates on its tick, hitting players still inside
+    if (this.hazards.length) {
+      const liveHz: Hazard[] = [];
+      for (const hz of this.hazards) {
+        if (this.tick >= hz.detonateTick) {
+          const hr2 = hz.r * hz.r;
+          for (const p of this.players.values()) {
+            if (p.dead || this.tick < p.pvpSafeUntil) continue;
+            if (dist2(p.x, p.y, hz.x, hz.y) <= hr2) {
+              p.hp -= hz.dmg;
+              if (p.hp <= 0) {
+                p.hp = 0;
+                p.dead = true;
+                p.respawnTick = this.tick + ticks(RESPAWN_MS);
+                p.dirty = true;
+              }
+            }
+          }
+        } else liveHz.push(hz);
+      }
+      this.hazards = liveHz;
+    }
 
     // 4) pickups — collected by walkover, expire on TTL (server decides the grant)
     const PR2 = PICKUP_RADIUS * PICKUP_RADIUS;
@@ -2142,6 +2317,18 @@ export class WorldDO {
     for (const pu of this.pickups.values()) {
       if (near(pu.x, pu.y)) pickups.push({ id: pu.id, x: round2(pu.x), y: round2(pu.y), kind: pu.kind });
     }
+    const hazards = [];
+    for (const hz of this.hazards) {
+      if (near(hz.x, hz.y))
+        hazards.push({
+          id: hz.id,
+          x: round2(hz.x),
+          y: round2(hz.y),
+          r: hz.r,
+          // 0 → just cast, 1 → about to detonate (drives the client telegraph fill)
+          frac: round2(Math.max(0, Math.min(1, (this.tick - hz.castTick) / Math.max(1, hz.detonateTick - hz.castTick)))),
+        });
+    }
     const nodes = [];
     for (const n of this.nodes) {
       if (near(n.x, n.y))
@@ -2173,6 +2360,7 @@ export class WorldDO {
       enemies,
       shots,
       pickups,
+      hazards,
       nodes,
       sing,
       meltdown,

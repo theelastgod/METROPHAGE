@@ -131,6 +131,13 @@ export interface PickupSnap {
   y: number;
   kind: number; // PICKUP_CREDIT | PICKUP_CORE
 }
+export interface HazardSnap {
+  id: number;
+  x: number;
+  y: number;
+  r: number; // radius (world px)
+  frac: number; // 0 = just telegraphed, 1 = detonating (telegraph fill)
+}
 export interface NodeSnap {
   id: number;
   x: number;
@@ -158,6 +165,7 @@ export type ServerMsg =
       enemies: EnemySnap[];
       shots: ShotSnap[];
       pickups: PickupSnap[];
+      hazards: HazardSnap[]; // telegraphed boss AoE zones (raid mechanics)
       nodes: NodeSnap[];
       sing: number; // shared server-wide Singularity meter (0..SING_MAX)
       meltdown: boolean;

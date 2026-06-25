@@ -87,6 +87,7 @@ export default class OnlineScene extends Phaser.Scene {
   private pickupSprites = new Map<number, Phaser.GameObjects.Image>();
   private nodeSprites = new Map<number, Phaser.GameObjects.Sprite>();
   private nodeG!: Phaser.GameObjects.Graphics;
+  private hazardG!: Phaser.GameObjects.Graphics; // telegraphed boss AoE rings (raid mechanics)
   private faction = 0;
   private hud!: Phaser.GameObjects.Text;
   private hpBar!: Phaser.GameObjects.Graphics;
@@ -203,6 +204,7 @@ export default class OnlineScene extends Phaser.Scene {
     const url = SERVER_URL + (SERVER_URL.includes("?") ? "&" : "?") + "zone=" + this.zone;
     this.faction = factionForColor(this.color); // your cell, from your signature colour
     this.nodeG = this.add.graphics().setDepth(5); // node capture rings (world-space)
+    this.hazardG = this.add.graphics().setDepth(8); // boss AoE telegraphs (under shots/players)
     // Send your look so every other player renders your customization (not a generic body).
     this.net = new NetClient(grid, this.callsign, url, this.faction, customizationToLook(cust));
     this.net.onWelcome = (x, y) => {
@@ -753,6 +755,17 @@ export default class OnlineScene extends Phaser.Scene {
           this.bossOverlays.delete(id);
         }
       }
+
+    // boss AoE telegraphs (raid mechanics) — a ring that fills as it nears detonation
+    this.hazardG.clear();
+    for (const hz of this.net.hazards) {
+      const danger = hz.frac;
+      const col = danger > 0.72 ? 0xff2b2b : 0xff7a3c;
+      this.hazardG.fillStyle(col, 0.1 + 0.32 * danger);
+      this.hazardG.fillCircle(hz.x, hz.y, hz.r * (0.22 + 0.78 * danger)); // inner fill rushes outward
+      this.hazardG.lineStyle(3, col, 0.85);
+      this.hazardG.strokeCircle(hz.x, hz.y, hz.r);
+    }
 
     // projectiles (server-simulated)
     for (const [id, sh] of this.net.shots) {

@@ -1049,6 +1049,96 @@ async function daily() {
   );
 }
 
+async function raid() {
+  // RAID-TIER BOSS. Two players → the boss locks a bigger HP pool on engage, telegraphs AoE
+  // hazards, escalates phases + summons adds. (run on a clean server so d0's boss is pristine)
+  const WW = 1280, WH = 960;
+  const base = WS_URL + (WS_URL.includes("?") ? "&" : "?") + "zone=d0";
+  const mk = async (name) => {
+    const ws = await connect(base);
+    const s = { x: 0, y: 0, enemies: [], boss: null, hazards: [], sys: [], sawHaz: false, maxEn: 0, _seq: 0 };
+    const w = await login(ws, name, 0);
+    s.x = w.x;
+    s.y = w.y;
+    trackState(ws, w.id, s);
+    ws.addEventListener("message", (ev) => {
+      const m = JSON.parse(ev.data);
+      if (m.t === "state") {
+        s.boss = m.boss || null;
+        s.hazards = m.hazards || [];
+        if ((m.hazards || []).length) s.sawHaz = true;
+        s.maxEn = Math.max(s.maxEn, (m.enemies || []).length);
+      }
+      if (m.t === "sys") s.sys.push(m.text);
+    });
+    return { ws, s };
+  };
+  const A = await mk("raidA");
+  const B = await mk("raidB");
+  await sleep(800);
+  const boss0 = A.s.boss;
+  const bossFound = !!boss0 && (boss0.hpMax || 0) > 100;
+  const hpMaxBefore = boss0?.hpMax || 0;
+
+  // Chase the boss once it's in AOI (exact pos from the enemy list); until then trek toward
+  // the far corner where it lairs (the proven locomotion from the `boss` smoke). `mayFire`
+  // gates shooting until BOTH bots are present so the engaging hit scales HP for 2 players.
+  const drive = (P, mayFire) => {
+    P.s._seq++;
+    const b = P.s.enemies.find((e) => e.boss);
+    if (b) {
+      const dx = b.x - P.s.x, dy = b.y - P.s.y, d = Math.hypot(dx, dy) || 1;
+      P.ws.send(JSON.stringify({ t: "input", seq: P.s._seq, mx: d > 90 ? dx / d : 0, my: d > 90 ? dy / d : 0 }));
+      if (mayFire) P.ws.send(JSON.stringify({ t: "fire", seq: P.s._seq, aim: Math.atan2(dy, dx) }));
+    } else {
+      const tx = P.s.x < WW / 2 ? WW - 64 : 64;
+      const ty = P.s.y < WH / 2 ? WH - 64 : 64;
+      const dx = tx - P.s.x, dy = ty - P.s.y, d = Math.hypot(dx, dy) || 1;
+      P.ws.send(JSON.stringify({ t: "input", seq: P.s._seq, mx: dx / d, my: dy / d }));
+    }
+  };
+  const seesBoss = (P) => P.s.enemies.some((e) => e.boss); // boss in this bot's AOI
+
+  let enAtEngage = 0;
+  let hpMaxAtEngage = 0; // capture AT engage (the boss may be killed + reform to base later)
+  let engaged = false;
+  const t0 = Date.now();
+  while (Date.now() - t0 < 90000) {
+    // hold fire until both bots are alive with the boss in view, so the first hit engages 2
+    const bothReady = engaged || (!A.s.dead && !B.s.dead && seesBoss(A) && seesBoss(B));
+    drive(A, bothReady);
+    drive(B, bothReady);
+    const b = A.s.boss;
+    if (!engaged && b && b.alive && b.hp < b.hpMax) {
+      engaged = true;
+      enAtEngage = Math.max(A.s.maxEn, B.s.maxEn);
+      hpMaxAtEngage = b.hpMax;
+    }
+    const escalated = A.s.sys.concat(B.s.sys).some((t) => /enters (ESCALATION|DESPERATION)/.test(t));
+    const haz = A.s.sawHaz || B.s.sawHaz;
+    if (escalated && haz && hpMaxAtEngage > 0 && (!A.s.boss?.alive || Date.now() - t0 > 20000)) break; // mechanics proven
+    await sleep(45);
+  }
+  const bossScaledHp = hpMaxAtEngage > hpMaxBefore; // 2 players → larger pool locked on engage
+  const sawHazard = A.s.sawHaz || B.s.sawHaz;
+  const allSys = A.s.sys.concat(B.s.sys);
+  const phaseAdvanced = allSys.some((t) => /enters (ESCALATION|DESPERATION)/.test(t));
+  const maxEn = Math.max(A.s.maxEn, B.s.maxEn);
+  const addsAppeared = maxEn > enAtEngage; // a phase summoned extra enemies into AOI
+  const bossKilled = !A.s.boss?.alive;
+  A.ws.close();
+  B.ws.close();
+  await sleep(300);
+
+  const checks = { bossFound, bossScaledHp, sawHazard, phaseAdvanced, addsAppeared };
+  report(
+    "RAID — boss scales HP to raid size, telegraphs AoE, escalates phases + summons adds",
+    { baseHp: hpMaxBefore, scaledHp: hpMaxAtEngage, enAtEngage, maxEnemies: maxEn, bossKilled, beats: allSys.filter((t) => /enters|ENRAGE/.test(t)).slice(-4) },
+    Object.values(checks).every(Boolean),
+    checks,
+  );
+}
+
 async function shop() {
   const ws = await connect();
   const store = { x: 0, y: 0, enemies: [], inventory: [], credits: 0 };
@@ -1913,6 +2003,7 @@ try {
   else if (mode === "guild") await guild();
   else if (mode === "market") await market();
   else if (mode === "daily") await daily();
+  else if (mode === "raid") await raid();
   else if (mode === "shop") await shop();
   else if (mode === "bestiary") await bestiary();
   else if (mode === "safehouse") await safehouse();

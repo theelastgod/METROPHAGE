@@ -86,6 +86,7 @@ export default class NetClient {
   meltdown = false;
   season = 1;
   pickups = new Map<number, { id: number; x: number; y: number; kind: number }>();
+  hazards: Array<{ id: number; x: number; y: number; r: number; frac: number }> = []; // boss AoE telegraphs
   faction = 0;
   nodes = new Map<number, { id: number; x: number; y: number; owner: number; progress: number; by: number }>();
   factions: number[] = [0, 0, 0, 0];
@@ -309,6 +310,8 @@ export default class NetClient {
         this.pickups.set(pu.id, pu);
       }
       for (const id of [...this.pickups.keys()]) if (!liveP.has(id)) this.pickups.delete(id);
+
+      this.hazards = msg.hazards ?? [];
 
       const liveN = new Set<number>();
       for (const n of msg.nodes) {
