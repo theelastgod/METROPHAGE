@@ -51,6 +51,19 @@ const SERVER_URL =
   (import.meta.env as Record<string, string | undefined>).VITE_SERVER_URL ??
   "ws://127.0.0.1:8787/ws";
 
+/** Service operatives that populate the SAFEHOUSE hub — walk up + press E to open each
+ *  online system. Static fixtures (deterministic positions, identical for everyone), so
+ *  they're pure client-side: the safehouse reads as a populated town, not an empty room. */
+const SAFEHOUSE_NPCS: { svc: string; name: string; tag: string; color: number; tile: [number, number] }[] = [
+  { svc: "forge", name: "ARMORER", tag: "FORGE", color: 0xff2bd6, tile: [7, 6] },
+  { svc: "board", name: "ARCHIVIST", tag: "DOSSIER", color: 0x00e5ff, tile: [20, 5] },
+  { svc: "vendor", name: "QUARTERMASTER", tag: "VENDOR", color: 0xf7ff3c, tile: [33, 6] },
+  { svc: "contracts", name: "THE FIXER", tag: "CONTRACTS", color: 0x39ff88, tile: [33, 15] },
+  { svc: "cosmetics", name: "THE TAILOR", tag: "WARDROBE", color: 0xff79c6, tile: [33, 24] },
+  { svc: "market", name: "THE FENCE", tag: "MARKET", color: 0xff7a3c, tile: [20, 25] },
+  { svc: "guild", name: "ORGANIZER", tag: "CELL", color: 0x6b9bff, tile: [7, 24] },
+];
+
 /** HSS archetype tints (index = enemy kind), matching the singleplayer reads. */
 // 0 patrol · 1 wasp · 2 lancer · 3 hound · 4 enforcer · 5 sniper · 6 wraith
 const ENEMY_KIND_TINT = [0xff3b6b, 0x39ffd0, 0xffe06a, 0xff5ad0, 0xff8a3c, 0x4d8cff, 0xb06bff];
@@ -130,6 +143,9 @@ export default class OnlineScene extends Phaser.Scene {
   private lastEmoteShownAt = 0; // newest relayed emote already rendered
   private wasInPvp = false; // last-frame PvP-arena state (for enter/exit warnings)
   private pvpWarn!: Phaser.GameObjects.Text;
+  private npcs: { svc: string; name: string; x: number; y: number }[] = []; // safehouse service operatives
+  private nearNpc: { svc: string; name: string; x: number; y: number } | null = null;
+  private interactPrompt?: Phaser.GameObjects.Text;
   private pvpTag!: Phaser.GameObjects.Text;
 
   constructor() {
@@ -188,13 +204,36 @@ export default class OnlineScene extends Phaser.Scene {
         .setOrigin(0.5)
         .setDepth(6);
       this.add
-        .text(WORLD_W / 2, 4 * TILE + 26, "a quiet hold — no combat · H to leave · B vendor", {
+        .text(WORLD_W / 2, 4 * TILE + 26, "a quiet hold — no combat · walk to an operative + press E · H to leave", {
           fontFamily: "Courier New, monospace",
           fontSize: "11px",
           color: "#9aa3b2",
         })
         .setOrigin(0.5)
         .setDepth(6);
+      // Service operatives — each opens one online system (walk up + E, or click).
+      for (const def of SAFEHOUSE_NPCS) {
+        const px = def.tile[0] * TILE + TILE / 2;
+        const py = def.tile[1] * TILE + TILE / 2;
+        this.add.image(px, py + 8, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(def.color).setDepth(8).setScale(0.6).setAlpha(0.45);
+        const spr = this.add.sprite(px, py, PLAYER_KEY, 0).setTint(def.color).setDepth(9).setInteractive({ useHandCursor: true });
+        spr.on("pointerdown", () => this.openService(def.svc));
+        this.add
+          .text(px, py - 28, def.name, { fontFamily: "Courier New, monospace", fontSize: "10px", color: "#cfe8ff", fontStyle: "bold" })
+          .setOrigin(0.5)
+          .setDepth(9);
+        this.add
+          .text(px, py + 20, "▸ " + def.tag, { fontFamily: "Courier New, monospace", fontSize: "9px", color: "#" + (def.color & 0xffffff).toString(16).padStart(6, "0") })
+          .setOrigin(0.5)
+          .setDepth(9);
+        this.npcs.push({ svc: def.svc, name: `${def.name} · ${def.tag}`, x: px, y: py });
+      }
+      this.interactPrompt = this.add
+        .text(this.scale.width / 2, this.scale.height - 64, "", { fontFamily: "Courier New, monospace", fontSize: "14px", color: "#39ff88", fontStyle: "bold" })
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setDepth(1200)
+        .setVisible(false);
     }
 
     // Local player — your full customization (build/head/visor/shoulders/decal/cloak/
@@ -467,6 +506,10 @@ export default class OnlineScene extends Phaser.Scene {
         this.shop.close();
         return;
       }
+      if (e.key === "e" || e.key === "E") {
+        if (this.nearNpc) this.openService(this.nearNpc.svc); // talk to a safehouse operative
+        return;
+      }
       if (e.key === "g" || e.key === "G") {
         this.forge.setState(this.net.inventory, this.net.equipped, this.net.credits, this.net.cores);
         this.forge.toggle();
@@ -651,6 +694,37 @@ export default class OnlineScene extends Phaser.Scene {
     return n >= 0 && n < DISTRICTS.length ? n : 0;
   }
 
+  /** Open the panel a safehouse operative fronts (also bound to its proximity E / click). */
+  private openService(svc: string) {
+    const n = this.net;
+    switch (svc) {
+      case "forge":
+        this.forge.setState(n.inventory, n.equipped, n.credits, n.cores);
+        this.forge.toggle();
+        break;
+      case "vendor":
+        this.shop.setRep(n.repTier);
+        this.shop.toggle();
+        break;
+      case "market":
+        this.market.toggle(n.marketListings, n.inventory, n.id, n.credits);
+        break;
+      case "contracts":
+        this.contracts.toggle(n.contracts, n.rep);
+        break;
+      case "board":
+        this.board.toggle(n.achievements, n.id);
+        break;
+      case "guild":
+        n.guildAction("info");
+        this.guildPanel.toggle(n.guild, n.id);
+        break;
+      case "cosmetics":
+        this.cosmetics.toggle(n.cosmeticsOwned, n.cosmeticEquipped, n.credits);
+        break;
+    }
+  }
+
   /** Retint the LOCAL avatar to the equipped transmog (remotes get it via the relayed look). */
   private applyLocalCosmetic() {
     if (!this.me || !this.baseLook) return;
@@ -756,6 +830,21 @@ export default class OnlineScene extends Phaser.Scene {
       this.tweens.add({ targets: this.pvpWarn, alpha: 0, delay: 1600, duration: 800 });
     }
     this.pvpTag.setVisible(inPvp).setText("⚔ PVP — free-for-all");
+
+    // safehouse operatives — surface the nearest one's interaction prompt
+    if (this.interior && this.interactPrompt) {
+      let near: { svc: string; name: string; x: number; y: number } | null = null;
+      let best = 60 * 60; // interact radius²
+      for (const npc of this.npcs) {
+        const d = (npc.x - this.net.pred.x) ** 2 + (npc.y - this.net.pred.y) ** 2;
+        if (d < best) {
+          best = d;
+          near = npc;
+        }
+      }
+      this.nearNpc = near;
+      this.interactPrompt.setText(near ? `▸ E — ${near.name}` : "").setVisible(!!near);
+    }
 
     // enemies (server-simulated) — tinted by HSS archetype (matches singleplayer reads)
     for (const [id, e] of this.net.enemies) {
