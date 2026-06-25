@@ -142,6 +142,7 @@ export default class OnlineScene extends Phaser.Scene {
   private meltdownFx!: Phaser.GameObjects.Rectangle;
   private meltdownText!: Phaser.GameObjects.Text;
   private atmosphere?: Atmosphere; // rich ambient layer, shared with the SP city
+  private connectStartedAt = 0; // when this connection attempt began (for the offline timeout)
   private inv!: OnlineInventory; // bottom hotbar + openable bag, fed by the server
   private shop!: OnlineShop; // vendor panel (credits sink)
   private forge!: OnlineForge; // gear forge — upgrade/reforge/fuse/salvage (credits+cores sink)
@@ -455,6 +456,7 @@ export default class OnlineScene extends Phaser.Scene {
       .setDepth(1002)
       .setVisible(false);
     this.bossArrow.setShadow(0, 0, "#02030a", 6, true, true);
+    this.connectStartedAt = Date.now(); // wall clock — robust to frame-rate throttling
     void this.signInThenConnect();
 
     this.keys = this.input.keyboard!.addKeys("W,A,S,D,UP,DOWN,LEFT,RIGHT") as Record<
@@ -1231,16 +1233,29 @@ export default class OnlineScene extends Phaser.Scene {
     const st = this.net.stats();
     const ctrl = this.net.control === NEUTRAL ? "—" : FACTION_NAMES[this.net.control];
     const war = FACTION_NAMES.map((nm, i) => `${nm[0]}:${this.net.factions[i]}`).join("  ");
-    this.hud.setText([
-      st.connected
-        ? `◢ ONLINE  ${this.callsign}  ·  ${this.interior ? INTERIOR_TITLES[this.zone] ?? "▣ INTERIOR" : this.isSubway ? "▼ THE UNDERLINE" : `${this.zone.toUpperCase()} ${DISTRICTS[this.districtIndex].name}`}`
-        : "connecting to server…",
-      `CELL ${FACTION_NAMES[this.net.faction]}   ·   DISTRICT CONTROL: ${ctrl}`,
-      `players: ${st.players}   enemies: ${this.net.enemies.size}   nodes: ${this.net.nodes.size}`,
-      `LV ${this.net.level}  XP ${xpIntoLevel(this.net.xp)}/100   ₵ ${this.net.credits}  ◈ ${this.net.cores}   HP ${Math.round(this.net.hp)}`,
-      `SINGULARITY ${this.net.singularity.toFixed(1)} / ${SING_MAX}${this.net.meltdown ? "  ▲ MELTDOWN" : ""}  (shared · ERA ${this.net.season})`,
-      `FACTION WAR  ${war}  (server-wide contribution)`,
-    ]);
+    if (!st.connected && Date.now() - this.connectStartedAt > 8000) {
+      // Server unreachable (e.g. a single-player-only static deploy) — don't hang on
+      // "connecting…" forever; tell the player how to get back. ESC returns to the menu.
+      this.hud.setColor("#ff6a6a");
+      this.hud.setText([
+        "⚠  SERVER OFFLINE",
+        "The online realm isn't reachable right now.",
+        "Press ESC to return to the menu.",
+        "(Single-player — THE CITY and class runs — works fully offline.)",
+      ]);
+    } else {
+      this.hud.setColor("#39ff88");
+      this.hud.setText([
+        st.connected
+          ? `◢ ONLINE  ${this.callsign}  ·  ${this.interior ? INTERIOR_TITLES[this.zone] ?? "▣ INTERIOR" : this.isSubway ? "▼ THE UNDERLINE" : `${this.zone.toUpperCase()} ${DISTRICTS[this.districtIndex].name}`}`
+          : "connecting to server…",
+        `CELL ${FACTION_NAMES[this.net.faction]}   ·   DISTRICT CONTROL: ${ctrl}`,
+        `players: ${st.players}   enemies: ${this.net.enemies.size}   nodes: ${this.net.nodes.size}`,
+        `LV ${this.net.level}  XP ${xpIntoLevel(this.net.xp)}/100   ₵ ${this.net.credits}  ◈ ${this.net.cores}   HP ${Math.round(this.net.hp)}`,
+        `SINGULARITY ${this.net.singularity.toFixed(1)} / ${SING_MAX}${this.net.meltdown ? "  ▲ MELTDOWN" : ""}  (shared · ERA ${this.net.season})`,
+        `FACTION WAR  ${war}  (server-wide contribution)`,
+      ]);
+    }
 
     // chat log (recent) + presence roster
     this.chatLogText.setText(
