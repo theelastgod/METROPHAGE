@@ -33,6 +33,7 @@ import NeonPipeline from "../render/NeonPipeline";
 import { QUESTLINE } from "../net/quest";
 import OnlineCosmetics from "../ui/OnlineCosmetics";
 import { applyCosmetic } from "../game/cosmetics";
+import { npcDef } from "../game/cityNpcs";
 import type { PlayerLook } from "../net/protocol";
 import { setOnlinePlayer } from "../economy/session";
 import { connectedWallet, signWalletLogin } from "../economy/wallet";
@@ -62,6 +63,18 @@ const SAFEHOUSE_NPCS: { svc: string; name: string; tag: string; color: number; t
   { svc: "cosmetics", name: "THE TAILOR", tag: "WARDROBE", color: 0xff79c6, tile: [33, 24] },
   { svc: "market", name: "THE FENCE", tag: "MARKET", color: 0xff7a3c, tile: [20, 25] },
   { svc: "guild", name: "ORGANIZER", tag: "CELL", color: 0x6b9bff, tile: [7, 24] },
+];
+
+/** Authored citizens (from the single-player city) who give the safehouse town life + lore.
+ *  Rendered from their PlayerLook (like remotes), talkable for flavour — bringing the
+ *  campaign's characters into the shared online world. */
+const SAFEHOUSE_CITIZENS: { id: string; tile: [number, number] }[] = [
+  { id: "rin", tile: [16, 12] },
+  { id: "doc", tile: [24, 12] },
+  { id: "vex", tile: [16, 18] },
+  { id: "marek", tile: [24, 18] },
+  { id: "sable", tile: [20, 11] },
+  { id: "amb_synth", tile: [20, 19] },
 ];
 
 /** HSS archetype tints (index = enemy kind), matching the singleplayer reads. */
@@ -144,9 +157,11 @@ export default class OnlineScene extends Phaser.Scene {
   private lastEmoteShownAt = 0; // newest relayed emote already rendered
   private wasInPvp = false; // last-frame PvP-arena state (for enter/exit warnings)
   private pvpWarn!: Phaser.GameObjects.Text;
-  private npcs: { svc: string; name: string; x: number; y: number }[] = []; // safehouse service operatives
-  private nearNpc: { svc: string; name: string; x: number; y: number } | null = null;
+  // safehouse occupants — service operatives (open a system) + authored citizens (flavour)
+  private npcs: { kind: "service" | "talk"; svc?: string; name: string; lines?: string[]; lineIdx?: number; x: number; y: number }[] = [];
+  private nearNpc: { kind: "service" | "talk"; svc?: string; name: string; lines?: string[]; lineIdx?: number; x: number; y: number } | null = null;
   private interactPrompt?: Phaser.GameObjects.Text;
+  private speechBubble?: Phaser.GameObjects.Text;
   private pvpTag!: Phaser.GameObjects.Text;
 
   constructor() {
@@ -227,8 +242,38 @@ export default class OnlineScene extends Phaser.Scene {
           .text(px, py + 20, "▸ " + def.tag, { fontFamily: "Courier New, monospace", fontSize: "9px", color: "#" + (def.color & 0xffffff).toString(16).padStart(6, "0") })
           .setOrigin(0.5)
           .setDepth(9);
-        this.npcs.push({ svc: def.svc, name: `${def.name} · ${def.tag}`, x: px, y: py });
+        this.npcs.push({ kind: "service", svc: def.svc, name: `${def.name} · ${def.tag}`, x: px, y: py });
       }
+      // authored citizens — looked + voiced, bringing the campaign's characters into the hub
+      for (const c of SAFEHOUSE_CITIZENS) {
+        const def = npcDef(c.id);
+        if (!def) continue;
+        const px = c.tile[0] * TILE + TILE / 2;
+        const py = c.tile[1] * TILE + TILE / 2;
+        const key = lookKey(def.look);
+        bakeRemoteLook(this, key, def.look);
+        const npc = { kind: "talk" as const, name: def.name, lines: def.lines, lineIdx: 0, x: px, y: py };
+        const spr = this.add.sprite(px, py, key, 0).setDepth(9).setInteractive({ useHandCursor: true });
+        spr.on("pointerdown", () => this.sayLine(npc));
+        this.add
+          .text(px, py - 26, def.name, { fontFamily: "Courier New, monospace", fontSize: "9px", color: "#9aa3b2" })
+          .setOrigin(0.5)
+          .setDepth(9);
+        this.npcs.push(npc);
+      }
+      this.speechBubble = this.add
+        .text(0, 0, "", {
+          fontFamily: "Courier New, monospace",
+          fontSize: "12px",
+          color: "#eafdff",
+          align: "center",
+          backgroundColor: "#0b0716e6",
+          padding: { x: 10, y: 7 },
+          wordWrap: { width: 240 },
+        })
+        .setOrigin(0.5, 1)
+        .setDepth(12)
+        .setVisible(false);
       this.interactPrompt = this.add
         .text(this.scale.width / 2, this.scale.height - 64, "", { fontFamily: "Courier New, monospace", fontSize: "14px", color: "#39ff88", fontStyle: "bold" })
         .setOrigin(0.5)
@@ -518,7 +563,10 @@ export default class OnlineScene extends Phaser.Scene {
         return;
       }
       if (e.key === "e" || e.key === "E") {
-        if (this.nearNpc) this.openService(this.nearNpc.svc); // talk to a safehouse operative
+        if (this.nearNpc) {
+          if (this.nearNpc.kind === "service" && this.nearNpc.svc) this.openService(this.nearNpc.svc);
+          else this.sayLine(this.nearNpc);
+        }
         return;
       }
       if (e.key === "g" || e.key === "G") {
@@ -736,6 +784,16 @@ export default class OnlineScene extends Phaser.Scene {
     }
   }
 
+  /** Speak an authored citizen's next flavour line in a floating bubble (cycles their lines). */
+  private sayLine(npc: { name: string; lines?: string[]; lineIdx?: number; x: number; y: number }) {
+    if (!this.speechBubble || !npc.lines || npc.lines.length === 0) return;
+    const line = npc.lines[(npc.lineIdx ?? 0) % npc.lines.length];
+    npc.lineIdx = (npc.lineIdx ?? 0) + 1;
+    this.speechBubble.setText(`${npc.name}: ${line}`).setPosition(npc.x, npc.y - 34).setVisible(true).setAlpha(1);
+    this.tweens.killTweensOf(this.speechBubble);
+    this.tweens.add({ targets: this.speechBubble, alpha: 0, delay: 3200, duration: 700, onComplete: () => this.speechBubble?.setVisible(false) });
+  }
+
   /** Retint the LOCAL avatar to the equipped transmog (remotes get it via the relayed look). */
   private applyLocalCosmetic() {
     if (!this.me || !this.baseLook) return;
@@ -844,7 +902,7 @@ export default class OnlineScene extends Phaser.Scene {
 
     // safehouse operatives — surface the nearest one's interaction prompt
     if (this.interior && this.interactPrompt) {
-      let near: { svc: string; name: string; x: number; y: number } | null = null;
+      let near: (typeof this.npcs)[number] | null = null;
       let best = 60 * 60; // interact radius²
       for (const npc of this.npcs) {
         const d = (npc.x - this.net.pred.x) ** 2 + (npc.y - this.net.pred.y) ** 2;
@@ -854,7 +912,8 @@ export default class OnlineScene extends Phaser.Scene {
         }
       }
       this.nearNpc = near;
-      this.interactPrompt.setText(near ? `▸ E — ${near.name}` : "").setVisible(!!near);
+      const label = near ? (near.kind === "service" ? near.name : `talk to ${near.name}`) : "";
+      this.interactPrompt.setText(near ? `▸ E — ${label}` : "").setVisible(!!near);
     }
 
     // enemies (server-simulated) — tinted by HSS archetype (matches singleplayer reads)
