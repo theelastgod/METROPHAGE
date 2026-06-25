@@ -24,7 +24,7 @@ import {
   PVP_ZONES,
   inPvpZone,
 } from "../net/sim";
-import { buildGrid, buildSafehouse } from "../world/district";
+import { buildGrid, buildSafehouse, isWall } from "../world/district";
 import { DISTRICTS } from "../game/districts";
 import { ENEMY_BARKS } from "../game/enemies";
 import { WORLD_W, WORLD_H } from "../net/sim";
@@ -33,7 +33,7 @@ import NeonPipeline from "../render/NeonPipeline";
 import { QUESTLINE } from "../net/quest";
 import OnlineCosmetics from "../ui/OnlineCosmetics";
 import { applyCosmetic } from "../game/cosmetics";
-import { npcDef } from "../game/cityNpcs";
+import { npcDef, AMBIENT_NPCS } from "../game/cityNpcs";
 import type { PlayerLook } from "../net/protocol";
 import { setOnlinePlayer } from "../economy/session";
 import { connectedWallet, signWalletLogin } from "../economy/wallet";
@@ -246,41 +246,49 @@ export default class OnlineScene extends Phaser.Scene {
       }
       // authored citizens — looked + voiced, bringing the campaign's characters into the hub
       for (const c of SAFEHOUSE_CITIZENS) {
-        const def = npcDef(c.id);
-        if (!def) continue;
-        const px = c.tile[0] * TILE + TILE / 2;
-        const py = c.tile[1] * TILE + TILE / 2;
-        const key = lookKey(def.look);
-        bakeRemoteLook(this, key, def.look);
-        const npc = { kind: "talk" as const, name: def.name, lines: def.lines, lineIdx: 0, x: px, y: py };
-        const spr = this.add.sprite(px, py, key, 0).setDepth(9).setInteractive({ useHandCursor: true });
-        spr.on("pointerdown", () => this.sayLine(npc));
-        this.add
-          .text(px, py - 26, def.name, { fontFamily: "Courier New, monospace", fontSize: "9px", color: "#9aa3b2" })
-          .setOrigin(0.5)
-          .setDepth(9);
-        this.npcs.push(npc);
+        const cdef = npcDef(c.id);
+        if (cdef) this.makeTalkNpc(cdef.name, cdef.look, cdef.lines, c.tile[0] * TILE + TILE / 2, c.tile[1] * TILE + TILE / 2);
       }
-      this.speechBubble = this.add
-        .text(0, 0, "", {
-          fontFamily: "Courier New, monospace",
-          fontSize: "12px",
-          color: "#eafdff",
-          align: "center",
-          backgroundColor: "#0b0716e6",
-          padding: { x: 10, y: 7 },
-          wordWrap: { width: 240 },
-        })
-        .setOrigin(0.5, 1)
-        .setDepth(12)
-        .setVisible(false);
-      this.interactPrompt = this.add
-        .text(this.scale.width / 2, this.scale.height - 64, "", { fontFamily: "Courier New, monospace", fontSize: "14px", color: "#39ff88", fontStyle: "bold" })
-        .setOrigin(0.5)
-        .setScrollFactor(0)
-        .setDepth(1200)
-        .setVisible(false);
+    } else {
+      // district ambient life — a few authored citizens near the entrance so the world
+      // outside the hub feels inhabited (cosmetic fixtures; HSS + player shots ignore them).
+      const [sx, sy] = def.spawnTile;
+      const spots: [number, number][] = [
+        [sx - 3, sy],
+        [sx + 3, sy],
+        [sx, sy + 3],
+        [sx - 2, sy - 2],
+        [sx + 2, sy + 2],
+      ];
+      let placed = 0;
+      for (const [tx, ty] of spots) {
+        if (placed >= 3) break;
+        if (isWall(grid[ty]?.[tx])) continue;
+        const adef = AMBIENT_NPCS[(this.districtIndex * 3 + placed) % AMBIENT_NPCS.length];
+        this.makeTalkNpc(adef.name, adef.look, adef.lines, tx * TILE + TILE / 2, ty * TILE + TILE / 2);
+        placed++;
+      }
     }
+    // floating dialogue bubble + proximity prompt (used in any zone that has NPCs)
+    this.speechBubble = this.add
+      .text(0, 0, "", {
+        fontFamily: "Courier New, monospace",
+        fontSize: "12px",
+        color: "#eafdff",
+        align: "center",
+        backgroundColor: "#0b0716e6",
+        padding: { x: 10, y: 7 },
+        wordWrap: { width: 240 },
+      })
+      .setOrigin(0.5, 1)
+      .setDepth(12)
+      .setVisible(false);
+    this.interactPrompt = this.add
+      .text(this.scale.width / 2, this.scale.height - 64, "", { fontFamily: "Courier New, monospace", fontSize: "14px", color: "#39ff88", fontStyle: "bold" })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(1200)
+      .setVisible(false);
 
     // Local player — your full customization (build/head/visor/shoulders/decal/cloak/
     // accessories), baked and tinted by your signature colour, the same as singleplayer.
@@ -784,6 +792,20 @@ export default class OnlineScene extends Phaser.Scene {
     }
   }
 
+  /** Build an authored, talkable citizen at a world position (baked from its PlayerLook). */
+  private makeTalkNpc(name: string, look: PlayerLook, lines: string[], px: number, py: number) {
+    const key = lookKey(look);
+    bakeRemoteLook(this, key, look);
+    const npc = { kind: "talk" as const, name, lines, lineIdx: 0, x: px, y: py };
+    const spr = this.add.sprite(px, py, key, 0).setDepth(9).setInteractive({ useHandCursor: true });
+    spr.on("pointerdown", () => this.sayLine(npc));
+    this.add
+      .text(px, py - 26, name, { fontFamily: "Courier New, monospace", fontSize: "9px", color: "#9aa3b2" })
+      .setOrigin(0.5)
+      .setDepth(9);
+    this.npcs.push(npc);
+  }
+
   /** Speak an authored citizen's next flavour line in a floating bubble (cycles their lines). */
   private sayLine(npc: { name: string; lines?: string[]; lineIdx?: number; x: number; y: number }) {
     if (!this.speechBubble || !npc.lines || npc.lines.length === 0) return;
@@ -900,8 +922,8 @@ export default class OnlineScene extends Phaser.Scene {
     }
     this.pvpTag.setVisible(inPvp).setText("⚔ PVP — free-for-all");
 
-    // safehouse operatives — surface the nearest one's interaction prompt
-    if (this.interior && this.interactPrompt) {
+    // NPCs (hub operatives + authored citizens) — surface the nearest one's interaction prompt
+    if (this.interactPrompt && this.npcs.length) {
       let near: (typeof this.npcs)[number] | null = null;
       let best = 60 * 60; // interact radius²
       for (const npc of this.npcs) {
