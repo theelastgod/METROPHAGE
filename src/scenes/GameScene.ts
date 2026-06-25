@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { installUiCamera } from "../render/cameras";
 import {
   TILE,
+  TILESET_PX,
   WORLD_W,
   WORLD_H,
   COLORS,
@@ -20,7 +21,8 @@ import { getClass, ClassDef, PrimaryDef } from "../game/classes";
 import { AbilityHost, AbilityDef } from "../game/ability";
 import { ENEMY_TIERS, ENEMY_BARKS, EnemyHost } from "../game/enemies";
 import { rollElite, type EliteModifier } from "../game/elites";
-import { buildGrid, spawnPoint, isWall, TILE_WALL, TileGrid } from "../world/district";
+import { buildGrid, spawnPoint, isWall, TILE_WALL, TILE_VARIANTS, TileGrid } from "../world/district";
+import { applyTileVariants } from "../render/tileVariants";
 import { DistrictDef, DISTRICTS } from "../game/districts";
 import {
   TILESET_KEY,
@@ -818,9 +820,10 @@ export default class GameScene
       tileWidth: TILE,
       tileHeight: TILE,
     });
-    const tileset = map.addTilesetImage(TILESET_KEY, TILESET_KEY, TILE, TILE)!;
+    const tileset = map.addTilesetImage(TILESET_KEY, TILESET_KEY, TILESET_PX, TILESET_PX)!;
     this.wallLayer = map.createLayer(0, tileset, 0, 0)!;
-    this.wallLayer.setCollision(TILE_WALL);
+    applyTileVariants(this.wallLayer); // scatter real-art tile variants (render-only)
+    this.wallLayer.setCollision(TILE_VARIANTS[TILE_WALL]); // base wall + its roof variant
     shadeWalls(this, this.grid); // raise buildings off the floor (edge light + cast shadow)
 
     this.physics.world.setBounds(0, 0, WORLD_W, WORLD_H);

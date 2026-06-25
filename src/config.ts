@@ -3,6 +3,15 @@
 
 export const TILE = 32;
 
+/**
+ * Source cell size of the real-art tileset PNG (public/assets/tilesets/metrophage_tiles.png).
+ * The world grid stays `TILE` (32) — this is only how `addTilesetImage` slices the source, so
+ * tiles are authored/stored at higher resolution and Phaser downscales them to `TILE` at render
+ * for a crisper image. Must match the cell size passed to `tools/tileset-gen.mjs`. Set to `TILE`
+ * to revert to 1:1 (e.g. if falling back to the procedural tileset).
+ */
+export const TILESET_PX = 64;
+
 /** District grid dimensions, in tiles. */
 export const GRID_W = 40;
 export const GRID_H = 30;

@@ -75,7 +75,7 @@ void main() {
     bloom += brightPass(texture2D(uMainSampler, uv + vec2( out2.x, -out2.y)).rgb) * 0.22;
     bloom += brightPass(texture2D(uMainSampler, uv + vec2(-out2.x, -out2.y)).rgb) * 0.22;
     bloom /= 4.7; // normalize by total weight
-    col += bloom * (0.5 + uHeat * 1.7 + uGlitch * 1.6);
+    col += bloom * (0.66 + uHeat * 1.7 + uGlitch * 1.6);
   }
 
   // saturation lift with heat
@@ -101,8 +101,8 @@ void main() {
     col += (nz - 0.5) * 0.18 * uGlitch;
   }
 
-  // vignette (slightly deeper for noir framing)
-  col *= 1.0 - dist * dist * (0.26 + uHeat * 0.28);
+  // vignette (deeper for noir framing — pulls the eye in off the busy floor)
+  col *= 1.0 - dist * dist * (0.34 + uHeat * 0.28);
 
   // district accent wash — a subtle hue signature per district (fades under heat
   // so the screen still "whites out" hot, and is overridden by meltdown glitch)

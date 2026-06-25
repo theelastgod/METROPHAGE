@@ -1,6 +1,9 @@
 import Phaser from "phaser";
 import { installUiCamera } from "../render/cameras";
 import { shadeWalls } from "../render/wallShade";
+import { applyTileVariants } from "../render/tileVariants";
+import { paintWetStreets } from "../render/wetStreets";
+import { paintRooftopLights } from "../render/rooftopLights";
 import Atmosphere from "../render/Atmosphere";
 import MusicDirector from "../audio/MusicDirector";
 import OnlineInventory from "../ui/OnlineInventory";
@@ -10,7 +13,7 @@ import OnlineBoard from "../ui/OnlineBoard";
 import OnlineGuild from "../ui/OnlineGuild";
 import OnlineMarket from "../ui/OnlineMarket";
 import OnlineContracts from "../ui/OnlineContracts";
-import { COLORS, TILE, VIEW_W, VIEW_H } from "../config";
+import { COLORS, TILE, TILESET_PX, VIEW_W, VIEW_H } from "../config";
 import { TILESET_KEY, PLAYER_KEY, COP_KEY, BULLET_KEY, GLOW_KEY, NODE_KEY, PROP_STREETLIGHT_KEY, PROP_VENDING_KEY, PROP_AC_KEY } from "../assets/manifest";
 import { driveChar } from "../assets/anim";
 import {
@@ -230,8 +233,9 @@ export default class OnlineScene extends Phaser.Scene {
     // Real world — same grid + tileset the server simulates against (or the safehouse room).
     const grid = this.isSubway ? buildSubway() : this.interior ? buildSafehouse() : buildGrid(def);
     const map = this.make.tilemap({ data: grid, tileWidth: TILE, tileHeight: TILE });
-    const tileset = map.addTilesetImage(TILESET_KEY, TILESET_KEY, TILE, TILE)!;
-    map.createLayer(0, tileset, 0, 0)!;
+    const tileset = map.addTilesetImage(TILESET_KEY, TILESET_KEY, TILESET_PX, TILESET_PX)!;
+    const layer = map.createLayer(0, tileset, 0, 0)!;
+    applyTileVariants(layer); // scatter real-art tile variants (render-only; collision is server-side)
     // Building-silhouette pass (also shades the interior walls). The atmospheric weather is
     // outdoors-only — the safehouse is a calm, indoor social hub.
     shadeWalls(this, grid);
@@ -268,6 +272,10 @@ export default class OnlineScene extends Phaser.Scene {
           placed++;
         }
       }
+      // Rain-slicked street lighting + lit rooftop accents — the SAME shared renderers as the
+      // offline city hub, tinted to the zone accent, so the unified world reads identically.
+      paintWetStreets(this, grid, () => def.accent);
+      paintRooftopLights(this, def.layout.buildings, (b) => b, () => def.accent);
     }
     this.cameras.main.setBounds(0, 0, WORLD_W, WORLD_H);
     installUiCamera(this, 1);

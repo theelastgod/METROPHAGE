@@ -1,7 +1,10 @@
 import Phaser from "phaser";
 import { installUiCamera } from "../render/cameras";
+import { applyTileVariants } from "../render/tileVariants";
+import { paintWetStreets } from "../render/wetStreets";
+import { paintRooftopLights } from "../render/rooftopLights";
 import MusicDirector from "../audio/MusicDirector";
-import { TILE, COLORS, NPC } from "../config";
+import { TILE, TILESET_PX, COLORS, NPC } from "../config";
 import {
   TILESET_KEY,
   PORTRAIT_NPC_KEY,
@@ -13,6 +16,8 @@ import {
   PROP_TAXI_KEY,
   PROP_CAR_KEY,
   HOLO_KEYS,
+  DECO_KEYS,
+  OBJ_KEYS,
 } from "../assets/manifest";
 import { COLLIDING_TILES, isWall } from "../world/district";
 import {
@@ -145,8 +150,9 @@ export default class CityScene extends Phaser.Scene {
     const worldW = grid[0].length * TILE;
     const worldH = grid.length * TILE;
     const map = this.make.tilemap({ data: grid, tileWidth: TILE, tileHeight: TILE });
-    const tileset = map.addTilesetImage(TILESET_KEY, TILESET_KEY, TILE, TILE)!;
+    const tileset = map.addTilesetImage(TILESET_KEY, TILESET_KEY, TILESET_PX, TILESET_PX)!;
     this.wallLayer = map.createLayer(0, tileset, 0, 0)!;
+    applyTileVariants(this.wallLayer); // scatter real-art tile variants (render-only) to break repetition
     this.wallLayer.setCollision(COLLIDING_TILES);
     shadeWalls(this, grid); // raise buildings off the floor (edge light + cast shadow)
 
@@ -201,6 +207,8 @@ export default class CityScene extends Phaser.Scene {
     if (this.mode === "city") {
       this.assignResidents();
       this.drawEnvWash();
+      this.drawWetStreets();
+      this.drawRooftopLights();
       this.drawDecorations();
       this.placeCityNpcs();
       this.drawResidentSigns();
@@ -372,6 +380,38 @@ export default class CityScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * Rain-slicked streets: overhead light-pools on a streetlamp grid + vertical neon
+   * "reflection" smears under the pools and the storefront doors, plus sparse specular
+   * glints. Pure additive ambiance on the ground (depth 2 — above the env wash, below
+   * props/entities), so the real-art floor reads as wet neon-lit pavement (the procedural
+   * floor baked this in; the photographed tiles don't). The city is always "rain" weather.
+   */
+  private drawWetStreets() {
+    if (!this.cityMap) return;
+    const grid = this.cityMap.grid;
+    const W = this.cityMap.w, H = this.cityMap.h;
+    // Shared rain-slicked lighting — the SAME renderer the unified online world uses
+    // (src/render/wetStreets.ts) — coloured per district here.
+    paintWetStreets(this, grid, (tx, ty) => ENV_IDENTITY[envAt(tx, ty, W, H)].accent);
+    // City-only extra: storefront neon reflected on the wet street under each signed door.
+    const KIND_NEON: Record<string, number> = { bar: 0xff2bd6, clinic: 0x39ff88, guild: 0xf7ff3c, hospital: 0x39ff88, hotel: 0x39ff88, stadium: 0xff3b6b };
+    for (const b of this.cityMap.buildings) {
+      if (!b.door) continue;
+      const col = KIND_NEON[b.kind] ?? 0x29e7ff;
+      const x = b.door[0] * TILE + TILE / 2, y = b.door[1] * TILE + TILE / 2;
+      this.add.image(x, y + 2, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(col).setDepth(2).setScale(1.1).setAlpha(0.16);
+      this.add.image(x, y + 8, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(col).setDepth(2).setScale(0.5, 2.1).setAlpha(0.13).setOrigin(0.5, 0.1);
+    }
+  }
+
+  /** Sparse emissive rooftop accents (beacons + roof-sign glows) so the skyline reads lit —
+   *  same shared renderer the unified online world uses, coloured per district here. */
+  private drawRooftopLights() {
+    if (!this.cityMap) return;
+    paintRooftopLights(this, this.cityMap.buildings, (b) => b.rect, (b) => ENV_IDENTITY[b.env].accent);
+  }
+
   /** Spawn the env-specific street props the generator placed. */
   private drawDecorations() {
     if (!this.cityMap) return;
@@ -387,6 +427,7 @@ export default class CityScene extends Phaser.Scene {
     const adjWall = (x: number, y: number) => wall(x - 1, y) || wall(x + 1, y) || wall(x, y - 1) || wall(x, y + 1);
     let cars = 0;
     let hyd = 0;
+    let crates = 0;
     for (let ty = 2; ty < grid.length - 2; ty++) {
       for (let tx = 2; tx < grid[ty].length - 2; tx++) {
         if (wall(tx, ty)) continue;
@@ -399,6 +440,13 @@ export default class CityScene extends Phaser.Scene {
         } else if (adjWall(tx, ty) && h % 211 === 0 && hyd < 8) {
           this.add.image(px, py + 4, PROP_HYDRANT_KEY).setOrigin(0.5, 0.9).setDepth(4);
           hyd++;
+        } else if (adjWall(tx, ty) && h % 19 === 0 && crates < 16) {
+          // Real isometric crates stacked as cargo against the buildings (asset-drop).
+          const key = DECO_KEYS[(h >>> 4) % DECO_KEYS.length];
+          const s = 0.72 + ((h >>> 8) % 24) / 100; // 0.72–0.95, deterministic per-tile
+          this.add.ellipse(px, py + 9, 26 * s, 9 * s, 0x05060c, 0.45).setDepth(3); // ground shadow
+          this.add.image(px, py + 5, key).setOrigin(0.5, 0.82).setDepth(4).setScale(s);
+          crates++;
         }
       }
     }
@@ -906,28 +954,27 @@ export default class CityScene extends Phaser.Scene {
       case "register":
         g.fillStyle(DARK, 1).fillRect(x - 5, y - 5, 10, 7); g.fillStyle(0x29e7ff, 0.9).fillRect(x - 4, y - 4, 8, 2); g.fillStyle(MET_L, 1).fillRect(x - 4, y + 1, 8, 1);
         break;
-      case "crate":
-        g.fillStyle(WOOD_D, 1).fillRect(x - 7, y - 7, 14, 14); g.fillStyle(WOOD, 1).fillRect(x - 6, y - 6, 12, 12);
-        g.lineStyle(1, WOOD_D, 1).lineBetween(x - 6, y - 6, x + 6, y + 6).lineBetween(x + 6, y - 6, x - 6, y + 6);
+      case "crate": {
+        // Real isometric crate (asset-drop) replaces the procedural wood box.
+        const ck = DECO_KEYS[(((x * 73856093) ^ (y * 19349663)) >>> 0) % DECO_KEYS.length];
+        this.add.image(x, y + 2, ck).setOrigin(0.5, 0.8).setDepth(D).setScale(0.62);
         break;
+      }
       case "board":
         g.fillStyle(0x2a2018, 1).fillRect(x - 12, y - 9, 24, 16); // cork board
         for (let i = 0; i < 6; i++) g.fillStyle([0xeae6ff, 0xf7ff3c, 0x9fdcff][i % 3], 0.9).fillRect(x - 10 + (i % 3) * 8, y - 7 + Math.floor(i / 3) * 8, 5, 5); // notes
         break;
       case "rack":
-        g.fillStyle(DARK, 1).fillRect(x - 6, y - 10, 12, 20);
-        for (let i = 0; i < 3; i++) { g.fillStyle(MET, 1).fillRect(x - 4, y - 9 + i * 7, 8, 2); g.fillStyle(MET_L, 1).fillRect(x - 4, y - 9 + i * 7, 6, 1); }
-        break;
       case "locker":
-        g.fillStyle(MET, 1).fillRect(x - 6, y - 11, 12, 22); g.fillStyle(MET_L, 1).fillRect(x - 5, y - 10, 5, 20); g.fillStyle(0x2a3242, 1).fillRect(x + 1, y - 10, 4, 20);
-        g.fillStyle(0xf7ff3c, 0.8).fillRect(x - 1, y - 1, 1, 2); // handle
+      case "terminal": {
+        // Real isometric tech machine (asset-drop INTERACTIVE OBJECTS) replaces the
+        // procedural box. A per-kind seed spreads the shared pool so the three kinds vary.
+        const seed = kind === "terminal" ? 5 : kind === "locker" ? 11 : 0;
+        const ok = OBJ_KEYS[((((x * 73856093) ^ (y * 19349663)) >>> 0) + seed) % OBJ_KEYS.length];
+        if (kind === "terminal") glow(0x29e7ff, 0.85, 0.3); // keep the interactive cyan wash
+        this.add.image(x, y + 3, ok).setOrigin(0.5, 0.82).setDepth(D).setScale(0.72);
         break;
-      case "terminal":
-        g.fillStyle(DARK, 1).fillRect(x - 6, y - 8, 12, 10); g.fillStyle(0x29e7ff, 0.85).fillRect(x - 5, y - 7, 10, 7);
-        for (let i = 0; i < 3; i++) g.fillStyle(0xeafdff, 0.7).fillRect(x - 4, y - 6 + i * 2, 6 - i, 1);
-        g.fillStyle(MET, 1).fillRect(x - 2, y + 2, 4, 4); // stand
-        glow(0x29e7ff, 0.8, 0.3);
-        break;
+      }
       case "bed":
         g.fillStyle(WOOD_D, 1).fillRect(x - 8, y - 6, 16, 16); g.fillStyle(CLOTH, 1).fillRect(x - 7, y - 5, 14, 14); g.fillStyle(0x7a3a58, 1).fillRect(x - 7, y - 5, 14, 4);
         g.fillStyle(0xeef2f8, 1).fillRect(x - 6, y - 4, 6, 4); // pillow

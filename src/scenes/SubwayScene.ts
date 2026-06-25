@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { installUiCamera } from "../render/cameras";
-import { TILE, COLORS, BULLET, ENEMY_BULLET } from "../config";
+import { TILE, TILESET_PX, COLORS, BULLET, ENEMY_BULLET } from "../config";
 import { getClass, ClassDef, PrimaryDef } from "../game/classes";
 import { ENEMY_TIERS, EnemyHost } from "../game/enemies";
 import { getBoss } from "../game/bosses";
@@ -15,6 +15,8 @@ import BossBar from "../ui/BossBar";
 import Inventory from "../systems/Inventory";
 import { loadSave, writeSave } from "../systems/Save";
 import NeonPipeline from "../render/NeonPipeline";
+import { applyTileVariants } from "../render/tileVariants";
+import { TILE_VARIANTS } from "../world/district";
 import { juiceShake, juiceFlash } from "../systems/juice";
 import Synth from "../audio/Synth";
 import MusicDirector from "../audio/MusicDirector";
@@ -124,9 +126,10 @@ export default class SubwayScene extends Phaser.Scene implements EnemyHost {
     for (let x = 2; x < AW - 2; x++) grid[1][x] = TILE_TRACK;
 
     const map = this.make.tilemap({ data: grid, tileWidth: TILE, tileHeight: TILE });
-    const tileset = map.addTilesetImage(TILESET_KEY, TILESET_KEY, TILE, TILE)!;
+    const tileset = map.addTilesetImage(TILESET_KEY, TILESET_KEY, TILESET_PX, TILESET_PX)!;
     this.wallLayer = map.createLayer(0, tileset, 0, 0)!;
-    this.wallLayer.setCollision([TILE_WALL, TILE_TRACK]);
+    applyTileVariants(this.wallLayer); // scatter real-art tile variants (render-only)
+    this.wallLayer.setCollision([...TILE_VARIANTS[TILE_WALL], TILE_TRACK]);
     this.physics.world.setBounds(0, 0, AW * TILE, AH * TILE);
     this.cameras.main.setBackgroundColor(0x05060c);
   }

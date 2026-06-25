@@ -48,6 +48,36 @@ Keep this order (or update `district.ts` tile constants + `setCollision`).
   gameplay. `Present_image2` is a **color/vibe reference only**.
 - **No copyrighted assets, characters, logos, or music.** Original or CC0 only.
 
+## `asset-drop/` packs — chroma-key slicing pipeline
+
+Large AI-generated tile/object **atlases** land in `asset-drop/<CATEGORY>/` (gitignored
+staging, like `art-source/`). They are flat **RGB with no alpha** — each object sits on a
+solid painted background — so the alpha-based `atlas-slice.mjs` can't cut them. Two
+sibling dev tools handle this (run with the project node, `~/.local/node/bin/node`):
+
+- `tools/atlas-key-slice.mjs "<atlas>" <outDir> [minArea] [dilate] [keyTol]` — keys the
+  background colour (sampled from the corners) to transparency, flood-fills the remaining
+  pixels into connected components, exports each as a clean trimmed RGBA sprite. Use for
+  objects on a plain background that are **well separated** (e.g. `DECORATIONS`).
+- `tools/grid-key-slice.mjs "<atlas>" <outDir> <cols> <rows> [inset] [keyTol]` — cuts a
+  regular grid, keys + trims each cell. Use when objects **touch** or sit on painted
+  grid-lines so flood-fill would merge them (e.g. `INTERACTIVE OBJECTS`, `WALLS`, terrain).
+
+Curate the montage (`asset-tool.mjs montage <dir> <out> <cols> <cell>`), then downscale
+the picks to game scale into `public/assets/objects/` and wire keys in `manifest.ts`.
+
+### What's integrated vs. held (and why)
+
+| Drop category        | Decision | Notes |
+| -------------------- | -------- | ----- |
+| `DECORATIONS`        | **Integrated** → `deco_01…14` | Isometric crates/containers, keyed clean. Scattered as non-colliding **cargo decals** against city buildings (`CityScene.drawDecorations`) + replace the procedural interior crate (`spawnInteriorProp`). Keyed via `decals` in `manifest.ts`. |
+| `INTERACTIVE OBJECTS`| **Integrated** → `obj_01…12` | File (2) is clean **isometric** machines (file 1 is messier front-view — not used). Curated 12 → building-interior set-dressing: `spawnInteriorProp` renders them for the `rack` / `locker` / `terminal` kinds (per-kind seed varies the shared pool; terminal keeps its interactive cyan glow). Keyed via `interior` in `manifest.ts`. |
+| `WALLS`              | Held | Side-on facade units — the city renders buildings as **top-down roof tiles**, so side-on walls don't fit the gameplay view. |
+| `GROUNDS` `FLOORS` `PATHS` `CORNERS` `EDGES` `ELEVATION` | **Integrated** → `tileset` (+ variants) | Real-art 8×4 tileset `public/assets/tilesets/metrophage_tiles.png` assembled by `tools/tileset-gen.mjs`, preserving the exact index→tile/collision contract (`src/world/district.ts`). Cells **0–17** are the canonical tiles; field tiles (floor/road/plaza/…) are centre-cropped uniform swatches from the kitbash `GROUNDS`/`PATHS`/`FLOORS` sheets, framed roof/wall tiles from `ELEVATION`/`CORNERS`/`EDGES`. Cells **18–31** hold same-surface **variants** of the most-repeated tiles. **Diversity pass:** `src/render/tileVariants.ts` `applyTileVariants(layer)` (called in all 5 tilemap scenes after `createLayer`, before `setCollision`) rewrites each tile's *render* index to a deterministic variant (`TILE_VARIANTS`/`variantOf` in district.ts) — render-only, so collision/gameplay still key off the canonical grid index. Roof-variant cells (25–29) are in `COLLIDING_TILES` so varied building tops still block; the 3 action scenes collide on `TILE_VARIANTS[TILE_WALL]`. **Crispness:** stored at **64px cells** (`config.TILESET_PX`) and sliced at that size by `addTilesetImage` in all 5 scenes; the world grid stays 32px so Phaser downscales each tile at render (sharper than pre-downscaling). **Revert to procedural** = `tilesets` entry `file=null` in `manifest.ts` **and** `TILESET_PX=32` (the procedural bake is 256×128/32px). |
+
+> Licensing: asset-drop packs are the project owner's responsibility per their source terms.
+> Only curated, processed sprites are committed (raw `asset-drop/` stays gitignored).
+
 ## UI assets integrated (from the user-supplied pack)
 
 The perspective-neutral UI pieces from the supplied `PixelWhale_SF_Project` pack

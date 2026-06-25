@@ -55,6 +55,13 @@ export const PROP_TAXI_KEY = "prop_taxi";
 export const PROP_CAR_KEY = "prop_car";
 // Holographic projectors (Signs & holograms atlas) — standing emitter decals for plazas.
 export const HOLO_KEYS = ["holo_spiral", "holo_cube", "holo_net", "holo_emit"];
+// Real isometric cyberpunk crates/containers (sliced from the asset-drop DECORATIONS
+// atlas via tools/atlas-key-slice.mjs, curated + downscaled to game scale). Scattered as
+// non-colliding cargo decals in the city + used for interior crate set-dressing.
+export const DECO_KEYS = Array.from({ length: 14 }, (_, i) => "deco_" + String(i + 1).padStart(2, "0"));
+// Real isometric tech machines (sliced from the asset-drop INTERACTIVE OBJECTS atlas) —
+// used as building-interior set-dressing (rack / locker / terminal) in spawnInteriorProp.
+export const OBJ_KEYS = Array.from({ length: 12 }, (_, i) => "obj_" + String(i + 1).padStart(2, "0"));
 
 export const PORTRAIT_PLAYER_KEY = "portrait_player";
 export const PORTRAIT_NPC_KEY = "portrait_npc";
@@ -79,8 +86,12 @@ const ICON_NAMES = [
 ];
 
 export const ASSETS: Record<string, AssetEntry[]> = {
-  // 256×64 image, sliced into sixteen 32×32 cells by addTilesetImage.
-  tilesets: [{ key: TILESET_KEY, file: null }], // code-authored tileset (textures.ts)
+  // 512×256 image = 8×4 grid of 64px cells, sliced by addTilesetImage at config.TILESET_PX
+  // (the world grid stays 32px; tiles are downscaled at render for crispness). Real-art tileset
+  // assembled from the asset-drop terrain atlases (tools/tileset-gen.mjs) — index→tile contract
+  // preserved exactly (see src/world/district.ts), incl. variant cells 18–31. To revert to the
+  // procedural bake (textures.ts makeTileset, 256×128): set file=null AND config.TILESET_PX=32.
+  tilesets: [{ key: TILESET_KEY, file: "assets/tilesets/metrophage_tiles.png" }],
   sprites: [
     { key: PLAYER_KEY, file: null, ...CHAR }, // code-authored pixel art (charart.ts)
     { key: COP_KEY, file: null, ...CHAR }, // code-authored pixel art (charart.ts)
@@ -133,6 +144,10 @@ export const ASSETS: Record<string, AssetEntry[]> = {
     { key: PROP_CAR_KEY, file: "assets/objects/prop_car.png" },
     ...HOLO_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
   ],
+  // Real isometric cyberpunk crates/containers — non-colliding cargo decals (asset-drop).
+  decals: DECO_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
+  // Real isometric tech machines — building-interior set-dressing (asset-drop).
+  interior: OBJ_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
   // Real garment icons (apparel pack) for the cosmetics wardrobe — keyed "cos_<id>".
   cosIcons: COSMETICS.map((c) => ({ key: "cos_" + c.id, file: "assets/icons/cos_" + c.id + ".png" })),
 };
