@@ -4,6 +4,24 @@ The online game is a Cloudflare Worker + Durable Objects (`WorldDO`, one per zon
 Everything runs locally today (`127.0.0.1:8787`); going live is config + your Cloudflare
 account, not feature work. Both production builds are verified to bundle (see below).
 
+## Fastest: ship single-player, no backend (others can play in ~2 min)
+
+The single-player game (THE CITY hub + class runs + dives + customization) is **100%
+client-side** — no server needed. If someone clicks ONLINE without a server configured, it
+now shows a clear "SERVER OFFLINE — press ESC" message instead of hanging. The build uses
+relative asset paths, so `dist/` runs from any host (domain root, a subpath, or an itch.io zip).
+
+1. `npm run build` → portable `dist/`.
+2. Host `dist/` on any static host:
+   - **itch.io** (easiest public link): zip the *contents* of `dist/`, upload as an HTML
+     game, tick "This file will be played in the browser".
+   - **Cloudflare Pages**: `npx wrangler pages deploy dist`
+   - **Netlify**: drag `dist/` onto the dashboard, or `npx netlify deploy --dir dist --prod`.
+   - **Quick LAN share**: `npm run preview` (vite serves `dist/` on a `--host` URL).
+
+That's a complete, shippable game on its own. Add the multiplayer server (below) when you
+want ONLINE live.
+
 ## What's verified
 - **Client build** (`npm run build`): ✓ 114 modules → `dist/` (index ~127 KB gzip + phaser
   ~340 KB gzip).
