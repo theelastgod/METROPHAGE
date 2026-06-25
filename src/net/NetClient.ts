@@ -120,6 +120,9 @@ export default class NetClient {
   repTier = 0;
   contractsDay = 0;
   onContracts?: () => void;
+  cosmeticsOwned: string[] = [];
+  cosmeticEquipped: string | null = null;
+  onCosmetics?: () => void;
   story: { act: string; title: string; text: string; done: boolean; at: number } | null = null;
   lastError = 0;
   reconciles = 0;
@@ -352,6 +355,10 @@ export default class NetClient {
       this.repTier = msg.repTier;
       this.contractsDay = msg.day;
       this.onContracts?.();
+    } else if (msg.t === "cosmetics") {
+      this.cosmeticsOwned = msg.owned;
+      this.cosmeticEquipped = msg.equipped;
+      this.onCosmetics?.();
     } else if (msg.t === "market") {
       this.marketListings = msg.listings;
       this.onMarket?.();
@@ -419,6 +426,10 @@ export default class NetClient {
   }
   marketBuy(id: number) {
     this.sendMsg({ t: "market", action: "buy", id });
+  }
+  /** Cosmetics / transmog — server owns ownership + the equipped override (zero power). */
+  cosmeticAction(action: "buy" | "equip" | "unequip" | "list", id?: string) {
+    this.sendMsg({ t: "cosmetic", action, id });
   }
   /** Guild ("Cell") action — server validates rank/balance + owns the shared bank (D1). */
   guildAction(

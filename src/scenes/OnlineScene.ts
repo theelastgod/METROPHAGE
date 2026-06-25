@@ -31,6 +31,9 @@ import { WORLD_W, WORLD_H } from "../net/sim";
 import NetClient, { type NetEnemy } from "../net/NetClient";
 import NeonPipeline from "../render/NeonPipeline";
 import { QUESTLINE } from "../net/quest";
+import OnlineCosmetics from "../ui/OnlineCosmetics";
+import { applyCosmetic } from "../game/cosmetics";
+import type { PlayerLook } from "../net/protocol";
 import { setOnlinePlayer } from "../economy/session";
 import { connectedWallet, signWalletLogin } from "../economy/wallet";
 import { loginMessage } from "../net/protocol";
@@ -102,6 +105,8 @@ export default class OnlineScene extends Phaser.Scene {
   private guildPanel!: OnlineGuild; // guild ("Cell") bank/roster/level (D1-backed)
   private market!: OnlineMarket; // auction house — cross-zone player market (D1-backed)
   private contracts!: OnlineContracts; // daily contracts + reputation track (D1-backed)
+  private cosmetics!: OnlineCosmetics; // wardrobe / transmog (cosmetic-only, wallet-owned)
+  private baseLook?: PlayerLook; // your base appearance (cosmetics merge on top for rendering)
   private lastSeason = -1;
   private chatLogText!: Phaser.GameObjects.Text;
   private chatInput!: Phaser.GameObjects.Text;
@@ -206,7 +211,8 @@ export default class OnlineScene extends Phaser.Scene {
     this.nodeG = this.add.graphics().setDepth(5); // node capture rings (world-space)
     this.hazardG = this.add.graphics().setDepth(8); // boss AoE telegraphs (under shots/players)
     // Send your look so every other player renders your customization (not a generic body).
-    this.net = new NetClient(grid, this.callsign, url, this.faction, customizationToLook(cust));
+    this.baseLook = customizationToLook(cust); // cosmetics merge onto this for the rendered avatar
+    this.net = new NetClient(grid, this.callsign, url, this.faction, this.baseLook);
     this.net.onWelcome = (x, y) => {
       this.me.setPosition(x, y).setVisible(true);
       this.cameras.main.startFollow(this.me, true, 0.18, 0.18);
@@ -247,6 +253,12 @@ export default class OnlineScene extends Phaser.Scene {
     this.net.onContracts = () => {
       if (this.contracts.open) this.contracts.setState(this.net.contracts, this.net.rep);
       this.shop.setRep(this.net.repTier); // higher vendor caches unlock with reputation
+    };
+    this.cosmetics = new OnlineCosmetics(this);
+    this.cosmetics.onAction = (action, id) => this.net.cosmeticAction(action, id);
+    this.net.onCosmetics = () => {
+      if (this.cosmetics.open) this.cosmetics.setState(this.net.cosmeticsOwned, this.net.cosmeticEquipped, this.net.credits);
+      this.applyLocalCosmetic(); // retint your own avatar to match the equipped transmog
     };
     // World-boss locator: a status banner + a screen-edge arrow toward an off-screen boss.
     this.bossBanner = this.add
@@ -289,7 +301,7 @@ export default class OnlineScene extends Phaser.Scene {
       .text(
         this.scale.width / 2,
         this.scale.height - 12,
-        `WASD · CLICK fire · I bag · G forge · B vendor · K market · J jobs · C cell · L board · H safehouse · V emote · ENTER chat · [1-${DISTRICTS.length}]`,
+        `WASD · CLICK fire · I bag · G forge · B vendor · K market · J jobs · Y style · C cell · L board · H safehouse · V emote · ENTER chat`,
         { fontFamily: "Courier New, monospace", fontSize: "11px", color: "#6b7184" },
       )
       .setOrigin(0.5, 1)
@@ -497,6 +509,14 @@ export default class OnlineScene extends Phaser.Scene {
         this.contracts.close();
         return;
       }
+      if (e.key === "y" || e.key === "Y") {
+        this.cosmetics.toggle(this.net.cosmeticsOwned, this.net.cosmeticEquipped, this.net.credits);
+        return;
+      }
+      if (this.cosmetics.open && e.key === "Escape") {
+        this.cosmetics.close();
+        return;
+      }
       if (e.key === "h" || e.key === "H") {
         // H enters the safehouse (a no-combat hub) from a district, and returns to where
         // you came from. Travel = reconnect to the destination zone's DO.
@@ -629,6 +649,22 @@ export default class OnlineScene extends Phaser.Scene {
     const m = z ? /^d(\d+)$/.exec(z) : null;
     const n = m ? parseInt(m[1], 10) : 0;
     return n >= 0 && n < DISTRICTS.length ? n : 0;
+  }
+
+  /** Retint the LOCAL avatar to the equipped transmog (remotes get it via the relayed look). */
+  private applyLocalCosmetic() {
+    if (!this.me || !this.baseLook) return;
+    const id = this.net.cosmeticEquipped;
+    if (id) {
+      const merged = applyCosmetic(this.baseLook, id);
+      if (merged) {
+        const k = lookKey(merged);
+        bakeRemoteLook(this, k, merged);
+        this.me.setTexture(k, 0).setTint(0xffffff);
+      }
+    } else {
+      this.me.setTexture(PLAYER_CUSTOM_KEY, 0).setTint(0xffffff);
+    }
   }
 
   update(_t: number, dt: number) {

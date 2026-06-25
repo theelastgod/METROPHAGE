@@ -65,6 +65,7 @@ import { GUILD_CREATE_COST, guildLevel, guildPerkPct, validateGuild } from "../.
 import { listingFee, MIN_PRICE, MAX_PRICE } from "../../src/game/market";
 import { dailyContracts, getDaily, currentDay, repTier, type DailyObjective } from "../../src/game/dailies";
 import { RAID_SCRIPT, phaseForHp, raidHpScale } from "../../src/game/raid";
+import { getCosmetic, applyCosmetic } from "../../src/game/cosmetics";
 import { verifyWalletLogin } from "./auth";
 
 /** Inventory is capped so the persisted JSON stays bounded; oldest drops out (FIFO). */
@@ -156,6 +157,8 @@ export interface Env {
   METRO_TREASURY_SECRET?: string;
   METRO_DEVNET_MINT?: string;
   METRO_RPC?: string;
+  // "1" arms the $METRO mainnet bridge (counsel sign-off) — also gates NFT-tier cosmetics.
+  METRO_MAINNET_ARMED?: string;
 }
 
 interface PlayerState {
@@ -208,6 +211,9 @@ interface PlayerState {
   dailyDay: number; // the UTC day these contracts belong to
   dailies: Array<{ id: string; progress: number; done: boolean }>;
   dailyDirty: boolean;
+  // cosmetics / transmog — owned set + equipped override (zero power), persisted to D1
+  cosmeticsOwned: Set<string>;
+  cosmeticEquipped: string | null;
   // appearance (relayed to other clients so they render this player's customization)
   look?: PlayerLook;
 }
@@ -723,6 +729,7 @@ export class WorldDO {
     if (msg.t === "chat") return this.onChat(ws, msg);
     if (msg.t === "guild") return this.onGuild(ws, msg);
     if (msg.t === "market") return this.onMarket(ws, msg);
+    if (msg.t === "cosmetic") return this.onCosmetic(ws, msg);
     if (msg.t === "party") return this.onParty(ws, msg);
     if (msg.t === "mute") return this.onMute(ws, msg);
     if (msg.t === "emote") return this.onEmote(ws, msg);
@@ -1237,6 +1244,54 @@ export class WorldDO {
     }
   }
 
+  // ── cosmetics / transmog — wallet-owned appearance overrides (zero power) ──
+  private sendCosmetics(ws: WebSocket, p: PlayerState) {
+    this.send(ws, { t: "cosmetics", owned: [...p.cosmeticsOwned], equipped: p.cosmeticEquipped });
+  }
+
+  private async onCosmetic(ws: WebSocket, msg: Extract<ClientMsg, { t: "cosmetic" }>) {
+    const p = this.playerFor(ws);
+    if (!p) return;
+    const DB = this.env.DB;
+    const sys = (text: string) => this.send(ws, { t: "sys", text });
+    const armed = this.env.METRO_MAINNET_ARMED === "1";
+    try {
+      if (msg.action === "list") {
+        this.sendCosmetics(ws, p);
+        return;
+      }
+      if (msg.action === "buy") {
+        const c = getCosmetic(msg.id ?? "");
+        if (!c) return;
+        if (p.cosmeticsOwned.has(c.id)) return sys("already in your wardrobe");
+        if (c.nft && !armed) return sys(`${c.name} is an on-chain NFT skin — gated until mainnet is armed (counsel)`);
+        if (c.price > 0 && p.credits < c.price) return sys(`need ₵${c.price} for ${c.name}`);
+        if (c.price > 0) {
+          p.credits -= c.price;
+          p.dirty = true;
+        }
+        p.cosmeticsOwned.add(c.id);
+        await DB.prepare("INSERT OR IGNORE INTO player_cosmetics (player, cosmetic_id, equipped, at) VALUES (?,?,0,?)").bind(p.id, c.id, Date.now()).run();
+        sys(`unlocked ${c.name}`);
+        this.sendCosmetics(ws, p);
+      } else if (msg.action === "equip") {
+        const id = msg.id ?? "";
+        if (!p.cosmeticsOwned.has(id)) return sys("you don't own that skin");
+        p.cosmeticEquipped = id;
+        await DB.prepare("UPDATE player_cosmetics SET equipped = CASE WHEN cosmetic_id = ? THEN 1 ELSE 0 END WHERE player = ?").bind(id, p.id).run();
+        sys(`equipped ${getCosmetic(id)?.name ?? id}`);
+        this.sendCosmetics(ws, p);
+      } else if (msg.action === "unequip") {
+        p.cosmeticEquipped = null;
+        await DB.prepare("UPDATE player_cosmetics SET equipped = 0 WHERE player = ?").bind(p.id).run();
+        sys("transmog cleared");
+        this.sendCosmetics(ws, p);
+      }
+    } catch {
+      sys("wardrobe action failed");
+    }
+  }
+
   // ── secure server-mediated trading ──────────────────────────────────
   // Properties: both must confirm; changing an offer resets BOTH confirms;
   // execution re-validates LIVE balances (dupe-proof) and swaps all-or-nothing.
@@ -1446,6 +1501,7 @@ export class WorldDO {
     await this.sendGuild(ws, p); // hydrate cell membership/bank/roster (cross-zone, D1)
     await this.drainMail(p); // collect any auction proceeds that arrived while away
     this.sendContracts(ws, p); // hydrate today's daily contracts + reputation
+    this.sendCosmetics(ws, p); // hydrate owned cosmetics + equipped transmog
     this.ensureTick();
     await this.ensureSupervisor();
   }
@@ -1551,6 +1607,20 @@ export class WorldDO {
     } catch {
       /* table may not exist before migration */
     }
+    // cosmetics / transmog — owned set + the equipped override (cosmetic only)
+    const cosmeticsOwned = new Set<string>();
+    let cosmeticEquipped: string | null = null;
+    try {
+      const cres = await this.env.DB.prepare("SELECT cosmetic_id, equipped FROM player_cosmetics WHERE player = ?")
+        .bind(id)
+        .all<{ cosmetic_id: string; equipped: number }>();
+      for (const r of cres.results ?? []) {
+        cosmeticsOwned.add(r.cosmetic_id);
+        if (r.equipped) cosmeticEquipped = r.cosmetic_id;
+      }
+    } catch {
+      /* table may not exist before migration */
+    }
     const mods = deriveMods(equipped);
     const maxHp = PLAYER_HP + Math.round(mods.hpAdd);
     return {
@@ -1596,6 +1666,8 @@ export class WorldDO {
       dailyDay,
       dailies,
       dailyDirty: false,
+      cosmeticsOwned,
+      cosmeticEquipped,
       look,
     };
   }
@@ -2294,7 +2366,7 @@ export class WorldDO {
         faction: p.faction,
         questStep: p.questStep,
         questProgress: p.questProgress,
-        look: p.look,
+        look: applyCosmetic(p.look, p.cosmeticEquipped), // relay the equipped transmog so others see it
       });
     }
     const enemies = [];

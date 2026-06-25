@@ -70,6 +70,8 @@ export type ClientMsg =
   | { t: "craft"; action: "upgrade" | "reforge" | "salvage" | "fuse"; itemId: string; itemId2?: string }
   // auction house — server escrows the item + settles atomically (cross-zone, D1)
   | { t: "market"; action: "list" | "cancel" | "buy" | "browse"; id?: number; itemId?: string; price?: number; currency?: "credits" | "metro" }
+  // cosmetics / transmog — appearance overrides (zero power); NFT tier gated server-side
+  | { t: "cosmetic"; action: "buy" | "equip" | "unequip" | "list"; id?: string }
   | { t: "buy"; sku: string } // vendor purchase (heal / gear cache), priced + validated server-side
   | { t: "emote"; kind: number; ping: boolean; x: number; y: number } // emote (above avatar) or world ping
   | {
@@ -208,6 +210,8 @@ export type ServerMsg =
       t: "market";
       listings: Array<{ id: number; seller: string; sellerName: string; item: Item; price: number; currency: string }>;
     }
+  // cosmetics — owned set + the equipped transmog (sent on login + on change)
+  | { t: "cosmetics"; owned: string[]; equipped: string | null }
   // guild ("Cell") state — full summary + roster, or "none" when not in a cell
   | {
       t: "guild";

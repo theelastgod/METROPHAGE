@@ -1139,6 +1139,96 @@ async function raid() {
   );
 }
 
+async function cosmetic() {
+  // COSMETICS / TRANSMOG. (harness pre-seeds: dresser credits=3000; cosmetics cleared)
+  const BASE_LOOK = {
+    color: 0x9aa3b2, build: "std", head: "none", visor: "none", shoulders: "none", decal: "none", cloak: "none",
+    skin: 0, sex: "m", hair: "buzz", hairColor: 0x101010, beard: "none", antennae: false, emblem: false, strap: false,
+  };
+  const loginWithLook = (ws, name, look) =>
+    new Promise((resolve, reject) => {
+      const to = setTimeout(() => reject(new Error("login timeout")), 5000);
+      const onMsg = (ev) => {
+        const m = JSON.parse(ev.data);
+        if (m.t === "welcome") {
+          clearTimeout(to);
+          ws.removeEventListener("message", onMsg);
+          resolve(m);
+        }
+      };
+      ws.addEventListener("message", onMsg);
+      ws.send(JSON.stringify({ t: "login", name, faction: 0, look }));
+    });
+
+  const D = await connect();
+  const sd = { owned: [], equipped: null, credits: 0, sys: [] };
+  D.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "cosmetics") {
+      sd.owned = m.owned;
+      sd.equipped = m.equipped;
+    }
+    if (m.t === "sys") sd.sys.push(m.text);
+  });
+  const wd = await loginWithLook(D, "dresser", BASE_LOOK);
+  trackState(D, wd.id, sd);
+  await sleep(450);
+  const V = await connect();
+  const sv = { players: [] };
+  const wv = await login(V, "cviewer", 0);
+  trackState(V, wv.id, sv);
+  await sleep(550);
+
+  const seeDresser = () => (sv.players || []).find((p) => p.id === wd.id);
+  const startCredits = sd.credits;
+
+  // BUY a credit cosmetic
+  D.send(JSON.stringify({ t: "cosmetic", action: "buy", id: "ghost_visor" }));
+  await sleep(550);
+  const bought = sd.owned.includes("ghost_visor");
+  const creditsDeducted = sd.credits === startCredits - 300;
+
+  // EQUIP → the viewer should see dresser's relayed look pick up the override
+  D.send(JSON.stringify({ t: "cosmetic", action: "equip", id: "ghost_visor" }));
+  await sleep(800);
+  const equipped = sd.equipped === "ghost_visor";
+  const lookAfter = seeDresser()?.look;
+  const transmogRelayed = !!lookAfter && lookAfter.visor === "scan" && lookAfter.color === 0x29e7ff;
+
+  // NFT-tier cosmetic is GATED (mainnet not armed) → buy refused, not owned
+  D.send(JSON.stringify({ t: "cosmetic", action: "buy", id: "genesis" }));
+  await sleep(550);
+  const nftGated = !sd.owned.includes("genesis") && sd.sys.some((t) => /gated|nft|mainnet/i.test(t));
+
+  D.close();
+  V.close();
+  await sleep(800);
+
+  // PERSISTENCE — reconnect; owned + equipped reload from D1
+  const D2 = await connect();
+  const sd2 = { owned: [], equipped: null };
+  D2.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "cosmetics") {
+      sd2.owned = m.owned;
+      sd2.equipped = m.equipped;
+    }
+  });
+  await loginWithLook(D2, "dresser", BASE_LOOK);
+  await sleep(550);
+  const persisted = sd2.owned.includes("ghost_visor") && sd2.equipped === "ghost_visor";
+  D2.close();
+  await sleep(200);
+
+  const checks = { bought, creditsDeducted, equipped, transmogRelayed, nftGated, persisted };
+  report(
+    "COSMETIC — buy/equip transmog relays the look override; NFT gated; persists",
+    { owned: sd.owned, equipped: sd.equipped, viewerSaw: lookAfter ? `${lookAfter.visor}/${(lookAfter.color || 0).toString(16)}` : null, lastSys: sd.sys.slice(-2) },
+    Object.values(checks).every(Boolean),
+    checks,
+  );
+}
+
 async function shop() {
   const ws = await connect();
   const store = { x: 0, y: 0, enemies: [], inventory: [], credits: 0 };
@@ -2004,6 +2094,7 @@ try {
   else if (mode === "market") await market();
   else if (mode === "daily") await daily();
   else if (mode === "raid") await raid();
+  else if (mode === "cosmetic") await cosmetic();
   else if (mode === "shop") await shop();
   else if (mode === "bestiary") await bestiary();
   else if (mode === "safehouse") await safehouse();
