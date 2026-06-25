@@ -39,7 +39,24 @@ function newCanvas(w: number, h: number) {
 }
 
 function register(scene: Phaser.Scene, key: string, canvas: HTMLCanvasElement) {
-  if (scene.textures.exists(key)) scene.textures.remove(key);
+  const existing = scene.textures.exists(key) ? scene.textures.get(key) : null;
+  // Re-baking a key (e.g. the custom player, rebaked on every scene that uses it and on
+  // server look-sync) used to remove + re-add the texture. That destroys its Frame objects,
+  // and any animation still referencing them (a global walk anim, created lazily on first
+  // move) then plays a null frame → hard crash. Instead, when an existing CANVAS texture is
+  // the same size, redraw into it in place and refresh: the Frame objects (and the anims
+  // bound to them) stay valid, and we never remove a texture a live sprite is mid-play on.
+  const ctx = existing && (existing as unknown as { context?: CanvasRenderingContext2D }).context;
+  if (existing && ctx && typeof (existing as unknown as { refresh?: () => void }).refresh === "function") {
+    const src = existing.getSourceImage() as HTMLCanvasElement;
+    if (src && src.width === canvas.width && src.height === canvas.height) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(canvas, 0, 0);
+      (existing as unknown as { refresh: () => void }).refresh();
+      return existing;
+    }
+  }
+  if (existing) scene.textures.remove(key);
   return scene.textures.addCanvas(key, canvas);
 }
 
