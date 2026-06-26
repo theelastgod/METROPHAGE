@@ -152,8 +152,13 @@ export default class Prologue extends Phaser.Scene {
       .setOrigin(0.5)
       .setAlpha(0.85);
 
-    mk(VIEW_H / 2 - 10, "▶  BEGIN", "liberate the city — the solo campaign", "#39ff88", () => this.scene.start("Game"));
-    mk(VIEW_H / 2 + 56, "◢  GO ONLINE", "fight the corps with other free minds — multiplayer", "#00e5ff", () => this.scene.start("Online", { zone: "safe" }));
+    mk(
+      VIEW_H / 2 - 10,
+      "◢  ENTER THE CITY",
+      "your personal arc begins in the shared world — other free minds fight beside you",
+      "#00e5ff",
+      () => this.scene.start("Online", { zone: "safe" }),
+    );
   }
 
   private applyNeon() {

@@ -74,6 +74,9 @@ export type ClientMsg =
   | { t: "cosmetic"; action: "buy" | "equip" | "unequip" | "list"; id?: string }
   // authored NPC bounties — accept a quest-giver's repeatable job (server validates + grants)
   | { t: "bounty"; action: "accept"; id: string }
+  // personal campaign — accept a quest from THE FIXER or resolve a talk beat
+  | { t: "quest"; action: "accept"; id?: string }
+  | { t: "quest"; action: "talk" }
   | { t: "buy"; sku: string } // vendor purchase (heal / gear cache), priced + validated server-side
   | { t: "emote"; kind: number; ping: boolean; x: number; y: number } // emote (above avatar) or world ping
   | {
@@ -107,8 +110,11 @@ export interface PlayerSnap {
   xp: number;
   level: number;
   faction: number;
-  questStep: number; // index into QUESTLINE (=== length when complete)
-  questProgress: number; // count toward the current step's objective
+  /** Personal campaign — only meaningful on the local player; omitted for remotes when null. */
+  campaignQuest: string | null;
+  campaignStage: number;
+  campaignProgress: number;
+  campaignObjective: string;
   look?: PlayerLook; // appearance, so remotes render this player's customization
 }
 export interface EnemySnap {
@@ -184,7 +190,16 @@ export type ServerMsg =
   | { t: "party"; members: string[] }
   | { t: "sys"; text: string }
   | { t: "emote"; from: string; kind: number; ping: boolean; x: number; y: number } // relayed emote/ping
-  | { t: "story"; act: string; title: string; text: string; step: number; done: boolean }
+  | {
+      t: "story";
+      quest: string;
+      stage: string;
+      title: string;
+      text: string;
+      journal: string;
+      objective: string;
+      done: boolean;
+    }
   | { t: "inv"; items: Item[] } // the owning client's full inventory (login + on change)
   | { t: "equipped"; items: Item[]; maxHp: number } // owning client's equipped gear + derived max HP
   | { t: "achv"; ids: string[] } // full unlocked achievement set (sent on login)

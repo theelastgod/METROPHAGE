@@ -1,8 +1,8 @@
 import Phaser from "phaser";
 import { VIEW_W, VIEW_H, COLORS, UI_SCALE, uiDim, uiFont } from "../config";
 import { playerKeyFor } from "../assets/manifest";
-import { CLASSES, getClass } from "../game/classes";
-import { loadSave } from "../systems/Save";
+import { CLASSES } from "../game/classes";
+
 import OptionsPanel from "../ui/OptionsPanel";
 import NeonPipeline from "../render/NeonPipeline";
 import MusicDirector from "../audio/MusicDirector";
@@ -77,28 +77,13 @@ export default class SelectScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
 
-    // CONTINUE (resume save) if one exists.
-    const save = loadSave();
-    if (save) {
-      const c = getClass(save.progress.classId);
-      const who = save.customization?.callsign
-        ? `${save.customization.callsign} · ${c.name}`
-        : c.name;
-      const cont = this.add
-        .text(
-          VIEW_W / 2,
-          82,
-          `▶ CONTINUE — ${who}  Lv ${save.progress.level}   (or pick a class for a NEW run)`,
-          { fontFamily: "Courier New, monospace", fontSize: uiFont(12), color: "#39ff88" },
-        )
-        .setOrigin(0.5)
-        .setInteractive({ useHandCursor: true });
-      cont.on("pointerdown", () => this.startGame(true));
-      this.input.keyboard?.on("keydown-ENTER", () => {
-        if (this.options.isOpen) return;
-        this.startGame(true);
-      });
-    }
+    this.add
+      .text(VIEW_W / 2, 82, "progress lives on the server — pick a class to deploy a new cyberian", {
+        fontFamily: "Courier New, monospace",
+        fontSize: uiFont(11),
+        color: "#6b7184",
+      })
+      .setOrigin(0.5);
 
     this.frames = this.add.graphics();
 
@@ -193,9 +178,8 @@ export default class SelectScene extends Phaser.Scene {
     optBtn.on("pointerout", () => optBtn.setColor("#9aa3b2"));
     optBtn.on("pointerdown", () => this.options.toggle());
 
-    // ONLINE (beta) — Phase 4 shared-world client (server-authoritative movement).
     const onlineBtn = this.add
-      .text(16, 14, "⊕ ONLINE (beta)", {
+      .text(16, 14, "⊕ ENTER WORLD", {
         fontFamily: "Courier New, monospace",
         fontSize: uiFont(12),
         color: "#39ff88",
@@ -207,22 +191,6 @@ export default class SelectScene extends Phaser.Scene {
       if (this.options?.isOpen) return;
       this.cameras.main.fadeOut(250, 2, 2, 8);
       this.cameras.main.once("camerafadeoutcomplete", () => this.scene.start("Online", { zone: "safe" }));
-    });
-
-    // THE CITY — the big walkable hub (buildings to enter, NPCs, single-player quests).
-    const cityBtn = this.add
-      .text(16, 32, "▣ THE CITY", {
-        fontFamily: "Courier New, monospace",
-        fontSize: uiFont(12),
-        color: "#00e5ff",
-      })
-      .setInteractive({ useHandCursor: true });
-    cityBtn.on("pointerover", () => cityBtn.setColor("#eafdff"));
-    cityBtn.on("pointerout", () => cityBtn.setColor("#00e5ff"));
-    cityBtn.on("pointerdown", () => {
-      if (this.options?.isOpen) return;
-      this.cameras.main.fadeOut(250, 2, 2, 8);
-      this.cameras.main.once("camerafadeoutcomplete", () => this.scene.start("City"));
     });
 
     this.drawFrames();
@@ -266,14 +234,6 @@ export default class SelectScene extends Phaser.Scene {
       this.neon.tint = [1, 0.17, 0.84];
       this.neon.tintAmt = 0.16;
     }
-  }
-
-  /** Fade out, then enter the game (fresh class run or resume). */
-  private startGame(resume: boolean) {
-    if (this.options?.isOpen) return;
-    this.registry.set("resume", resume);
-    this.cameras.main.fadeOut(350, 2, 2, 8);
-    this.cameras.main.once("camerafadeoutcomplete", () => this.scene.start("Game"));
   }
 
   private select(i: number) {

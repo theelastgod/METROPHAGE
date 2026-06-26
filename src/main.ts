@@ -4,16 +4,12 @@ import BootScene from "./scenes/BootScene";
 import SelectScene from "./scenes/SelectScene";
 import CustomizeScene from "./scenes/CustomizeScene";
 import Prologue from "./scenes/Prologue";
-import GameScene from "./scenes/GameScene";
-import DiveScene from "./scenes/DiveScene";
-import SubwayScene from "./scenes/SubwayScene";
 import OnlineScene from "./scenes/OnlineScene";
-import CityScene from "./scenes/CityScene";
 import { getMetroStatus } from "./economy/metro";
 import { mountMetroPanel } from "./ui/MetroPanel";
 import { getOnlinePlayer } from "./economy/session";
 
-// METROPHAGE — Phase 0 vertical slice entry point.
+// METROPHAGE — Path A: one server-authoritative world; personal campaign per player.
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
   parent: "game-root",
@@ -37,7 +33,7 @@ const config: Phaser.Types.Core.GameConfig = {
       debug: false,
     },
   },
-  scene: [BootScene, SelectScene, CustomizeScene, Prologue, GameScene, DiveScene, SubwayScene, OnlineScene, CityScene],
+  scene: [BootScene, SelectScene, CustomizeScene, Prologue, OnlineScene],
 };
 
 const game = new Phaser.Game(config);

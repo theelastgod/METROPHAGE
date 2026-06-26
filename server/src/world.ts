@@ -112,7 +112,14 @@ function parseLook(raw: string | null | undefined): PlayerLook | undefined {
   }
 }
 import { TILE } from "../../src/config";
-import { QUESTLINE, QUEST_DONE_TEXT, type QuestObjective } from "../../src/net/quest";
+import {
+  Campaign,
+  parseCampaign,
+  serializeCampaign,
+  CAMPAIGN_DONE_TEXT,
+  type CampaignData,
+} from "../../src/net/campaign";
+import type { QuestTriggerType, QuestReward } from "../../src/game/quests";
 
 // Server-only tuning.
 const PERSIST_EVERY_TICKS = 40; // ~2s snapshot cadence
@@ -201,9 +208,8 @@ interface PlayerState {
   muted: Set<string>; // player ids this player has muted (their chat is dropped)
   lastChatTick: number;
   lastEmoteTick: number;
-  // questline (The Blank — per-player, server-authoritative)
-  questStep: number;
-  questProgress: number;
+  // personal campaign arc (Path A — per-player in the shared world)
+  campaign: Campaign;
   // achievements + leaderboards — cross-zone lifetime counters persisted to D1 player_stats
   stats: Record<string, number>; // additive counters (kills, bosses, captures, credits, pvp)
   statDelta: Record<string, number>; // unflushed increments queued for D1
@@ -802,6 +808,7 @@ export class WorldDO {
     if (msg.t === "market") return this.onMarket(ws, msg);
     if (msg.t === "cosmetic") return this.onCosmetic(ws, msg);
     if (msg.t === "bounty") return this.onBounty(ws, msg);
+    if (msg.t === "quest") return this.onQuest(ws, msg);
     if (msg.t === "party") return this.onParty(ws, msg);
     if (msg.t === "mute") return this.onMute(ws, msg);
     if (msg.t === "emote") return this.onEmote(ws, msg);
@@ -1565,7 +1572,8 @@ export class WorldDO {
       tickMs: NET_TICK_MS,
       world: { w: WORLD_W, h: WORLD_H },
     });
-    this.sendStory(ws, p.questStep); // brief the Blank on their current beat
+    if (!p.campaign.activeId && p.campaign.completed.length === 0) p.campaign.accept("the_wake");
+    this.sendCampaignBeat(ws, p); // brief on the current personal storyline beat
     this.send(ws, { t: "inv", items: p.inventory }); // hydrate their held gear
     this.sendLoadout(ws, p); // hydrate equipped gear + derived max HP
     this.noteDeepest(p); // arriving in this district may set a "deepest reached" milestone
@@ -1589,12 +1597,12 @@ export class WorldDO {
     let credits = 0;
     let xp = 0;
     let cores = 0;
-    let questStep = 0;
+    let campaign = new Campaign();
     let inventory: Item[] = [];
     let look: PlayerLook | undefined;
     let equipped: Partial<Record<Slot, Item>> = {};
     const row = await this.env.DB.prepare(
-      "SELECT x, y, credits, xp, zone, cores, quest_step, inventory, look, equipped FROM players WHERE id = ?",
+      "SELECT x, y, credits, xp, zone, cores, quest_step, campaign, inventory, look, equipped FROM players WHERE id = ?",
     )
       .bind(id)
       .first<{
@@ -1605,6 +1613,7 @@ export class WorldDO {
         zone: string;
         cores: number;
         quest_step: number;
+        campaign: string | null;
         inventory: string;
         look: string | null;
         equipped: string;
@@ -1613,7 +1622,10 @@ export class WorldDO {
       credits = row.credits ?? 0;
       xp = row.xp ?? 0;
       cores = row.cores ?? 0;
-      questStep = row.quest_step ?? 0;
+      campaign = new Campaign(parseCampaign(row.campaign));
+      if (!row.campaign && (row.quest_step ?? 0) > 0) {
+        campaign = new Campaign({ activeId: "the_wake", stage: 0, progress: 0, completed: [], flags: [] });
+      }
       inventory = parseInventory(row.inventory);
       look = parseLook(row.look);
       equipped = parseEquipped(row.equipped);
@@ -1624,7 +1636,7 @@ export class WorldDO {
         y = row.y;
       }
     } else {
-      await this.upsert(id, name, x, y, 0, 0, 0, 0, [], undefined, {});
+      await this.upsert(id, name, x, y, 0, 0, 0, campaign.toData(), [], undefined, {});
     }
     // achievements + leaderboard counters (cross-zone, shared D1)
     const stats: Record<string, number> = {};
@@ -1726,8 +1738,7 @@ export class WorldDO {
       muted: new Set<string>(),
       lastChatTick: -999,
       lastEmoteTick: -999,
-      questStep,
-      questProgress: 0,
+      campaign,
       stats,
       statDelta: {},
       deepest,
@@ -1758,23 +1769,103 @@ export class WorldDO {
     }
   }
 
-  /** Send the story text for a quest step (or the completion beat). */
-  private sendStory(ws: WebSocket, step: number) {
-    const s = QUESTLINE[step];
-    if (s) this.send(ws, { t: "story", act: s.act, title: s.title, text: s.text, step, done: false });
-    else this.send(ws, { t: "story", act: "THE WAKE", title: "Recurrence", text: QUEST_DONE_TEXT, step, done: true });
+  /** Push the current campaign beat (stage journal + uplink line) to one client. */
+  private sendCampaignBeat(ws: WebSocket, p: PlayerState) {
+    const q = p.campaign.active;
+    const s = p.campaign.currentStage;
+    if (q && s) {
+      this.send(ws, {
+        t: "story",
+        quest: q.name,
+        stage: s.id,
+        title: s.objective,
+        text: s.onEnterLine ?? s.journal,
+        journal: s.journal,
+        objective: s.objective,
+        done: false,
+      });
+      return;
+    }
+    const next = p.campaign.nextOffer();
+    if (next) {
+      this.send(ws, {
+        t: "story",
+        quest: next.name,
+        stage: "offer",
+        title: "THE FIXER",
+        text: `A new contract surfaces on your uplink: ${next.name}. Find THE FIXER in the safehouse.`,
+        journal: next.stages[0]?.journal ?? "",
+        objective: "Visit THE FIXER",
+        done: false,
+      });
+      return;
+    }
+    this.send(ws, {
+      t: "story",
+      quest: "THE AWAKENING",
+      stage: "done",
+      title: "Recurrence",
+      text: CAMPAIGN_DONE_TEXT,
+      journal: CAMPAIGN_DONE_TEXT,
+      objective: "—",
+      done: true,
+    });
   }
 
-  /** Advance a player's questline when a shared-world action matches their objective. */
-  private questEvent(p: PlayerState, type: QuestObjective, n = 1) {
-    const s = QUESTLINE[p.questStep];
-    if (!s || s.objective !== type) return;
-    p.questProgress += n;
-    if (p.questProgress >= s.count) {
-      p.questStep += 1;
-      p.questProgress = 0;
+  private grantCampaignReward(p: PlayerState, reward: QuestReward) {
+    p.xp += reward.xp;
+    p.level = levelForXp(p.xp);
+    p.credits += reward.currency;
+    p.dirty = true;
+    this.sendTo(p.id, { t: "sys", text: `◈ quest complete — +${reward.xp} XP  ₵${reward.currency}` });
+  }
+
+  /** Advance the personal campaign when a stage completes. */
+  private campaignBeat(p: PlayerState) {
+    const finished = p.campaign.tickAfterAdvance();
+    if (finished) this.grantCampaignReward(p, finished.reward);
+    p.dirty = true;
+    for (const [sock, id] of this.sessions) if (id === p.id) this.sendCampaignBeat(sock, p);
+  }
+
+  /** Fire a gameplay trigger against the active campaign stage. */
+  private campaignEvent(p: PlayerState, type: QuestTriggerType, n = 1) {
+    const r = p.campaign.onTrigger(type, n);
+    if (!r) return;
+    this.campaignBeat(p);
+  }
+
+  /** Node captured — infect vs dive stages both key off territory captures. */
+  private campaignCapture(p: PlayerState) {
+    const s = p.campaign.currentStage;
+    if (!s) return;
+    if (s.on.type === "infect") this.campaignEvent(p, "infect");
+    else if (s.on.type === "dive") this.campaignEvent(p, "dive");
+  }
+
+  private campaignSecureCheck(p: PlayerState) {
+    if (this.districtControl() !== p.faction) return;
+    this.campaignEvent(p, "secure");
+  }
+
+  private onQuest(ws: WebSocket, msg: Extract<ClientMsg, { t: "quest" }>) {
+    const p = this.playerFor(ws);
+    if (!p) return;
+    const sys = (text: string) => this.send(ws, { t: "sys", text });
+    if (msg.action === "accept") {
+      const id = msg.id ?? p.campaign.nextOffer()?.id;
+      if (!id) return sys("no quest available");
+      const q = p.campaign.accept(id);
+      if (!q) return sys("can't accept that quest");
       p.dirty = true;
-      for (const [sock, id] of this.sessions) if (id === p.id) this.sendStory(sock, p.questStep);
+      sys(`accepted — ${q.name}`);
+      this.sendCampaignBeat(ws, p);
+      return;
+    }
+    if (msg.action === "talk") {
+      if (!p.campaign.isTalkStage()) return sys("nothing to report right now");
+      p.campaign.onTalk();
+      this.campaignBeat(p);
     }
   }
 
@@ -2192,7 +2283,7 @@ export class WorldDO {
         p.dirty = true;
       }
       // The Convergence: surviving a meltdown (alive while it rages) advances it.
-      if (meltdown) this.questEvent(p, "meltdown");
+      if (meltdown) this.campaignSecureCheck(p);
     }
 
     // 2) enemies — chase nearest player, fire in range
@@ -2287,7 +2378,7 @@ export class WorldDO {
                 killer.level = levelForXp(killer.xp);
                 killer.dirty = true;
                 this.bumpMeta("f" + killer.faction, isBoss ? 10 : 1); // faction contribution
-                this.questEvent(killer, "kill");
+                this.campaignEvent(killer, "kill");
                 // achievement counters (cross-zone, D1)
                 this.bumpStat(killer, "kills", 1);
                 if (isBoss) this.bumpStat(killer, "bosses", 1);
@@ -2395,7 +2486,7 @@ export class WorldDO {
             p.cores += 1; // a tradeable data core
             p.xp += 8;
             p.level = levelForXp(p.xp);
-            this.questEvent(p, "collect");
+            /* cores feed bounties/dailies; campaign collect stages use talk/dive */
             this.bountyEvent(p, "collect", 1);
           } else {
             p.credits += 6;
@@ -2434,7 +2525,8 @@ export class WorldDO {
           // credit the players who channelled it (quest "capture" objective)
           for (const pl of this.players.values()) {
             if (!pl.dead && pl.faction === node.by && dist2(pl.x, pl.y, node.x, node.y) <= CR2) {
-              this.questEvent(pl, "capture");
+              this.campaignCapture(pl);
+              this.campaignSecureCheck(pl);
               this.bumpStat(pl, "captures", 1);
               this.contractEvent(pl, "capture", 1);
             }
@@ -2500,8 +2592,10 @@ export class WorldDO {
         xp: p.xp,
         level: p.level,
         faction: p.faction,
-        questStep: p.questStep,
-        questProgress: p.questProgress,
+        campaignQuest: p.campaign.activeId,
+        campaignStage: p.campaign.stage,
+        campaignProgress: p.campaign.progress,
+        campaignObjective: p.campaign.currentStage?.objective ?? "",
         look: applyCosmetic(p.look, p.cosmeticEquipped), // relay the equipped transmog so others see it
       });
     }
@@ -2683,7 +2777,7 @@ export class WorldDO {
     for (const p of this.players.values()) {
       if (p.dirty) {
         p.dirty = false;
-        await this.upsert(p.id, p.name, p.x, p.y, p.credits, p.xp, p.cores, p.questStep, p.inventory, p.look, p.equipped);
+        await this.upsert(p.id, p.name, p.x, p.y, p.credits, p.xp, p.cores, p.campaign.toData(), p.inventory, p.look, p.equipped);
       }
       await this.flushStats(p); // lifetime counters / achievements may change without `dirty`
       await this.flushDailies(p);
@@ -2776,17 +2870,17 @@ export class WorldDO {
     credits: number,
     xp: number,
     cores: number,
-    questStep: number,
+    campaign: CampaignData,
     inventory: Item[],
     look: PlayerLook | undefined,
     equipped: Partial<Record<Slot, Item>>,
   ) {
     try {
       await this.env.DB.prepare(
-        "INSERT INTO players (id, name, x, y, zone, credits, xp, cores, quest_step, inventory, look, equipped, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) " +
-          "ON CONFLICT(id) DO UPDATE SET x=excluded.x, y=excluded.y, credits=excluded.credits, xp=excluded.xp, cores=excluded.cores, quest_step=excluded.quest_step, inventory=excluded.inventory, look=excluded.look, equipped=excluded.equipped, updated_at=excluded.updated_at",
+        "INSERT INTO players (id, name, x, y, zone, credits, xp, cores, campaign, inventory, look, equipped, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) " +
+          "ON CONFLICT(id) DO UPDATE SET x=excluded.x, y=excluded.y, credits=excluded.credits, xp=excluded.xp, cores=excluded.cores, campaign=excluded.campaign, inventory=excluded.inventory, look=excluded.look, equipped=excluded.equipped, updated_at=excluded.updated_at",
       )
-        .bind(id, name, round2(x), round2(y), this.zoneName, Math.round(credits), Math.round(xp), Math.round(cores), Math.round(questStep), JSON.stringify(inventory.slice(0, INVENTORY_CAP)), look ? JSON.stringify(look) : null, JSON.stringify(equipped), Date.now())
+        .bind(id, name, round2(x), round2(y), this.zoneName, Math.round(credits), Math.round(xp), Math.round(cores), serializeCampaign(campaign), JSON.stringify(inventory.slice(0, INVENTORY_CAP)), look ? JSON.stringify(look) : null, JSON.stringify(equipped), Date.now())
         .run();
     } catch {
       /* D1 hiccup — next snapshot retries */
@@ -2803,7 +2897,7 @@ export class WorldDO {
       if (tr) this.endTrade(tr, "cancelled", "trade partner left");
       this.leaveParty(p);
       this.pendingInvites.delete(p.id);
-      await this.upsert(p.id, p.name, p.x, p.y, p.credits, p.xp, p.cores, p.questStep, p.inventory, p.look, p.equipped);
+      await this.upsert(p.id, p.name, p.x, p.y, p.credits, p.xp, p.cores, p.campaign.toData(), p.inventory, p.look, p.equipped);
       await this.flushStats(p);
       await this.flushDailies(p);
       await this.syncMeta();

@@ -35,7 +35,7 @@ import { ENEMY_BARKS } from "../game/enemies";
 import { WORLD_W, WORLD_H } from "../net/sim";
 import NetClient, { type NetEnemy } from "../net/NetClient";
 import NeonPipeline from "../render/NeonPipeline";
-import { QUESTLINE } from "../net/quest";
+import { campaignHud, Campaign } from "../net/campaign";
 import OnlineCosmetics from "../ui/OnlineCosmetics";
 import OnlineMap from "../ui/OnlineMap";
 import { applyCosmetic } from "../game/cosmetics";
@@ -860,6 +860,8 @@ export default class OnlineScene extends Phaser.Scene {
       this.net.tradeOffer(parseInt(parts[0], 10) || 0, parseInt(parts[1], 10) || 0);
     } else if (s === "/confirm") this.net.tradeConfirm();
     else if (s === "/tcancel") this.net.tradeCancel();
+    else if (s === "/quest talk") this.net.questTalk();
+    else if (s.startsWith("/quest accept")) this.net.questAccept();
     else this.net.sendChat("zone", undefined, s);
   }
 
@@ -901,6 +903,7 @@ export default class OnlineScene extends Phaser.Scene {
         break;
       case "contracts":
         this.contracts.toggle(n.contracts, n.rep);
+        this.net.questTalk();
         break;
       case "board":
         this.board.toggle(n.achievements, n.id);
@@ -1306,13 +1309,15 @@ export default class OnlineScene extends Phaser.Scene {
       this.tradeText.setVisible(false);
     }
 
-    // questline (The Blank) — tracker + phased story beat
-    const qs = QUESTLINE[this.net.questStep];
-    this.questText.setText(
-      qs
-        ? `◈ ${qs.act} — ${qs.title}   [${this.net.questProgress}/${qs.count}]`
-        : "◈ THE BLANK — the cycle is yours",
-    );
+    // personal campaign — per-player arc in the shared world
+    const camp = new Campaign({
+      activeId: this.net.campaignQuest,
+      stage: this.net.campaignStage,
+      progress: this.net.campaignProgress,
+      completed: [],
+      flags: [],
+    });
+    this.questText.setText(campaignHud(camp));
     // immediate objective: the first unfinished daily contract (or a done/empty state)
     const active = this.net.contracts.find((c) => !c.done);
     if (active) {
@@ -1328,7 +1333,7 @@ export default class OnlineScene extends Phaser.Scene {
     else this.bountyText.setVisible(false);
     const story = this.net.story;
     if (story && performance.now() - story.at < 8000) {
-      this.storyPanel.setVisible(true).setText(`◢ ${story.act} — ${story.title} ◣\n\n${story.text}`);
+      this.storyPanel.setVisible(true).setText(`◢ ${story.quest} — ${story.title} ◣\n\n${story.text}`);
     } else {
       this.storyPanel.setVisible(false);
     }

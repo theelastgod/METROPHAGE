@@ -98,8 +98,10 @@ export default class NetClient {
   chatLog: Array<{ from: string; ch: string; text: string; faction: number; sys: boolean }> = [];
   /** Recent emotes/pings relayed by the server (rendered + aged out by the scene). */
   emotes: Array<{ from: string; kind: number; ping: boolean; x: number; y: number; at: number }> = [];
-  questStep = 0;
-  questProgress = 0;
+  campaignQuest: string | null = null;
+  campaignStage = 0;
+  campaignProgress = 0;
+  campaignObjective = "";
   achievements = new Set<string>(); // unlocked achievement ids (hydrated on login, grows live)
   guild: null | {
     id: number;
@@ -127,7 +129,16 @@ export default class NetClient {
   onBounty?: () => void;
   discovered: string[] = []; // zones this account has arrived at (fast-travel unlocks)
   onDiscovered?: () => void;
-  story: { act: string; title: string; text: string; done: boolean; at: number } | null = null;
+  story: {
+    quest: string;
+    stage: string;
+    title: string;
+    text: string;
+    journal: string;
+    objective: string;
+    done: boolean;
+    at: number;
+  } | null = null;
   lastError = 0;
   reconciles = 0;
   lastAck = 0;
@@ -263,8 +274,10 @@ export default class NetClient {
           this.cores = sp.cores;
           this.xp = sp.xp;
           this.level = sp.level;
-          this.questStep = sp.questStep;
-          this.questProgress = sp.questProgress;
+          this.campaignQuest = sp.campaignQuest;
+          this.campaignStage = sp.campaignStage;
+          this.campaignProgress = sp.campaignProgress;
+          this.campaignObjective = sp.campaignObjective;
         } else {
           const r = this.remotes.get(sp.id) ?? {
             id: sp.id,
@@ -344,8 +357,17 @@ export default class NetClient {
     } else if (msg.t === "party") {
       this.party = msg.members;
     } else if (msg.t === "story") {
-      this.story = { act: msg.act, title: msg.title, text: msg.text, done: msg.done, at: performance.now() };
-      this.pushChat({ from: "", ch: "sys", text: `${msg.act} — ${msg.title}`, faction: -1, sys: true });
+      this.story = {
+        quest: msg.quest,
+        stage: msg.stage,
+        title: msg.title,
+        text: msg.text,
+        journal: msg.journal,
+        objective: msg.objective,
+        done: msg.done,
+        at: performance.now(),
+      };
+      this.pushChat({ from: "", ch: "sys", text: `${msg.quest} — ${msg.title}`, faction: -1, sys: true });
     } else if (msg.t === "inv") {
       this.inventory = msg.items;
       this.onInventory?.();
@@ -395,6 +417,13 @@ export default class NetClient {
         if (msg.text) this.pushChat({ from: "", ch: "sys", text: "trade: " + msg.text, faction: -1, sys: true });
       }
     }
+  }
+
+  questAccept(id?: string) {
+    this.sendMsg({ t: "quest", action: "accept", id });
+  }
+  questTalk() {
+    this.sendMsg({ t: "quest", action: "talk" });
   }
 
   tradeRequest(to: string) {
