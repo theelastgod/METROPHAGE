@@ -6,6 +6,7 @@
   "description": "METROPHAGE — top-down neon-noir cyberpunk action-RPG (Phase 0 vertical slice)",
   "scripts": {
     "dev": "vite",
+    "dev:online": "sh -c 'npm run dev -- --host 127.0.0.1 --port 5174 & cd server && npm run dev -- --port 8787; wait'",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",

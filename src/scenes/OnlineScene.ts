@@ -36,13 +36,15 @@ import {
   buildTutorial,
   TUTORIAL_PORTAL,
   TUTORIAL_NODE_TILE,
+  TUTORIAL_SPAWN,
   isWall,
+  type TileGrid,
 } from "../world/district";
 import { TUTORIAL_ZONE, tutorialStepAt, type TutorialMode } from "../net/tutorial";
 import { getSettings } from "../systems/Settings";
 import { DISTRICTS } from "../game/districts";
 import { ENEMY_BARKS } from "../game/enemies";
-import { WORLD_W, WORLD_H } from "../net/sim";
+import { WORLD_W, WORLD_H, stepMove, NET_TICK_MS, type MoveState } from "../net/sim";
 import NetClient, { type NetEnemy } from "../net/NetClient";
 import NeonPipeline from "../render/NeonPipeline";
 import { campaignHud, Campaign } from "../net/campaign";
@@ -208,6 +210,10 @@ export default class OnlineScene extends Phaser.Scene {
   private tutorialPortalGlow!: Phaser.GameObjects.Image;
 
   private nearPortal = false;
+  private zoneGrid!: TileGrid;
+  /** Offline/connecting drill preview — local movement until the server welcomes us. */
+  private drillLocal: MoveState | null = null;
+  private drillLocalAcc = 0;
 
   constructor() {
     super("Online");
@@ -257,6 +263,7 @@ export default class OnlineScene extends Phaser.Scene {
         : this.interior
           ? buildSafehouse()
           : buildGrid(def);
+    this.zoneGrid = grid;
     const map = this.make.tilemap({ data: grid, tileWidth: TILE, tileHeight: TILE });
     const tileset = map.addTilesetImage(TILESET_KEY, TILESET_KEY, TILESET_PX, TILESET_PX)!;
     const layer = map.createLayer(0, tileset, 0, 0)!;
@@ -419,6 +426,16 @@ export default class OnlineScene extends Phaser.Scene {
       .setDepth(10)
       .setVisible(false);
     this.meLight = new PlayerLight(this, this.me.x, this.me.y); // soft carried light (same as the city hub)
+    if (this.isTutorial) {
+      this.drillLocal = { x: TUTORIAL_SPAWN.x, y: TUTORIAL_SPAWN.y };
+      this.drillLocalAcc = 0;
+      this.me.setPosition(TUTORIAL_SPAWN.x, TUTORIAL_SPAWN.y).setVisible(true);
+      this.cameras.main.startFollow(this.me, true, 0.18, 0.18);
+      this.meLight.update(TUTORIAL_SPAWN.x, TUTORIAL_SPAWN.y, 0);
+      this.meLight.setVisible(true);
+    } else {
+      this.drillLocal = null;
+    }
 
     const url = SERVER_URL + (SERVER_URL.includes("?") ? "&" : "?") + "zone=" + this.zone;
     this.faction = factionForColor(this.color); // your cell, from your signature colour
@@ -432,6 +449,7 @@ export default class OnlineScene extends Phaser.Scene {
     if (this.isTutorial) this.registry.set("tutorialMode", tutorialMode);
 
     this.net.onWelcome = (x, y) => {
+      this.drillLocal = null;
       this.me.setPosition(x, y).setVisible(true);
       this.cameras.main.startFollow(this.me, true, 0.18, 0.18);
       setOnlinePlayer(this.net.id);
@@ -1173,7 +1191,17 @@ export default class OnlineScene extends Phaser.Scene {
     if (this.shop.open) this.shop.setCredits(this.net.credits);
     if (this.forge.open) this.forge.setWallet(this.net.credits, this.net.cores);
 
-    if (this.net.connected) {
+    if (this.drillLocal && !this.net.connected) {
+      this.drillLocalAcc += dt;
+      while (this.drillLocalAcc >= NET_TICK_MS) {
+        this.drillLocalAcc -= NET_TICK_MS;
+        stepMove(this.drillLocal, { mx, my }, this.zoneGrid, NET_TICK_MS);
+      }
+      this.me.setPosition(this.drillLocal.x, this.drillLocal.y);
+      const moving = mx !== 0 || my !== 0;
+      if (moving) this.meDir.set(mx, my);
+      driveChar(this.me, this.meDir.x, this.meDir.y, moving);
+    } else if (this.net.connected) {
       this.me.setPosition(this.net.pred.x, this.net.pred.y);
       const moving = mx !== 0 || my !== 0;
       if (moving) this.meDir.set(mx, my);
@@ -1233,7 +1261,7 @@ export default class OnlineScene extends Phaser.Scene {
         driveChar(this.me, this.meDir.x, this.meDir.y, false);
       }
     }
-    this.me.setVisible(this.net.connected && !this.net.dead);
+    this.me.setVisible(!this.net.dead && (this.net.connected || !!this.drillLocal));
     this.meLight.update(this.me.x, this.me.y, this.time.now);
     this.meLight.setVisible(this.me.visible);
 
@@ -1430,15 +1458,23 @@ export default class OnlineScene extends Phaser.Scene {
     const ctrl = this.net.control === NEUTRAL ? "—" : FACTION_NAMES[this.net.control];
     const war = FACTION_NAMES.map((nm, i) => `${nm[0]}:${this.net.factions[i]}`).join("  ");
     if (!st.connected && Date.now() - this.connectStartedAt > 8000) {
-      // Server unreachable (e.g. a single-player-only static deploy) — don't hang on
-      // "connecting…" forever; tell the player how to get back. ESC returns to the menu.
       this.hud.setColor("#ff6a6a");
-      this.hud.setText([
-        "⚠  SERVER OFFLINE",
-        "The online realm isn't reachable right now.",
-        "Press ESC to return to the menu.",
-        "(Single-player — THE CITY and class runs — works fully offline.)",
-      ]);
+      if (this.isTutorial) {
+        this.hud.setText([
+          "⚠  DRILL SERVER OFFLINE — preview movement only",
+          "Start the game server, then refresh:",
+          "  cd server && npm run dev",
+          "  (or from project root: npm run dev:online)",
+          "Press ESC to return to the menu.",
+        ]);
+      } else {
+        this.hud.setText([
+          "⚠  SERVER OFFLINE",
+          "The online realm isn't reachable right now.",
+          "Press ESC to return to the menu.",
+          "Start server: cd server && npm run dev",
+        ]);
+      }
     } else if (this.isTutorial) {
       this.hud.setColor("#39ff88");
       const lesson = this.net.tutorialStep + 1;
