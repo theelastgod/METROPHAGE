@@ -303,6 +303,13 @@ export function bakeRemoteLook(scene: Phaser.Scene, key: string, look: PlayerLoo
   bakeWalkSheet(scene, key, customSpec(c));
 }
 
+/** Rehydrate a saved server look (+ optional callsign) into a full customization. */
+export function lookToCustomization(look: PlayerLook, callsign?: string, classId?: string): Customization {
+  const c = sanitizeCustomization(look as unknown as Partial<Customization>, classId);
+  if (callsign) c.callsign = cleanCallsign(callsign) || c.callsign;
+  return c;
+}
+
 /** Repair a possibly-stale/partial saved customization against the valid options. */
 export function sanitizeCustomization(
   raw: Partial<Customization> | undefined,

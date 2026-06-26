@@ -4,13 +4,10 @@ import NeonPipeline from "../render/NeonPipeline";
 import { getClass } from "../game/classes";
 import MusicDirector from "../audio/MusicDirector";
 import { updateSettings, type TutorialModePref } from "../systems/Settings";
+import { drawMenuBackdrop, MENU_FOOTER_Y, MENU_PAD } from "../ui/menuChrome";
 
 /**
- * Prologue — the narrative open. Instead of dropping a fresh run straight into combat,
- * this sets the world (the corps own the city's minds; you woke free; the Awakening ends
- * ownership) one click-advanced beat at a time, and — crucially — signposts that this is a
- * shared world: other free minds are fighting the same corps right now. It ends on a choice,
- * so multiplayer is offered up front: BEGIN the solo campaign, or GO ONLINE.
+ * Narrative open — full-screen beats, then deploy into training.
  */
 export default class Prologue extends Phaser.Scene {
   private beat = 0;
@@ -36,19 +33,14 @@ export default class Prologue extends Phaser.Scene {
     this.acting = false;
     this.cameras.main.setBackgroundColor(COLORS.bgVoid);
     this.cameras.main.fadeIn(500, 2, 2, 8);
-    MusicDirector.for(this)?.play("menu", this); // carry the title bed into the prologue
+    MusicDirector.for(this)?.play("menu", this);
     this.applyNeon();
-
-    // faint city grid backdrop
-    const g = this.add.graphics().setAlpha(0.25);
-    g.lineStyle(1, 0x1b2740, 0.6);
-    for (let x = 0; x <= VIEW_W; x += 32) g.lineBetween(x, 0, x, VIEW_H);
-    for (let y = 0; y <= VIEW_H; y += 32) g.lineBetween(0, y, VIEW_W, y);
+    drawMenuBackdrop(this);
 
     this.add
-      .text(VIEW_W / 2, 60, "METROPHAGE", {
+      .text(VIEW_W / 2, uiDim(52), "METROPHAGE", {
         fontFamily: "Courier New, monospace",
-        fontSize: uiFont(34),
+        fontSize: uiFont(40),
         color: "#ff2bd6",
         fontStyle: "bold",
       })
@@ -56,26 +48,30 @@ export default class Prologue extends Phaser.Scene {
       .setShadow(0, 0, "#00e5ff", 6, true, true);
 
     this.body = this.add
-      .text(VIEW_W / 2, VIEW_H / 2, "", {
+      .text(VIEW_W / 2, VIEW_H * 0.46, "", {
         fontFamily: "Courier New, monospace",
-        fontSize: uiFont(16),
+        fontSize: uiFont(20),
         color: "#eafdff",
         align: "center",
-        lineSpacing: uiDim(8),
-        wordWrap: { width: VIEW_W - uiDim(180) },
+        lineSpacing: uiDim(12),
+        wordWrap: { width: VIEW_W - MENU_PAD * 2 },
       })
       .setOrigin(0.5);
 
     this.hint = this.add
-      .text(VIEW_W / 2, VIEW_H - 40, "▸ click / SPACE to continue", {
+      .text(VIEW_W / 2, MENU_FOOTER_Y, "▸ click / SPACE to continue", {
         fontFamily: "Courier New, monospace",
-        fontSize: uiFont(12),
+        fontSize: uiFont(14),
         color: "#6b7184",
       })
       .setOrigin(0.5);
 
     this.add
-      .text(VIEW_W - uiDim(16), uiDim(16), "SKIP ▸", { fontFamily: "Courier New, monospace", fontSize: uiFont(12), color: "#6b7184" })
+      .text(VIEW_W - MENU_PAD, uiDim(20), "SKIP ▸", {
+        fontFamily: "Courier New, monospace",
+        fontSize: uiFont(13),
+        color: "#6b7184",
+      })
       .setOrigin(1, 0)
       .setInteractive({ useHandCursor: true })
       .on("pointerdown", () => this.showActions());
@@ -88,8 +84,13 @@ export default class Prologue extends Phaser.Scene {
   private showBeat() {
     const b = this.beats[this.beat];
     this.body.setText(`${b.speaker}\n\n${b.text}`).setColor(b.color).setAlpha(0);
-    // speaker line + body share the colour; the body stays bright for readability
-    this.tweens.add({ targets: this.body, alpha: 1, y: { from: VIEW_H / 2 + 10, to: VIEW_H / 2 }, duration: 450, ease: "Quad.out" });
+    this.tweens.add({
+      targets: this.body,
+      alpha: 1,
+      y: { from: VIEW_H * 0.46 + uiDim(10), to: VIEW_H * 0.46 },
+      duration: 450,
+      ease: "Quad.out",
+    });
   }
 
   private advance() {
@@ -107,7 +108,6 @@ export default class Prologue extends Phaser.Scene {
     });
   }
 
-  /** The fork — solo campaign or straight online. */
   private showActions() {
     if (this.acting) return;
     this.acting = true;
@@ -120,7 +120,7 @@ export default class Prologue extends Phaser.Scene {
       const t = this.add
         .text(VIEW_W / 2, y, label, {
           fontFamily: "Courier New, monospace",
-          fontSize: uiFont(20),
+          fontSize: uiFont(24),
           color,
           fontStyle: "bold",
           align: "center",
@@ -130,14 +130,20 @@ export default class Prologue extends Phaser.Scene {
         .setInteractive({ useHandCursor: true });
       t.setShadow(0, 0, color, 5, true, true);
       const s = this.add
-        .text(VIEW_W / 2, y + uiDim(24), sub, { fontFamily: "Courier New, monospace", fontSize: uiFont(12), color: "#9aa3b2" })
+        .text(VIEW_W / 2, y + uiDim(30), sub, {
+          fontFamily: "Courier New, monospace",
+          fontSize: uiFont(14),
+          color: "#9aa3b2",
+          align: "center",
+          wordWrap: { width: VIEW_W - MENU_PAD * 2 },
+        })
         .setOrigin(0.5)
         .setAlpha(0);
-      t.on("pointerover", () => t.setScale(1.08));
+      t.on("pointerover", () => t.setScale(1.06));
       t.on("pointerout", () => t.setScale(1));
       t.on("pointerdown", () => {
-        if (this.acting === false) return;
-        this.acting = false; // guard against double-pick
+        if (!this.acting) return;
+        this.acting = false;
         this.cameras.main.fadeOut(350, 2, 2, 8);
         this.cameras.main.once("camerafadeoutcomplete", onPick);
       });
@@ -145,23 +151,23 @@ export default class Prologue extends Phaser.Scene {
     };
 
     this.add
-      .text(VIEW_W / 2, VIEW_H / 2 - 70, `${cls.name} — ${cls.primaryName}`, {
+      .text(VIEW_W / 2, VIEW_H * 0.34, `${cls.name} — ${cls.primaryName}`, {
         fontFamily: "Courier New, monospace",
-        fontSize: uiFont(13),
+        fontSize: uiFont(16),
         color: cls.hex,
       })
       .setOrigin(0.5)
       .setAlpha(0.85);
 
     mk(
-      VIEW_H / 2 - 36,
+      VIEW_H * 0.46,
       "◢  QUICK DRILL",
       "core combat + bag + chat + one systems taste · ~9 lessons",
       "#00e5ff",
       () => this.deployTutorial("quick"),
     );
     mk(
-      VIEW_H / 2 + 44,
+      VIEW_H * 0.58,
       "◢  FULL TRAINING",
       "every major system explained — forge, factions, market, PvP, singularity · ~23 lessons",
       "#b06bff",
@@ -182,7 +188,7 @@ export default class Prologue extends Phaser.Scene {
     const p = cam.getPostPipeline("Neon");
     const neon = (Array.isArray(p) ? p[0] : p) as NeonPipeline | undefined;
     if (neon) {
-      neon.heat = 0.06; // narrative screen — keep the prose crisp
+      neon.heat = 0.06;
       neon.tint = [0, 0.9, 1];
       neon.tintAmt = 0.16;
     }

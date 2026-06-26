@@ -1628,16 +1628,21 @@ export class WorldDO {
     const fac = Number.isInteger(faction) && faction! >= 0 && faction! < FACTION_COUNT ? faction! : 0;
     const p = this.players.get(id) ?? (await this.loadPlayer(id, name, fac));
     p.faction = fac;
-    // Appearance: a client-supplied look wins + is persisted; otherwise keep the one
-    // loaded from D1 (so traits survive relogin even if the client has no local save).
-    if (look) {
+    const lookLocked = !!p.look;
+    // One-time character creation: persist a client look only when none is stored yet.
+    // Wallet identities keep their saved appearance across devices; later edits are ignored.
+    if (look && !lookLocked) {
       p.look = look;
+      p.dirty = true;
+    }
+    if (!lookLocked && look && id.startsWith("w:")) {
+      p.name = name;
       p.dirty = true;
     }
     this.players.set(id, p);
     this.sessions.set(ws, id);
     // Persist identity + look on the socket so a hibernation wake can re-attach it (above).
-    ws.serializeAttachment({ id, name, faction: fac, look: p.look } satisfies SessionAttach);
+    ws.serializeAttachment({ id, name: p.name, faction: fac, look: p.look } satisfies SessionAttach);
     this.send(ws, {
       t: "welcome",
       id,
@@ -1646,6 +1651,8 @@ export class WorldDO {
       y: round2(p.y),
       tickMs: NET_TICK_MS,
       world: { w: WORLD_W, h: WORLD_H },
+      look: p.look,
+      lookLocked: lookLocked || !!p.look,
     });
     if (this.inTutorial()) {
       if (p.tutorialDone) {

@@ -1,5 +1,6 @@
 import { WorldDO, parseZone, NAMED_ZONES, type Env } from "./world";
 import { getAccount, quote, withdraw, deposit, simSettlement, type Settlement } from "./metro";
+import { verifyWalletLogin } from "./auth";
 
 export { WorldDO };
 
@@ -32,6 +33,30 @@ const json = (body: unknown, status = 200): Response =>
  * ranking players by a stat. Lives in the Worker, not a DO, because it aggregates across
  * ALL zones — the whole point of keeping global state in D1.
  */
+/** Wallet-authenticated character lookup — used by the title screen before WS login. */
+async function handleIdentity(req: Request, env: Env): Promise<Response> {
+  try {
+    const b = (await req.json()) as { wallet?: string; sig?: string; ts?: number };
+    const id = verifyWalletLogin({ wallet: b.wallet ?? "", sig: b.sig ?? "", ts: Number(b.ts) });
+    if (!id) return json({ ok: false, reason: "wallet sign-in failed" }, 401);
+    const row = await env.DB.prepare("SELECT name, look FROM players WHERE id = ?")
+      .bind(id)
+      .first<{ name: string; look: string | null }>();
+    let look: unknown = null;
+    if (row?.look) {
+      try {
+        look = JSON.parse(row.look);
+      } catch {
+        look = null;
+      }
+    }
+    const locked = !!row?.look;
+    return json({ ok: true, id, name: row?.name ?? null, look, locked });
+  } catch (e) {
+    return json({ ok: false, reason: String((e as Error)?.message ?? e) }, 400);
+  }
+}
+
 async function handleLeaderboard(url: URL, env: Env): Promise<Response> {
   const stat = (url.searchParams.get("stat") || "kills").replace(/[^a-z]/g, "").slice(0, 24);
   const n = Math.min(50, Math.max(1, parseInt(url.searchParams.get("n") || "10", 10)));
@@ -101,6 +126,8 @@ export default {
     }
 
     if (url.pathname === "/leaderboard") return handleLeaderboard(url, env);
+
+    if (url.pathname === "/identity" && req.method === "POST") return handleIdentity(req, env);
 
     if (url.pathname.startsWith("/metro/")) return handleMetro(url, req, env);
 

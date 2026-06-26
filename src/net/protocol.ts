@@ -172,6 +172,8 @@ export type ServerMsg =
       tickMs: number;
       world: { w: number; h: number };
       faction: number;
+      look?: PlayerLook;
+      lookLocked?: boolean;
     }
   | {
       t: "state";

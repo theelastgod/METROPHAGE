@@ -309,9 +309,10 @@ function drawPose(ctx: CanvasRenderingContext2D, facing: Facing, spec: CharSpec,
   px(tx + tw + 1, raY + 1, 1, 5, t.a); // right arm in shadow
   px(tx - 2, laY + 3, 1, 1, t.a); // elbow crease L
   px(tx + tw + 1, raY + 3, 1, 1, t.a); // elbow crease R
-  part(tx - 3, laY + 7, 3, 3, t.a); // left fist (gloved)
-  part(tx + tw, raY + 7, 3, 3, t.a); // right fist
-  px(tx - 2, laY + 8, 1, 1, t.rim, 0.55); // knuckle glint
+  part(tx - 3, laY + 7, 3, 4, t.a); // left hand (gloved)
+  part(tx + tw, raY + 7, 3, 4, t.a); // right hand
+  px(tx - 2, laY + 7, 2, 1, t.c, 0.5); // back of hand highlight
+  px(tx - 2, laY + 9, 1, 1, t.rim, 0.55); // knuckle glint
 
   // ── shoulder armor (over the arms/yoke) ─────────────────────────
   if (spec.shoulders && spec.shoulders !== "none") drawShoulders(spec, px, part, tx, tw);
@@ -336,9 +337,13 @@ function drawPose(ctx: CanvasRenderingContext2D, facing: Facing, spec: CharSpec,
     for (let i = 0; i < 6; i++) px(tx + 2 + i, 16 + i, 2, 1, t.d, 0.9); // bandolier
   }
 
-  // ── head ────────────────────────────────────────────────────────
-  if (spec.skin != null) drawHumanHead(facing, spec, px, part);
-  else drawHead(facing, spec, px, part);
+  // ── neck + head (humanoid) ──────────────────────────────────────
+  if (spec.skin != null) {
+    const skinT = tonesFromColor(spec.skin);
+    part(cx - 2, 11, 4, 4, skinT.b);
+    px(cx - 1, 11, 2, 3, skinT.c);
+    drawHumanHead(facing, spec, px, part);
+  } else drawHead(facing, spec, px, part);
 }
 
 type Px = (x: number, y: number, w: number, h: number, c: number, a?: number) => void;
@@ -405,26 +410,29 @@ function drawHumanHead(facing: Facing, spec: CharSpec, px: Px, part: Part) {
   const skin = tonesFromColor(spec.skin ?? 0xe0b48a);
   const hair = tonesFromColor(spec.hairColor ?? 0x2a1d14);
 
-  // skull / head in skin
-  part(cx - 5, 3, 10, 11, skin.b);
-  px(cx - 4, 4, 8, 3, skin.c); // lit forehead
-  px(cx - 4, 4, 6, 1, skin.d); // crown highlight
-  px(cx + 3, 6, 1, 7, skin.a); // side shadow
-  px(cx - 5, 6, 1, 6, skin.rim, 0.6); // cool rim
+  // skull / head in skin — slightly larger for readable humanoid silhouette
+  part(cx - 6, 2, 12, 12, skin.b);
+  px(cx - 5, 3, 10, 4, skin.c); // lit forehead
+  px(cx - 5, 3, 7, 1, skin.d); // crown highlight
+  px(cx + 3, 5, 2, 8, skin.a); // side shadow
+  px(cx - 6, 5, 1, 7, skin.rim, 0.6); // cool rim
 
   if (back) {
-    px(cx - 4, 5, 8, 8, skin.a); // back of the head — no face
+    px(cx - 5, 4, 10, 9, skin.a); // back of the head — no face
     drawHair("up", spec, px, hair);
+    drawHumanHeadgear(facing, spec, px, part);
     return;
   }
 
   // face — cheeks / eyes / nose / mouth, lit from the top-left
-  px(cx - 4, 8, 8, 5, skin.b);
-  px(cx - 4, 8, 3, 3, skin.c, 0.7); // lit left cheek
-  px(cx + 2, 9, 2, 3, skin.a, 0.5); // shaded right cheek
-  px(cx - 4, 12, 8, 1, skin.a); // jaw shadow
-  px(cx - 3, 9, 2, 2, 0x0a0b12);
-  px(cx + 1, 9, 2, 2, 0x0a0b12); // eye sockets
+  px(cx - 5, 8, 10, 6, skin.b);
+  px(cx - 5, 8, 4, 4, skin.c, 0.7); // lit left cheek
+  px(cx + 2, 9, 3, 4, skin.a, 0.5); // shaded right cheek
+  px(cx - 5, 13, 10, 1, skin.a); // jaw shadow
+  px(cx - 3, 9, 2, 2, 0xf0f0f5);
+  px(cx + 1, 9, 2, 2, 0xf0f0f5); // sclera
+  px(cx - 3, 10, 1, 1, 0x1a1020);
+  px(cx + 1, 10, 1, 1, 0x1a1020); // pupils
   px(cx - 3, 9, 1, 1, skin.e);
   px(cx + 1, 9, 1, 1, skin.e); // catchlights
   px(cx - 3, 11, 2, 1, skin.d, 0.45); // under-eye light L
@@ -438,6 +446,39 @@ function drawHumanHead(facing: Facing, spec: CharSpec, px: Px, part: Part) {
 
   if (spec.beard && spec.beard !== "none") drawBeard(spec, px, cx, hair);
   drawHair(facing, spec, px, hair);
+  drawHumanHeadgear(facing, spec, px, part);
+}
+
+/** Light headgear layered over a human face (cap, hood, helmet rim, etc.). */
+function drawHumanHeadgear(facing: Facing, spec: CharSpec, px: Px, part: Part) {
+  if (facing === "up") return;
+  const t = spec.tones;
+  const cx = 16;
+  if (spec.head === "cap") {
+    px(cx - 7, 1, 14, 3, t.b);
+    px(cx - 6, 2, 12, 1, t.c);
+    px(cx - 5, 3, 10, 1, t.d, 0.65);
+  } else if (spec.head === "hood") {
+    part(cx - 8, 1, 16, 5, t.a);
+    px(cx - 7, 2, 14, 1, t.b);
+    px(cx - 6, 3, 12, 1, t.rim, 0.5);
+  } else if (spec.head === "helmet") {
+    px(cx - 7, 1, 14, 3, t.c);
+    px(cx - 6, 0, 12, 2, t.d, 0.55);
+    px(cx - 5, 1, 10, 1, t.e, 0.35);
+  } else if (spec.head === "mohawk") {
+    px(cx - 1, 0, 2, 5, t.e);
+    px(cx - 1, 0, 1, 4, t.d);
+  } else if (spec.head === "horns") {
+    px(cx - 8, 1, 1, 3, t.d);
+    px(cx + 7, 1, 1, 3, t.d);
+  } else if (spec.head === "crown") {
+    px(cx - 7, 2, 14, 1, t.d);
+    for (const ox of [-5, -1, 3]) px(cx + ox, 0, 1, 2, t.e);
+  } else if (spec.head === "drone") {
+    px(cx + 5, 3, 3, 2, t.b);
+    px(cx + 6, 3, 1, 1, t.e);
+  }
 }
 
 /** Facial hair on the human face (uses the hair tones). */
