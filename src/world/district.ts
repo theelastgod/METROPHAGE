@@ -190,6 +190,36 @@ export function buildSubway(): TileGrid {
 }
 export const SUBWAY_SPAWN = { x: 4 * TILE + TILE / 2, y: 7 * TILE + TILE / 2 };
 
+/**
+ * THE DRILL YARD — tutorial zone. A linear training floor: spawn + skip on the west,
+ * combat drill + infection node in the middle, one-way deploy portal on the east wall.
+ * Shared by client render and server sim (zone "tutorial").
+ */
+export function buildTutorial(): TileGrid {
+  const g: TileGrid = [];
+  for (let y = 0; y < GRID_H; y++) {
+    const row: number[] = [];
+    for (let x = 0; x < GRID_W; x++) {
+      const border = x < 3 || x >= GRID_W - 3 || y < 2 || y >= GRID_H - 2;
+      row.push(border ? TILE_INNER_WALL : TILE_INNER_FLOOR);
+    }
+    g.push(row);
+  }
+  // central corridor dividers (open archways)
+  for (let y = 8; y < GRID_H - 8; y++) {
+    if (y === 14 || y === 15) continue;
+    g[y][14] = TILE_INNER_WALL;
+    g[y][26] = TILE_INNER_WALL;
+  }
+  return g;
+}
+
+export const TUTORIAL_SPAWN = { x: 6 * TILE + TILE / 2, y: 15 * TILE + TILE / 2 };
+/** East gate — the one-way portal into the live city. */
+export const TUTORIAL_PORTAL = { x: 36 * TILE + TILE / 2, y: 15 * TILE + TILE / 2 };
+/** Infection-node drill tile (centre chamber). */
+export const TUTORIAL_NODE_TILE: [number, number] = [20, 15];
+
 /** Player start in world (pixel) coordinates, at tile center, from the district def. */
 export function spawnPoint(grid: TileGrid, def: DistrictDef = DISTRICTS[0]): { x: number; y: number } {
   const [sx, sy] = def.spawnTile;

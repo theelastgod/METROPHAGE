@@ -157,7 +157,7 @@ export default class Prologue extends Phaser.Scene {
       "◢  ENTER THE CITY",
       "your personal arc begins in the shared world — other free minds fight beside you",
       "#00e5ff",
-      () => this.scene.start("Online", { zone: "safe" }),
+      () => this.scene.start("Online", { zone: "tutorial" }),
     );
   }
 

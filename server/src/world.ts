@@ -46,7 +46,27 @@ import {
   NODE_HOLD_SCORE_PER_SEC,
   inPvpZone,
 } from "../../src/net/sim";
-import { buildGrid, spawnPoint, isWall, buildSafehouse, SAFEHOUSE_SPAWN, buildSubway, SUBWAY_SPAWN, type TileGrid } from "../../src/world/district";
+import {
+  buildGrid,
+  spawnPoint,
+  isWall,
+  buildSafehouse,
+  SAFEHOUSE_SPAWN,
+  buildSubway,
+  SUBWAY_SPAWN,
+  buildTutorial,
+  TUTORIAL_SPAWN,
+  TUTORIAL_NODE_TILE,
+  type TileGrid,
+} from "../../src/world/district";
+import {
+  TUTORIAL_ZONE,
+  TUTORIAL_STEPS,
+  TUTORIAL_TOTAL,
+  tutorialStepAt,
+  tutorialReadyForPortal,
+  type TutorialKind,
+} from "../../src/net/tutorial";
 import { DISTRICTS } from "../../src/game/districts";
 import { rollItem, rollModsFor, effectiveMods, nextRarity, SLOTS, type Item, type Slot, type Rarity } from "../../src/game/items";
 import {
@@ -162,7 +182,7 @@ export const parseZone = (z: string | null): number => {
  *  the Worker router so these zone names pass through instead of collapsing to a district. */
 export const INTERIOR_ZONES = new Set(["safe", "clinic", "bar", "den", "shop"]);
 /** All named (non-district) zones the Worker routes by name — interiors + the subway dungeon. */
-export const NAMED_ZONES = new Set([...INTERIOR_ZONES, "subway"]);
+export const NAMED_ZONES = new Set([...INTERIOR_ZONES, "subway", TUTORIAL_ZONE]);
 
 export interface Env {
   WORLD: DurableObjectNamespace;
@@ -210,6 +230,12 @@ interface PlayerState {
   lastEmoteTick: number;
   // personal campaign arc (Path A — per-player in the shared world)
   campaign: Campaign;
+  // tutorial drill yard — onboarding before the one-way deploy portal
+  tutorialDone: boolean;
+  tutorialStep: number;
+  tutorialProgress: number;
+  tutorialAnchorX: number;
+  tutorialAnchorY: number;
   // achievements + leaderboards — cross-zone lifetime counters persisted to D1 player_stats
   stats: Record<string, number>; // additive counters (kills, bosses, captures, credits, pvp)
   statDelta: Record<string, number>; // unflushed increments queued for D1
@@ -451,6 +477,16 @@ export class WorldDO {
     this.zoneReady = true;
     // THE UNDERLINE — the subway dungeon: an indoor COMBAT zone (no PvP/weather via the
     // interior flag, but it DOES populate a tough HSS garrison + a boss).
+    if (zone === TUTORIAL_ZONE) {
+      this.interior = false;
+      this.zoneName = TUTORIAL_ZONE;
+      this.districtIndex = 0;
+      this.grid = buildTutorial();
+      this.spawn = TUTORIAL_SPAWN;
+      this.spawnTutorial();
+      void this.state.storage.put("zone", TUTORIAL_ZONE);
+      return;
+    }
     if (zone === "subway") {
       this.interior = true; // indoor: no PvP, client skips weather
       this.zoneName = "subway";
@@ -594,6 +630,41 @@ export class WorldDO {
       lastAoeTick: 0,
       enraged: false,
     });
+  }
+
+  /** Tutorial drill yard — one weak patrol cop + a single infection node. No boss. */
+  private spawnTutorial() {
+    const [tx, ty] = [10, 15];
+    const x = tx * TILE + TILE / 2;
+    const y = ty * TILE + TILE / 2;
+    const id = this.nextEnemyId++;
+    this.enemies.set(id, {
+      id,
+      x,
+      y,
+      ox: x,
+      oy: y,
+      hp: 40,
+      maxHp: 40,
+      respawnTick: 0,
+      lastFireTick: 0,
+      kind: 0,
+    });
+    const [nx, ny] = TUTORIAL_NODE_TILE;
+    this.nodes = [
+      {
+        id: 0,
+        x: nx * TILE + TILE / 2,
+        y: ny * TILE + TILE / 2,
+        owner: NEUTRAL,
+        progress: 0,
+        by: NEUTRAL,
+      },
+    ];
+  }
+
+  private inTutorial(): boolean {
+    return this.zoneName === TUTORIAL_ZONE;
   }
 
   /** Raid-tier boss tick: HP-gated phase escalation, telegraphed AoE, summoned adds, enrage. */
@@ -809,6 +880,7 @@ export class WorldDO {
     if (msg.t === "cosmetic") return this.onCosmetic(ws, msg);
     if (msg.t === "bounty") return this.onBounty(ws, msg);
     if (msg.t === "quest") return this.onQuest(ws, msg);
+    if (msg.t === "tutorial") return this.onTutorial(ws, msg);
     if (msg.t === "party") return this.onParty(ws, msg);
     if (msg.t === "mute") return this.onMute(ws, msg);
     if (msg.t === "emote") return this.onEmote(ws, msg);
@@ -859,6 +931,7 @@ export class WorldDO {
     if (!text) return;
     if ((this.tick - p.lastChatTick) * NET_TICK_MS < 300) return; // rate-limit ~3/s
     p.lastChatTick = this.tick;
+    if (this.inTutorial() && msg.ch === "zone") this.tutorialEvent(p, "chat");
     const out = { t: "chat", from: p.name, faction: p.faction, ch: msg.ch, text };
     if (msg.ch === "whisper") {
       const to = (msg.to || "").toLowerCase();
@@ -1572,8 +1645,27 @@ export class WorldDO {
       tickMs: NET_TICK_MS,
       world: { w: WORLD_W, h: WORLD_H },
     });
-    if (!p.campaign.activeId && p.campaign.completed.length === 0) p.campaign.accept("the_wake");
-    this.sendCampaignBeat(ws, p); // brief on the current personal storyline beat
+    if (this.inTutorial()) {
+      if (p.tutorialDone) {
+        this.send(ws, { t: "redirect", zone: "safe", text: "Drill already complete — deploying." });
+        try {
+          ws.close(1000, "graduate");
+        } catch {
+          /* noop */
+        }
+        return;
+      }
+      p.tutorialAnchorX = p.x;
+      p.tutorialAnchorY = p.y;
+      if (p.inventory.length === 0) {
+        p.inventory.push(rollItem(1, 0.5));
+        this.send(ws, { t: "inv", items: p.inventory });
+      }
+      this.sendTutorialState(p);
+    } else {
+      if (!p.campaign.activeId && p.campaign.completed.length === 0) p.campaign.accept("the_wake");
+      this.sendCampaignBeat(ws, p);
+    }
     this.send(ws, { t: "inv", items: p.inventory }); // hydrate their held gear
     this.sendLoadout(ws, p); // hydrate equipped gear + derived max HP
     this.noteDeepest(p); // arriving in this district may set a "deepest reached" milestone
@@ -1598,11 +1690,13 @@ export class WorldDO {
     let xp = 0;
     let cores = 0;
     let campaign = new Campaign();
+    let tutorialDone = false;
+    let tutorialStep = 0;
     let inventory: Item[] = [];
     let look: PlayerLook | undefined;
     let equipped: Partial<Record<Slot, Item>> = {};
     const row = await this.env.DB.prepare(
-      "SELECT x, y, credits, xp, zone, cores, quest_step, campaign, inventory, look, equipped FROM players WHERE id = ?",
+      "SELECT x, y, credits, xp, zone, cores, quest_step, campaign, tutorial_done, tutorial_step, inventory, look, equipped FROM players WHERE id = ?",
     )
       .bind(id)
       .first<{
@@ -1614,6 +1708,8 @@ export class WorldDO {
         cores: number;
         quest_step: number;
         campaign: string | null;
+        tutorial_done: number;
+        tutorial_step: number;
         inventory: string;
         look: string | null;
         equipped: string;
@@ -1629,14 +1725,17 @@ export class WorldDO {
       inventory = parseInventory(row.inventory);
       look = parseLook(row.look);
       equipped = parseEquipped(row.equipped);
-      // Same zone → resume exact position. Different zone → they just travelled in,
-      // so spawn at this district's entrance (x,y already hold the spawn).
-      if (row.zone === this.zoneName) {
+      tutorialDone = !!row.tutorial_done;
+      tutorialStep = row.tutorial_step ?? 0;
+      if (this.inTutorial() && tutorialDone) {
+        x = SAFEHOUSE_SPAWN.x;
+        y = SAFEHOUSE_SPAWN.y;
+      } else if (row.zone === this.zoneName) {
         x = row.x;
         y = row.y;
       }
     } else {
-      await this.upsert(id, name, x, y, 0, 0, 0, campaign.toData(), [], undefined, {});
+      await this.upsert(id, name, x, y, 0, 0, 0, campaign.toData(), [], undefined, {}, false, 0);
     }
     // achievements + leaderboard counters (cross-zone, shared D1)
     const stats: Record<string, number> = {};
@@ -1739,6 +1838,11 @@ export class WorldDO {
       lastChatTick: -999,
       lastEmoteTick: -999,
       campaign,
+      tutorialDone,
+      tutorialStep,
+      tutorialProgress: 0,
+      tutorialAnchorX: x,
+      tutorialAnchorY: y,
       stats,
       statDelta: {},
       deepest,
@@ -1830,6 +1934,7 @@ export class WorldDO {
 
   /** Fire a gameplay trigger against the active campaign stage. */
   private campaignEvent(p: PlayerState, type: QuestTriggerType, n = 1) {
+    if (this.inTutorial()) return;
     const r = p.campaign.onTrigger(type, n);
     if (!r) return;
     this.campaignBeat(p);
@@ -1866,6 +1971,94 @@ export class WorldDO {
       if (!p.campaign.isTalkStage()) return sys("nothing to report right now");
       p.campaign.onTalk();
       this.campaignBeat(p);
+    }
+  }
+
+  private sendTutorialState(p: PlayerState) {
+    const step = tutorialStepAt(p.tutorialStep) ?? tutorialStepAt(TUTORIAL_TOTAL - 1)!;
+    const payload = {
+      t: "tutorial" as const,
+      step: p.tutorialStep,
+      total: TUTORIAL_TOTAL,
+      title: step.title,
+      teach: step.teach,
+      hint: step.hint,
+      objective: step.title,
+      progress: p.tutorialProgress,
+      count: step.count,
+      portalOpen: tutorialReadyForPortal(p.tutorialStep),
+    };
+    this.sendTo(p.id, payload);
+  }
+
+  private tutorialEvent(p: PlayerState, kind: TutorialKind, n = 1) {
+    if (!this.inTutorial() || p.tutorialDone) return;
+    const step = tutorialStepAt(p.tutorialStep);
+    if (!step || step.kind !== kind) return;
+    p.tutorialProgress += n;
+    if (p.tutorialProgress >= step.count) {
+      p.tutorialStep = Math.min(TUTORIAL_TOTAL, p.tutorialStep + 1);
+      p.tutorialProgress = 0;
+      p.dirty = true;
+      this.sendTo(p.id, { t: "sys", text: `✓ ${step.title} — cleared` });
+    }
+    this.sendTutorialState(p);
+  }
+
+  private async graduateTutorial(p: PlayerState, ws: WebSocket, skipped: boolean) {
+    p.tutorialDone = true;
+    p.tutorialStep = TUTORIAL_TOTAL;
+    p.tutorialProgress = 0;
+    p.x = SAFEHOUSE_SPAWN.x;
+    p.y = SAFEHOUSE_SPAWN.y;
+    p.dirty = true;
+    await this.upsert(
+      p.id,
+      p.name,
+      p.x,
+      p.y,
+      p.credits,
+      p.xp,
+      p.cores,
+      p.campaign.toData(),
+      p.inventory,
+      p.look,
+      p.equipped,
+      true,
+      TUTORIAL_TOTAL,
+      "safe",
+    );
+    this.send(ws, {
+      t: "redirect",
+      zone: "safe",
+      text: skipped ? "Tutorial skipped — deploying to the live city." : "Drill complete — welcome to the city.",
+    });
+    try {
+      ws.close(1000, "graduate");
+    } catch {
+      /* already closed */
+    }
+    this.sessions.delete(ws);
+    this.players.delete(p.id);
+  }
+
+  private onTutorial(ws: WebSocket, msg: Extract<ClientMsg, { t: "tutorial" }>) {
+    const p = this.playerFor(ws);
+    if (!p || !this.inTutorial()) return;
+    if (msg.action === "skip") {
+      void this.graduateTutorial(p, ws, true);
+      return;
+    }
+    if (msg.action === "graduate") {
+      if (!tutorialReadyForPortal(p.tutorialStep)) {
+        this.send(ws, { t: "sys", text: "finish the remaining drills first — or press SKIP" });
+        return;
+      }
+      void this.graduateTutorial(p, ws, false);
+      return;
+    }
+    if (msg.action === "progress" && msg.kind) {
+      this.tutorialEvent(p, msg.kind as TutorialKind);
     }
   }
 
@@ -2045,6 +2238,7 @@ export class WorldDO {
     if (prev) p.inventory.push(prev); // the old piece returns to the bag
     this.recomputeStats(p);
     p.dirty = true;
+    if (this.inTutorial()) this.tutorialEvent(p, "equip");
     this.send(ws, { t: "inv", items: p.inventory });
     this.sendLoadout(ws, p);
   }
@@ -2181,6 +2375,7 @@ export class WorldDO {
     // exceed it, and a hit is never client-reported.
     if ((this.tick - p.lastFireTick) * NET_TICK_MS < PLAYER_FIRE_MS) return;
     p.lastFireTick = this.tick;
+    if (this.inTutorial()) this.tutorialEvent(p, "fire");
     this.shots.push({
       id: this.nextShotId++,
       x: p.x,
@@ -2281,6 +2476,9 @@ export class WorldDO {
       if (p.mx !== 0 || p.my !== 0) {
         stepMove(p, { mx: p.mx, my: p.my }, this.grid, NET_TICK_MS);
         p.dirty = true;
+        if (this.inTutorial() && dist2(p.x, p.y, p.tutorialAnchorX, p.tutorialAnchorY) > 96 * 96) {
+          this.tutorialEvent(p, "move");
+        }
       }
       // The Convergence: surviving a meltdown (alive while it rages) advances it.
       if (meltdown) this.campaignSecureCheck(p);
@@ -2371,56 +2569,61 @@ export class WorldDO {
               e.respawnTick = this.tick + ticks(isBoss ? BOSS_RESPAWN_MS : 4000);
               const killer = owner;
               if (killer) {
-                const mult = isBoss ? 12 : 1; // a boss pays out like a dozen grunts
-                const gained = Math.round(CREDITS_PER_KILL * mult * (1 + (killer.guildBonus || 0))); // cell perk
-                killer.credits += gained; // server-authoritative currency
-                killer.xp += XP_PER_KILL * mult; // server-authoritative progression
-                killer.level = levelForXp(killer.xp);
-                killer.dirty = true;
-                this.bumpMeta("f" + killer.faction, isBoss ? 10 : 1); // faction contribution
-                this.campaignEvent(killer, "kill");
-                // achievement counters (cross-zone, D1)
-                this.bumpStat(killer, "kills", 1);
-                if (isBoss) this.bumpStat(killer, "bosses", 1);
-                this.bumpStat(killer, "credits", gained);
-                // daily contracts + NPC bounties
-                this.contractEvent(killer, "kill", 1);
-                this.bountyEvent(killer, "kill", 1);
-                if (isBoss) {
-                  this.contractEvent(killer, "boss", 1);
-                  this.bountyEvent(killer, "boss", 1);
-                }
-                // item loot — a boss ALWAYS drops, rarity-boosted; a grunt rolls the chance.
-                // Pushed (FIFO-capped) to the killer's client only.
-                if (isBoss || Math.random() < arch.loot.chance) {
-                  killer.inventory.push(rollItem(killer.level, isBoss ? 2.5 : arch.loot.boost));
-                  if (killer.inventory.length > INVENTORY_CAP) killer.inventory.shift();
-                  this.sendTo(killer.id, { t: "inv", items: killer.inventory });
-                }
-                // Zone-wide kill feed so everyone knows the boss fell (and will be back).
-                if (isBoss) {
-                  this.broadcast({ t: "sys", text: `▲ ${killer.name} slew ${e.name} — it will reform soon` });
+                if (this.inTutorial()) {
+                  this.tutorialEvent(killer, "kill");
+                  const pid = this.nextPickupId++;
+                  this.pickups.set(pid, {
+                    id: pid,
+                    x: e.x,
+                    y: e.y,
+                    kind: PICKUP_CORE,
+                    dieTick: this.tick + ticks(PICKUP_TTL_MS),
+                  });
+                } else {
+                  const mult = isBoss ? 12 : 1;
+                  const gained = Math.round(CREDITS_PER_KILL * mult * (1 + (killer.guildBonus || 0)));
+                  killer.credits += gained;
+                  killer.xp += XP_PER_KILL * mult;
+                  killer.level = levelForXp(killer.xp);
+                  killer.dirty = true;
+                  this.bumpMeta("f" + killer.faction, isBoss ? 10 : 1);
+                  this.campaignEvent(killer, "kill");
+                  this.bumpStat(killer, "kills", 1);
+                  if (isBoss) this.bumpStat(killer, "bosses", 1);
+                  this.bumpStat(killer, "credits", gained);
+                  this.contractEvent(killer, "kill", 1);
+                  this.bountyEvent(killer, "kill", 1);
+                  if (isBoss) {
+                    this.contractEvent(killer, "boss", 1);
+                    this.bountyEvent(killer, "boss", 1);
+                  }
+                  if (isBoss || Math.random() < arch.loot.chance) {
+                    killer.inventory.push(rollItem(killer.level, isBoss ? 2.5 : arch.loot.boost));
+                    if (killer.inventory.length > INVENTORY_CAP) killer.inventory.shift();
+                    this.sendTo(killer.id, { t: "inv", items: killer.inventory });
+                  }
+                  if (isBoss) {
+                    this.broadcast({ t: "sys", text: `▲ ${killer.name} slew ${e.name} — it will reform soon` });
+                  }
                 }
               }
-              // raid cleanup: a felled boss clears its summoned adds + any pending hazards
               if (isBoss) {
                 for (const [aid, ae] of this.enemies) if (ae.add) this.enemies.delete(aid);
                 this.hazards = [];
               }
-              // shared meta: every kill (any player, ANY zone) pushes the server-wide
-              // Singularity. Optimistic local bump now; flushed/synced to D1 on persist.
-              this.bumpMeta("singularity", isBoss ? SING_PER_KILL * 8 : SING_PER_KILL, SING_MAX);
-              // loot roll — server decides the drop
-              if (Math.random() < LOOT_DROP_CHANCE) {
-                const kind = Math.random() < 0.25 ? PICKUP_CORE : PICKUP_CREDIT;
-                const pid = this.nextPickupId++;
-                this.pickups.set(pid, {
-                  id: pid,
-                  x: e.x,
-                  y: e.y,
-                  kind,
-                  dieTick: this.tick + ticks(PICKUP_TTL_MS),
-                });
+              if (!this.inTutorial()) {
+                this.bumpMeta("singularity", isBoss ? SING_PER_KILL * 8 : SING_PER_KILL, SING_MAX);
+                if (Math.random() < LOOT_DROP_CHANCE) {
+                  const kind = Math.random() < 0.25 ? PICKUP_CORE : PICKUP_CREDIT;
+                  const pid = this.nextPickupId++;
+                  this.pickups.set(pid, {
+                    id: pid,
+                    x: e.x,
+                    y: e.y,
+                    kind,
+                    dieTick: this.tick + ticks(PICKUP_TTL_MS),
+                  });
+                }
               }
             }
             break;
@@ -2482,16 +2685,17 @@ export class WorldDO {
       for (const p of this.players.values()) {
         if (p.dead) continue;
         if (dist2(p.x, p.y, pu.x, pu.y) <= PR2) {
-          if (pu.kind === PICKUP_CORE) {
-            p.cores += 1; // a tradeable data core
+          if (this.inTutorial()) {
+            this.tutorialEvent(p, "pickup");
+          } else if (pu.kind === PICKUP_CORE) {
+            p.cores += 1;
             p.xp += 8;
             p.level = levelForXp(p.xp);
-            /* cores feed bounties/dailies; campaign collect stages use talk/dive */
             this.bountyEvent(p, "collect", 1);
           } else {
             p.credits += 6;
           }
-          p.dirty = true;
+          if (!this.inTutorial()) p.dirty = true;
           this.pickups.delete(pid);
           break;
         }
@@ -2516,19 +2720,22 @@ export class WorldDO {
       node.by = contested ? NEUTRAL : by;
       if (node.by !== NEUTRAL && node.by === node.owner) {
         node.progress = 1; // held
-        this.bumpMeta("f" + node.by, NODE_HOLD_SCORE_PER_SEC * dts);
+        if (!this.inTutorial()) this.bumpMeta("f" + node.by, NODE_HOLD_SCORE_PER_SEC * dts);
       } else if (node.owner === NEUTRAL && node.by !== NEUTRAL) {
         node.progress = Math.min(1, node.progress + NODE_CAPTURE_PER_SEC * dts);
         if (node.progress >= 1) {
           node.owner = node.by;
-          this.bumpMeta("f" + node.by, FACTION_CAPTURE_SCORE);
+          if (!this.inTutorial()) this.bumpMeta("f" + node.by, FACTION_CAPTURE_SCORE);
           // credit the players who channelled it (quest "capture" objective)
           for (const pl of this.players.values()) {
             if (!pl.dead && pl.faction === node.by && dist2(pl.x, pl.y, node.x, node.y) <= CR2) {
-              this.campaignCapture(pl);
-              this.campaignSecureCheck(pl);
-              this.bumpStat(pl, "captures", 1);
-              this.contractEvent(pl, "capture", 1);
+              if (this.inTutorial()) this.tutorialEvent(pl, "capture");
+              else {
+                this.campaignCapture(pl);
+                this.campaignSecureCheck(pl);
+                this.bumpStat(pl, "captures", 1);
+                this.contractEvent(pl, "capture", 1);
+              }
             }
           }
         }
@@ -2596,6 +2803,10 @@ export class WorldDO {
         campaignStage: p.campaign.stage,
         campaignProgress: p.campaign.progress,
         campaignObjective: p.campaign.currentStage?.objective ?? "",
+        tutorialStep: p.tutorialStep,
+        tutorialProgress: p.tutorialProgress,
+        tutorialDone: p.tutorialDone,
+        inTutorial: this.inTutorial(),
         look: applyCosmetic(p.look, p.cosmeticEquipped), // relay the equipped transmog so others see it
       });
     }
@@ -2777,7 +2988,21 @@ export class WorldDO {
     for (const p of this.players.values()) {
       if (p.dirty) {
         p.dirty = false;
-        await this.upsert(p.id, p.name, p.x, p.y, p.credits, p.xp, p.cores, p.campaign.toData(), p.inventory, p.look, p.equipped);
+        await this.upsert(
+          p.id,
+          p.name,
+          p.x,
+          p.y,
+          p.credits,
+          p.xp,
+          p.cores,
+          p.campaign.toData(),
+          p.inventory,
+          p.look,
+          p.equipped,
+          p.tutorialDone,
+          p.tutorialStep,
+        );
       }
       await this.flushStats(p); // lifetime counters / achievements may change without `dirty`
       await this.flushDailies(p);
@@ -2874,13 +3099,33 @@ export class WorldDO {
     inventory: Item[],
     look: PlayerLook | undefined,
     equipped: Partial<Record<Slot, Item>>,
+    tutorialDone = false,
+    tutorialStep = 0,
+    zoneOverride?: string,
   ) {
+    const zone = zoneOverride ?? this.zoneName;
     try {
       await this.env.DB.prepare(
-        "INSERT INTO players (id, name, x, y, zone, credits, xp, cores, campaign, inventory, look, equipped, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) " +
-          "ON CONFLICT(id) DO UPDATE SET x=excluded.x, y=excluded.y, credits=excluded.credits, xp=excluded.xp, cores=excluded.cores, campaign=excluded.campaign, inventory=excluded.inventory, look=excluded.look, equipped=excluded.equipped, updated_at=excluded.updated_at",
+        "INSERT INTO players (id, name, x, y, zone, credits, xp, cores, campaign, tutorial_done, tutorial_step, inventory, look, equipped, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) " +
+          "ON CONFLICT(id) DO UPDATE SET x=excluded.x, y=excluded.y, zone=excluded.zone, credits=excluded.credits, xp=excluded.xp, cores=excluded.cores, campaign=excluded.campaign, tutorial_done=excluded.tutorial_done, tutorial_step=excluded.tutorial_step, inventory=excluded.inventory, look=excluded.look, equipped=excluded.equipped, updated_at=excluded.updated_at",
       )
-        .bind(id, name, round2(x), round2(y), this.zoneName, Math.round(credits), Math.round(xp), Math.round(cores), serializeCampaign(campaign), JSON.stringify(inventory.slice(0, INVENTORY_CAP)), look ? JSON.stringify(look) : null, JSON.stringify(equipped), Date.now())
+        .bind(
+          id,
+          name,
+          round2(x),
+          round2(y),
+          zone,
+          Math.round(credits),
+          Math.round(xp),
+          Math.round(cores),
+          serializeCampaign(campaign),
+          tutorialDone ? 1 : 0,
+          Math.round(tutorialStep),
+          JSON.stringify(inventory.slice(0, INVENTORY_CAP)),
+          look ? JSON.stringify(look) : null,
+          JSON.stringify(equipped),
+          Date.now(),
+        )
         .run();
     } catch {
       /* D1 hiccup — next snapshot retries */
@@ -2897,7 +3142,21 @@ export class WorldDO {
       if (tr) this.endTrade(tr, "cancelled", "trade partner left");
       this.leaveParty(p);
       this.pendingInvites.delete(p.id);
-      await this.upsert(p.id, p.name, p.x, p.y, p.credits, p.xp, p.cores, p.campaign.toData(), p.inventory, p.look, p.equipped);
+      await this.upsert(
+        p.id,
+        p.name,
+        p.x,
+        p.y,
+        p.credits,
+        p.xp,
+        p.cores,
+        p.campaign.toData(),
+        p.inventory,
+        p.look,
+        p.equipped,
+        p.tutorialDone,
+        p.tutorialStep,
+      );
       await this.flushStats(p);
       await this.flushDailies(p);
       await this.syncMeta();

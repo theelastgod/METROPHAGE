@@ -14,7 +14,7 @@ import OnlineBoard from "../ui/OnlineBoard";
 import OnlineGuild from "../ui/OnlineGuild";
 import OnlineMarket from "../ui/OnlineMarket";
 import OnlineContracts from "../ui/OnlineContracts";
-import { COLORS, TILE, TILESET_PX, VIEW_W, VIEW_H } from "../config";
+import { COLORS, TILE, TILESET_PX, VIEW_W, VIEW_H, uiFont } from "../config";
 import { TILESET_KEY, PLAYER_KEY, COP_KEY, BULLET_KEY, GLOW_KEY, NODE_KEY, PROP_STREETLIGHT_KEY, PROP_VENDING_KEY, PROP_AC_KEY } from "../assets/manifest";
 import { driveChar } from "../assets/anim";
 import {
@@ -29,7 +29,16 @@ import {
   PVP_ZONES,
   inPvpZone,
 } from "../net/sim";
-import { buildGrid, buildSafehouse, buildSubway, isWall } from "../world/district";
+import {
+  buildGrid,
+  buildSafehouse,
+  buildSubway,
+  buildTutorial,
+  TUTORIAL_PORTAL,
+  TUTORIAL_NODE_TILE,
+  isWall,
+} from "../world/district";
+import { TUTORIAL_ZONE, TUTORIAL_STEPS, tutorialStepAt } from "../net/tutorial";
 import { DISTRICTS } from "../game/districts";
 import { ENEMY_BARKS } from "../game/enemies";
 import { WORLD_W, WORLD_H } from "../net/sim";
@@ -192,6 +201,12 @@ export default class OnlineScene extends Phaser.Scene {
   private interactPrompt?: Phaser.GameObjects.Text;
   private speechBubble?: Phaser.GameObjects.Text;
   private pvpTag!: Phaser.GameObjects.Text;
+  private isTutorial = false;
+  private tutorialPanel!: Phaser.GameObjects.Text;
+  private tutorialSkipBtn!: Phaser.GameObjects.Text;
+  private tutorialPortalGlow!: Phaser.GameObjects.Image;
+
+  private nearPortal = false;
 
   constructor() {
     super("Online");
@@ -209,11 +224,12 @@ export default class OnlineScene extends Phaser.Scene {
     // Zone = which district (or the safehouse interior) this client is in. Travel hands off
     // to another DO by reconnecting with a new zone.
     // named zones (interiors + the subway dungeon) pass through by name; else a district
-    const rawZone = data?.zone ?? "d0";
-    const named = !!INTERIOR_TITLES[rawZone] || rawZone === "subway";
+    const rawZone = data?.zone ?? TUTORIAL_ZONE;
+    const named = !!INTERIOR_TITLES[rawZone] || rawZone === "subway" || rawZone === TUTORIAL_ZONE;
     this.zone = named ? rawZone : "d" + this.parseZone(data?.zone);
-    this.interior = !!INTERIOR_TITLES[this.zone]; // no-combat interior (NOT the subway)
-    this.isSubway = this.zone === "subway"; // indoor combat dungeon
+    this.isTutorial = this.zone === TUTORIAL_ZONE;
+    this.interior = !!INTERIOR_TITLES[this.zone]; // no-combat interior (NOT the subway / tutorial)
+    this.isSubway = this.zone === "subway";
     this.fromZone = data?.from ?? "d0"; // where 'H' returns to from inside an interior
     this.districtIndex = this.interior ? 0 : this.parseZone(data?.zone);
     // scene.start reuses the instance (field initializers don't re-run) — reset per-zone
@@ -226,14 +242,20 @@ export default class OnlineScene extends Phaser.Scene {
     // subway dungeon its transit bed; the safehouse hub + building interiors the
     // social/online bed. (Re-asserted on every travel since scene.start re-runs create.)
     MusicDirector.for(this)?.play(
-      this.isSubway ? "subway" : this.interior ? "online" : MusicDirector.districtEnv(def.id),
+      this.isTutorial ? "online" : this.isSubway ? "subway" : this.interior ? "online" : MusicDirector.districtEnv(def.id),
       this,
     );
 
     this.cameras.main.setBackgroundColor(COLORS.bgVoid);
 
     // Real world — same grid + tileset the server simulates against (or the safehouse room).
-    const grid = this.isSubway ? buildSubway() : this.interior ? buildSafehouse() : buildGrid(def);
+    const grid = this.isTutorial
+      ? buildTutorial()
+      : this.isSubway
+        ? buildSubway()
+        : this.interior
+          ? buildSafehouse()
+          : buildGrid(def);
     const map = this.make.tilemap({ data: grid, tileWidth: TILE, tileHeight: TILE });
     const tileset = map.addTilesetImage(TILESET_KEY, TILESET_KEY, TILESET_PX, TILESET_PX)!;
     const layer = map.createLayer(0, tileset, 0, 0)!;
@@ -282,7 +304,8 @@ export default class OnlineScene extends Phaser.Scene {
     this.cameras.main.setBounds(0, 0, WORLD_W, WORLD_H);
     installUiCamera(this, 1);
     this.applyNeon();
-    if (!this.interior && !this.isSubway) this.drawPvpZones(); // no PvP arena indoors
+    if (!this.interior && !this.isSubway && !this.isTutorial) this.drawPvpZones();
+    if (this.isTutorial) this.buildTutorialZone();
     if (this.interior) {
       const isHub = this.zone === "safe";
       this.add
@@ -405,7 +428,11 @@ export default class OnlineScene extends Phaser.Scene {
     this.net.onWelcome = (x, y) => {
       this.me.setPosition(x, y).setVisible(true);
       this.cameras.main.startFollow(this.me, true, 0.18, 0.18);
-      setOnlinePlayer(this.net.id); // let the $METRO bridge panel address this player
+      setOnlinePlayer(this.net.id);
+    };
+    this.net.onRedirect = (zone) => {
+      this.net.disconnect();
+      this.scene.restart({ zone });
     };
     this.inv = new OnlineInventory(this);
     this.inv.onEquip = (id) => this.net.equip(id);
@@ -496,8 +523,10 @@ export default class OnlineScene extends Phaser.Scene {
       .text(
         this.scale.width / 2,
         this.scale.height - 12,
-        `WASD · CLICK fire · I bag · G forge · B vendor · K market · J jobs · Y style · C cell · L board · M map · H safehouse · V emote · ENTER chat`,
-        { fontFamily: "Courier New, monospace", fontSize: "11px", color: "#6b7184" },
+        this.isTutorial
+          ? "WASD move · CLICK fire · I bag · J/G/B/K panels · ENTER chat · SKIP (top-right) · portal = one-way deploy"
+          : `WASD · CLICK fire · I bag · G forge · B vendor · K market · J jobs · Y style · C cell · L board · M map · H safehouse · V emote · ENTER chat`,
+        { fontFamily: "Courier New, monospace", fontSize: uiFont(11), color: "#6b7184" },
       )
       .setOrigin(0.5, 1)
       .setScrollFactor(0)
@@ -676,6 +705,7 @@ export default class OnlineScene extends Phaser.Scene {
       }
       if (e.key === "b" || e.key === "B") {
         this.shop.toggle();
+        if (this.shop.open) this.maybeTutorialPanel();
         return;
       }
       if (this.shop.open && e.key === "Escape") {
@@ -683,6 +713,10 @@ export default class OnlineScene extends Phaser.Scene {
         return;
       }
       if (e.key === "e" || e.key === "E") {
+        if (this.isTutorial && this.nearPortal && this.net.tutorialPortalOpen) {
+          this.net.tutorialGraduate();
+          return;
+        }
         if (this.nearNpc) {
           if (this.nearNpc.kind === "service" && this.nearNpc.svc) this.openService(this.nearNpc.svc);
           else if (this.nearNpc.kind === "door" && this.nearNpc.dest) this.enterZone(this.nearNpc.dest);
@@ -693,6 +727,7 @@ export default class OnlineScene extends Phaser.Scene {
       if (e.key === "g" || e.key === "G") {
         this.forge.setState(this.net.inventory, this.net.equipped, this.net.credits, this.net.cores);
         this.forge.toggle();
+        if (this.forge.open) this.maybeTutorialPanel();
         return;
       }
       if (this.forge.open && e.key === "Escape") {
@@ -701,6 +736,7 @@ export default class OnlineScene extends Phaser.Scene {
       }
       if (e.key === "l" || e.key === "L") {
         this.board.toggle(this.net.achievements, this.net.id);
+        if (this.board.open) this.maybeTutorialPanel();
         return;
       }
       if (this.board.open && e.key === "Escape") {
@@ -710,6 +746,7 @@ export default class OnlineScene extends Phaser.Scene {
       if (e.key === "c" || e.key === "C") {
         this.net.guildAction("info"); // pull a fresh summary before showing
         this.guildPanel.toggle(this.net.guild, this.net.id);
+        if (this.guildPanel.open) this.maybeTutorialPanel();
         return;
       }
       if (this.guildPanel.open && e.key === "Escape") {
@@ -718,6 +755,7 @@ export default class OnlineScene extends Phaser.Scene {
       }
       if (e.key === "k" || e.key === "K") {
         this.market.toggle(this.net.marketListings, this.net.inventory, this.net.id, this.net.credits);
+        if (this.market.open) this.maybeTutorialPanel();
         return;
       }
       if (this.market.open && e.key === "Escape") {
@@ -726,6 +764,7 @@ export default class OnlineScene extends Phaser.Scene {
       }
       if (e.key === "j" || e.key === "J") {
         this.contracts.toggle(this.net.contracts, this.net.rep);
+        if (this.contracts.open) this.maybeTutorialPanel();
         return;
       }
       if (this.contracts.open && e.key === "Escape") {
@@ -734,6 +773,7 @@ export default class OnlineScene extends Phaser.Scene {
       }
       if (e.key === "y" || e.key === "Y") {
         this.cosmetics.toggle(this.net.cosmeticsOwned, this.net.cosmeticEquipped, this.net.credits);
+        if (this.cosmetics.open) this.maybeTutorialPanel();
         return;
       }
       if (this.cosmetics.open && e.key === "Escape") {
@@ -742,6 +782,7 @@ export default class OnlineScene extends Phaser.Scene {
       }
       if (e.key === "m" || e.key === "M") {
         this.mapPanel.toggle(this.net.discovered, this.zone);
+        if (this.mapPanel.open) this.maybeTutorialPanel();
         return;
       }
       if (this.mapPanel.open && e.key === "Escape") {
@@ -749,9 +790,10 @@ export default class OnlineScene extends Phaser.Scene {
         return;
       }
       if (e.key === "h" || e.key === "H") {
-        // H enters the safehouse (a no-combat hub) from a district, and returns to where
-        // you came from. Travel = reconnect to the destination zone's DO.
-        // indoors (interior or the subway) → return to where you entered; a district → the hub
+        if (this.isTutorial) {
+          this.showBubble(this.me.x, this.me.y, "Finish the drill — or SKIP — then use the portal.");
+          return;
+        }
         const indoors = this.interior || this.isSubway;
         const dest = indoors ? this.fromZone : "safe";
         const from = indoors ? undefined : this.zone;
@@ -916,6 +958,87 @@ export default class OnlineScene extends Phaser.Scene {
         this.cosmetics.toggle(n.cosmeticsOwned, n.cosmeticEquipped, n.credits);
         break;
     }
+    this.maybeTutorialPanel();
+  }
+
+  /** Drill yard — signage, skip control, lesson panel, and the one-way deploy portal. */
+  private buildTutorialZone() {
+    const mono = "Courier New, monospace";
+    const label = (x: number, y: number, title: string, sub: string, color = "#9aa3b2") => {
+      this.add
+        .text(x, y, title, { fontFamily: mono, fontSize: "14px", color, fontStyle: "bold" })
+        .setOrigin(0.5)
+        .setDepth(6);
+      this.add
+        .text(x, y + 18, sub, { fontFamily: mono, fontSize: "9px", color: "#6b7184" })
+        .setOrigin(0.5)
+        .setDepth(6);
+    };
+
+    label(WORLD_W / 2, 3 * TILE, "◢ THE DRILL YARD ◣", "learn each system · no XP here · one-way portal east", "#39ff88");
+    label(6 * TILE + TILE / 2, 11 * TILE, "SPAWN", "WASD / arrows");
+    label(10 * TILE + TILE / 2, 11 * TILE, "COMBAT", "click to fire · drop the patrol");
+    label(TUTORIAL_NODE_TILE[0] * TILE + TILE / 2, 11 * TILE, "TERRITORY", "stand on the node");
+    label(TUTORIAL_PORTAL.x, 11 * TILE, "DEPLOY PORTAL", "one way · no return", "#29e7ff");
+
+    const px = TUTORIAL_PORTAL.x;
+    const py = TUTORIAL_PORTAL.y;
+    const g = this.add.graphics().setDepth(7);
+    g.fillStyle(COLORS.neonCyan, 0.12).fillRect(px - 28, py - 40, 56, 80);
+    g.lineStyle(2, COLORS.neonCyan, 0.85).strokeRect(px - 28, py - 40, 56, 80);
+    this.tutorialPortalGlow = this.add
+      .image(px, py, GLOW_KEY)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setTint(COLORS.neonCyan)
+      .setDepth(8)
+      .setAlpha(0.55);
+    this.tweens.add({
+      targets: this.tutorialPortalGlow,
+      scale: { from: 0.7, to: 1.15 },
+      alpha: { from: 0.35, to: 0.75 },
+      duration: 1400,
+      yoyo: true,
+      repeat: -1,
+    });
+    this.add
+      .text(px, py - 52, "▶ LIVE CITY", { fontFamily: mono, fontSize: "11px", color: "#29e7ff", fontStyle: "bold" })
+      .setOrigin(0.5)
+      .setDepth(9);
+
+    this.tutorialPanel = this.add
+      .text(VIEW_W / 2, 72, "", {
+        fontFamily: mono,
+        fontSize: uiFont(12),
+        color: "#eafdff",
+        align: "center",
+        backgroundColor: "#0b0716ee",
+        padding: { x: 16, y: 12 },
+        wordWrap: { width: 520 },
+      })
+      .setOrigin(0.5, 0)
+      .setScrollFactor(0)
+      .setDepth(1005);
+
+    this.tutorialSkipBtn = this.add
+      .text(VIEW_W - 14, 14, "SKIP TUTORIAL", {
+        fontFamily: mono,
+        fontSize: uiFont(11),
+        color: "#ff7a3c",
+        fontStyle: "bold",
+        backgroundColor: "#1a1020cc",
+        padding: { x: 10, y: 6 },
+      })
+      .setOrigin(1, 0)
+      .setScrollFactor(0)
+      .setDepth(1006)
+      .setInteractive({ useHandCursor: true });
+    this.tutorialSkipBtn.on("pointerover", () => this.tutorialSkipBtn.setColor("#ffb347"));
+    this.tutorialSkipBtn.on("pointerout", () => this.tutorialSkipBtn.setColor("#ff7a3c"));
+    this.tutorialSkipBtn.on("pointerdown", () => this.net.tutorialSkip());
+  }
+
+  private maybeTutorialPanel() {
+    if (this.isTutorial) this.net.reportTutorial("panel");
   }
 
   /** Build an authored, talkable citizen at a world position (baked from its PlayerLook).
@@ -975,13 +1098,13 @@ export default class OnlineScene extends Phaser.Scene {
 
   /** Travel into another zone (door/interior) — reconnect to that zone's DO, like H-travel. */
   private enterZone(dest: string) {
+    if (dest === TUTORIAL_ZONE) return;
     this.net.disconnect();
     this.scene.restart({ zone: dest, from: this.zone });
   }
 
-  /** Fast travel to a discovered zone from the map — reconnect to that zone's DO. */
   private fastTravel(zone: string) {
-    if (zone === this.zone) return;
+    if (zone === TUTORIAL_ZONE || zone === this.zone) return;
     this.net.disconnect();
     this.scene.restart({ zone });
   }
@@ -1102,8 +1225,32 @@ export default class OnlineScene extends Phaser.Scene {
     }
     this.pvpTag.setVisible(inPvp).setText("⚔ PVP — free-for-all");
 
+    // tutorial drill — lesson panel, portal proximity, deploy prompt
+    if (this.isTutorial && this.tutorialPanel) {
+      const step = tutorialStepAt(this.net.tutorialStep);
+      const count = step?.count ?? 1;
+      const prog = this.net.tutorialProgress;
+      const stepLine = step ? `◢ ${step.title}  (${Math.min(prog, count)}/${count})` : "◢ DRILL COMPLETE";
+      const body = [stepLine, this.net.tutorialTeach || "", `▸ ${this.net.tutorialHint || ""}`].filter(Boolean).join("\n");
+      this.tutorialPanel.setText(body);
+      const d2 = (this.net.pred.x - TUTORIAL_PORTAL.x) ** 2 + (this.net.pred.y - TUTORIAL_PORTAL.y) ** 2;
+      this.nearPortal = d2 < 72 * 72;
+      if (this.interactPrompt) {
+        const portalMsg =
+          this.net.tutorialPortalOpen && this.nearPortal
+            ? "▸ E — enter portal (one way · no return)"
+            : this.net.tutorialPortalOpen
+              ? "▸ walk east to the deploy portal"
+              : "";
+        this.interactPrompt.setText(portalMsg).setVisible(!!portalMsg);
+      }
+      this.questText.setVisible(false);
+      this.dailyText.setVisible(false);
+      this.bountyText.setVisible(false);
+    }
+
     // NPCs (hub operatives + authored citizens) — surface the nearest one's interaction prompt
-    if (this.interactPrompt && this.npcs.length) {
+    if (this.interactPrompt && this.npcs.length && !this.isTutorial) {
       let near: (typeof this.npcs)[number] | null = null;
       let best = 60 * 60; // interact radius²
       for (const npc of this.npcs) {
@@ -1267,6 +1414,16 @@ export default class OnlineScene extends Phaser.Scene {
         "Press ESC to return to the menu.",
         "(Single-player — THE CITY and class runs — works fully offline.)",
       ]);
+    } else if (this.isTutorial) {
+      this.hud.setColor("#39ff88");
+      const lesson = this.net.tutorialStep + 1;
+      this.hud.setText([
+        st.connected ? `◢ DRILL YARD  ${this.callsign}  ·  lesson ${Math.min(lesson, TUTORIAL_STEPS.length)}/${TUTORIAL_STEPS.length}` : "connecting to drill yard…",
+        "no XP · no leveling · rewards unlock in the live city",
+        `players: ${st.players}   hostiles: ${this.net.enemies.size}   nodes: ${this.net.nodes.size}`,
+        `HP ${Math.round(this.net.hp)}   ₵ ${this.net.credits}  ◈ ${this.net.cores}  (drill only — not saved)`,
+        this.net.tutorialPortalOpen ? "portal open — deploy east when ready (one way)" : "complete each lesson to unlock the portal",
+      ]);
     } else {
       this.hud.setColor("#39ff88");
       this.hud.setText([
@@ -1309,28 +1466,31 @@ export default class OnlineScene extends Phaser.Scene {
       this.tradeText.setVisible(false);
     }
 
-    // personal campaign — per-player arc in the shared world
-    const camp = new Campaign({
-      activeId: this.net.campaignQuest,
-      stage: this.net.campaignStage,
-      progress: this.net.campaignProgress,
-      completed: [],
-      flags: [],
-    });
-    this.questText.setText(campaignHud(camp));
-    // immediate objective: the first unfinished daily contract (or a done/empty state)
-    const active = this.net.contracts.find((c) => !c.done);
-    if (active) {
-      this.dailyText.setVisible(true).setText(`◇ CONTRACT — ${active.name}  ${Math.min(active.progress, active.count)}/${active.count}`);
-    } else if (this.net.contracts.length > 0) {
-      this.dailyText.setVisible(true).setText("◇ daily contracts complete — see THE FIXER tomorrow");
-    } else {
-      this.dailyText.setVisible(false);
+    // personal campaign — per-player arc in the shared world (hidden during drill)
+    if (!this.isTutorial) {
+      const camp = new Campaign({
+        activeId: this.net.campaignQuest,
+        stage: this.net.campaignStage,
+        progress: this.net.campaignProgress,
+        completed: [],
+        flags: [],
+      });
+      this.questText.setText(campaignHud(camp));
     }
-    // authored NPC bounty (accepted from a quest-giver)
-    const bty = this.net.bounty;
-    if (bty) this.bountyText.setVisible(true).setText(`◈ BOUNTY — ${bty.name}  ${Math.min(bty.progress, bty.count)}/${bty.count}`);
-    else this.bountyText.setVisible(false);
+    // immediate objective: the first unfinished daily contract (or a done/empty state)
+    if (!this.isTutorial) {
+      const active = this.net.contracts.find((c) => !c.done);
+      if (active) {
+        this.dailyText.setVisible(true).setText(`◇ CONTRACT — ${active.name}  ${Math.min(active.progress, active.count)}/${active.count}`);
+      } else if (this.net.contracts.length > 0) {
+        this.dailyText.setVisible(true).setText("◇ daily contracts complete — see THE FIXER tomorrow");
+      } else {
+        this.dailyText.setVisible(false);
+      }
+      const bty = this.net.bounty;
+      if (bty) this.bountyText.setVisible(true).setText(`◈ BOUNTY — ${bty.name}  ${Math.min(bty.progress, bty.count)}/${bty.count}`);
+      else this.bountyText.setVisible(false);
+    }
     const story = this.net.story;
     if (story && performance.now() - story.at < 8000) {
       this.storyPanel.setVisible(true).setText(`◢ ${story.quest} — ${story.title} ◣\n\n${story.text}`);

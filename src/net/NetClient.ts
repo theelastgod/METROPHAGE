@@ -102,6 +102,14 @@ export default class NetClient {
   campaignStage = 0;
   campaignProgress = 0;
   campaignObjective = "";
+  tutorialStep = 0;
+  tutorialProgress = 0;
+  tutorialDone = false;
+  inTutorial = false;
+  tutorialPortalOpen = false;
+  tutorialTitle = "";
+  tutorialTeach = "";
+  tutorialHint = "";
   achievements = new Set<string>(); // unlocked achievement ids (hydrated on login, grows live)
   guild: null | {
     id: number;
@@ -145,6 +153,7 @@ export default class NetClient {
   playersOnline = 0;
   onWelcome?: (x: number, y: number) => void;
   onInventory?: () => void; // fired when the server pushes an inventory update
+  onRedirect?: (zone: string) => void;
 
   private ws?: WebSocket;
   private intent = { mx: 0, my: 0 };
@@ -278,6 +287,10 @@ export default class NetClient {
           this.campaignStage = sp.campaignStage;
           this.campaignProgress = sp.campaignProgress;
           this.campaignObjective = sp.campaignObjective;
+          this.tutorialStep = sp.tutorialStep;
+          this.tutorialProgress = sp.tutorialProgress;
+          this.tutorialDone = sp.tutorialDone;
+          this.inTutorial = sp.inTutorial;
         } else {
           const r = this.remotes.get(sp.id) ?? {
             id: sp.id,
@@ -356,6 +369,17 @@ export default class NetClient {
       if (this.emotes.length > 30) this.emotes.shift();
     } else if (msg.t === "party") {
       this.party = msg.members;
+    } else if (msg.t === "tutorial") {
+      this.tutorialStep = msg.step;
+      this.tutorialProgress = msg.progress;
+      this.tutorialPortalOpen = msg.portalOpen;
+      this.tutorialTitle = msg.title;
+      this.tutorialTeach = msg.teach;
+      this.tutorialHint = msg.hint;
+    } else if (msg.t === "redirect") {
+      this.connected = false;
+      this.pushChat({ from: "", ch: "sys", text: msg.text, faction: -1, sys: true });
+      this.onRedirect?.(msg.zone);
     } else if (msg.t === "story") {
       this.story = {
         quest: msg.quest,
@@ -424,6 +448,15 @@ export default class NetClient {
   }
   questTalk() {
     this.sendMsg({ t: "quest", action: "talk" });
+  }
+  tutorialSkip() {
+    this.sendMsg({ t: "tutorial", action: "skip" });
+  }
+  tutorialGraduate() {
+    this.sendMsg({ t: "tutorial", action: "graduate" });
+  }
+  reportTutorial(kind: string) {
+    this.sendMsg({ t: "tutorial", action: "progress", kind });
   }
 
   tradeRequest(to: string) {

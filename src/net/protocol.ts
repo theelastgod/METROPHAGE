@@ -77,6 +77,7 @@ export type ClientMsg =
   // personal campaign — accept a quest from THE FIXER or resolve a talk beat
   | { t: "quest"; action: "accept"; id?: string }
   | { t: "quest"; action: "talk" }
+  | { t: "tutorial"; action: "skip" | "graduate" | "progress"; kind?: string }
   | { t: "buy"; sku: string } // vendor purchase (heal / gear cache), priced + validated server-side
   | { t: "emote"; kind: number; ping: boolean; x: number; y: number } // emote (above avatar) or world ping
   | {
@@ -115,6 +116,10 @@ export interface PlayerSnap {
   campaignStage: number;
   campaignProgress: number;
   campaignObjective: string;
+  tutorialStep: number;
+  tutorialProgress: number;
+  tutorialDone: boolean;
+  inTutorial: boolean;
   look?: PlayerLook; // appearance, so remotes render this player's customization
 }
 export interface EnemySnap {
@@ -259,4 +264,17 @@ export type ServerMsg =
       theyConfirm?: boolean;
       text?: string;
     }
+  | {
+      t: "tutorial";
+      step: number;
+      total: number;
+      title: string;
+      teach: string;
+      hint: string;
+      objective: string;
+      progress: number;
+      count: number;
+      portalOpen: boolean;
+    }
+  | { t: "redirect"; zone: string; text: string }
   | { t: "error"; message: string };
