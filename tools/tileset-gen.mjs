@@ -161,9 +161,15 @@ for (let idx = 0; idx < COLS * ROWS; idx++) {
 const out = "public/assets/tilesets/metrophage_tiles.png";
 // Noir grade: pull the floor DOWN in brightness + saturation so terrain recedes and the
 // characters / neon / signage read on top of it (these source tiles are too hot/busy raw).
-const DARKEN = 0.6, DESAT = 0.78;
+// Slightly brighter + less desaturated than the old grade so roof/floor detail survives
+// the wall-shade pass and blooms more naturally through the neon post-FX.
+const DARKEN = 0.68, DESAT = 0.84;
 await sharp({ create: { width: COLS * CELL, height: ROWS * CELL, channels: 3, background: { r: 8, g: 8, b: 12 } } })
-  .composite(comps).modulate({ brightness: DARKEN, saturation: DESAT }).png({ compressionLevel: 9 }).toFile(out);
+  .composite(comps)
+  .modulate({ brightness: DARKEN, saturation: DESAT })
+  .sharpen({ sigma: 0.85, m1: 0.5, m2: 0.35, x1: 2, y2: 10, y3: 20 })
+  .png({ compressionLevel: 9 })
+  .toFile(out);
 
 // ── report + district.ts snippet ─────────────────────────────────────────────
 const NAMES = { 0: "concrete", 1: "sidewalk", 2: "road", 3: "plaza", 4: "roof-downtown", 5: "park", 6: "water", 7: "roof-industrial", 8: "roof-residential", 9: "roof-corporate", 10: "market", 11: "grate", 12: "crosswalk", 13: "neon", 14: "dirt", 15: "roof-slum", 16: "inner-floor", 17: "inner-wall" };

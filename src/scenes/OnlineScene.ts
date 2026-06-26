@@ -263,11 +263,12 @@ export default class OnlineScene extends Phaser.Scene {
     applyTileVariants(layer); // scatter real-art tile variants (render-only; collision is server-side)
     // Building-silhouette pass (also shades the interior walls). The atmospheric weather is
     // outdoors-only — the safehouse is a calm, indoor social hub.
-    shadeWalls(this, grid);
+    const zoneAccent = this.isTutorial ? 0x29e7ff : def.accent;
+    shadeWalls(this, grid, zoneAccent);
     if (!this.interior && !this.isSubway) {
       this.atmosphere = new Atmosphere(this, {
         weather: def.weather,
-        accent: def.accent,
+        accent: zoneAccent,
         worldW: WORLD_W,
         worldH: WORLD_H,
       });
@@ -275,7 +276,7 @@ export default class OnlineScene extends Phaser.Scene {
         const b = def.layout.buildings[i];
         const cx = ((b.x1 + b.x2) / 2) * TILE + TILE / 2;
         const cy = ((b.y1 + b.y2) / 2) * TILE + TILE / 2;
-        this.atmosphere.addHologram(cx, cy, def.accent);
+        this.atmosphere.addHologram(cx, cy, zoneAccent);
       }
       // CyberPunk street props — non-colliding client decals on walkable tiles set against
       // a building, deterministically scattered (sparse) so the streets read as lived-in.
@@ -299,8 +300,8 @@ export default class OnlineScene extends Phaser.Scene {
       }
       // Rain-slicked street lighting + lit rooftop accents — the SAME shared renderers as the
       // offline city hub, tinted to the zone accent, so the unified world reads identically.
-      paintWetStreets(this, grid, () => def.accent);
-      paintRooftopLights(this, def.layout.buildings, (b) => b, () => def.accent);
+      paintWetStreets(this, grid, () => zoneAccent);
+      paintRooftopLights(this, def.layout.buildings, (b) => b, () => zoneAccent);
     }
     this.cameras.main.setBounds(0, 0, WORLD_W, WORLD_H);
     installUiCamera(this, 1);
@@ -1233,7 +1234,7 @@ export default class OnlineScene extends Phaser.Scene {
       }
     }
     this.me.setVisible(this.net.connected && !this.net.dead);
-    this.meLight.update(this.me.x, this.me.y);
+    this.meLight.update(this.me.x, this.me.y, this.time.now);
     this.meLight.setVisible(this.me.visible);
 
     // PvP arena state — warn on enter/exit; the SERVER enforces the actual damage.
@@ -1729,9 +1730,9 @@ export default class OnlineScene extends Phaser.Scene {
     const p = cam.getPostPipeline("Neon");
     const neon = (Array.isArray(p) ? p[0] : p) as NeonPipeline | undefined;
     if (neon) {
-      neon.heat = 0.12;
+      neon.heat = 0.14;
       neon.tint = [0, 0.9, 1];
-      neon.tintAmt = 0.18;
+      neon.tintAmt = 0.22;
     }
   }
 }

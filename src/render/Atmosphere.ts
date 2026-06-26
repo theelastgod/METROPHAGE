@@ -16,14 +16,17 @@ const MOTE_KEY = "fx_mote";
 function ensureTextures(scene: Phaser.Scene) {
   if (!scene.textures.exists(RAIN_KEY)) {
     const g = scene.make.graphics({ x: 0, y: 0 }, false);
-    g.fillStyle(0xffffff, 1).fillRect(0, 0, 2, 16);
-    g.generateTexture(RAIN_KEY, 2, 16);
+    g.fillStyle(0xffffff, 0.35).fillRect(0, 0, 1, 22);
+    g.fillStyle(0xffffff, 0.9).fillRect(1, 0, 1, 18);
+    g.fillStyle(0xffffff, 0.5).fillRect(2, 2, 1, 14);
+    g.generateTexture(RAIN_KEY, 3, 22);
     g.destroy();
   }
   if (!scene.textures.exists(MOTE_KEY)) {
     const g = scene.make.graphics({ x: 0, y: 0 }, false);
-    g.fillStyle(0xffffff, 1).fillCircle(3, 3, 3);
-    g.generateTexture(MOTE_KEY, 6, 6);
+    g.fillStyle(0xffffff, 0.25).fillCircle(4, 4, 4);
+    g.fillStyle(0xffffff, 0.85).fillCircle(4, 4, 2);
+    g.generateTexture(MOTE_KEY, 8, 8);
     g.destroy();
   }
 }

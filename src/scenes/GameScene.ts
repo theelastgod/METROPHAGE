@@ -824,7 +824,7 @@ export default class GameScene
     this.wallLayer = map.createLayer(0, tileset, 0, 0)!;
     applyTileVariants(this.wallLayer); // scatter real-art tile variants (render-only)
     this.wallLayer.setCollision(TILE_VARIANTS[TILE_WALL]); // base wall + its roof variant
-    shadeWalls(this, this.grid); // raise buildings off the floor (edge light + cast shadow)
+    shadeWalls(this, this.grid, this.district.accent); // raise buildings off the floor (edge light + cast shadow)
 
     this.physics.world.setBounds(0, 0, WORLD_W, WORLD_H);
     this.cameras.main.setBackgroundColor(COLORS.bgVoid);

@@ -374,15 +374,18 @@ function makePlayer(scene: Phaser.Scene) {
 
 /** Projectile: a hot white bolt with a soft glow (tinted to the class per shot). */
 function makeBullet(scene: Phaser.Scene) {
-  bakeCanvas(scene, BULLET_KEY, 14, 14, (ctx) => {
-    const grad = ctx.createRadialGradient(7, 7, 0.5, 7, 7, 7);
+  bakeCanvas(scene, BULLET_KEY, 16, 8, (ctx) => {
+    const grad = ctx.createRadialGradient(10, 4, 0.2, 10, 4, 8);
     grad.addColorStop(0, "rgba(255,255,255,1)");
-    grad.addColorStop(0.4, "rgba(255,255,255,0.8)");
+    grad.addColorStop(0.35, "rgba(255,255,255,0.75)");
     grad.addColorStop(1, "rgba(255,255,255,0)");
     ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, 14, 14);
+    ctx.fillRect(0, 0, 16, 8);
+    ctx.fillStyle = "rgba(255,255,255,0.55)";
+    ctx.fillRect(2, 3, 6, 2); // motion trail
     ctx.fillStyle = "#ffffff";
-    ctx.fillRect(6, 6, 2, 2); // hot core
+    ctx.fillRect(10, 3, 3, 2);
+    ctx.fillRect(11, 3, 1, 2); // hot core
   });
 }
 
@@ -486,32 +489,47 @@ function makeNpc(scene: Phaser.Scene) {
 /** Soft additive glow disc (white — tinted per use: muzzle, gate, light). */
 function makeGlow(scene: Phaser.Scene) {
   bakeCanvas(scene, GLOW_KEY, 64, 64, (ctx) => {
-    const grad = ctx.createRadialGradient(32, 32, 1, 32, 32, 31);
-    grad.addColorStop(0, "rgba(255,255,255,1)");
-    grad.addColorStop(0.32, "rgba(255,255,255,0.55)");
-    grad.addColorStop(1, "rgba(255,255,255,0)");
-    ctx.fillStyle = grad;
+    const core = ctx.createRadialGradient(32, 32, 0, 32, 32, 10);
+    core.addColorStop(0, "rgba(255,255,255,1)");
+    core.addColorStop(0.5, "rgba(255,255,255,0.7)");
+    core.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = core;
+    ctx.fillRect(0, 0, 64, 64);
+    const mid = ctx.createRadialGradient(32, 32, 4, 32, 32, 22);
+    mid.addColorStop(0, "rgba(255,255,255,0.45)");
+    mid.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = mid;
+    ctx.fillRect(0, 0, 64, 64);
+    const outer = ctx.createRadialGradient(32, 32, 10, 32, 32, 31);
+    outer.addColorStop(0, "rgba(255,255,255,0.18)");
+    outer.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = outer;
     ctx.fillRect(0, 0, 64, 64);
   });
 }
 
 /** Hit spark — a hot 4-point star (white, tinted per impact). */
 function makeSpark(scene: Phaser.Scene) {
-  bakeCanvas(scene, SPARK_KEY, 16, 16, (ctx) => {
+  bakeCanvas(scene, SPARK_KEY, 20, 20, (ctx) => {
     const a = (x: number, y: number, w: number, h: number, al: number) => {
       ctx.globalAlpha = al;
       ctx.fillStyle = "#ffffff";
       ctx.fillRect(x, y, w, h);
       ctx.globalAlpha = 1;
     };
-    a(7, 0, 2, 16, 0.45); // vertical ray
-    a(0, 7, 16, 2, 0.45); // horizontal ray
-    a(3, 3, 2, 2, 0.35);
-    a(11, 3, 2, 2, 0.35);
-    a(3, 11, 2, 2, 0.35);
-    a(11, 11, 2, 2, 0.35); // diagonal sparks
-    a(6, 6, 4, 4, 1); // core
-    a(7, 7, 2, 2, 1);
+    const halo = ctx.createRadialGradient(10, 10, 0.5, 10, 10, 9);
+    halo.addColorStop(0, "rgba(255,255,255,0.9)");
+    halo.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = halo;
+    ctx.fillRect(0, 0, 20, 20);
+    a(9, 0, 2, 20, 0.5);
+    a(0, 9, 20, 2, 0.5);
+    a(4, 4, 2, 2, 0.4);
+    a(14, 4, 2, 2, 0.4);
+    a(4, 14, 2, 2, 0.4);
+    a(14, 14, 2, 2, 0.4);
+    a(8, 8, 4, 4, 1);
+    a(9, 9, 2, 2, 1);
   });
 }
 

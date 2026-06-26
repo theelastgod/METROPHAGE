@@ -49,11 +49,14 @@ export const TILE_VARIANTS: Record<number, number[]> = { 0: [0, 18, 19], 1: [1, 
 /** Roof-variant cells (variants of the colliding building bases 4/7/8/9/15). */
 const WALL_VARIANTS = [25, 26, 27, 28, 29];
 
-/** Deterministic per-tile variant pick (stable across reloads). */
+/** Deterministic per-tile variant pick (stable across reloads). Biased toward the primary
+ *  swatch so districts feel cohesive, with scattered alternates to break repetition. */
 export function variantOf(base: number, tx: number, ty: number): number {
   const vs = TILE_VARIANTS[base];
   if (!vs || vs.length < 2) return base;
-  return vs[(((tx * 73856093) ^ (ty * 19349663)) >>> 0) % vs.length];
+  const h = ((tx * 73856093) ^ (ty * 19349663) ^ (base * 83492791)) >>> 0;
+  if ((h & 3) === 0) return base;
+  return vs[1 + (h % (vs.length - 1))];
 }
 
 /** Every building/blocking tile index — scenes pass this to setCollision(). Includes the

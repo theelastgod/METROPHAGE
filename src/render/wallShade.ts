@@ -5,19 +5,27 @@ import { isWall, type TileGrid } from "../world/district";
 // METROPHAGE — building readability pass. The world is a flat tile grid; buildings are
 // blocks of wall tiles that, untreated, read as the same dark mass as the floor. This
 // scans the grid and, for every building EDGE (wall tile touching open floor):
-//   • mutes the busy roof into a clean dark mass,
-//   • wraps a BRIGHT CYAN structure-rim on the lit (north/west) faces — this blooms
-//     through the neon post-FX, so buildings read as glowing-edged solids,
-//   • drops a hard cast shadow + dark wall faces on the floor to the south/east.
-// The bright rim is the key: it draws each building's silhouette unmistakably. Static
-// (one Graphics per district), cheap.
+//   • lightly mutes the busy roof into a clean dark mass (leaves source art visible),
+//   • wraps a BRIGHT structure-rim on the lit (north/west) faces — tinted to the district,
+//   • drops a hard cast shadow + dark wall faces on the floor to the south/east,
+//   • scatters sparse lit-window dots on roof faces for a lived-in skyline.
+// Static (one Graphics per district), cheap.
 
-const RIM = 0x6fe0ff; // bright cyan structure edge (blooms)
-const RIM_HOT = 0xeafdff;
-const DIM = 0x1f4a66; // dim rim on the shadow faces (keeps the full outline visible)
+const hash = (x: number, y: number) => ((x * 73856093) ^ (y * 19349663)) >>> 0;
 
-export function shadeWalls(scene: Phaser.Scene, grid: TileGrid): Phaser.GameObjects.Graphics {
+function rimColors(accent: number) {
+  const r = (accent >> 16) & 0xff;
+  const g = (accent >> 8) & 0xff;
+  const b = accent & 0xff;
+  const hot = (Math.min(255, r + 40) << 16) | (Math.min(255, g + 50) << 8) | Math.min(255, b + 60);
+  const rim = (Math.min(255, Math.round(r * 0.55 + 90)) << 16) | (Math.min(255, Math.round(g * 0.55 + 140)) << 8) | Math.min(255, Math.round(b * 0.55 + 180));
+  const dim = (Math.round(r * 0.18) << 16) | (Math.round(g * 0.22) << 8) | Math.round(b * 0.28);
+  return { rim, hot, dim };
+}
+
+export function shadeWalls(scene: Phaser.Scene, grid: TileGrid, accent = 0x00e5ff): Phaser.GameObjects.Graphics {
   const g = scene.add.graphics().setDepth(2.5); // above floor + light pools, below actors
+  const { rim: RIM, hot: RIM_HOT, dim: DIM } = rimColors(accent);
   const wallAt = (x: number, y: number) => {
     const row = grid[y];
     return !row || isWall(row[x]); // out-of-bounds counts as wall (outer ring shades inward)
@@ -35,8 +43,20 @@ export function shadeWalls(scene: Phaser.Scene, grid: TileGrid): Phaser.GameObje
       const X = tx * TILE;
       const Y = ty * TILE;
 
-      // Mute the busy roof into a clean, darker mass so the silhouette + rim carry the read.
-      g.fillStyle(0x070a14, 0.48).fillRect(X, Y, TILE, TILE);
+      // Light mute — keep photographed roof detail, just unify the mass slightly.
+      g.fillStyle(0x070a14, 0.28).fillRect(X, Y, TILE, TILE);
+
+      // Sparse rooftop windows (warm + accent) — reads as inhabited blocks at night.
+      const h = hash(tx, ty);
+      if ((h & 7) === 0) {
+        const wx = X + 4 + (h % 20);
+        const wy = Y + 5 + ((h >> 4) % 14);
+        g.fillStyle(0xffd9a8, 0.38).fillRect(wx, wy, 3, 2);
+        g.fillStyle(RIM, 0.22).fillRect(wx + 1, wy, 1, 1);
+      }
+      if ((h & 11) === 3) {
+        g.fillStyle(0xf7ff3c, 0.28).fillRect(X + 18 + (h % 8), Y + 8 + ((h >> 6) % 10), 2, 2);
+      }
 
       // ── cast shadow + dark wall faces (south / east) ──
       if (openBelow) {

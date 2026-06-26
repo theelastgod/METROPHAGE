@@ -156,7 +156,7 @@ export default class CityScene extends Phaser.Scene {
     this.wallLayer = map.createLayer(0, tileset, 0, 0)!;
     applyTileVariants(this.wallLayer); // scatter real-art tile variants (render-only) to break repetition
     this.wallLayer.setCollision(COLLIDING_TILES);
-    shadeWalls(this, grid); // raise buildings off the floor (edge light + cast shadow)
+    shadeWalls(this, grid, 0x29e7ff); // raise buildings off the floor (edge light + cast shadow)
 
     this.cameras.main.setBackgroundColor(COLORS.bgVoid);
     this.physics.world.setBounds(0, 0, worldW, worldH);
@@ -786,7 +786,7 @@ export default class CityScene extends Phaser.Scene {
 
   update(_time: number, delta: number) {
     this.atmosphere?.update(this.time.now, delta, 0.15); // weather/fog/holos animate always
-    this.playerLight?.update(this.player.x, this.player.y); // carried light tracks the player
+    this.playerLight?.update(this.player.x, this.player.y, this.time.now); // carried light tracks the player
     // ease the screen mood toward the current district's tint (keeps shifting even when frozen)
     if (this.mode === "city" && this.neon) {
       const t = this.neonTint;

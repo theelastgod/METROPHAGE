@@ -25,7 +25,7 @@ float rand(vec2 c) { return fract(sin(dot(c, vec2(12.9898, 78.233))) * 43758.545
 // knee sits high so only genuinely emissive neon blooms — ordinary UI text doesn't.
 vec3 brightPass(vec3 s) {
   float bright = max(s.r, max(s.g, s.b));
-  return s * smoothstep(0.55, 0.97, bright);
+  return s * smoothstep(0.48, 0.94, bright);
 }
 
 void main() {
@@ -75,7 +75,7 @@ void main() {
     bloom += brightPass(texture2D(uMainSampler, uv + vec2( out2.x, -out2.y)).rgb) * 0.22;
     bloom += brightPass(texture2D(uMainSampler, uv + vec2(-out2.x, -out2.y)).rgb) * 0.22;
     bloom /= 4.7; // normalize by total weight
-    col += bloom * (0.78 + uHeat * 1.85 + uGlitch * 1.7);
+    col += bloom * (0.92 + uHeat * 1.85 + uGlitch * 1.7);
   }
 
   // saturation lift with heat + a subtle noir teal/magenta split-tone in the shadows
@@ -104,7 +104,7 @@ void main() {
   }
 
   // vignette (deeper for noir framing — pulls the eye in off the busy floor)
-  col *= 1.0 - dist * dist * (0.38 + uHeat * 0.3);
+  col *= 1.0 - dist * dist * (0.32 + uHeat * 0.28);
   // gentle highlight lift on emissive peaks so neon reads hotter at high resolution
   col = mix(col, col * 1.08 + vec3(0.02, 0.03, 0.05), smoothstep(0.55, 0.95, l) * 0.18);
 
