@@ -60,13 +60,20 @@ export default class CustomizeScene extends Phaser.Scene {
   private rowTexts: Phaser.GameObjects.Text[] = [];
   private rowValTexts: Phaser.GameObjects.Text[] = [];
   private rowSwatches: Phaser.GameObjects.Rectangle[] = [];
+  private rowLeftBtns: Phaser.GameObjects.Text[] = [];
+  private rowRightBtns: Phaser.GameObjects.Text[] = [];
+  private rowZones: Phaser.GameObjects.Zone[] = [];
+  private scrollHint!: Phaser.GameObjects.Text;
+  private rowScroll = 0;
 
   private readonly panelX = Math.round(VIEW_W * 0.52);
   private readonly panelW = VIEW_W - this.panelX - MENU_PAD;
   private readonly previewX = MENU_PAD;
   private readonly previewW = this.panelX - MENU_PAD * 2;
-  private readonly rowTop = uiDim(200);
-  private readonly rowH = uiDim(34);
+  private readonly listTop = uiDim(168);
+  private readonly listBottom = MENU_FOOTER_Y - uiDim(28);
+  private readonly rowH = uiDim(28);
+  private readonly visibleRows = Math.max(4, Math.floor((MENU_FOOTER_Y - uiDim(28) - uiDim(168)) / uiDim(28)));
 
   constructor() {
     super("Customize");
@@ -121,9 +128,17 @@ export default class CustomizeScene extends Phaser.Scene {
 
     this.preview = this.add.container(0, 0);
     this.makeCallsignField();
+    this.makeListViewport();
     this.defineRows();
     this.bakeAndRefresh();
     this.renderRows();
+    this.scrollHint = this.add
+      .text(this.panelX + this.panelW / 2, this.listBottom + uiDim(6), "", {
+        fontFamily: "Courier New, monospace",
+        fontSize: uiFont(10),
+        color: "#6b7184",
+      })
+      .setOrigin(0.5, 0);
 
     const back = this.add
       .text(MENU_PAD, MENU_FOOTER_Y, "◀ BACK", {
@@ -150,7 +165,7 @@ export default class CustomizeScene extends Phaser.Scene {
     confirm.on("pointerdown", () => this.confirm());
 
     this.add
-      .text(VIEW_W / 2, MENU_FOOTER_Y, "TYPE callsign · ↑↓ row · ←→ option · ENTER to lock in", {
+      .text(VIEW_W / 2, MENU_FOOTER_Y, "TYPE callsign · ↑↓ row · ←→ option · scroll wheel on list · ENTER to lock in", {
         fontFamily: "Courier New, monospace",
         fontSize: uiFont(11),
         color: "#6b7184",
@@ -352,40 +367,73 @@ export default class CustomizeScene extends Phaser.Scene {
     });
   }
 
+  private makeListViewport() {
+    const listH = this.listBottom - this.listTop;
+    const panelBg = this.add.graphics();
+    panelBg.fillStyle(0x0b0716, 0.96).fillRect(this.panelX, this.listTop - uiDim(8), this.panelW, listH + uiDim(16));
+    panelBg.lineStyle(uiDim(2), this.classDef.color, 0.5).strokeRect(this.panelX, this.listTop - uiDim(8), this.panelW, listH + uiDim(16));
+    this.add
+      .zone(this.panelX, this.listTop, this.panelW, listH)
+      .setOrigin(0)
+      .setInteractive()
+      .on("wheel", (_p: Phaser.Input.Pointer, _dx: number, dy: number) => this.scrollList(dy > 0 ? 1 : -1));
+  }
+
+  private maxRowScroll() {
+    return Math.max(0, this.rows.length - this.visibleRows);
+  }
+
+  private scrollList(delta: number) {
+    const next = Phaser.Math.Clamp(this.rowScroll + delta, 0, this.maxRowScroll());
+    if (next === this.rowScroll) return;
+    this.rowScroll = next;
+    this.layoutRows();
+    this.renderRowValues();
+  }
+
+  private ensureRowVisible(index: number) {
+    if (index < this.rowScroll) this.rowScroll = index;
+    else if (index >= this.rowScroll + this.visibleRows) this.rowScroll = index - this.visibleRows + 1;
+    this.rowScroll = Phaser.Math.Clamp(this.rowScroll, 0, this.maxRowScroll());
+  }
+
+  private rowY(index: number) {
+    return this.listTop + (index - this.rowScroll) * this.rowH + this.rowH / 2;
+  }
+
   private renderRows() {
     this.rowG = this.add.graphics();
     this.rows.forEach((row, i) => {
-      const y = this.rowTop + i * this.rowH;
       this.rowTexts.push(
         this.add
-          .text(this.panelX + uiDim(16), y, row.label, {
+          .text(this.panelX + uiDim(16), 0, row.label, {
             fontFamily: "Courier New, monospace",
-            fontSize: uiFont(14),
+            fontSize: uiFont(13),
             color: "#9aa3b2",
           })
           .setOrigin(0, 0.5),
       );
       this.rowValTexts.push(
         this.add
-          .text(VIEW_W - MENU_PAD - uiDim(48), y, "", {
+          .text(VIEW_W - MENU_PAD - uiDim(48), 0, "", {
             fontFamily: "Courier New, monospace",
-            fontSize: uiFont(14),
+            fontSize: uiFont(13),
             color: "#eafdff",
           })
           .setOrigin(1, 0.5),
       );
       const sw = this.add
-        .rectangle(VIEW_W - MENU_PAD - uiDim(28), y, uiDim(16), uiDim(16), 0xffffff)
+        .rectangle(0, 0, uiDim(14), uiDim(14), 0xffffff)
         .setStrokeStyle(uiDim(1), 0x000000, 0.6);
       sw.setVisible(false);
       this.rowSwatches.push(sw);
 
       const left = this.add
-        .text(this.panelX + uiDim(180), y, "◀", { fontFamily: "monospace", fontSize: uiFont(16), color: "#6b7184" })
+        .text(0, 0, "◀", { fontFamily: "monospace", fontSize: uiFont(14), color: "#6b7184" })
         .setOrigin(0.5)
         .setInteractive({ useHandCursor: true });
       const right = this.add
-        .text(VIEW_W - MENU_PAD - uiDim(8), y, "▶", { fontFamily: "monospace", fontSize: uiFont(16), color: "#6b7184" })
+        .text(0, 0, "▶", { fontFamily: "monospace", fontSize: uiFont(14), color: "#6b7184" })
         .setOrigin(0.5)
         .setInteractive({ useHandCursor: true });
       left.on("pointerdown", () => {
@@ -398,29 +446,65 @@ export default class CustomizeScene extends Phaser.Scene {
         row.cycle(1);
         this.renderRowValues();
       });
-      this.add
-        .zone(this.panelX + uiDim(8), y - this.rowH / 2, this.panelW - uiDim(16), this.rowH)
-        .setOrigin(0)
-        .setInteractive({ useHandCursor: true })
-        .on("pointerdown", () => {
-          this.rowIndex = i;
-          this.renderRowValues();
-        });
+      this.rowLeftBtns.push(left);
+      this.rowRightBtns.push(right);
+
+      const z = this.add
+        .zone(0, 0, this.panelW - uiDim(16), this.rowH)
+        .setOrigin(0, 0.5)
+        .setInteractive({ useHandCursor: true });
+      z.on("pointerdown", () => {
+        this.rowIndex = i;
+        this.renderRowValues();
+      });
+      this.rowZones.push(z);
     });
+    this.layoutRows();
     this.renderRowValues();
   }
 
+  private layoutRows() {
+    this.rows.forEach((_row, i) => {
+      const visible = i >= this.rowScroll && i < this.rowScroll + this.visibleRows;
+      const y = this.rowY(i);
+      this.rowTexts[i].setVisible(visible);
+      this.rowValTexts[i].setVisible(visible);
+      if (visible) {
+        this.rowTexts[i].setY(y);
+        this.rowValTexts[i].setY(y);
+      }
+      this.rowLeftBtns[i].setVisible(visible);
+      this.rowRightBtns[i].setVisible(visible);
+      this.rowZones[i].setVisible(visible);
+      if (visible) {
+        this.rowLeftBtns[i].setPosition(this.panelX + uiDim(180), y);
+        this.rowRightBtns[i].setPosition(VIEW_W - MENU_PAD - uiDim(8), y);
+        this.rowZones[i].setPosition(this.panelX + uiDim(8), y);
+        this.rowSwatches[i].setPosition(VIEW_W - MENU_PAD - uiDim(28), y);
+      } else {
+        this.rowSwatches[i].setVisible(false);
+      }
+    });
+    if (this.scrollHint) {
+      const max = this.maxRowScroll();
+      this.scrollHint.setText(
+        max > 0 ? `scroll ▲▼  ·  ${this.rowScroll + 1}–${Math.min(this.rowScroll + this.visibleRows, this.rows.length)} of ${this.rows.length}` : "",
+      );
+    }
+  }
+
   private renderRowValues() {
+    this.ensureRowVisible(this.rowIndex);
+    this.layoutRows();
     this.rowG.clear();
-    const listH = this.rows.length * this.rowH + uiDim(20);
-    this.rowG.fillStyle(0x0b0716, 0.6).fillRect(this.panelX, this.rowTop - uiDim(18), this.panelW, listH);
-    this.rowG.lineStyle(uiDim(1), this.classDef.color, 0.45).strokeRect(this.panelX, this.rowTop - uiDim(18), this.panelW, listH);
+    this.rowG.fillStyle(0x0b0716, 0.35).fillRect(this.panelX, this.listTop, this.panelW, this.listBottom - this.listTop);
     this.rows.forEach((row, i) => {
-      const y = this.rowTop + i * this.rowH;
+      if (i < this.rowScroll || i >= this.rowScroll + this.visibleRows) return;
+      const y = this.rowY(i);
       const selected = i === this.rowIndex;
       if (selected) {
-        this.rowG.fillStyle(this.classDef.color, 0.14).fillRect(this.panelX + uiDim(8), y - this.rowH / 2 + uiDim(4), this.panelW - uiDim(16), this.rowH - uiDim(8));
-        this.rowG.lineStyle(uiDim(2), this.classDef.color, 0.9).strokeRect(this.panelX + uiDim(8), y - this.rowH / 2 + uiDim(4), this.panelW - uiDim(16), this.rowH - uiDim(8));
+        this.rowG.fillStyle(this.classDef.color, 0.18).fillRect(this.panelX + uiDim(8), y - this.rowH / 2 + uiDim(3), this.panelW - uiDim(16), this.rowH - uiDim(6));
+        this.rowG.lineStyle(uiDim(2), this.classDef.color, 0.9).strokeRect(this.panelX + uiDim(8), y - this.rowH / 2 + uiDim(3), this.panelW - uiDim(16), this.rowH - uiDim(6));
       }
       this.rowTexts[i].setColor(selected ? "#eafdff" : "#9aa3b2");
       const sw = this.rowSwatches[i];
@@ -452,10 +536,12 @@ export default class CustomizeScene extends Phaser.Scene {
       switch (e.key) {
         case "ArrowUp":
           this.rowIndex = (this.rowIndex - 1 + this.rows.length) % this.rows.length;
+          this.ensureRowVisible(this.rowIndex);
           this.renderRowValues();
           break;
         case "ArrowDown":
           this.rowIndex = (this.rowIndex + 1) % this.rows.length;
+          this.ensureRowVisible(this.rowIndex);
           this.renderRowValues();
           break;
         case "ArrowLeft":

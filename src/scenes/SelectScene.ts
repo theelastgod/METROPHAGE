@@ -99,9 +99,9 @@ export default class SelectScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
 
-    this.actionLayer = this.add.container(0, 0);
-    this.classLayer = this.add.container(0, 0).setVisible(false);
-    this.frames = this.add.graphics();
+    this.actionLayer = this.add.container(0, 0).setDepth(30);
+    this.classLayer = this.add.container(0, 0).setVisible(false).setDepth(25);
+    this.frames = this.add.graphics().setDepth(24).setScrollFactor(0);
     this.buildClassCards();
 
     this.options = new OptionsPanel(this, () => MusicDirector.for(this)?.applyVolumes());
@@ -396,7 +396,18 @@ export default class SelectScene extends Phaser.Scene {
       const cx = x + cardW / 2;
 
       const card = this.add.container(0, 0);
-      card.add(this.add.image(cx, cardY + uiDim(72), playerKeyFor(c.id), 0).setScale(3.2 * UI_SCALE).setTint(c.color));
+      const bg = this.add.graphics();
+      bg.fillStyle(0x0b0716, 1).fillRect(x, cardY, cardW, cardH);
+      bg.fillStyle(0x141026, 0.55).fillRect(x + uiDim(4), cardY + uiDim(4), cardW - uiDim(8), cardH - uiDim(8));
+      bg.lineStyle(uiDim(2), c.color, 0.9).strokeRect(x, cardY, cardW, cardH);
+      card.add(bg);
+      card.add(
+        this.add
+          .image(cx, cardY + uiDim(72), playerKeyFor(c.id), 0)
+          .setScale(3.2 * UI_SCALE)
+          .setTint(c.color)
+          .setAlpha(1),
+      );
       card.add(
         this.add
           .text(cx, cardY + uiDim(148), c.name, { fontFamily: "Courier New, monospace", fontSize: uiFont(18), color: c.hex, fontStyle: "bold" })
@@ -470,10 +481,9 @@ export default class SelectScene extends Phaser.Scene {
     this.cardRects.forEach((r, i) => {
       const c = CLASSES[i];
       const hovered = this.hover === i;
-      g.fillStyle(hovered ? 0x141026 : 0x0b0716, hovered ? 0.95 : 0.82);
-      g.fillRect(r.x, r.y, r.w, r.h);
-      g.lineStyle(uiDim(hovered ? 3 : 2), c.color, hovered ? 1 : 0.7);
-      g.strokeRect(r.x, r.y, r.w, r.h);
+      if (!hovered) return;
+      g.fillStyle(0x00e5ff, 0.08).fillRect(r.x, r.y, r.w, r.h);
+      g.lineStyle(uiDim(3), c.color, 1).strokeRect(r.x - uiDim(2), r.y - uiDim(2), r.w + uiDim(4), r.h + uiDim(4));
     });
   }
 
