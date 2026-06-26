@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { VIEW_W, VIEW_H, COLORS } from "../config";
+import { VIEW_W, VIEW_H, COLORS, UI_SCALE, uiDim, uiFont } from "../config";
 import { playerKeyFor } from "../assets/manifest";
 import { CLASSES, getClass } from "../game/classes";
 import { loadSave } from "../systems/Save";
@@ -35,7 +35,7 @@ export default class SelectScene extends Phaser.Scene {
     const title = this.add
       .text(VIEW_W / 2, 28, "METROPHAGE", {
         fontFamily: "Courier New, monospace",
-        fontSize: "42px",
+        fontSize: uiFont(42),
         color: "#ff2bd6",
         fontStyle: "bold",
       })
@@ -64,14 +64,14 @@ export default class SelectScene extends Phaser.Scene {
     this.add
       .text(VIEW_W / 2, 62, "SELECT YOUR CYBERIAN", {
         fontFamily: "Courier New, monospace",
-        fontSize: "13px",
+        fontSize: uiFont(13),
         color: "#00e5ff",
       })
       .setOrigin(0.5);
     this.add
       .text(VIEW_W / 2, 74, "the city rebuilds what you burn", {
         fontFamily: "Courier New, monospace",
-        fontSize: "10px",
+        fontSize: uiFont(10),
         color: "#6b7184",
         fontStyle: "italic",
       })
@@ -89,7 +89,7 @@ export default class SelectScene extends Phaser.Scene {
           VIEW_W / 2,
           82,
           `▶ CONTINUE — ${who}  Lv ${save.progress.level}   (or pick a class for a NEW run)`,
-          { fontFamily: "Courier New, monospace", fontSize: "12px", color: "#39ff88" },
+          { fontFamily: "Courier New, monospace", fontSize: uiFont(12), color: "#39ff88" },
         )
         .setOrigin(0.5)
         .setInteractive({ useHandCursor: true });
@@ -103,10 +103,10 @@ export default class SelectScene extends Phaser.Scene {
     this.frames = this.add.graphics();
 
     const n = CLASSES.length;
-    const margin = 30;
-    const gap = 18;
+    const margin = uiDim(30);
+    const gap = uiDim(18);
     const cardW = (VIEW_W - margin * 2 - gap * (n - 1)) / n;
-    const cardH = 232;
+    const cardH = uiDim(232);
     // Centre the card band in the space between the header and the footer hint, so the
     // taller (supersampled) viewport doesn't leave the cards stranded near the top.
     const cardY = Math.round((VIEW_H - cardH) / 2 + 20);
@@ -116,11 +116,11 @@ export default class SelectScene extends Phaser.Scene {
       this.cardRects.push({ x, y: cardY, w: cardW, h: cardH });
       const cx = x + cardW / 2;
 
-      this.add.image(cx, cardY + 52, playerKeyFor(c.id), 0).setScale(2.4).setTint(c.color);
+      this.add.image(cx, cardY + uiDim(52), playerKeyFor(c.id), 0).setScale(2.4 * UI_SCALE).setTint(c.color);
       this.add
         .text(cx, cardY + 96, c.name, {
           fontFamily: "Courier New, monospace",
-          fontSize: "14px",
+          fontSize: uiFont(14),
           color: c.hex,
           fontStyle: "bold",
         })
@@ -128,14 +128,14 @@ export default class SelectScene extends Phaser.Scene {
       this.add
         .text(cx, cardY + 120, c.primaryName, {
           fontFamily: "Courier New, monospace",
-          fontSize: "11px",
+          fontSize: uiFont(11),
           color: "#eafdff",
         })
         .setOrigin(0.5);
       this.add
         .text(x + 10, cardY + 142, c.primaryDesc, {
           fontFamily: "Courier New, monospace",
-          fontSize: "10px",
+          fontSize: uiFont(10),
           color: "#9aa3b2",
           wordWrap: { width: cardW - 20 },
         })
@@ -143,7 +143,7 @@ export default class SelectScene extends Phaser.Scene {
       this.add
         .text(x + 10, cardY + 178, `Q  ${c.ability.name}\nF  ${c.ultimate.name}`, {
           fontFamily: "Courier New, monospace",
-          fontSize: "9px",
+          fontSize: uiFont(9),
           color: c.hex,
           lineSpacing: 3,
         })
@@ -151,7 +151,7 @@ export default class SelectScene extends Phaser.Scene {
       this.add
         .text(cx, cardY + cardH - 16, `[ ${i + 1} ]`, {
           fontFamily: "Courier New, monospace",
-          fontSize: "12px",
+          fontSize: uiFont(12),
           color: c.hex,
         })
         .setOrigin(0.5);
@@ -174,7 +174,7 @@ export default class SelectScene extends Phaser.Scene {
     this.add
       .text(VIEW_W / 2, VIEW_H - 22, "CLICK a class  ·  or press 1–4", {
         fontFamily: "Courier New, monospace",
-        fontSize: "12px",
+        fontSize: uiFont(12),
         color: "#f7ff3c",
       })
       .setOrigin(0.5);
@@ -184,7 +184,7 @@ export default class SelectScene extends Phaser.Scene {
     const optBtn = this.add
       .text(VIEW_W - 16, 14, "⚙ OPTIONS", {
         fontFamily: "Courier New, monospace",
-        fontSize: "12px",
+        fontSize: uiFont(12),
         color: "#9aa3b2",
       })
       .setOrigin(1, 0)
@@ -197,7 +197,7 @@ export default class SelectScene extends Phaser.Scene {
     const onlineBtn = this.add
       .text(16, 14, "⊕ ONLINE (beta)", {
         fontFamily: "Courier New, monospace",
-        fontSize: "12px",
+        fontSize: uiFont(12),
         color: "#39ff88",
       })
       .setInteractive({ useHandCursor: true });
@@ -213,7 +213,7 @@ export default class SelectScene extends Phaser.Scene {
     const cityBtn = this.add
       .text(16, 32, "▣ THE CITY", {
         fontFamily: "Courier New, monospace",
-        fontSize: "12px",
+        fontSize: uiFont(12),
         color: "#00e5ff",
       })
       .setInteractive({ useHandCursor: true });

@@ -123,8 +123,8 @@ export default class Atmosphere {
         scaleY: { min: 0.7, max: 1.4 },
         alpha: { start: 0.5, end: 0 },
         tint: 0x9fdcff,
-        quantity: lowFx ? 1 : 3,
-        frequency: 16,
+        quantity: lowFx ? 2 : 5,
+        frequency: 12,
       }, 950);
     } else if (weather === "ash") {
       add(MOTE_KEY, {
@@ -173,9 +173,9 @@ export default class Atmosphere {
 
   private buildFog(accent: number, weather: Weather) {
     const lowFx = getSettings().lowFx;
-    const count = lowFx ? 2 : weather === "smog" ? 6 : 4;
+    const count = lowFx ? 3 : weather === "smog" ? 8 : 6;
     const tint = weather === "smog" ? 0x8088a0 : weather === "embers" ? 0xff5a3c : accent;
-    const maxAlpha = weather === "smog" ? 0.12 : 0.06;
+    const maxAlpha = weather === "smog" ? 0.14 : 0.08;
     for (let i = 0; i < count; i++) {
       const baseAlpha = maxAlpha * (0.5 + Math.random() * 0.5);
       const img = this.scene.add

@@ -10,7 +10,7 @@ export const TILE = 32;
  * for a crisper image. Must match the cell size passed to `tools/tileset-gen.mjs`. Set to `TILE`
  * to revert to 1:1 (e.g. if falling back to the procedural tileset).
  */
-export const TILESET_PX = 64;
+export const TILESET_PX = 96;
 
 /** District grid dimensions, in tiles. */
 export const GRID_W = 40;
@@ -22,7 +22,7 @@ export const WORLD_H = GRID_H * TILE;
 /**
  * Render/backing resolution. The canvas scales to fit the window (Phaser.Scale.FIT),
  * so this IS the fidelity ceiling — below the window size Phaser nearest-neighbour
- * upscales it (blocky). Supersampled from the 960×540 design size up to 1600×900
+ * upscales it (blocky). Supersampled from the 960×540 design size up to 2560×1440
  * (RENDER_SCALE) for a crisp neon-noir image at modern window sizes.
  *
  * Framing is preserved, not changed: each world camera zooms by RENDER_SCALE (see
@@ -33,12 +33,19 @@ export const WORLD_H = GRID_H * TILE;
  * cleanly at the new size.
  */
 /** Original logical design size — the world + UI are still authored at this scale. */
-const DESIGN_W = 960;
+export const DESIGN_W = 960;
+export const DESIGN_H = 540;
 /** Backing buffer (exact integers — these are the real canvas dimensions). */
-export const VIEW_W = 1600;
-export const VIEW_H = 900;
+export const VIEW_W = 2560;
+export const VIEW_H = 1440;
 /** Supersample factor: each world camera zooms by this to keep the 960×540 framing. */
-export const RENDER_SCALE = VIEW_W / DESIGN_W; // 5/3
+export const RENDER_SCALE = VIEW_W / DESIGN_W; // 8/3
+/** Screen-space UI scale — keeps typography/layout proportional at higher backing resolution. */
+export const UI_SCALE = RENDER_SCALE;
+/** Scale a design-space pixel dimension to the current backing buffer. */
+export const uiDim = (px: number) => Math.round(px * UI_SCALE);
+/** Scale a design-space font size for Phaser text styles. */
+export const uiFont = (px: number) => `${uiDim(px)}px`;
 
 /** Player tuning. */
 export const PLAYER = {

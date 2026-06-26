@@ -40,9 +40,9 @@ export function paintWetStreets(
       if (wall(jx, jy)) continue;
       const col = (h & 1) === 0 ? WARM : accentAt(jx, jy); // mix sodium + district neon
       const x = jx * TILE + TILE / 2, y = jy * TILE + TILE / 2;
-      const p = pool(x, y, col, 2.1 + (h % 8) / 10, 0.17); // broad soft overhead wash
+      const p = pool(x, y, col, 2.35 + (h % 8) / 10, 0.21); // broad soft overhead wash
       scene.add.image(x, y + 7, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(col)
-        .setDepth(depth).setScale(0.5, 1.9).setAlpha(0.12).setOrigin(0.5, 0.1); // reflection down the wet ground
+        .setDepth(depth).setScale(0.55, 2.2).setAlpha(0.16).setOrigin(0.5, 0.1); // reflection down the wet ground
       if ((h & 3) === 0) // a quarter of the lamps breathe, for life
         scene.tweens.add({ targets: p, alpha: 0.08, scale: p.scale * 1.12, duration: 1700 + (h % 1400), yoyo: true, repeat: -1, ease: "Sine.inOut" });
     }
@@ -51,7 +51,7 @@ export function paintWetStreets(
   // sparse specular glints — light catching on wet pavement
   const gl = scene.add.graphics().setDepth(depth).setBlendMode(Phaser.BlendModes.ADD);
   const GLINT = [0xbfd0ff, 0x9fe8ff, 0xffd9a8];
-  for (let i = 0; i < 90; i++) {
+  for (let i = 0; i < 160; i++) {
     const tx = 2 + Math.floor(hash(i * 7 + 1, i * 13 + 5) % Math.max(1, W - 4));
     const ty = 2 + Math.floor(hash(i * 17 + 3, i * 11 + 9) % Math.max(1, H - 4));
     if (wall(tx, ty)) continue;

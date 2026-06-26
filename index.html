@@ -25,7 +25,9 @@
         justify-content: center;
       }
       #game-root canvas {
+        image-rendering: crisp-edges;
         image-rendering: pixelated;
+        filter: contrast(1.04) saturate(1.08);
       }
       /* Boot flash while the bundle loads */
       #boot {
@@ -37,7 +39,7 @@
         color: #ff2bd6;
         letter-spacing: 0.4em;
         text-shadow: 0 0 12px #ff2bd6;
-        font-size: 14px;
+        font-size: clamp(14px, 1.1vw, 20px);
         pointer-events: none;
         transition: opacity 0.6s ease;
       }

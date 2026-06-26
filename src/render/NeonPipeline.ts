@@ -25,7 +25,7 @@ float rand(vec2 c) { return fract(sin(dot(c, vec2(12.9898, 78.233))) * 43758.545
 // knee sits high so only genuinely emissive neon blooms — ordinary UI text doesn't.
 vec3 brightPass(vec3 s) {
   float bright = max(s.r, max(s.g, s.b));
-  return s * smoothstep(0.62, 0.99, bright);
+  return s * smoothstep(0.55, 0.97, bright);
 }
 
 void main() {
@@ -75,12 +75,14 @@ void main() {
     bloom += brightPass(texture2D(uMainSampler, uv + vec2( out2.x, -out2.y)).rgb) * 0.22;
     bloom += brightPass(texture2D(uMainSampler, uv + vec2(-out2.x, -out2.y)).rgb) * 0.22;
     bloom /= 4.7; // normalize by total weight
-    col += bloom * (0.66 + uHeat * 1.7 + uGlitch * 1.6);
+    col += bloom * (0.78 + uHeat * 1.85 + uGlitch * 1.7);
   }
 
-  // saturation lift with heat
+  // saturation lift with heat + a subtle noir teal/magenta split-tone in the shadows
   float l = dot(col, vec3(0.299, 0.587, 0.114));
-  col = mix(vec3(l), col, 1.05 + uHeat * 0.7 + uGlitch * 0.6);
+  col = mix(vec3(l), col, 1.08 + uHeat * 0.75 + uGlitch * 0.6);
+  vec3 shadowTint = mix(vec3(0.04, 0.08, 0.14), vec3(0.12, 0.02, 0.10), 0.5 + 0.5 * sin(uTime * 0.08));
+  col = mix(col, col * shadowTint + shadowTint * 0.06, smoothstep(0.0, 0.42, 1.0 - l) * 0.22);
 
   // fine scanlines + a slow rolling brightness band (CRT feel), stronger with heat.
   // Kept light at rest so it doesn't stripe small UI text; ramps up in hot combat.
@@ -102,7 +104,9 @@ void main() {
   }
 
   // vignette (deeper for noir framing — pulls the eye in off the busy floor)
-  col *= 1.0 - dist * dist * (0.34 + uHeat * 0.28);
+  col *= 1.0 - dist * dist * (0.38 + uHeat * 0.3);
+  // gentle highlight lift on emissive peaks so neon reads hotter at high resolution
+  col = mix(col, col * 1.08 + vec3(0.02, 0.03, 0.05), smoothstep(0.55, 0.95, l) * 0.18);
 
   // district accent wash — a subtle hue signature per district (fades under heat
   // so the screen still "whites out" hot, and is overridden by meltdown glitch)

@@ -42,14 +42,14 @@ export function paintRooftopLights<T>(
     // corner beacon (top-right of the roof) — mostly the district accent, some red warning lamps
     const bx = (b.x2 + 1) * TILE - 5, by = b.y1 * TILE + 5;
     const col = (hh & 3) === 0 ? RED_WARN : accent;
-    const beacon = glow(bx, by, col, 0.5, 0.55);
-    glow(bx, by, 0xffffff, 0.16, 0.85); // hot core
+    const beacon = glow(bx, by, col, 0.58, 0.62);
+    glow(bx, by, 0xffffff, 0.18, 0.92); // hot core
     if (!reduce)
       scene.tweens.add({ targets: beacon, alpha: 0.12, scale: 0.72, duration: 850 + (hh % 1100), yoyo: true, repeat: -1, ease: "Sine.inOut" });
 
     // bigger buildings: a faint neon roof-sign wash + a warm service light on the far corner
     if (w >= 4 && h >= 3) {
-      glow((b.x1 + w * 0.5) * TILE, (b.y1 + h * 0.42) * TILE, accent, 1.1 + (hh % 6) / 10, 0.1);
+      glow((b.x1 + w * 0.5) * TILE, (b.y1 + h * 0.42) * TILE, accent, 1.25 + (hh % 6) / 10, 0.14);
       if (((hh >> 5) & 1) === 1) glow(b.x1 * TILE + 5, (b.y2 + 1) * TILE - 5, WARM, 0.4, 0.4);
     }
   }

@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import { NPC } from "../config";
+import { GLOW_KEY } from "../assets/manifest";
 import { bakeRemoteLook, lookKey } from "../game/customization";
 import type { PlayerLook } from "../net/protocol";
 
@@ -21,6 +22,7 @@ export default class CityNpc {
   readonly x: number;
   readonly y: number;
   private sprite: Phaser.GameObjects.Image;
+  private shadow: Phaser.GameObjects.Image;
   private label: Phaser.GameObjects.Text;
   private prompt: Phaser.GameObjects.Text;
 
@@ -33,6 +35,7 @@ export default class CityNpc {
 
     const key = lookKey(def.look);
     bakeRemoteLook(scene, key, def.look); // cached by look — identical NPCs share a texture
+    this.shadow = scene.add.image(x, y + 8, GLOW_KEY).setTint(0x05070d).setDepth(7).setScale(0.46, 0.28).setAlpha(0.4); // contact shadow
     this.sprite = scene.add.image(x, y, key, 0).setTint(0xffffff).setDepth(8).setOrigin(0.5, 0.62);
     this.label = scene.add
       .text(x, y - 22, def.name, { fontFamily: "Courier New, monospace", fontSize: "9px", color: "#bfe6ff" })
@@ -66,6 +69,7 @@ export default class CityNpc {
 
   destroy() {
     this.sprite.destroy();
+    this.shadow.destroy();
     this.label.destroy();
     this.prompt.destroy();
   }

@@ -4,6 +4,7 @@ import { shadeWalls } from "../render/wallShade";
 import { applyTileVariants } from "../render/tileVariants";
 import { paintWetStreets } from "../render/wetStreets";
 import { paintRooftopLights } from "../render/rooftopLights";
+import { PlayerLight } from "../render/PlayerLight";
 import Atmosphere from "../render/Atmosphere";
 import MusicDirector from "../audio/MusicDirector";
 import OnlineInventory from "../ui/OnlineInventory";
@@ -128,6 +129,7 @@ const EMOTES: Array<{ text: string; ping: boolean }> = [
 export default class OnlineScene extends Phaser.Scene {
   private net!: NetClient;
   private me!: Phaser.GameObjects.Sprite;
+  private meLight!: PlayerLight;
   private remoteSprites = new Map<string, Phaser.GameObjects.Sprite>();
   private remoteLabels = new Map<string, Phaser.GameObjects.Text>();
   private enemySprites = new Map<number, Phaser.GameObjects.Sprite>();
@@ -391,6 +393,7 @@ export default class OnlineScene extends Phaser.Scene {
       .setTint(0xffffff) // baked in final colours — render untinted
       .setDepth(10)
       .setVisible(false);
+    this.meLight = new PlayerLight(this, this.me.x, this.me.y); // soft carried light (same as the city hub)
 
     const url = SERVER_URL + (SERVER_URL.includes("?") ? "&" : "?") + "zone=" + this.zone;
     this.faction = factionForColor(this.color); // your cell, from your signature colour
@@ -1080,6 +1083,8 @@ export default class OnlineScene extends Phaser.Scene {
       }
     }
     this.me.setVisible(this.net.connected && !this.net.dead);
+    this.meLight.update(this.me.x, this.me.y);
+    this.meLight.setVisible(this.me.visible);
 
     // PvP arena state — warn on enter/exit; the SERVER enforces the actual damage.
     const inPvp = this.net.connected && !this.interior && !this.isSubway && inPvpZone(this.net.pred.x, this.net.pred.y);

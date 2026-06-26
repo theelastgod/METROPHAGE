@@ -4,7 +4,7 @@ import { RENDER_SCALE } from "../config";
 /**
  * Supersampled rendering with an isolated UI layer.
  *
- * The game canvas is the big backing buffer (VIEW_W×VIEW_H = 1600×900) but the world is
+ * The game canvas is the big backing buffer (VIEW_W×VIEW_H = 2560×1440) but the world is
  * authored in the 960×540 logical space, so the world camera is zoomed by RENDER_SCALE:
  * the original framing fills the bigger buffer → crisp, not nearest-neighbour upscaled.
  *

@@ -36,7 +36,7 @@ export function shadeWalls(scene: Phaser.Scene, grid: TileGrid): Phaser.GameObje
       const Y = ty * TILE;
 
       // Mute the busy roof into a clean, darker mass so the silhouette + rim carry the read.
-      g.fillStyle(0x070a14, 0.42).fillRect(X, Y, TILE, TILE);
+      g.fillStyle(0x070a14, 0.48).fillRect(X, Y, TILE, TILE);
 
       // ── cast shadow + dark wall faces (south / east) ──
       if (openBelow) {

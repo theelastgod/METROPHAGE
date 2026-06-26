@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { VIEW_W, VIEW_H, COLORS } from "../config";
+import { VIEW_W, VIEW_H, COLORS, uiDim, uiFont } from "../config";
 import NeonPipeline from "../render/NeonPipeline";
 import { getClass } from "../game/classes";
 import MusicDirector from "../audio/MusicDirector";
@@ -47,7 +47,7 @@ export default class Prologue extends Phaser.Scene {
     this.add
       .text(VIEW_W / 2, 60, "METROPHAGE", {
         fontFamily: "Courier New, monospace",
-        fontSize: "34px",
+        fontSize: uiFont(34),
         color: "#ff2bd6",
         fontStyle: "bold",
       })
@@ -57,24 +57,24 @@ export default class Prologue extends Phaser.Scene {
     this.body = this.add
       .text(VIEW_W / 2, VIEW_H / 2, "", {
         fontFamily: "Courier New, monospace",
-        fontSize: "16px",
+        fontSize: uiFont(16),
         color: "#eafdff",
         align: "center",
-        lineSpacing: 8,
-        wordWrap: { width: VIEW_W - 180 },
+        lineSpacing: uiDim(8),
+        wordWrap: { width: VIEW_W - uiDim(180) },
       })
       .setOrigin(0.5);
 
     this.hint = this.add
       .text(VIEW_W / 2, VIEW_H - 40, "▸ click / SPACE to continue", {
         fontFamily: "Courier New, monospace",
-        fontSize: "12px",
+        fontSize: uiFont(12),
         color: "#6b7184",
       })
       .setOrigin(0.5);
 
     this.add
-      .text(VIEW_W - 16, 16, "SKIP ▸", { fontFamily: "Courier New, monospace", fontSize: "12px", color: "#6b7184" })
+      .text(VIEW_W - uiDim(16), uiDim(16), "SKIP ▸", { fontFamily: "Courier New, monospace", fontSize: uiFont(12), color: "#6b7184" })
       .setOrigin(1, 0)
       .setInteractive({ useHandCursor: true })
       .on("pointerdown", () => this.showActions());
@@ -119,7 +119,7 @@ export default class Prologue extends Phaser.Scene {
       const t = this.add
         .text(VIEW_W / 2, y, label, {
           fontFamily: "Courier New, monospace",
-          fontSize: "20px",
+          fontSize: uiFont(20),
           color,
           fontStyle: "bold",
           align: "center",
@@ -129,7 +129,7 @@ export default class Prologue extends Phaser.Scene {
         .setInteractive({ useHandCursor: true });
       t.setShadow(0, 0, color, 5, true, true);
       const s = this.add
-        .text(VIEW_W / 2, y + 24, sub, { fontFamily: "Courier New, monospace", fontSize: "12px", color: "#9aa3b2" })
+        .text(VIEW_W / 2, y + uiDim(24), sub, { fontFamily: "Courier New, monospace", fontSize: uiFont(12), color: "#9aa3b2" })
         .setOrigin(0.5)
         .setAlpha(0);
       t.on("pointerover", () => t.setScale(1.08));
@@ -146,7 +146,7 @@ export default class Prologue extends Phaser.Scene {
     this.add
       .text(VIEW_W / 2, VIEW_H / 2 - 70, `${cls.name} — ${cls.primaryName}`, {
         fontFamily: "Courier New, monospace",
-        fontSize: "13px",
+        fontSize: uiFont(13),
         color: cls.hex,
       })
       .setOrigin(0.5)

@@ -136,6 +136,10 @@ for (const baseS of Object.keys(VAR_SLOTS)) {
 // ── composite the 8×4 tileset ─────────────────────────────────────────────────
 const cellFor = (idx) => idx < 18 ? pick[idx] : slotCell[idx];
 const modeFor = (idx) => idx < 18 ? SPEC[idx]?.mode : SPEC[slotBase[idx]]?.mode;
+// Per-cell extra grade for the few tiles that blow out at scale (the source plaza/neon swatches
+// are very hot magenta) — pulled down + desaturated on top of the global noir grade so the
+// plaza stays a vivid landmark without flaring the whole district. base/variant kept in sync.
+const TAME = { 3: { b: 0.78, s: 0.62 }, 22: { b: 0.78, s: 0.62 }, 13: { b: 0.82, s: 0.72 } };
 const comps = [];
 const placed = {};
 for (let idx = 0; idx < COLS * ROWS; idx++) {
@@ -147,7 +151,10 @@ for (let idx = 0; idx < COLS * ROWS; idx++) {
     const cw = Math.round(m.width * 0.78), ch = Math.round(m.height * 0.78);
     img = sharp(cell.file).extract({ left: (m.width - cw) >> 1, top: (m.height - ch) >> 1, width: cw, height: ch });
   }
-  const buf = await img.resize(CELL, CELL, { kernel: "lanczos3" }).removeAlpha().png().toBuffer();
+  img = img.resize(CELL, CELL, { kernel: "lanczos3" });
+  const t = TAME[idx];
+  if (t) img = img.modulate({ brightness: t.b, saturation: t.s });
+  const buf = await img.removeAlpha().png().toBuffer();
   comps.push({ input: buf, left: (idx % COLS) * CELL, top: Math.floor(idx / COLS) * CELL });
   placed[idx] = cell ? srcDir(cell.file) + "/" + path.basename(cell.file) : "(concrete)";
 }

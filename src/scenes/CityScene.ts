@@ -3,6 +3,7 @@ import { installUiCamera } from "../render/cameras";
 import { applyTileVariants } from "../render/tileVariants";
 import { paintWetStreets } from "../render/wetStreets";
 import { paintRooftopLights } from "../render/rooftopLights";
+import { PlayerLight } from "../render/PlayerLight";
 import MusicDirector from "../audio/MusicDirector";
 import { TILE, TILESET_PX, COLORS, NPC } from "../config";
 import {
@@ -69,6 +70,7 @@ interface CityEnter {
  */
 export default class CityScene extends Phaser.Scene {
   private player!: Player;
+  private playerLight!: PlayerLight;
   private cityMap?: CityMap; // present in city mode
   private wallLayer!: Phaser.Tilemaps.TilemapLayer;
   private neon?: NeonPipeline;
@@ -164,6 +166,7 @@ export default class CityScene extends Phaser.Scene {
       color: 0xffffff,
     });
     this.physics.add.collider(this.player, this.wallLayer);
+    this.playerLight = new PlayerLight(this, this.player.x, this.player.y); // soft carried light
     // City clamps the camera to the big map; a small interior centres + zooms in, so the
     // room fills the frame (reads as "indoors") rather than clamping to a corner.
     if (this.mode === "city") {
@@ -783,6 +786,7 @@ export default class CityScene extends Phaser.Scene {
 
   update(_time: number, delta: number) {
     this.atmosphere?.update(this.time.now, delta, 0.15); // weather/fog/holos animate always
+    this.playerLight?.update(this.player.x, this.player.y); // carried light tracks the player
     // ease the screen mood toward the current district's tint (keeps shifting even when frozen)
     if (this.mode === "city" && this.neon) {
       const t = this.neonTint;
