@@ -1,11 +1,7 @@
 import Phaser from "phaser";
-import { VIEW_W, VIEW_H, COLORS } from "../config";
+import { COLORS } from "../config";
 import { GUILD_CREATE_COST, guildXpForLevel } from "../game/guilds";
-
-// METROPHAGE Cell panel (key C) — your guild's bank, level, roster + rank. All mutations are
-// server-authoritative (the bank is dupe-proof D1); this panel shows state + fires quick
-// deposit/withdraw/leave intents. Founding, invites, ranks + amounts also work via /g chat
-// commands (see OnlineScene). Cross-zone: the registry lives in shared D1.
+import { dimBackdrop, modalRect, uiDim, uiFont } from "./uiLayout";
 
 interface GuildState {
   id: number;
@@ -61,101 +57,106 @@ export default class OnlineGuild {
       return o;
     };
     const D = 1700;
-    const w = 640;
-    const h = 520;
-    const x = (VIEW_W - w) / 2;
-    const y = (VIEW_H - h) / 2;
-    add(scene.add.rectangle(VIEW_W / 2, VIEW_H / 2, VIEW_W, VIEW_H, 0x02020a, 0.64).setScrollFactor(0).setDepth(D));
+    const { x, y, w, h } = modalRect(660, 540);
+    const btnH = uiDim(28);
+    const rosterH = uiDim(24);
+
+    add(dimBackdrop(scene, D, 0.64));
     const g = add(scene.add.graphics().setScrollFactor(0).setDepth(D + 1));
     g.fillStyle(0x0a0818, 0.97).fillRect(x, y, w, h);
-    g.lineStyle(2, COLORS.neonGreen, 0.85).strokeRect(x, y, w, h);
+    g.lineStyle(uiDim(2), COLORS.neonGreen, 0.85).strokeRect(x, y, w, h);
 
     const tx = (s: string, fx: number, fy: number, size: number, color: string, bold = false, origin = 0) =>
       add(
         scene.add
-          .text(fx, fy, s, { fontFamily: "Courier New, monospace", fontSize: size + "px", color, fontStyle: bold ? "bold" : "normal" })
+          .text(fx, fy, s, {
+            fontFamily: "Courier New, monospace",
+            fontSize: uiFont(size),
+            color,
+            fontStyle: bold ? "bold" : "normal",
+          })
           .setOrigin(origin, 0)
           .setScrollFactor(0)
           .setDepth(D + 3),
       );
     const btn = (bx: number, by: number, bw: number, label: string, color: number, fn: () => void) => {
-      g.fillStyle(0x161232, 0.96).fillRect(bx, by, bw, 26);
-      g.lineStyle(1.3, color, 0.95).strokeRect(bx, by, bw, 26);
-      tx(label, bx + bw / 2, by + 7, 11, "#cfe8ff", false, 0.5);
-      const z = add(scene.add.zone(bx, by, bw, 26).setOrigin(0).setScrollFactor(0).setInteractive({ useHandCursor: true }).setDepth(D + 4));
+      g.fillStyle(0x161232, 0.96).fillRect(bx, by, bw, btnH);
+      g.lineStyle(uiDim(1.3), color, 0.95).strokeRect(bx, by, bw, btnH);
+      tx(label, bx + bw / 2, by + uiDim(8), 12, "#cfe8ff", false, 0.5);
+      const z = add(
+        scene.add.zone(bx, by, bw, btnH).setOrigin(0).setScrollFactor(0).setInteractive({ useHandCursor: true }).setDepth(D + 4),
+      );
       z.on("pointerdown", fn);
     };
 
-    tx("⬡ CELL", x + 18, y + 12, 16, "#39ff88", true);
-    tx("C / ESC close", x + w - 18, y + 14, 11, "#9aa3b2", false, 1);
+    tx("⬡ CELL", x + uiDim(20), y + uiDim(14), 17, "#39ff88", true);
+    tx("C / ESC close", x + w - uiDim(20), y + uiDim(16), 12, "#9aa3b2", false, 1);
 
     if (!this.guild) {
-      tx("You're not in a Cell.", x + 24, y + 56, 13, "#cfe8ff", true);
-      tx("A Cell is a player-run resistance group — a shared bank, a level, and a", x + 24, y + 84, 11, "#9aa3b2");
-      tx("credit-find perk for every member. Found one or accept an invite:", x + 24, y + 100, 11, "#9aa3b2");
+      tx("You're not in a Cell.", x + uiDim(26), y + uiDim(60), 14, "#cfe8ff", true);
+      tx("A Cell is a player-run resistance group — a shared bank, a level, and a", x + uiDim(26), y + uiDim(90), 12, "#9aa3b2");
+      tx("credit-find perk for every member. Found one or accept an invite:", x + uiDim(26), y + uiDim(108), 12, "#9aa3b2");
       const cmds = [
         [`/gcreate <TAG> <name>`, `found a Cell (costs ₵${GUILD_CREATE_COST})`],
         ["/gjoin", "accept your latest invite"],
         ["/ginvite <id>", "invite a player (leader/officer)"],
         ["/g <message>", "Cell chat"],
       ];
-      let cy = y + 134;
+      let cy = y + uiDim(142);
       for (const [c, d] of cmds) {
-        tx(c, x + 30, cy, 12, "#f7ff3c", true);
-        tx(d, x + 250, cy, 11, "#9aa3b2");
-        cy += 26;
+        tx(c, x + uiDim(32), cy, 13, "#f7ff3c", true);
+        tx(d, x + uiDim(260), cy, 12, "#9aa3b2");
+        cy += uiDim(28);
       }
       return;
     }
 
     const gd = this.guild;
-    tx(`[${gd.tag}] ${gd.name}`, x + 90, y + 16, 15, "#39ff88", true);
-    // level + xp bar
-    const lvY = y + 50;
-    tx(`CELL LEVEL ${gd.level}`, x + 24, lvY, 12, "#f7ff3c", true);
-    const barX = x + 170;
-    const barW = w - 170 - 24;
+    tx(`[${gd.tag}] ${gd.name}`, x + uiDim(96), y + uiDim(18), 16, "#39ff88", true);
+    const lvY = y + uiDim(54);
+    tx(`CELL LEVEL ${gd.level}`, x + uiDim(26), lvY, 13, "#f7ff3c", true);
+    const barX = x + uiDim(180);
+    const barW = w - uiDim(180) - uiDim(26);
+    const barH = uiDim(16);
     const cur = guildXpForLevel(gd.level);
     const next = guildXpForLevel(gd.level + 1);
     const frac = next > cur ? Math.max(0, Math.min(1, (gd.xp - cur) / (next - cur))) : 1;
-    g.fillStyle(0x12102a, 1).fillRect(barX, lvY, barW, 14);
-    g.fillStyle(0x39ff88, 0.85).fillRect(barX, lvY, barW * frac, 14);
-    g.lineStyle(1, 0x39ff88, 0.7).strokeRect(barX, lvY, barW, 14);
-    tx(`${gd.xp} XP`, barX + barW, lvY + 16, 9, "#6b7184", false, 1);
+    g.fillStyle(0x12102a, 1).fillRect(barX, lvY, barW, barH);
+    g.fillStyle(0x39ff88, 0.85).fillRect(barX, lvY, barW * frac, barH);
+    g.lineStyle(uiDim(1), 0x39ff88, 0.7).strokeRect(barX, lvY, barW, barH);
+    tx(`${gd.xp} XP`, barX + barW, lvY + uiDim(18), 10, "#6b7184", false, 1);
 
-    // bank
-    const bkY = y + 92;
-    g.fillStyle(0x12102a, 0.9).fillRect(x + 24, bkY, w - 48, 40);
-    g.lineStyle(1.2, COLORS.neonYellow, 0.7).strokeRect(x + 24, bkY, w - 48, 40);
-    tx("CELL BANK", x + 36, bkY + 6, 10, "#6b7184");
-    tx(`₵ ${gd.bankCredits}     ◈ ${gd.bankCores}`, x + 36, bkY + 20, 14, "#f7ff3c", true);
-    tx(`your rank: ${gd.rank.toUpperCase()}`, x + w - 36, bkY + 14, 11, "#cfe8ff", false, 1);
+    const bkY = y + uiDim(98);
+    const bankH = uiDim(44);
+    g.fillStyle(0x12102a, 0.9).fillRect(x + uiDim(26), bkY, w - uiDim(52), bankH);
+    g.lineStyle(uiDim(1.2), COLORS.neonYellow, 0.7).strokeRect(x + uiDim(26), bkY, w - uiDim(52), bankH);
+    tx("CELL BANK", x + uiDim(38), bkY + uiDim(8), 11, "#6b7184");
+    tx(`₵ ${gd.bankCredits}     ◈ ${gd.bankCores}`, x + uiDim(38), bkY + uiDim(22), 15, "#f7ff3c", true);
+    tx(`your rank: ${gd.rank.toUpperCase()}`, x + w - uiDim(38), bkY + uiDim(16), 12, "#cfe8ff", false, 1);
 
-    // quick bank buttons (amounts are clamped server-side to your balance / the bank)
     const officer = gd.rank === "leader" || gd.rank === "officer";
-    let bx = x + 24;
-    const by = y + 144;
-    btn(bx, by, 120, "DEPOSIT ₵100", COLORS.neonGreen, () => this.onAction?.("deposit", 100, 0));
-    bx += 128;
-    btn(bx, by, 120, "DEPOSIT ₵500", COLORS.neonGreen, () => this.onAction?.("deposit", 500, 0));
-    bx += 128;
+    let bx = x + uiDim(26);
+    const by = y + uiDim(152);
+    btn(bx, by, uiDim(126), "DEPOSIT ₵100", COLORS.neonGreen, () => this.onAction?.("deposit", 100, 0));
+    bx += uiDim(134);
+    btn(bx, by, uiDim(126), "DEPOSIT ₵500", COLORS.neonGreen, () => this.onAction?.("deposit", 500, 0));
+    bx += uiDim(134);
     if (officer) {
-      btn(bx, by, 130, "WITHDRAW ₵100", COLORS.neonCyan, () => this.onAction?.("withdraw", 100, 0));
-      bx += 138;
+      btn(bx, by, uiDim(136), "WITHDRAW ₵100", COLORS.neonCyan, () => this.onAction?.("withdraw", 100, 0));
+      bx += uiDim(144);
     }
-    btn(bx, by, 100, "LEAVE", COLORS.neonMagenta, () => this.onAction?.("leave"));
-    tx("more: /gdep <c> [k] · /gwd <c> [k] · /gpromote <id> · /gkick <id> · /g <msg>", x + 24, by + 34, 10, "#6b7184");
+    btn(bx, by, uiDim(106), "LEAVE", COLORS.neonMagenta, () => this.onAction?.("leave"));
+    tx("more: /gdep <c> [k] · /gwd <c> [k] · /gpromote <id> · /gkick <id> · /g <msg>", x + uiDim(26), by + uiDim(36), 11, "#6b7184");
 
-    // roster
-    tx(`ROSTER (${gd.members.length})`, x + 24, y + 196, 12, "#f7ff3c", true);
-    let ry = y + 218;
+    tx(`ROSTER (${gd.members.length})`, x + uiDim(26), y + uiDim(206), 13, "#f7ff3c", true);
+    let ry = y + uiDim(228);
     for (const m of gd.members.slice(0, 12)) {
       const me = m.id === this.selfId;
-      g.fillStyle(me ? 0x231a3a : 0x12102a, 0.9).fillRect(x + 24, ry, w - 48, 22);
+      g.fillStyle(me ? 0x231a3a : 0x12102a, 0.9).fillRect(x + uiDim(26), ry, w - uiDim(52), rosterH);
       const rankColor = m.rank === "leader" ? "#f7ff3c" : m.rank === "officer" ? "#29e7ff" : "#9aa3b2";
-      tx(m.id, x + 34, ry + 4, 11, me ? "#ff2bd6" : "#cfe8ff", me);
-      tx(m.rank.toUpperCase(), x + w - 36, ry + 4, 10, rankColor, false, 1);
-      ry += 25;
+      tx(m.id, x + uiDim(36), ry + uiDim(5), 12, me ? "#ff2bd6" : "#cfe8ff", me);
+      tx(m.rank.toUpperCase(), x + w - uiDim(38), ry + uiDim(5), 11, rankColor, false, 1);
+      ry += rosterH + uiDim(3);
     }
   }
 

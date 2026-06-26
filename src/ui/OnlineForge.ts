@@ -1,19 +1,14 @@
 import Phaser from "phaser";
-import { VIEW_W, VIEW_H, COLORS } from "../config";
+import { COLORS } from "../config";
 import { Item, Slot, RARITIES, SLOT_NAMES, itemStatLines } from "../game/items";
 import { getWeapon } from "../game/weapons";
 import { iconKey, ensureItemIcons } from "../assets/itemIcons";
 import { upgradeCost, reforgeCost, salvageYield, fuseCost, canUpgrade, canFuse, UPGRADE_MAX } from "../game/crafting";
-
-// METROPHAGE gear forge (key G) — the credits+cores sink that deepens loot→equip. Lists
-// your loadout + bag and fires server-authoritative craft requests (the server validates
-// + deducts + mutates; this panel only previews costs and sends intent). FUSE: click ✦ on
-// one bag item, then ✦ on another of the same rarity to merge them up a tier.
+import { dimBackdrop, modalRect, uiDim, uiFont } from "./uiLayout";
 
 const SLOT_ICON: Record<Slot, string> = { weapon: "WEAPON-MOD", implant: "IMPLANT", armor: "ARMOR", chip: "CHIP" };
 function itemIcon(it: Item): { key: string; tint: number } {
   const w = it.weaponId ? getWeapon(it.weaponId) : undefined;
-  // weapons = full-colour gun art (untinted); gear/consumables = monochrome glyphs, rarity-tinted
   if (w) return { key: iconKey(w.klass), tint: 0xffffff };
   return { key: iconKey(SLOT_ICON[it.slot]), tint: RARITIES[it.rarity].color };
 }
@@ -28,7 +23,7 @@ export default class OnlineForge {
   private equipped: Item[] = [];
   private credits = 0;
   private cores = 0;
-  private fuseSel: string | null = null; // first-picked fuse item id
+  private fuseSel: string | null = null;
   private objs: Phaser.GameObjects.GameObject[] = [];
   private hdr?: Phaser.GameObjects.Text;
 
@@ -44,7 +39,7 @@ export default class OnlineForge {
     this.cores = cores;
     if (this.open) this.build();
   }
-  /** Cheap per-frame header refresh (credits/cores) without rebuilding the whole panel. */
+
   setWallet(credits: number, cores: number) {
     this.credits = credits;
     this.cores = cores;
@@ -76,78 +71,82 @@ export default class OnlineForge {
       return o;
     };
     const D = 1700;
-    const w = 660;
+    const rowH = uiDim(62);
     const rows = [...this.equipped.map((it) => ({ it, eq: true })), ...this.items.map((it) => ({ it, eq: false }))];
     const shown = rows.slice(0, 9);
-    const h = 96 + shown.length * 60;
-    const x = (VIEW_W - w) / 2;
-    const y = (VIEW_H - h) / 2;
+    const { x, y, w, h } = modalRect(680, 100 + shown.length * 62);
 
-    add(scene.add.rectangle(VIEW_W / 2, VIEW_H / 2, VIEW_W, VIEW_H, 0x02020a, 0.62).setScrollFactor(0).setDepth(D));
+    add(dimBackdrop(scene, D));
     const g = add(scene.add.graphics().setScrollFactor(0).setDepth(D + 1));
     g.fillStyle(0x0a0818, 0.97).fillRect(x, y, w, h);
-    g.lineStyle(2, COLORS.neonMagenta, 0.85).strokeRect(x, y, w, h);
+    g.lineStyle(uiDim(2), COLORS.neonMagenta, 0.85).strokeRect(x, y, w, h);
 
     const tx = (s: string, fx: number, fy: number, size: number, color: string, bold = false, origin = 0) =>
       add(
         scene.add
-          .text(fx, fy, s, { fontFamily: "Courier New, monospace", fontSize: size + "px", color, fontStyle: bold ? "bold" : "normal" })
+          .text(fx, fy, s, {
+            fontFamily: "Courier New, monospace",
+            fontSize: uiFont(size),
+            color,
+            fontStyle: bold ? "bold" : "normal",
+          })
           .setOrigin(origin, 0)
           .setScrollFactor(0)
           .setDepth(D + 3),
       );
-    // labeled button: rect + glyph; affordable→bright, broke→dim+inert
+    const btnH = uiDim(24);
     const btn = (bx: number, by: number, bw: number, label: string, color: number, enabled: boolean, fn: () => void) => {
-      g.fillStyle(enabled ? 0x161232 : 0x0e0c1c, 0.95).fillRect(bx, by, bw, 22);
-      g.lineStyle(1.2, color, enabled ? 0.95 : 0.3).strokeRect(bx, by, bw, 22);
-      tx(label, bx + bw / 2, by + 5, 10, enabled ? "#cfe8ff" : "#4a5266", false, 0.5);
+      g.fillStyle(enabled ? 0x161232 : 0x0e0c1c, 0.95).fillRect(bx, by, bw, btnH);
+      g.lineStyle(uiDim(1.2), color, enabled ? 0.95 : 0.3).strokeRect(bx, by, bw, btnH);
+      tx(label, bx + bw / 2, by + uiDim(6), 11, enabled ? "#cfe8ff" : "#4a5266", false, 0.5);
       if (enabled) {
-        const z = add(scene.add.zone(bx, by, bw, 22).setOrigin(0).setScrollFactor(0).setInteractive({ useHandCursor: true }).setDepth(D + 4));
+        const z = add(
+          scene.add.zone(bx, by, bw, btnH).setOrigin(0).setScrollFactor(0).setInteractive({ useHandCursor: true }).setDepth(D + 4),
+        );
         z.on("pointerdown", fn);
       }
     };
 
-    tx("⚒ GEAR FORGE", x + 18, y + 12, 16, "#ff2bd6", true);
-    this.hdr = tx(`₵ ${this.credits}    ◈ ${this.cores}`, x + w - 18, y + 14, 14, "#f7ff3c", true, 1);
+    tx("⚒ GEAR FORGE", x + uiDim(20), y + uiDim(14), 17, "#ff2bd6", true);
+    this.hdr = tx(`₵ ${this.credits}    ◈ ${this.cores}`, x + w - uiDim(20), y + uiDim(16), 15, "#f7ff3c", true, 1);
     tx(
       this.fuseSel ? "FUSE: pick a second item of the same rarity (✦)" : "▲ upgrade · ↻ reforge · ✂ salvage · ✦ fuse · G/ESC close",
-      x + 18,
-      y + 36,
-      11,
+      x + uiDim(20),
+      y + uiDim(40),
+      12,
       this.fuseSel ? "#39ff88" : "#9aa3b2",
     );
 
-    if (shown.length === 0) tx("nothing to forge — loot or buy gear first", VIEW_W / 2, y + h / 2, 12, "#5a6172", false, 0.5);
+    if (shown.length === 0) tx("nothing to forge — loot or buy gear first", x + w / 2, y + h / 2, 13, "#5a6172", false, 0.5);
+
+    const cardH = uiDim(56);
+    const bw = uiDim(96);
+    const gap = uiDim(6);
+    const iconSize = uiDim(32);
 
     shown.forEach(({ it, eq }, i) => {
-      const ry = y + 56 + i * 60;
+      const ry = y + uiDim(60) + i * rowH;
       const r = RARITIES[it.rarity];
       const selected = this.fuseSel === it.id;
-      g.fillStyle(selected ? 0x231a3a : 0x12102a, 0.92).fillRect(x + 16, ry, w - 32, 54);
-      g.lineStyle(selected ? 2 : 1.4, selected ? 0x39ff88 : r.color, 1).strokeRect(x + 16, ry, w - 32, 54);
+      g.fillStyle(selected ? 0x231a3a : 0x12102a, 0.92).fillRect(x + uiDim(18), ry, w - uiDim(36), cardH);
+      g.lineStyle(selected ? uiDim(2) : uiDim(1.4), selected ? 0x39ff88 : r.color, 1).strokeRect(x + uiDim(18), ry, w - uiDim(36), cardH);
       const ic = itemIcon(it);
-      add(scene.add.image(x + 40, ry + 27, ic.key).setDisplaySize(30, 30).setTint(ic.tint).setScrollFactor(0).setDepth(D + 2));
+      add(scene.add.image(x + uiDim(42), ry + cardH / 2, ic.key).setDisplaySize(iconSize, iconSize).setTint(ic.tint).setScrollFactor(0).setDepth(D + 2));
       const lvl = it.ilvl ?? 0;
-      tx(`${it.name}${lvl ? ` +${lvl}` : ""}${eq ? "  [E]" : ""}`, x + 62, ry + 6, 12, r.hex, true);
-      tx(itemStatLines(it).filter((l) => !l.startsWith("◈")).join("  ") || "—", x + 62, ry + 24, 9, "#9aa3b2");
-      tx(`${r.name} · ${SLOT_NAMES[it.slot]}`, x + 62, ry + 38, 9, "#5a6172");
+      tx(`${it.name}${lvl ? ` +${lvl}` : ""}${eq ? "  [E]" : ""}`, x + uiDim(66), ry + uiDim(8), 13, r.hex, true);
+      tx(itemStatLines(it).filter((l) => !l.startsWith("◈")).join("  ") || "—", x + uiDim(66), ry + uiDim(26), 10, "#9aa3b2");
+      tx(`${r.name} · ${SLOT_NAMES[it.slot]}`, x + uiDim(66), ry + uiDim(40), 10, "#5a6172");
 
-      // action buttons, right-aligned
-      const bw = 92;
-      const gap = 6;
-      let bx = x + w - 16 - bw;
-      const by = ry + 6;
-      const by2 = ry + 30;
-      // UPGRADE
+      let bx = x + w - uiDim(18) - bw;
+      const by = ry + uiDim(8);
+      const by2 = ry + uiDim(32);
       const uc = upgradeCost(it);
       const canU = canUpgrade(it);
       btn(bx, by, bw, canU ? `▲+1 ₵${uc.credits} ◈${uc.cores}` : `MAX +${UPGRADE_MAX}`, 0x39ff88, canU && this.credits >= uc.credits && this.cores >= uc.cores, () =>
         this.onCraft?.("upgrade", it.id),
       );
-      // REFORGE
       const rc = reforgeCost(it);
       btn(bx, by2, bw, `↻ ₵${rc.credits} ◈${rc.cores}`, 0x29e7ff, this.credits >= rc.credits && this.cores >= rc.cores, () => this.onCraft?.("reforge", it.id));
-      // bag-only: salvage + fuse
       if (!eq) {
         bx -= bw + gap;
         const sy = salvageYield(it);
@@ -159,7 +158,6 @@ export default class OnlineForge {
     });
   }
 
-  /** Fuse selection: first ✦ arms it; a second valid ✦ fires the fuse. */
   private pickFuse(it: Item) {
     if (!this.fuseSel) {
       this.fuseSel = it.id;
@@ -167,7 +165,7 @@ export default class OnlineForge {
       return;
     }
     if (this.fuseSel === it.id) {
-      this.fuseSel = null; // toggle off
+      this.fuseSel = null;
       this.build();
       return;
     }
@@ -176,8 +174,8 @@ export default class OnlineForge {
       this.onCraft?.("fuse", this.fuseSel, it.id);
       this.fuseSel = null;
     } else {
-      this.scene.events.emit("forge-msg"); // (no-op hook) — keep selection, let user retry
-      this.fuseSel = it.id; // re-arm with the latest pick
+      this.scene.events.emit("forge-msg");
+      this.fuseSel = it.id;
       this.build();
     }
   }

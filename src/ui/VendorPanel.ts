@@ -1,11 +1,11 @@
 import Phaser from "phaser";
-import { VIEW_W, VIEW_H } from "../config";
 import Vendor from "../systems/Vendor";
 import Progression from "../systems/Progression";
 import Inventory from "../systems/Inventory";
 import { itemValue, sellValue, RARITIES } from "../game/items";
 import { CONSUMABLES } from "../game/consumables";
 import { drawPanelFrame } from "./panelChrome";
+import { overlayRect, uiDim, uiFont } from "./uiLayout";
 
 const BUY_ROWS = 8; // 5 gear + 3 consumables
 const SELL_ROWS = 13;
@@ -30,11 +30,13 @@ export default class VendorPanel {
   private respecText!: Phaser.GameObjects.Text;
   private open = false;
 
-  private readonly x = 60;
-  private readonly y = 36;
-  private readonly w = VIEW_W - 120;
-  private readonly h = VIEW_H - 60;
-  private readonly colW = (VIEW_W - 120) / 2;
+  private readonly frame = overlayRect(18);
+  private readonly x = this.frame.x;
+  private readonly y = this.frame.y;
+  private readonly w = this.frame.w;
+  private readonly h = this.frame.h;
+  private readonly colW = this.frame.w / 2;
+  private readonly rowH = uiDim(24);
 
   constructor(scene: Phaser.Scene, vendor: Vendor, prog: Progression, inv: Inventory, onChange: () => void) {
     this.scene = scene;
@@ -45,32 +47,43 @@ export default class VendorPanel {
     this.g = scene.add.graphics().setScrollFactor(0).setDepth(1600);
     const D = 1601;
 
-    this.header = this.text(this.x + 14, this.y + 10, "", "#eafdff", "13px", D);
-    this.text(this.x + 14, this.y + 34, "BUY", "#39ff88", "11px", D);
-    this.text(this.x + this.colW + 14, this.y + 34, "SELL", "#f7ff3c", "11px", D);
+    this.header = this.text(this.x + uiDim(16), this.y + uiDim(12), "", "#eafdff", 15, D);
+    this.text(this.x + uiDim(16), this.y + uiDim(36), "BUY", "#39ff88", 12, D);
+    this.text(this.x + this.colW + uiDim(16), this.y + uiDim(36), "SELL", "#f7ff3c", 12, D);
 
     for (let i = 0; i < BUY_ROWS; i++) {
       const ry = this.rowY(i);
-      this.buyTexts.push(this.text(this.x + 20, ry + 4, "", "#eafdff", "10px", D + 1));
-      const z = scene.add.zone(this.x + 14, ry, this.colW - 28, 20).setOrigin(0).setScrollFactor(0).setInteractive({ useHandCursor: true });
+      this.buyTexts.push(this.text(this.x + uiDim(22), ry + uiDim(5), "", "#eafdff", 11, D + 1));
+      const z = scene.add
+        .zone(this.x + uiDim(14), ry, this.colW - uiDim(28), this.rowH)
+        .setOrigin(0)
+        .setScrollFactor(0)
+        .setInteractive({ useHandCursor: true });
       z.on("pointerdown", () => this.buy(i));
       this.zones.push(z);
     }
     for (let i = 0; i < SELL_ROWS; i++) {
       const ry = this.rowY(i);
-      this.sellTexts.push(this.text(this.x + this.colW + 20, ry + 4, "", "#eafdff", "10px", D + 1));
-      const z = scene.add.zone(this.x + this.colW + 14, ry, this.colW - 28, 20).setOrigin(0).setScrollFactor(0).setInteractive({ useHandCursor: true });
+      this.sellTexts.push(this.text(this.x + this.colW + uiDim(22), ry + uiDim(5), "", "#eafdff", 11, D + 1));
+      const z = scene.add
+        .zone(this.x + this.colW + uiDim(14), ry, this.colW - uiDim(28), this.rowH)
+        .setOrigin(0)
+        .setScrollFactor(0)
+        .setInteractive({ useHandCursor: true });
       z.on("pointerdown", () => this.sell(i));
       this.zones.push(z);
     }
 
-    // RESPEC
-    const by = this.y + this.h - 26;
-    this.respecText = this.text(this.x + 20, by + 4, "", "#f7ff3c", "11px", D + 1);
-    const rz = scene.add.zone(this.x + 14, by, 170, 20).setOrigin(0).setScrollFactor(0).setInteractive({ useHandCursor: true });
+    const by = this.y + this.h - uiDim(30);
+    this.respecText = this.text(this.x + uiDim(22), by + uiDim(5), "", "#f7ff3c", 12, D + 1);
+    const rz = scene.add
+      .zone(this.x + uiDim(14), by, uiDim(180), this.rowH)
+      .setOrigin(0)
+      .setScrollFactor(0)
+      .setInteractive({ useHandCursor: true });
     rz.on("pointerdown", () => this.doRespec());
     this.zones.push(rz);
-    this.text(this.x + this.w - 124, by + 4, "E / ESC to close", "#9aa3b2", "10px", D);
+    this.text(this.x + this.w - uiDim(130), by + uiDim(5), "E / ESC to close", "#9aa3b2", 11, D);
 
     this.setVisible(false);
   }
@@ -92,7 +105,7 @@ export default class VendorPanel {
   }
 
   private rowY(i: number) {
-    return this.y + 52 + i * 22;
+    return this.y + uiDim(54) + i * this.rowH;
   }
 
   private buy(i: number) {
@@ -128,7 +141,12 @@ export default class VendorPanel {
     const g = this.g;
     g.clear();
     drawPanelFrame(g, this.x, this.y, this.w, this.h);
-    g.lineStyle(1, 0x29e7ff, 0.3).lineBetween(this.x + this.colW, this.y + 30, this.x + this.colW, this.y + this.h - 32);
+    g.lineStyle(uiDim(1), 0x29e7ff, 0.3).lineBetween(
+      this.x + this.colW,
+      this.y + uiDim(32),
+      this.x + this.colW,
+      this.y + this.h - uiDim(36),
+    );
 
     this.header.setText(`FIXER          ₵ ${this.prog.currency}`);
 
@@ -163,9 +181,9 @@ export default class VendorPanel {
     this.statics.forEach((t) => t.setVisible(v));
   }
 
-  private text(x: number, y: number, s: string, color: string, size: string, depth: number) {
+  private text(x: number, y: number, s: string, color: string, sizePx: number, depth: number) {
     const t = this.scene.add
-      .text(x, y, s, { fontFamily: "Courier New, monospace", fontSize: size, color })
+      .text(x, y, s, { fontFamily: "Courier New, monospace", fontSize: uiFont(sizePx), color })
       .setScrollFactor(0)
       .setDepth(depth);
     this.statics.push(t);

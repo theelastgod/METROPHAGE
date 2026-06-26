@@ -1,11 +1,11 @@
 import Phaser from "phaser";
-import { VIEW_W, VIEW_H } from "../config";
 import Inventory from "../systems/Inventory";
 import { Item, Slot, SLOTS, SLOT_NAMES, RARITIES, itemStatLines } from "../game/items";
 import { getWeapon } from "../game/weapons";
 import { iconKey } from "../assets/itemIcons";
 import { ModBag } from "../game/stats";
 import { drawPanelFrame } from "./panelChrome";
+import { overlayRect, uiDim, uiFont } from "./uiLayout";
 
 const COLS = 6;
 const ROWS = 4;
@@ -14,7 +14,6 @@ const SLOT_ICON: Record<string, string> = { weapon: "WEAPON-MOD", implant: "IMPL
 /** Icon texture + tint for an inventory item (weapon → its type icon, else the slot icon). */
 function itemIcon(it: Item): { key: string; tint: number } {
   const w = getWeapon(it.weaponId);
-  // weapons = full-colour gun art (untinted); gear/consumables = monochrome glyphs, rarity-tinted
   if (w) return { key: iconKey(w.klass), tint: 0xffffff };
   return { key: iconKey(SLOT_ICON[it.slot] ?? "CHIP"), tint: RARITIES[it.rarity].color };
 }
@@ -40,12 +39,15 @@ export default class InventoryPanel {
   private zones: Phaser.GameObjects.Zone[] = [];
   private open = false;
 
-  private readonly x = 70;
-  private readonly y = 40;
-  private readonly w = VIEW_W - 140;
-  private readonly h = VIEW_H - 70;
-  private readonly cellW = 62;
-  private readonly cellH = 44;
+  private readonly frame = overlayRect(18);
+  private readonly x = this.frame.x;
+  private readonly y = this.frame.y;
+  private readonly w = this.frame.w;
+  private readonly h = this.frame.h;
+  private readonly cellW = uiDim(72);
+  private readonly cellH = uiDim(52);
+  private readonly slotW = uiDim(200);
+  private readonly slotH = uiDim(54);
 
   constructor(scene: Phaser.Scene, inv: Inventory, onChange: () => void) {
     this.scene = scene;
@@ -54,19 +56,23 @@ export default class InventoryPanel {
     this.g = scene.add.graphics().setScrollFactor(0).setDepth(1600);
     const D = 1601;
 
-    this.header = this.text(this.x + 16, this.y + 12, "", "#eafdff", "13px", D);
-    this.summary = this.text(this.x + 16, this.y + 32, "", "#39ff88", "10px", D);
+    this.header = this.text(this.x + uiDim(16), this.y + uiDim(12), "", "#eafdff", 15, D);
+    this.summary = this.text(this.x + uiDim(16), this.y + uiDim(36), "", "#39ff88", 11, D);
 
-    // Equip slots (left column).
     SLOTS.forEach((slot, i) => {
       const by = this.slotY(i);
-      this.text(this.x + 22, by + 5, SLOT_NAMES[slot], "#9aa3b2", "9px", D);
-      this.slotTexts.push(this.text(this.x + 44, by + 22, "—", "#5a6172", "10px", D + 1));
+      this.text(this.x + uiDim(22), by + uiDim(5), SLOT_NAMES[slot], "#9aa3b2", 10, D);
+      this.slotTexts.push(this.text(this.x + uiDim(52), by + uiDim(24), "—", "#5a6172", 12, D + 1));
       this.slotIcons.push(
-        scene.add.image(this.x + 30, by + 25, iconKey(SLOT_ICON[slot])).setDisplaySize(26, 26).setScrollFactor(0).setDepth(D + 1).setVisible(false),
+        scene.add
+          .image(this.x + uiDim(34), by + uiDim(28), iconKey(SLOT_ICON[slot]))
+          .setDisplaySize(uiDim(30), uiDim(30))
+          .setScrollFactor(0)
+          .setDepth(D + 1)
+          .setVisible(false),
       );
       const z = scene.add
-        .zone(this.x + 16, by, 156, 46)
+        .zone(this.x + uiDim(16), by, this.slotW, this.slotH)
         .setOrigin(0)
         .setScrollFactor(0)
         .setInteractive({ useHandCursor: true });
@@ -75,14 +81,18 @@ export default class InventoryPanel {
       this.zones.push(z);
     });
 
-    // Bag grid (right).
     for (let i = 0; i < COLS * ROWS; i++) {
       const { cx, cy } = this.cellPos(i);
       this.cellIcons.push(
-        scene.add.image(cx + this.cellW / 2, cy + this.cellH / 2, iconKey("PISTOL")).setDisplaySize(32, 32).setScrollFactor(0).setDepth(D + 1).setVisible(false),
+        scene.add
+          .image(cx + this.cellW / 2, cy + this.cellH / 2, iconKey("PISTOL"))
+          .setDisplaySize(uiDim(36), uiDim(36))
+          .setScrollFactor(0)
+          .setDepth(D + 1)
+          .setVisible(false),
       );
       this.cellTexts.push(
-        this.text(cx + this.cellW - 6, cy + this.cellH - 4, "", "#eafdff", "8px", D + 2).setOrigin(1, 1),
+        this.text(cx + this.cellW - uiDim(6), cy + this.cellH - uiDim(4), "", "#eafdff", 10, D + 2).setOrigin(1, 1),
       );
       const z = scene.add
         .zone(cx, cy, this.cellW, this.cellH)
@@ -94,8 +104,8 @@ export default class InventoryPanel {
       this.zones.push(z);
     }
 
-    this.detail = this.text(this.x + 16, this.y + this.h - 40, "", "#eafdff", "10px", D + 1);
-    this.text(this.x + this.w - 132, this.y + 12, "I / ESC to close", "#9aa3b2", "10px", D);
+    this.detail = this.text(this.x + uiDim(16), this.y + this.h - uiDim(48), "", "#eafdff", 12, D + 1);
+    this.text(this.x + this.w - uiDim(16), this.y + uiDim(12), "I / ESC to close", "#9aa3b2", 11, D).setOrigin(1, 0);
 
     this.setVisible(false);
   }
@@ -117,12 +127,15 @@ export default class InventoryPanel {
   }
 
   private slotY(i: number) {
-    return this.y + 56 + i * 54;
+    return this.y + uiDim(64) + i * (this.slotH + uiDim(8));
   }
   private cellPos(i: number) {
     const c = i % COLS;
     const r = Math.floor(i / COLS);
-    return { cx: this.x + 188 + c * (this.cellW + 2), cy: this.y + 56 + r * (this.cellH + 8) };
+    return {
+      cx: this.x + uiDim(240) + c * (this.cellW + uiDim(4)),
+      cy: this.y + uiDim(64) + r * (this.cellH + uiDim(10)),
+    };
   }
 
   private doEquip(i: number) {
@@ -161,13 +174,12 @@ export default class InventoryPanel {
     this.header.setText(`INVENTORY   (${this.inv.items.length}/${this.inv.cap})`);
     this.summary.setText(this.modSummary(this.inv.mods()));
 
-    // equip slots
     SLOTS.forEach((slot, i) => {
       const by = this.slotY(i);
       const it = this.inv.equipped[slot];
       const col = it ? RARITIES[it.rarity].color : 0x3a3350;
-      g.fillStyle(0x0c0a18, 0.92).fillRect(this.x + 16, by, 156, 46);
-      g.lineStyle(2, col, it ? 1 : 0.6).strokeRect(this.x + 16, by, 156, 46);
+      g.fillStyle(0x0c0a18, 0.92).fillRect(this.x + uiDim(16), by, this.slotW, this.slotH);
+      g.lineStyle(uiDim(2), col, it ? 1 : 0.6).strokeRect(this.x + uiDim(16), by, this.slotW, this.slotH);
       const sIcon = this.slotIcons[i];
       if (it) {
         const ic = itemIcon(it);
@@ -178,13 +190,12 @@ export default class InventoryPanel {
         .setColor(it ? RARITIES[it.rarity].hex : "#5a6172");
     });
 
-    // bag cells
     for (let i = 0; i < COLS * ROWS; i++) {
       const { cx, cy } = this.cellPos(i);
       const it = this.inv.items[i];
       const col = it ? RARITIES[it.rarity].color : 0x241d3a;
       g.fillStyle(it ? 0x14102a : 0x0c0a18, 0.92).fillRect(cx, cy, this.cellW, this.cellH);
-      g.lineStyle(1, col, it ? 1 : 0.5).strokeRect(cx, cy, this.cellW, this.cellH);
+      g.lineStyle(uiDim(1), col, it ? 1 : 0.5).strokeRect(cx, cy, this.cellW, this.cellH);
       const icon = this.cellIcons[i];
       if (it) {
         const ic = itemIcon(it);
@@ -225,9 +236,9 @@ export default class InventoryPanel {
     }
   }
 
-  private text(x: number, y: number, s: string, color: string, size: string, depth: number) {
+  private text(x: number, y: number, s: string, color: string, sizePx: number, depth: number) {
     const t = this.scene.add
-      .text(x, y, s, { fontFamily: "Courier New, monospace", fontSize: size, color })
+      .text(x, y, s, { fontFamily: "Courier New, monospace", fontSize: uiFont(sizePx), color })
       .setScrollFactor(0)
       .setDepth(depth);
     this.statics.push(t);

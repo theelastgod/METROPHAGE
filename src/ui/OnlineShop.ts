@@ -1,10 +1,7 @@
 import Phaser from "phaser";
-import { VIEW_W, VIEW_H, COLORS } from "../config";
+import { COLORS } from "../config";
+import { dimBackdrop, modalRect, uiDim, uiFont } from "./uiLayout";
 
-// METROPHAGE online vendor — the credits sink. A field-patch heal + gear "caches" that
-// roll an item of a guaranteed rarity into your bag. The server validates + deducts
-// credits (authoritative); this panel just lists the catalogue and fires buy requests.
-// SKUs mirror the server SHOP table in world.ts.
 const SKUS: { sku: string; label: string; price: number; desc: string; color: string; repReq?: number }[] = [
   { sku: "heal", label: "FIELD PATCH", price: 40, desc: "restore to full HP", color: "#39ff88" },
   { sku: "cache_standard", label: "SALVAGE CACHE", price: 60, desc: "a Standard gear roll", color: "#9aa3b2" },
@@ -19,7 +16,7 @@ export default class OnlineShop {
   private scene: Phaser.Scene;
   private objs: Phaser.GameObjects.GameObject[] = [];
   private creditsText?: Phaser.GameObjects.Text;
-  private repTier = 0; // reputation tier — gates the higher caches (set by the scene)
+  private repTier = 0;
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
@@ -42,7 +39,6 @@ export default class OnlineShop {
     this.clear();
   }
 
-  /** Live-update the credits header (the scene calls this each frame while open). */
   setCredits(n: number) {
     this.creditsText?.setText(`₵ ${n}`);
   }
@@ -61,27 +57,26 @@ export default class OnlineShop {
       return o;
     };
     const D = 1700;
-    const w = 560;
-    const h = 80 + SKUS.length * 54;
-    const x = (VIEW_W - w) / 2;
-    const y = (VIEW_H - h) / 2;
+    const rowH = uiDim(56);
+    const { x, y, w, h } = modalRect(580, 88 + SKUS.length * 56);
 
-    add(scene.add.rectangle(VIEW_W / 2, VIEW_H / 2, VIEW_W, VIEW_H, 0x02020a, 0.62).setScrollFactor(0).setDepth(D));
+    add(dimBackdrop(scene, D));
     const g = add(scene.add.graphics().setScrollFactor(0).setDepth(D + 1));
     g.fillStyle(0x0a0818, 0.97).fillRect(x, y, w, h);
-    g.lineStyle(2, COLORS.neonYellow, 0.85).strokeRect(x, y, w, h);
-    g.lineStyle(2, COLORS.neonMagenta, 0.9);
+    g.lineStyle(uiDim(2), COLORS.neonYellow, 0.85).strokeRect(x, y, w, h);
+    g.lineStyle(uiDim(2), COLORS.neonMagenta, 0.9);
+    const corner = uiDim(16);
     g.beginPath();
-    g.moveTo(x, y + 16);
+    g.moveTo(x, y + corner);
     g.lineTo(x, y);
-    g.lineTo(x + 16, y);
+    g.lineTo(x + corner, y);
     g.strokePath();
 
     add(
       scene.add
-        .text(x + 18, y + 14, "◢ VENDOR — BLACK MARKET", {
+        .text(x + uiDim(20), y + uiDim(16), "◢ VENDOR — BLACK MARKET", {
           fontFamily: "Courier New, monospace",
-          fontSize: "16px",
+          fontSize: uiFont(17),
           color: "#f7ff3c",
           fontStyle: "bold",
         })
@@ -90,9 +85,9 @@ export default class OnlineShop {
     );
     this.creditsText = add(
       scene.add
-        .text(x + w - 18, y + 16, "₵ 0", {
+        .text(x + w - uiDim(20), y + uiDim(18), "₵ 0", {
           fontFamily: "Courier New, monospace",
-          fontSize: "14px",
+          fontSize: uiFont(15),
           color: "#f7ff3c",
         })
         .setOrigin(1, 0)
@@ -101,28 +96,38 @@ export default class OnlineShop {
     );
 
     SKUS.forEach((s, i) => {
-      const ry = y + 52 + i * 54;
-      const locked = !!s.repReq && this.repTier < s.repReq; // rep gate (vendor tiers)
+      const ry = y + uiDim(56) + i * rowH;
+      const locked = !!s.repReq && this.repTier < s.repReq;
       const strokeCol = locked ? 0x3a3350 : Phaser.Display.Color.HexStringToColor(s.color).color;
-      g.fillStyle(0x12102a, locked ? 0.6 : 0.92).fillRect(x + 16, ry, w - 32, 46);
-      g.lineStyle(1.5, strokeCol, locked ? 0.4 : 0.9).strokeRect(x + 16, ry, w - 32, 46);
+      const cardH = uiDim(48);
+      g.fillStyle(0x12102a, locked ? 0.6 : 0.92).fillRect(x + uiDim(18), ry, w - uiDim(36), cardH);
+      g.lineStyle(uiDim(1.5), strokeCol, locked ? 0.4 : 0.9).strokeRect(x + uiDim(18), ry, w - uiDim(36), cardH);
       add(
         scene.add
-          .text(x + 28, ry + 7, s.label, { fontFamily: "Courier New, monospace", fontSize: "13px", color: locked ? "#5a6172" : s.color, fontStyle: "bold" })
-          .setScrollFactor(0)
-          .setDepth(D + 2),
-      );
-      add(
-        scene.add
-          .text(x + 28, ry + 26, s.desc, { fontFamily: "Courier New, monospace", fontSize: "10px", color: locked ? "#4a5266" : "#9aa3b2" })
-          .setScrollFactor(0)
-          .setDepth(D + 2),
-      );
-      add(
-        scene.add
-          .text(x + w - 28, ry + 16, locked ? `🔒 REP TIER ${s.repReq}` : `₵ ${s.price}  ▸ BUY`, {
+          .text(x + uiDim(30), ry + uiDim(8), s.label, {
             fontFamily: "Courier New, monospace",
-            fontSize: "13px",
+            fontSize: uiFont(14),
+            color: locked ? "#5a6172" : s.color,
+            fontStyle: "bold",
+          })
+          .setScrollFactor(0)
+          .setDepth(D + 2),
+      );
+      add(
+        scene.add
+          .text(x + uiDim(30), ry + uiDim(28), s.desc, {
+            fontFamily: "Courier New, monospace",
+            fontSize: uiFont(11),
+            color: locked ? "#4a5266" : "#9aa3b2",
+          })
+          .setScrollFactor(0)
+          .setDepth(D + 2),
+      );
+      add(
+        scene.add
+          .text(x + w - uiDim(30), ry + uiDim(18), locked ? `🔒 REP TIER ${s.repReq}` : `₵ ${s.price}  ▸ BUY`, {
+            fontFamily: "Courier New, monospace",
+            fontSize: uiFont(14),
             color: locked ? "#5a6172" : "#f7ff3c",
             fontStyle: "bold",
           })
@@ -133,7 +138,7 @@ export default class OnlineShop {
       if (!locked) {
         const z = add(
           scene.add
-            .zone(x + 16, ry, w - 32, 46)
+            .zone(x + uiDim(18), ry, w - uiDim(36), cardH)
             .setOrigin(0)
             .setScrollFactor(0)
             .setInteractive({ useHandCursor: true })
@@ -145,9 +150,9 @@ export default class OnlineShop {
 
     add(
       scene.add
-        .text(VIEW_W / 2, y + h - 18, "click to buy · B / ESC to close", {
+        .text(x + w / 2, y + h - uiDim(22), "click to buy · B / ESC to close", {
           fontFamily: "Courier New, monospace",
-          fontSize: "11px",
+          fontSize: uiFont(12),
           color: "#9aa3b2",
         })
         .setOrigin(0.5)

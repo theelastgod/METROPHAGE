@@ -1,10 +1,7 @@
 import Phaser from "phaser";
-import { VIEW_W, VIEW_H, COLORS } from "../config";
+import { COLORS } from "../config";
 import { repProgress } from "../game/dailies";
-
-// METROPHAGE daily contracts (key J) — the login loop. Day-seeded bounties that grant credits
-// + reputation; the reputation track (top) unlocks vendor tiers. Server-authoritative: it owns
-// progress + auto-grants on completion; this panel just displays net.contracts.
+import { dimBackdrop, modalRect, uiDim, uiFont } from "./uiLayout";
 
 interface DailyView {
   id: string;
@@ -61,66 +58,71 @@ export default class OnlineContracts {
       return o;
     };
     const D = 1700;
-    const w = 680;
-    const h = 480;
-    const x = (VIEW_W - w) / 2;
-    const y = (VIEW_H - h) / 2;
-    add(scene.add.rectangle(VIEW_W / 2, VIEW_H / 2, VIEW_W, VIEW_H, 0x02020a, 0.64).setScrollFactor(0).setDepth(D));
+    const { x, y, w, h } = modalRect(700, 500);
+    const bountyH = uiDim(80);
+    const bountyGap = uiDim(4);
+
+    add(dimBackdrop(scene, D, 0.64));
     const g = add(scene.add.graphics().setScrollFactor(0).setDepth(D + 1));
     g.fillStyle(0x0a0818, 0.97).fillRect(x, y, w, h);
-    g.lineStyle(2, COLORS.neonCyan, 0.85).strokeRect(x, y, w, h);
+    g.lineStyle(uiDim(2), COLORS.neonCyan, 0.85).strokeRect(x, y, w, h);
 
     const tx = (s: string, fx: number, fy: number, size: number, color: string, bold = false, origin = 0) =>
       add(
         scene.add
-          .text(fx, fy, s, { fontFamily: "Courier New, monospace", fontSize: size + "px", color, fontStyle: bold ? "bold" : "normal" })
+          .text(fx, fy, s, {
+            fontFamily: "Courier New, monospace",
+            fontSize: uiFont(size),
+            color,
+            fontStyle: bold ? "bold" : "normal",
+          })
           .setOrigin(origin, 0)
           .setScrollFactor(0)
           .setDepth(D + 3),
       );
 
-    tx("◎ DAILY CONTRACTS", x + 20, y + 14, 16, "#00e5ff", true);
-    tx("J / ESC close · resets daily", x + w - 18, y + 16, 11, "#9aa3b2", false, 1);
+    tx("◎ DAILY CONTRACTS", x + uiDim(22), y + uiDim(16), 17, "#00e5ff", true);
+    tx("J / ESC close · resets daily", x + w - uiDim(20), y + uiDim(18), 12, "#9aa3b2", false, 1);
 
-    // reputation track
     const rp = repProgress(this.rep);
-    tx(`REPUTATION — ${rp.name}  (tier ${rp.tier})`, x + 20, y + 46, 12, "#f7ff3c", true);
-    const barX = x + 20;
-    const barW = w - 40;
+    tx(`REPUTATION — ${rp.name}  (tier ${rp.tier})`, x + uiDim(22), y + uiDim(50), 13, "#f7ff3c", true);
+    const barX = x + uiDim(22);
+    const barW = w - uiDim(44);
+    const barH = uiDim(16);
     const frac = rp.next > rp.cur ? Math.max(0, Math.min(1, (this.rep - rp.cur) / (rp.next - rp.cur))) : 1;
-    g.fillStyle(0x12102a, 1).fillRect(barX, y + 64, barW, 14);
-    g.fillStyle(0xf7ff3c, 0.85).fillRect(barX, y + 64, barW * frac, 14);
-    g.lineStyle(1, 0xf7ff3c, 0.6).strokeRect(barX, y + 64, barW, 14);
+    g.fillStyle(0x12102a, 1).fillRect(barX, y + uiDim(68), barW, barH);
+    g.fillStyle(0xf7ff3c, 0.85).fillRect(barX, y + uiDim(68), barW * frac, barH);
+    g.lineStyle(uiDim(1), 0xf7ff3c, 0.6).strokeRect(barX, y + uiDim(68), barW, barH);
     tx(
       rp.next > rp.cur ? `${this.rep} / ${rp.next} → ${rp.nextName}` : `${this.rep} (MAX)`,
-      x + w - 20,
-      y + 80,
-      9,
+      x + w - uiDim(22),
+      y + uiDim(86),
+      10,
       "#9aa3b2",
       false,
       1,
     );
 
-    tx("TODAY'S BOUNTIES", x + 20, y + 100, 11, "#6b7184");
-    let cy = y + 120;
-    if (this.list.length === 0) tx("no contracts loaded", x + 20, cy + 10, 12, "#5a6172");
+    tx("TODAY'S BOUNTIES", x + uiDim(22), y + uiDim(106), 12, "#6b7184");
+    let cy = y + uiDim(126);
+    if (this.list.length === 0) tx("no contracts loaded", x + uiDim(22), cy + uiDim(12), 13, "#5a6172");
     for (const d of this.list) {
       const done = d.done;
-      g.fillStyle(done ? 0x11231a : 0x12102a, 0.92).fillRect(x + 20, cy, w - 40, 78);
-      g.lineStyle(1.4, done ? 0x39ff88 : COLORS.neonCyan, done ? 1 : 0.7).strokeRect(x + 20, cy, w - 40, 78);
-      tx(`${done ? "✔ " : ""}${d.name}`, x + 32, cy + 8, 14, done ? "#39ff88" : "#cfe8ff", true);
-      tx(`[${OBJ_LABEL[d.objective] ?? d.objective}]`, x + w - 32, cy + 10, 10, "#9aa3b2", false, 1);
-      tx(d.desc, x + 32, cy + 28, 10, "#9aa3b2");
-      // progress bar
+      g.fillStyle(done ? 0x11231a : 0x12102a, 0.92).fillRect(x + uiDim(22), cy, w - uiDim(44), bountyH);
+      g.lineStyle(uiDim(1.4), done ? 0x39ff88 : COLORS.neonCyan, done ? 1 : 0.7).strokeRect(x + uiDim(22), cy, w - uiDim(44), bountyH);
+      tx(`${done ? "✔ " : ""}${d.name}`, x + uiDim(34), cy + uiDim(10), 15, done ? "#39ff88" : "#cfe8ff", true);
+      tx(`[${OBJ_LABEL[d.objective] ?? d.objective}]`, x + w - uiDim(34), cy + uiDim(12), 11, "#9aa3b2", false, 1);
+      tx(d.desc, x + uiDim(34), cy + uiDim(30), 11, "#9aa3b2");
       const pf = Math.max(0, Math.min(1, d.progress / d.count));
-      const pbX = x + 32;
-      const pbW = w - 64 - 150;
-      g.fillStyle(0x07061a, 1).fillRect(pbX, cy + 48, pbW, 12);
-      g.fillStyle(done ? 0x39ff88 : 0x29e7ff, 0.85).fillRect(pbX, cy + 48, pbW * pf, 12);
-      g.lineStyle(1, done ? 0x39ff88 : 0x29e7ff, 0.6).strokeRect(pbX, cy + 48, pbW, 12);
-      tx(`${Math.min(d.progress, d.count)}/${d.count}`, pbX + pbW + 8, cy + 48, 10, "#cfe8ff");
-      tx(`+₵${d.rewardCredits}  +${d.rewardRep} rep`, x + w - 32, cy + 49, 11, done ? "#39ff88" : "#f7ff3c", true, 1);
-      cy += 84;
+      const pbX = x + uiDim(34);
+      const pbW = w - uiDim(68) - uiDim(156);
+      const pbH = uiDim(14);
+      g.fillStyle(0x07061a, 1).fillRect(pbX, cy + uiDim(50), pbW, pbH);
+      g.fillStyle(done ? 0x39ff88 : 0x29e7ff, 0.85).fillRect(pbX, cy + uiDim(50), pbW * pf, pbH);
+      g.lineStyle(uiDim(1), done ? 0x39ff88 : 0x29e7ff, 0.6).strokeRect(pbX, cy + uiDim(50), pbW, pbH);
+      tx(`${Math.min(d.progress, d.count)}/${d.count}`, pbX + pbW + uiDim(8), cy + uiDim(50), 11, "#cfe8ff");
+      tx(`+₵${d.rewardCredits}  +${d.rewardRep} rep`, x + w - uiDim(34), cy + uiDim(51), 12, done ? "#39ff88" : "#f7ff3c", true, 1);
+      cy += bountyH + bountyGap;
     }
   }
 

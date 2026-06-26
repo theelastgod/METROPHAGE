@@ -1,9 +1,9 @@
 import Phaser from "phaser";
-import { VIEW_W, VIEW_H } from "../config";
 import { treeFor, SkillNode } from "../game/skills";
 import Progression, { RESPEC_COST } from "../systems/Progression";
 import { ClassDef } from "../game/classes";
 import { drawPanelFrame } from "./panelChrome";
+import { overlayRect, uiDim, uiFont } from "./uiLayout";
 
 const BRANCHES = ["ASSAULT", "CHASSIS", "SYSTEMS"];
 
@@ -23,11 +23,13 @@ export default class SkillPanel {
   private respecText!: Phaser.GameObjects.Text;
   private open = false;
 
-  private readonly x = 70;
-  private readonly y = 40;
-  private readonly w = VIEW_W - 140;
-  private readonly h = VIEW_H - 80;
-  private readonly colW = (VIEW_W - 140 - 40) / 3;
+  private readonly frame = overlayRect(18);
+  private readonly x = this.frame.x;
+  private readonly y = this.frame.y;
+  private readonly w = this.frame.w;
+  private readonly h = this.frame.h;
+  private readonly colW = (this.frame.w - uiDim(40)) / 3;
+  private readonly nodeH = uiDim(48);
 
   constructor(scene: Phaser.Scene, classDef: ClassDef, prog: Progression, onChange: () => void) {
     this.scene = scene;
@@ -37,15 +39,13 @@ export default class SkillPanel {
     this.g = scene.add.graphics().setScrollFactor(0).setDepth(1600);
     const D = 1601;
 
-    this.header = this.text(this.x + 16, this.y + 12, "", "#eafdff", "13px", D);
-    BRANCHES.forEach((b, col) =>
-      this.text(this.colX(col) + 10, this.y + 44, b, classDef.hex, "11px", D),
-    );
+    this.header = this.text(this.x + uiDim(18), this.y + uiDim(14), "", "#eafdff", 15, D);
+    BRANCHES.forEach((b, col) => this.text(this.colX(col) + uiDim(12), this.y + uiDim(48), b, classDef.hex, 12, D));
 
     for (const node of treeFor(classDef.id)) {
-      const bx = this.colX(node.col) + 8;
+      const bx = this.colX(node.col) + uiDim(10);
       const by = this.rowY(node.row);
-      const txt = this.text(bx + 8, by + 6, "", "#eafdff", "9px", D + 1);
+      const txt = this.text(bx + uiDim(10), by + uiDim(8), "", "#eafdff", 10, D + 1);
       this.nodeTexts.set(node.id, txt);
       const zone = scene.add
         .zone(bx, by, this.nodeW, this.nodeH)
@@ -56,18 +56,17 @@ export default class SkillPanel {
       this.parts.push(zone);
     }
 
-    // RESPEC button
-    const ry = this.y + this.h - 30;
-    this.respecText = this.text(this.x + 24, ry + 5, "", "#f7ff3c", "11px", D + 1);
+    const ry = this.y + this.h - uiDim(34);
+    this.respecText = this.text(this.x + uiDim(26), ry + uiDim(6), "", "#f7ff3c", 12, D + 1);
     const rzone = scene.add
-      .zone(this.x + 16, ry, 150, 22)
+      .zone(this.x + uiDim(18), ry, uiDim(160), uiDim(26))
       .setOrigin(0)
       .setScrollFactor(0)
       .setInteractive({ useHandCursor: true });
     rzone.on("pointerdown", () => this.tryRespec());
     this.parts.push(rzone);
 
-    this.text(this.x + this.w - 150, ry + 5, "K / ESC to close", "#9aa3b2", "10px", D + 1);
+    this.text(this.x + this.w - uiDim(160), ry + uiDim(6), "K / ESC to close", "#9aa3b2", 11, D + 1);
 
     this.setVisible(false);
   }
@@ -89,16 +88,13 @@ export default class SkillPanel {
   }
 
   private get nodeW() {
-    return this.colW - 16;
-  }
-  private get nodeH() {
-    return 44;
+    return this.colW - uiDim(18);
   }
   private colX(col: number) {
-    return this.x + 20 + col * this.colW;
+    return this.x + uiDim(22) + col * this.colW;
   }
   private rowY(row: number) {
-    return this.y + 64 + row * 54;
+    return this.y + uiDim(70) + row * uiDim(58);
   }
 
   private tryAllocate(node: SkillNode) {
@@ -130,12 +126,12 @@ export default class SkillPanel {
       const can = this.prog.canAllocate(node);
       const maxed = rank >= node.maxRank;
       const locked = !!node.requires && this.prog.rankOf(node.requires) <= 0;
-      const bx = this.colX(node.col) + 8;
+      const bx = this.colX(node.col) + uiDim(10);
       const by = this.rowY(node.row);
 
       const border = maxed ? 0x39ff88 : can ? 0xeafdff : locked ? 0x3a3350 : 0x6a6488;
       g.fillStyle(rank > 0 ? 0x14102a : 0x0c0a18, 0.92).fillRect(bx, by, this.nodeW, this.nodeH);
-      g.lineStyle(can ? 2 : 1, border, locked ? 0.5 : 1).strokeRect(bx, by, this.nodeW, this.nodeH);
+      g.lineStyle(can ? uiDim(2) : uiDim(1), border, locked ? 0.5 : 1).strokeRect(bx, by, this.nodeW, this.nodeH);
 
       this.nodeTexts
         .get(node.id)!
@@ -144,8 +140,10 @@ export default class SkillPanel {
         .setAlpha(locked ? 0.7 : 1);
     }
 
-    g.fillStyle(0x1a1206, 0.9).fillRect(this.x + 16, this.y + this.h - 30, 150, 22);
-    g.lineStyle(1, 0xf7ff3c, 0.8).strokeRect(this.x + 16, this.y + this.h - 30, 150, 22);
+    const respecW = uiDim(160);
+    const respecH = uiDim(26);
+    g.fillStyle(0x1a1206, 0.9).fillRect(this.x + uiDim(18), this.y + this.h - uiDim(34), respecW, respecH);
+    g.lineStyle(uiDim(1), 0xf7ff3c, 0.8).strokeRect(this.x + uiDim(18), this.y + this.h - uiDim(34), respecW, respecH);
     this.respecText.setText(`RESPEC  (₵${RESPEC_COST})`);
   }
 
@@ -159,9 +157,9 @@ export default class SkillPanel {
   }
 
   private staticTexts: Phaser.GameObjects.Text[] = [];
-  private text(x: number, y: number, s: string, color: string, size: string, depth: number) {
+  private text(x: number, y: number, s: string, color: string, sizePx: number, depth: number) {
     const t = this.scene.add
-      .text(x, y, s, { fontFamily: "Courier New, monospace", fontSize: size, color })
+      .text(x, y, s, { fontFamily: "Courier New, monospace", fontSize: uiFont(sizePx), color })
       .setScrollFactor(0)
       .setDepth(depth);
     this.staticTexts.push(t);

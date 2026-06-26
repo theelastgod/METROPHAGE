@@ -1,8 +1,8 @@
 import Phaser from "phaser";
-import { VIEW_W, VIEW_H } from "../config";
 import Contracts from "../systems/Contracts";
 import { Contract, objectiveLabel } from "../game/contracts";
 import { drawPanelFrame } from "./panelChrome";
+import { overlayRect, uiDim, uiFont } from "./uiLayout";
 
 const DIFF_HEX = ["#9aa3b2", "#9aa3b2", "#29e7ff", "#ff2bd6"]; // index by difficulty
 
@@ -40,11 +40,12 @@ export default class ContractPanel {
   private cardTexts: Phaser.GameObjects.Text[] = [];
   private open = false;
 
-  private readonly x = 70;
-  private readonly y = 40;
-  private readonly w = VIEW_W - 140;
-  private readonly h = VIEW_H - 70;
-  private readonly cardW = (VIEW_W - 140 - 40) / 3;
+  private readonly frame = overlayRect(18);
+  private readonly x = this.frame.x;
+  private readonly y = this.frame.y;
+  private readonly w = this.frame.w;
+  private readonly h = this.frame.h;
+  private readonly cardW = (this.frame.w - uiDim(40)) / 3;
 
   constructor(scene: Phaser.Scene, contracts: Contracts, onAccept: (c: Contract) => void, onAbandon: () => void) {
     this.scene = scene;
@@ -54,11 +55,11 @@ export default class ContractPanel {
     this.g = scene.add.graphics().setScrollFactor(0).setDepth(1600);
     const D = 1601;
 
-    this.text(this.x + 16, this.y + 12, "CONTRACT BOARD", "#eafdff", "13px", D);
-    this.activeText = this.text(this.x + 16, this.y + 34, "", "#39ff88", "11px", D);
+    this.text(this.x + uiDim(18), this.y + uiDim(14), "CONTRACT BOARD", "#eafdff", 15, D);
+    this.activeText = this.text(this.x + uiDim(18), this.y + uiDim(38), "", "#39ff88", 12, D);
 
     const abandonZone = scene.add
-      .zone(this.x + this.w - 130, this.y + 32, 110, 20)
+      .zone(this.x + this.w - uiDim(140), this.y + uiDim(34), uiDim(118), uiDim(22))
       .setOrigin(0)
       .setScrollFactor(0)
       .setInteractive({ useHandCursor: true });
@@ -69,13 +70,13 @@ export default class ContractPanel {
       }
     });
     this.zones.push(abandonZone);
-    this.text(this.x + this.w - 124, this.y + 34, "[ ABANDON ]", "#ff3b6b", "10px", D + 1);
+    this.text(this.x + this.w - uiDim(132), this.y + uiDim(38), "[ ABANDON ]", "#ff3b6b", 11, D + 1);
 
     for (let i = 0; i < 3; i++) {
-      const cx = this.x + 20 + i * this.cardW;
-      this.cardTexts.push(this.text(cx + 10, this.y + 78, "", "#eafdff", "10px", D + 1));
+      const cx = this.x + uiDim(22) + i * this.cardW;
+      this.cardTexts.push(this.text(cx + uiDim(12), this.y + uiDim(84), "", "#eafdff", 11, D + 1));
       const z = scene.add
-        .zone(cx, this.y + 70, this.cardW - 12, this.h - 110)
+        .zone(cx, this.y + uiDim(76), this.cardW - uiDim(14), this.h - uiDim(118))
         .setOrigin(0)
         .setScrollFactor(0)
         .setInteractive({ useHandCursor: true });
@@ -83,7 +84,7 @@ export default class ContractPanel {
       this.zones.push(z);
     }
 
-    this.text(this.x + this.w - 122, this.y + this.h - 22, "E / ESC to close", "#9aa3b2", "10px", D);
+    this.text(this.x + this.w - uiDim(130), this.y + this.h - uiDim(26), "E / ESC to close", "#9aa3b2", 11, D);
     this.setVisible(false);
   }
 
@@ -104,7 +105,7 @@ export default class ContractPanel {
   }
 
   private tryAccept(i: number) {
-    if (!this.open || this.contracts.active) return; // one at a time
+    if (!this.open || this.contracts.active) return;
     const c = this.contracts.offers[i];
     if (!c) return;
     this.onAccept(c);
@@ -124,13 +125,13 @@ export default class ContractPanel {
     );
 
     for (let i = 0; i < 3; i++) {
-      const cx = this.x + 20 + i * this.cardW;
+      const cx = this.x + uiDim(22) + i * this.cardW;
       const c = this.contracts.offers[i];
-      const cardH = this.h - 110;
-      const dim = !!active; // can't accept while one is active
+      const cardH = this.h - uiDim(118);
+      const dim = !!active;
       const col = c ? Phaser.Display.Color.HexStringToColor(DIFF_HEX[c.difficulty]).color : 0x3a3350;
-      g.fillStyle(0x0c0a18, 0.92).fillRect(cx, this.y + 70, this.cardW - 12, cardH);
-      g.lineStyle(2, col, dim ? 0.4 : 0.9).strokeRect(cx, this.y + 70, this.cardW - 12, cardH);
+      g.fillStyle(0x0c0a18, 0.92).fillRect(cx, this.y + uiDim(76), this.cardW - uiDim(14), cardH);
+      g.lineStyle(uiDim(2), col, dim ? 0.4 : 0.9).strokeRect(cx, this.y + uiDim(76), this.cardW - uiDim(14), cardH);
 
       if (c) {
         const r = c.rewards;
@@ -154,9 +155,14 @@ export default class ContractPanel {
     this.statics.forEach((t) => t.setVisible(v));
   }
 
-  private text(x: number, y: number, s: string, color: string, size: string, depth: number) {
+  private text(x: number, y: number, s: string, color: string, sizePx: number, depth: number) {
     const t = this.scene.add
-      .text(x, y, s, { fontFamily: "Courier New, monospace", fontSize: size, color, lineSpacing: 2 })
+      .text(x, y, s, {
+        fontFamily: "Courier New, monospace",
+        fontSize: uiFont(sizePx),
+        color,
+        lineSpacing: uiDim(2),
+      })
       .setScrollFactor(0)
       .setDepth(depth);
     this.statics.push(t);

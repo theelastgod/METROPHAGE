@@ -1,10 +1,10 @@
 import Phaser from "phaser";
-import { VIEW_W, VIEW_H } from "../config";
 import { WEAPON_STORE, type WeaponDef } from "../game/weapons";
 import { CONSUMABLES, type ConsumableDef } from "../game/consumables";
 import { fmtMetro } from "../economy/metro";
 import { iconKey } from "../assets/itemIcons";
 import { drawPanelFrame } from "./panelChrome";
+import { overlayRect, uiDim, uiFont } from "./uiLayout";
 
 /** What the host scene must provide — the panel never touches the save/inventory itself. */
 export interface BlackMarketHooks {
@@ -40,19 +40,21 @@ export default class BlackMarketPanel {
   private offset = 0;
   private entries: Entry[] = [];
 
-  private readonly x = 60;
-  private readonly y = 30;
-  private readonly w = VIEW_W - 120;
-  private readonly h = VIEW_H - 48;
-  private readonly rowH = 40;
+  private readonly frame = overlayRect(18);
+  private readonly x = this.frame.x;
+  private readonly y = this.frame.y;
+  private readonly w = this.frame.w;
+  private readonly h = this.frame.h;
+  private readonly rowH = uiDim(44);
   private readonly listTop: number;
   private readonly visible: number;
+  private readonly iconSize = uiDim(34);
 
   constructor(scene: Phaser.Scene, hooks: BlackMarketHooks) {
     this.scene = scene;
     this.hooks = hooks;
-    this.listTop = this.y + 58;
-    this.visible = Math.floor((this.h - 74) / this.rowH);
+    this.listTop = this.y + uiDim(62);
+    this.visible = Math.floor((this.h - uiDim(80)) / this.rowH);
     this.entries = [
       { kind: "header", label: "WEAPONS" },
       ...WEAPON_STORE.map((w) => ({ kind: "weapon", w }) as Entry),
@@ -62,24 +64,39 @@ export default class BlackMarketPanel {
 
     this.g = scene.add.graphics().setScrollFactor(0).setDepth(1600);
     const D = 1601;
-    this.header = this.text(this.x + 16, this.y + 12, "", "#eafdff", "14px", D);
-    this.text(this.x + 16, this.y + 36, "ARMS + MEDS · paid in $METRO · 1B fixed supply · scroll ▲▼ · click to buy", "#9aa3b2", "10px", D);
+    this.header = this.text(this.x + uiDim(18), this.y + uiDim(14), "", "#eafdff", 15, D);
+    this.text(
+      this.x + uiDim(18),
+      this.y + uiDim(40),
+      "ARMS + MEDS · paid in $METRO · 1B fixed supply · scroll ▲▼ · click to buy",
+      "#9aa3b2",
+      11,
+      D,
+    );
 
     for (let r = 0; r < this.visible; r++) {
       const ry = this.listTop + r * this.rowH;
-      const img = scene.add.image(this.x + 34, ry + this.rowH / 2, iconKey("PISTOL")).setDisplaySize(30, 30).setScrollFactor(0).setDepth(D + 1);
+      const img = scene.add
+        .image(this.x + uiDim(36), ry + this.rowH / 2, iconKey("PISTOL"))
+        .setDisplaySize(this.iconSize, this.iconSize)
+        .setScrollFactor(0)
+        .setDepth(D + 1);
       this.icons.push(img);
-      this.titles.push(this.text(this.x + 60, ry + 6, "", "#eafdff", "12px", D + 1));
-      this.subs.push(this.text(this.x + 60, ry + 23, "", "#7a8295", "9px", D + 1));
-      const z = scene.add.zone(this.x + 12, ry + 2, this.w - 24, this.rowH - 4).setOrigin(0).setScrollFactor(0).setInteractive({ useHandCursor: true });
+      this.titles.push(this.text(this.x + uiDim(64), ry + uiDim(8), "", "#eafdff", 13, D + 1));
+      this.subs.push(this.text(this.x + uiDim(64), ry + uiDim(26), "", "#7a8295", 10, D + 1));
+      const z = scene.add
+        .zone(this.x + uiDim(14), ry + uiDim(2), this.w - uiDim(28), this.rowH - uiDim(4))
+        .setOrigin(0)
+        .setScrollFactor(0)
+        .setInteractive({ useHandCursor: true });
       z.on("pointerdown", () => this.buyRow(r));
       z.on("pointerover", () => this.titles[r].setColor("#ffffff"));
       z.on("pointerout", () => this.refresh());
       this.zones.push(z);
     }
 
-    this.status = this.text(this.x + 16, this.y + this.h - 26, "", "#f7ff3c", "11px", D + 1);
-    this.text(this.x + this.w - 128, this.y + this.h - 26, "B / E / ESC to close", "#9aa3b2", "10px", D);
+    this.status = this.text(this.x + uiDim(18), this.y + this.h - uiDim(30), "", "#f7ff3c", 12, D + 1);
+    this.text(this.x + this.w - uiDim(134), this.y + this.h - uiDim(30), "B / E / ESC to close", "#9aa3b2", 11, D);
 
     scene.input.on("wheel", (_p: unknown, _o: unknown, _dx: number, dy: number) => {
       if (!this.open) return;
@@ -162,12 +179,17 @@ export default class BlackMarketPanel {
       }
       if (e.kind === "header") {
         icon.setVisible(false);
-        g.fillStyle(0x14102a, 0.9).fillRect(this.x + 10, ry + 2, this.w - 20, this.rowH - 4);
+        g.fillStyle(0x14102a, 0.9).fillRect(this.x + uiDim(12), ry + uiDim(2), this.w - uiDim(24), this.rowH - uiDim(4));
         title.setText(`— ${e.label} —`).setColor("#00e5ff");
         sub.setText("");
         continue;
       }
-      g.lineStyle(1, 0x2a2440, 0.6).lineBetween(this.x + 12, ry + this.rowH - 1, this.x + this.w - 12, ry + this.rowH - 1);
+      g.lineStyle(uiDim(1), 0x2a2440, 0.6).lineBetween(
+        this.x + uiDim(14),
+        ry + this.rowH - uiDim(1),
+        this.x + this.w - uiDim(14),
+        ry + this.rowH - uiDim(1),
+      );
       if (e.kind === "weapon") {
         const w = e.w;
         const afford = metro >= w.metro;
@@ -193,9 +215,9 @@ export default class BlackMarketPanel {
     this.subs.forEach((s) => s.setVisible(v));
   }
 
-  private text(x: number, y: number, s: string, color: string, size: string, depth: number) {
+  private text(x: number, y: number, s: string, color: string, sizePx: number, depth: number) {
     const t = this.scene.add
-      .text(x, y, s, { fontFamily: "Courier New, monospace", fontSize: size, color })
+      .text(x, y, s, { fontFamily: "Courier New, monospace", fontSize: uiFont(sizePx), color })
       .setScrollFactor(0)
       .setDepth(depth);
     this.statics.push(t);

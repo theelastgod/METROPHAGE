@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { VIEW_H } from "../config";
 import { drawPanelFrame } from "./panelChrome";
+import { uiDim, uiFont } from "./uiLayout";
 
 /** A row in the stats sheet: label + formatted value (+ optional value colour). */
 export interface StatLine {
@@ -25,25 +26,25 @@ export default class StatsPanel {
   private valueTexts: Phaser.GameObjects.Text[] = [];
   private open = false;
 
-  private readonly x = 270;
-  private readonly y = 48;
-  private readonly w = 420;
-  private readonly h = VIEW_H - 96;
+  private readonly x = uiDim(270);
+  private readonly y = uiDim(48);
+  private readonly w = uiDim(440);
+  private readonly h = VIEW_H - uiDim(96);
+  private readonly rowH = uiDim(29);
 
   constructor(scene: Phaser.Scene, provider: () => StatLine[]) {
     this.scene = scene;
     this.provider = provider;
     this.g = scene.add.graphics().setScrollFactor(0).setDepth(1600);
 
-    this.header = this.text(this.x + 18, this.y + 14, "", "#eafdff", "14px");
-    this.text(this.x + this.w - 132, this.y + 16, "C / ESC to close", "#9aa3b2", "10px");
+    this.header = this.text(this.x + uiDim(20), this.y + uiDim(16), "", "#eafdff", 15);
+    this.text(this.x + this.w - uiDim(140), this.y + uiDim(18), "C / ESC to close", "#9aa3b2", 11);
 
-    // Pre-create a row (label + right-aligned value) per stat; values refresh on open.
     const lines = provider();
     lines.forEach((ln, i) => {
-      const ry = this.y + 50 + i * 27;
-      this.labelTexts.push(this.text(this.x + 28, ry, ln.label, "#9aa3b2", "12px"));
-      const v = this.text(this.x + this.w - 28, ry, ln.value, ln.color ?? "#eafdff", "13px");
+      const ry = this.y + uiDim(54) + i * this.rowH;
+      this.labelTexts.push(this.text(this.x + uiDim(30), ry, ln.label, "#9aa3b2", 13));
+      const v = this.text(this.x + this.w - uiDim(30), ry, ln.value, ln.color ?? "#eafdff", 14);
       v.setOrigin(1, 0);
       this.valueTexts.push(v);
     });
@@ -76,9 +77,13 @@ export default class StatsPanel {
     lines.forEach((ln, i) => {
       this.labelTexts[i]?.setText(ln.label);
       this.valueTexts[i]?.setText(ln.value).setColor(ln.color ?? "#eafdff");
-      // faint separators between groups read better than a wall of rows
-      const ry = this.y + 50 + i * 27;
-      g.lineStyle(1, 0x2a2440, 0.5).lineBetween(this.x + 24, ry + 20, this.x + this.w - 24, ry + 20);
+      const ry = this.y + uiDim(54) + i * this.rowH;
+      g.lineStyle(uiDim(1), 0x2a2440, 0.5).lineBetween(
+        this.x + uiDim(26),
+        ry + uiDim(22),
+        this.x + this.w - uiDim(26),
+        ry + uiDim(22),
+      );
     });
   }
 
@@ -90,9 +95,9 @@ export default class StatsPanel {
     this.valueTexts.forEach((t) => t.setVisible(v));
   }
 
-  private text(x: number, y: number, s: string, color: string, size: string) {
+  private text(x: number, y: number, s: string, color: string, sizePx: number) {
     const t = this.scene.add
-      .text(x, y, s, { fontFamily: "Courier New, monospace", fontSize: size, color })
+      .text(x, y, s, { fontFamily: "Courier New, monospace", fontSize: uiFont(sizePx), color })
       .setScrollFactor(0)
       .setDepth(1601);
     this.staticTexts.push(t);
