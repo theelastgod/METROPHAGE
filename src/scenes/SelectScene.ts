@@ -7,13 +7,13 @@ import NeonPipeline from "../render/NeonPipeline";
 import MusicDirector from "../audio/MusicDirector";
 import { getSettings, updateSettings } from "../systems/Settings";
 import { drawMenuBackdrop, MENU_FOOTER_Y, MENU_HEADER_Y, MENU_PAD, MENU_SUB_Y } from "../ui/menuChrome";
+import { connectedWallet, disconnectWallet, walletAvailable } from "../economy/wallet";
 import {
-  connectWallet,
-  connectedWallet,
-  disconnectWallet,
-  walletAvailable,
-} from "../economy/wallet";
-import { fetchWalletIdentity, signIdentityProof, type WalletIdentity } from "../economy/identity";
+  ensureWalletConnected,
+  fetchWalletIdentity,
+  signIdentityProof,
+  type WalletIdentity,
+} from "../economy/identity";
 import { lookToCustomization, bakeCustomPlayer, PLAYER_CUSTOM_KEY } from "../game/customization";
 
 type MenuPhase = "wallet" | "returning" | "create";
@@ -177,31 +177,33 @@ export default class SelectScene extends Phaser.Scene {
     this.actionLayer.add([t, s]);
   }
 
-  private async refreshWalletState() {
-    const addr = connectedWallet();
-    if (addr) {
-      this.walletLabel.setText(`◈ ${this.shortWallet(addr)}`);
-      this.bodyText.setText("verifying wallet identity…");
-      const proof = await signIdentityProof();
-      if (proof) {
-        this.identity = await fetchWalletIdentity(proof);
-        if (this.identity?.locked && this.identity.look) {
-          this.enterReturning();
-          return;
-        }
-        if (this.identity) {
-          this.enterCreate();
-          return;
-        }
-      }
-      this.bodyText.setText("could not verify wallet — try reconnecting");
-    } else {
-      this.walletLabel.setText("◈ no wallet");
-    }
-    this.enterWallet();
+  private setWalletLabel(addr: string | null) {
+    this.walletLabel.setText(addr ? `◈ ${this.shortWallet(addr)}` : "◈ no wallet");
   }
 
-  private enterWallet() {
+  private async refreshWalletState() {
+    const addr = connectedWallet();
+    if (!addr) {
+      this.setWalletLabel(null);
+      this.enterWalletDisconnected();
+      return;
+    }
+    this.registry.set("walletAddress", addr);
+    this.showConnectedPending(
+      addr,
+      `wallet connected: ${this.shortWallet(addr)}\n\nclick SIGN IN to load your character or start creation`,
+      [
+        {
+          label: "◈ SIGN IN",
+          sub: "sign one message in your wallet (no fee) — then we check for your saved body",
+          color: "#39ff88",
+          fn: () => void this.verifyAndAdvance(addr),
+        },
+      ],
+    );
+  }
+
+  private enterWalletDisconnected() {
     this.phase = "wallet";
     this.classLayer.setVisible(false);
     this.preview?.destroy();
@@ -213,17 +215,123 @@ export default class SelectScene extends Phaser.Scene {
         : "No wallet extension detected.\nInstall Phantom, Backpack, or Solflare to play.",
     );
     if (walletAvailable()) {
-      this.addAction(VIEW_H * 0.52, "◈ CONNECT WALLET", "sign in to load or create your character", "#39ff88", () => void this.onConnectWallet());
+      this.addAction(VIEW_H * 0.52, "◈ CONNECT WALLET", "approve the connection in your wallet extension", "#39ff88", () =>
+        void this.onConnectWallet(),
+      );
     }
+  }
+
+  /** Wallet is connected — prompt for sign-in and load/create branch. */
+  private showConnectedPending(addr: string, message: string, actions: Array<{ label: string; sub: string; color: string; fn: () => void }>) {
+    this.phase = "wallet";
+    this.classLayer.setVisible(false);
+    this.preview?.destroy();
+    this.preview = undefined;
+    this.clearActionLayer();
+    this.setWalletLabel(addr);
+    this.bodyText.setText(message);
+    actions.forEach((a, i) => this.addAction(VIEW_H * 0.5 + i * uiDim(72), a.label, a.sub, a.color, a.fn));
+    const disc = this.add
+      .text(VIEW_W / 2, VIEW_H * 0.86, "disconnect wallet", {
+        fontFamily: "Courier New, monospace",
+        fontSize: uiFont(11),
+        color: "#6b7184",
+      })
+      .setOrigin(0.5)
+      .setInteractive({ useHandCursor: true });
+    disc.on("pointerdown", () => void this.onDisconnect());
+    this.actionLayer.add(disc);
   }
 
   private async onConnectWallet() {
     this.bodyText.setText("waiting for wallet approval…");
-    const addr = await connectWallet();
+    this.clearActionLayer();
+    const addr = await ensureWalletConnected();
     if (!addr) {
-      this.bodyText.setText("wallet connect cancelled");
+      this.bodyText.setText("wallet connect cancelled — click CONNECT WALLET to try again");
+      this.enterWalletDisconnected();
       return;
     }
+    this.setWalletLabel(addr);
+    this.registry.set("walletAddress", addr);
+    this.bodyText.setText(`wallet connected: ${this.shortWallet(addr)}\n\napprove the sign-in message in your wallet to continue`);
+    this.showConnectedPending(addr, `wallet connected: ${this.shortWallet(addr)}\n\nnext: sign a message to prove you own this address`, [
+      {
+        label: "◈ SIGN IN",
+        sub: "your wallet will ask you to sign one message (no transaction fee)",
+        color: "#39ff88",
+        fn: () => void this.verifyAndAdvance(addr),
+      },
+    ]);
+  }
+
+  private async verifyAndAdvance(addr: string) {
+    this.bodyText.setText(`sign the message in your wallet…`);
+    this.clearActionLayer();
+    const proof = await signIdentityProof(addr);
+    if (!proof) {
+      this.showConnectedPending(
+        addr,
+        `wallet connected: ${this.shortWallet(addr)}\n\nsign-in was cancelled or your wallet cannot sign messages`,
+        [
+          {
+            label: "◈ RETRY SIGN IN",
+            sub: "approve the signature popup in Phantom / Backpack / Solflare",
+            color: "#39ff88",
+            fn: () => void this.verifyAndAdvance(addr),
+          },
+          {
+            label: "◢ CONTINUE WITHOUT SERVER",
+            sub: "create a character locally (start server with npm run dev:online to save)",
+            color: "#f7ff3c",
+            fn: () => this.enterCreate(),
+          },
+        ],
+      );
+      return;
+    }
+
+    this.bodyText.setText("checking for existing character…");
+    const result = await fetchWalletIdentity(proof);
+    if (result.identity) {
+      this.identity = result.identity;
+      if (result.identity.locked && result.identity.look) {
+        this.enterReturning();
+        return;
+      }
+      this.enterCreate();
+      return;
+    }
+
+    const serverHint =
+      result.error === "server_unreachable"
+        ? "game server is offline — run npm run dev:online from the project root"
+        : (result.detail ?? "could not reach the identity service");
+    this.showConnectedPending(
+      addr,
+      `wallet connected: ${this.shortWallet(addr)}\n\n${serverHint}`,
+      [
+        {
+          label: "◈ RETRY",
+          sub: "try the server check again",
+          color: "#39ff88",
+          fn: () => void this.verifyAndAdvance(addr),
+        },
+        {
+          label: "◢ CREATE CHARACTER",
+          sub: "proceed to class select (saves when the server is running)",
+          color: "#00e5ff",
+          fn: () => this.enterCreate(),
+        },
+      ],
+    );
+  }
+
+  private async onDisconnect() {
+    await disconnectWallet();
+    this.identity = null;
+    this.registry.remove("walletAddress");
+    this.registry.remove("characterLocked");
     await this.refreshWalletState();
   }
 
@@ -258,12 +366,7 @@ export default class SelectScene extends Phaser.Scene {
       })
       .setOrigin(0.5)
       .setInteractive({ useHandCursor: true });
-    disc.on("pointerdown", async () => {
-      await disconnectWallet();
-      this.identity = null;
-      this.registry.remove("characterLocked");
-      await this.refreshWalletState();
-    });
+    disc.on("pointerdown", () => void this.onDisconnect());
     this.actionLayer.add(disc);
   }
 

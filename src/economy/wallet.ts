@@ -13,9 +13,17 @@ interface InjectedProvider {
   signMessage?(message: Uint8Array, encoding?: string): Promise<{ signature: Uint8Array }>;
 }
 
+let lastConnectedAddress: string | null = null;
+
 function getProvider(): InjectedProvider | null {
-  const w = window as unknown as { solana?: InjectedProvider; phantom?: { solana?: InjectedProvider }; solflare?: InjectedProvider };
-  return w.solana ?? w.phantom?.solana ?? w.solflare ?? null;
+  const w = window as unknown as {
+    solana?: InjectedProvider;
+    phantom?: { solana?: InjectedProvider };
+    backpack?: { solana?: InjectedProvider };
+    solflare?: InjectedProvider;
+  };
+  // Phantom injects window.phantom.solana; Backpack/Solflare vary — try all common paths.
+  return w.phantom?.solana ?? w.solana ?? w.backpack?.solana ?? w.solflare ?? null;
 }
 
 /** Is any injected Solana wallet present? */
@@ -26,7 +34,14 @@ export function walletAvailable(): boolean {
 /** Currently connected address (base58), or null. */
 export function connectedWallet(): string | null {
   const p = getProvider();
-  return p?.isConnected && p.publicKey ? p.publicKey.toString() : null;
+  const pk = p?.publicKey?.toString();
+  if (pk) {
+    lastConnectedAddress = pk;
+    return pk;
+  }
+  // Some wallets expose publicKey only briefly — keep the last successful connect().
+  if (p?.isConnected && lastConnectedAddress) return lastConnectedAddress;
+  return lastConnectedAddress;
 }
 
 /** Prompt the user to connect; resolves to the address or null on cancel/no-wallet. */
@@ -35,13 +50,16 @@ export async function connectWallet(): Promise<string | null> {
   if (!p) return null;
   try {
     const res = await p.connect();
-    return res.publicKey.toString();
+    const addr = res.publicKey.toString();
+    lastConnectedAddress = addr;
+    return addr;
   } catch {
     return null; // user rejected
   }
 }
 
 export async function disconnectWallet(): Promise<void> {
+  lastConnectedAddress = null;
   try {
     await getProvider()?.disconnect();
   } catch {
@@ -78,12 +96,25 @@ function base58Encode(bytes: Uint8Array): string {
  * address (base58) + an ed25519 signature (base58, what the server's bs58.decode expects),
  * or null if there's no signing wallet / the user declines.
  */
-export async function signWalletLogin(message: string): Promise<{ address: string; signature: string } | null> {
+export async function signWalletLogin(
+  message: string,
+  address?: string,
+): Promise<{ address: string; signature: string } | null> {
   const p = getProvider();
-  if (!p?.signMessage || !p.publicKey) return null;
+  const addr = address ?? p?.publicKey?.toString() ?? lastConnectedAddress;
+  if (!p?.signMessage || !addr) return null;
+  const bytes = new TextEncoder().encode(message);
   try {
-    const { signature } = await p.signMessage(new TextEncoder().encode(message), "utf8");
-    return { address: p.publicKey.toString(), signature: base58Encode(signature) };
+    // Wallet APIs differ: Phantom accepts (bytes, "utf8"); others want bytes only.
+    let signature: Uint8Array;
+    try {
+      const res = await p.signMessage(bytes, "utf8");
+      signature = res.signature;
+    } catch {
+      const res = await p.signMessage(bytes);
+      signature = res.signature;
+    }
+    return { address: addr, signature: base58Encode(signature) };
   } catch {
     return null; // user declined
   }

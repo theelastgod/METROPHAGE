@@ -13,19 +13,32 @@ export interface WalletIdentity {
   locked: boolean;
 }
 
-/** Sign a fresh wallet proof for HTTP identity checks. */
-export async function signIdentityProof(): Promise<{ wallet: string; sig: string; ts: number } | null> {
-  let wallet = connectedWallet();
-  if (!wallet) wallet = await connectWallet();
-  if (!wallet) return null;
+export type IdentityError = "no_wallet" | "connect_failed" | "sign_failed" | "server_unreachable" | "auth_failed" | "unknown";
+
+/** Sign a fresh wallet proof for HTTP identity checks (wallet must already be connected). */
+export async function signIdentityProof(
+  wallet?: string,
+): Promise<{ wallet: string; sig: string; ts: number } | null> {
+  const addr = wallet ?? connectedWallet();
+  if (!addr) return null;
   const ts = Date.now();
-  const signed = await signWalletLogin(loginMessage(wallet, ts));
+  const signed = await signWalletLogin(loginMessage(addr, ts), addr);
   if (!signed) return null;
   return { wallet: signed.address, sig: signed.signature, ts };
 }
 
+export interface IdentityResult {
+  identity: WalletIdentity | null;
+  error?: IdentityError;
+  detail?: string;
+}
+
 /** Query the server for this wallet's locked character (one-time creation). */
-export async function fetchWalletIdentity(proof: { wallet: string; sig: string; ts: number }): Promise<WalletIdentity | null> {
+export async function fetchWalletIdentity(proof: {
+  wallet: string;
+  sig: string;
+  ts: number;
+}): Promise<IdentityResult> {
   try {
     const r = await fetch(`${HTTP_BASE}/identity`, {
       method: "POST",
@@ -40,17 +53,36 @@ export async function fetchWalletIdentity(proof: { wallet: string; sig: string; 
       locked?: boolean;
       reason?: string;
     };
-    if (!j.ok || !j.id) return null;
+    if (r.status === 401 || j.reason?.includes("sign-in failed")) {
+      return { identity: null, error: "auth_failed", detail: j.reason ?? "signature rejected" };
+    }
+    if (!j.ok || !j.id) {
+      return { identity: null, error: "unknown", detail: j.reason ?? `HTTP ${r.status}` };
+    }
     return {
-      wallet: proof.wallet,
-      playerId: j.id,
-      name: j.name ?? null,
-      look: j.look ?? null,
-      locked: !!j.locked,
+      identity: {
+        wallet: proof.wallet,
+        playerId: j.id,
+        name: j.name ?? null,
+        look: j.look ?? null,
+        locked: !!j.locked,
+      },
     };
-  } catch {
-    return null;
+  } catch (e) {
+    return {
+      identity: null,
+      error: "server_unreachable",
+      detail: String((e as Error)?.message ?? e),
+    };
   }
+}
+
+/** Connect wallet (if needed) — does not sign or hit the server. */
+export async function ensureWalletConnected(): Promise<string | null> {
+  const existing = connectedWallet();
+  if (existing) return existing;
+  if (!walletAvailable()) return null;
+  return connectWallet();
 }
 
 export function hasWalletProvider(): boolean {
