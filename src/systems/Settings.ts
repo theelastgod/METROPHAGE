@@ -5,7 +5,11 @@
 
 const KEY = "metrophage_settings_v1";
 
+export type TutorialModePref = "quick" | "full";
+
 export interface SettingsData {
+  /** Drill yard depth — quick core loop or full system tour. */
+  tutorialMode: TutorialModePref;
   /** ⚠ Photosensitivity safety: caps flashing/glitch, softens the meltdown. */
   reduceFlashing: boolean;
   /** Low-FX / device tier: thins particles + skips the costly bloom (low-end/mobile). */
@@ -17,6 +21,7 @@ export interface SettingsData {
 }
 
 const DEFAULTS: SettingsData = {
+  tutorialMode: "quick",
   reduceFlashing: false,
   lowFx: false,
   shake: 1,

@@ -3,6 +3,7 @@ import { VIEW_W, VIEW_H, COLORS, uiDim, uiFont } from "../config";
 import NeonPipeline from "../render/NeonPipeline";
 import { getClass } from "../game/classes";
 import MusicDirector from "../audio/MusicDirector";
+import { updateSettings, type TutorialModePref } from "../systems/Settings";
 
 /**
  * Prologue — the narrative open. Instead of dropping a fresh run straight into combat,
@@ -153,12 +154,25 @@ export default class Prologue extends Phaser.Scene {
       .setAlpha(0.85);
 
     mk(
-      VIEW_H / 2 - 10,
-      "◢  ENTER THE CITY",
-      "your personal arc begins in the shared world — other free minds fight beside you",
+      VIEW_H / 2 - 36,
+      "◢  QUICK DRILL",
+      "core combat + bag + chat + one systems taste · ~9 lessons",
       "#00e5ff",
-      () => this.scene.start("Online", { zone: "tutorial" }),
+      () => this.deployTutorial("quick"),
     );
+    mk(
+      VIEW_H / 2 + 44,
+      "◢  FULL TRAINING",
+      "every major system explained — forge, factions, market, PvP, singularity · ~23 lessons",
+      "#b06bff",
+      () => this.deployTutorial("full"),
+    );
+  }
+
+  private deployTutorial(mode: TutorialModePref) {
+    updateSettings({ tutorialMode: mode });
+    this.registry.set("tutorialMode", mode);
+    this.scene.start("Online", { zone: "tutorial", tutorialMode: mode });
   }
 
   private applyNeon() {

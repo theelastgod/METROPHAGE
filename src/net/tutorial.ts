@@ -3,14 +3,31 @@
 
 export const TUTORIAL_ZONE = "tutorial";
 
+export type TutorialMode = "quick" | "full";
+
 export type TutorialKind =
   | "move"
   | "fire"
   | "kill"
   | "pickup"
   | "capture"
+  | "faction"
   | "equip"
+  | "craft"
+  | "vendor"
+  | "market"
+  | "contracts"
+  | "cosmetics"
+  | "guild"
+  | "board"
+  | "map"
+  | "emote"
   | "chat"
+  | "campaign"
+  | "pvp"
+  | "singularity"
+  | "trade"
+  | "travel"
   | "panel"
   | "portal";
 
@@ -23,8 +40,8 @@ export interface TutorialStepDef {
   count: number;
 }
 
-/** Ordered lessons — one major mechanic each, before the final deploy portal. */
-export const TUTORIAL_STEPS: TutorialStepDef[] = [
+/** Core loop only — combat, nodes, bag, chat, one systems taste, deploy. */
+export const TUTORIAL_STEPS_QUICK: TutorialStepDef[] = [
   {
     id: "move",
     title: "MOVEMENT",
@@ -99,12 +116,152 @@ export const TUTORIAL_STEPS: TutorialStepDef[] = [
   },
 ];
 
-export const TUTORIAL_TOTAL = TUTORIAL_STEPS.length;
+/** Every major online system — one lesson each before deploy. */
+export const TUTORIAL_STEPS_FULL: TutorialStepDef[] = [
+  ...TUTORIAL_STEPS_QUICK.slice(0, 5),
+  {
+    id: "faction",
+    title: "FACTION WAR",
+    teach:
+      "Your signature colour chose your CELL — one of four factions contesting the city. Capturing nodes scores your cell; the HUD tracks district control and the server-wide war tally.",
+    hint: "Press SPACE to continue",
+    kind: "faction",
+    count: 1,
+  },
+  TUTORIAL_STEPS_QUICK[5],
+  {
+    id: "craft",
+    title: "FORGE",
+    teach: "The forge (G) sinks credits + cores into power: upgrade (+), reforge mods (↻), fuse two same-rarity items (✦), or salvage bag loot (✂). The server validates every craft.",
+    hint: "Press G · upgrade, reforge, fuse, or salvage once (free in drill)",
+    kind: "craft",
+    count: 1,
+  },
+  {
+    id: "vendor",
+    title: "VENDOR",
+    teach: "The quartermaster (B) sells heals and gear caches for credits. Higher reputation tiers unlock better stock — earned from contracts and jobs.",
+    hint: "Press B · open the vendor",
+    kind: "vendor",
+    count: 1,
+  },
+  {
+    id: "market",
+    title: "MARKET",
+    teach: "The fence (K) runs a cross-zone auction house. List bag items, bid on player listings, cancel your own — escrow is server-side in D1.",
+    hint: "Press K · open the market",
+    kind: "market",
+    count: 1,
+  },
+  {
+    id: "contracts",
+    title: "CONTRACTS",
+    teach: "The fixer (J) posts daily contracts — kill quotas, boss hunts, collection runs. Finish them for credits, cores, and vendor reputation.",
+    hint: "Press J · open contracts",
+    kind: "contracts",
+    count: 1,
+  },
+  {
+    id: "cosmetics",
+    title: "WARDROBE",
+    teach: "The tailor (Y) sells transmog — appearance only, zero combat power. Your look still relays to every other player in the world.",
+    hint: "Press Y · open wardrobe",
+    kind: "cosmetics",
+    count: 1,
+  },
+  {
+    id: "guild",
+    title: "CELL",
+    teach: "The organizer (C) fronts your guild — a persistent cell with shared bank, roster, ranks, and a level track. Invite free minds, pool resources, fight as a unit.",
+    hint: "Press C · open cell panel",
+    kind: "guild",
+    count: 1,
+  },
+  {
+    id: "board",
+    title: "LEADERBOARDS",
+    teach: "The board (L) tracks cross-zone achievements and lifetime stats — kills, bosses, deepest district, credits earned. Milestones pay out automatically.",
+    hint: "Press L · open leaderboards",
+    kind: "board",
+    count: 1,
+  },
+  {
+    id: "map",
+    title: "NAVIGATION",
+    teach: "The map (M) shows discovered zones. Black tiles are unknown until you arrive; lit districts can be fast-traveled once explored.",
+    hint: "Press M · open the map",
+    kind: "map",
+    count: 1,
+  },
+  {
+    id: "emote",
+    title: "EMOTES",
+    teach: "The emote wheel (V) sends gestures above your avatar or drops a world ping other players can see — useful for coordination without chat spam.",
+    hint: "Press V · pick an emote or ping",
+    kind: "emote",
+    count: 1,
+  },
+  TUTORIAL_STEPS_QUICK[6],
+  {
+    id: "campaign",
+    title: "CAMPAIGN",
+    teach:
+      "Your personal storyline runs in parallel with everyone else — accept beats from THE FIXER, talk to operatives, and progress a five-act arc persisted to your account.",
+    hint: "Press SPACE to continue",
+    kind: "campaign",
+    count: 1,
+  },
+  {
+    id: "pvp",
+    title: "PVP ARENAS",
+    teach: "Marked red zones in the districts are free-for-all arenas — players can damage each other only inside them. The server enforces damage; you'll get a warning on entry.",
+    hint: "Press SPACE to continue",
+    kind: "pvp",
+    count: 1,
+  },
+  {
+    id: "singularity",
+    title: "SINGULARITY",
+    teach:
+      "Every kill and node hold feeds a shared Singularity meter. When it maxes, meltdown triggers a server-wide era shift — tougher enemies, new season, everyone feels it.",
+    hint: "Press SPACE to continue",
+    kind: "singularity",
+    count: 1,
+  },
+  {
+    id: "trade",
+    title: "SECURE TRADE",
+    teach: "Face-to-face trades use chat commands: /trade <name> · /offer <credits> <cores> · /confirm on both sides. Either party can /tcancel.",
+    hint: "Press SPACE to continue",
+    kind: "trade",
+    count: 1,
+  },
+  {
+    id: "travel",
+    title: "TRAVEL",
+    teach: "H recalls you to the safehouse hub from any district. M fast-travels to discovered zones. Building doors and the subway dungeon are separate combat spaces.",
+    hint: "Press SPACE to continue",
+    kind: "travel",
+    count: 1,
+  },
+  TUTORIAL_STEPS_QUICK[8],
+];
 
-export function tutorialStepAt(step: number): TutorialStepDef | null {
-  return TUTORIAL_STEPS[step] ?? null;
+export function tutorialSteps(mode: TutorialMode = "quick"): TutorialStepDef[] {
+  return mode === "full" ? TUTORIAL_STEPS_FULL : TUTORIAL_STEPS_QUICK;
 }
 
-export function tutorialReadyForPortal(step: number): boolean {
-  return step >= TUTORIAL_STEPS.length - 1;
+export function tutorialTotal(mode: TutorialMode = "quick"): number {
+  return tutorialSteps(mode).length;
 }
+
+export function tutorialStepAt(step: number, mode: TutorialMode = "quick"): TutorialStepDef | null {
+  return tutorialSteps(mode)[step] ?? null;
+}
+
+export function tutorialReadyForPortal(step: number, mode: TutorialMode = "quick"): boolean {
+  return step >= tutorialTotal(mode) - 1;
+}
+
+/** @deprecated use tutorialTotal(mode) */
+export const TUTORIAL_TOTAL = tutorialTotal("quick");

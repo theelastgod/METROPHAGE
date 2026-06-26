@@ -61,11 +61,11 @@ import {
 } from "../../src/world/district";
 import {
   TUTORIAL_ZONE,
-  TUTORIAL_STEPS,
-  TUTORIAL_TOTAL,
   tutorialStepAt,
+  tutorialTotal,
   tutorialReadyForPortal,
   type TutorialKind,
+  type TutorialMode,
 } from "../../src/net/tutorial";
 import { DISTRICTS } from "../../src/game/districts";
 import { rollItem, rollModsFor, effectiveMods, nextRarity, SLOTS, type Item, type Slot, type Rarity } from "../../src/game/items";
@@ -233,6 +233,7 @@ interface PlayerState {
   // tutorial drill yard — onboarding before the one-way deploy portal
   tutorialDone: boolean;
   tutorialStep: number;
+  tutorialMode: TutorialMode;
   tutorialProgress: number;
   tutorialAnchorX: number;
   tutorialAnchorY: number;
@@ -896,6 +897,7 @@ export class WorldDO {
     const ping = !!msg.ping;
     const x = ping ? msg.x : p.x; // a ping carries a world point; an emote anchors to the sender
     const y = ping ? msg.y : p.y;
+    if (this.inTutorial()) this.tutorialEvent(p, "emote");
     const out = { t: "emote", from: p.id, kind: msg.kind | 0, ping, x: round2(x), y: round2(y) };
     const r2 = AOI_RADIUS * AOI_RADIUS;
     for (const other of this.players.values()) {
@@ -1661,6 +1663,7 @@ export class WorldDO {
         p.inventory.push(rollItem(1, 0.5));
         this.send(ws, { t: "inv", items: p.inventory });
       }
+      this.ensureTutorialSupplies(p);
       this.sendTutorialState(p);
     } else {
       if (!p.campaign.activeId && p.campaign.completed.length === 0) p.campaign.accept("the_wake");
@@ -1692,11 +1695,12 @@ export class WorldDO {
     let campaign = new Campaign();
     let tutorialDone = false;
     let tutorialStep = 0;
+    let tutorialMode: TutorialMode = "quick";
     let inventory: Item[] = [];
     let look: PlayerLook | undefined;
     let equipped: Partial<Record<Slot, Item>> = {};
     const row = await this.env.DB.prepare(
-      "SELECT x, y, credits, xp, zone, cores, quest_step, campaign, tutorial_done, tutorial_step, inventory, look, equipped FROM players WHERE id = ?",
+      "SELECT x, y, credits, xp, zone, cores, quest_step, campaign, tutorial_done, tutorial_step, tutorial_mode, inventory, look, equipped FROM players WHERE id = ?",
     )
       .bind(id)
       .first<{
@@ -1710,6 +1714,7 @@ export class WorldDO {
         campaign: string | null;
         tutorial_done: number;
         tutorial_step: number;
+        tutorial_mode: string | null;
         inventory: string;
         look: string | null;
         equipped: string;
@@ -1727,6 +1732,7 @@ export class WorldDO {
       equipped = parseEquipped(row.equipped);
       tutorialDone = !!row.tutorial_done;
       tutorialStep = row.tutorial_step ?? 0;
+      tutorialMode = row.tutorial_mode === "full" ? "full" : "quick";
       if (this.inTutorial() && tutorialDone) {
         x = SAFEHOUSE_SPAWN.x;
         y = SAFEHOUSE_SPAWN.y;
@@ -1840,6 +1846,7 @@ export class WorldDO {
       campaign,
       tutorialDone,
       tutorialStep,
+      tutorialMode,
       tutorialProgress: 0,
       tutorialAnchorX: x,
       tutorialAnchorY: y,
@@ -1975,29 +1982,33 @@ export class WorldDO {
   }
 
   private sendTutorialState(p: PlayerState) {
-    const step = tutorialStepAt(p.tutorialStep) ?? tutorialStepAt(TUTORIAL_TOTAL - 1)!;
+    const mode = p.tutorialMode ?? "quick";
+    const total = tutorialTotal(mode);
+    const step = tutorialStepAt(p.tutorialStep, mode) ?? tutorialStepAt(total - 1, mode)!;
     const payload = {
       t: "tutorial" as const,
       step: p.tutorialStep,
-      total: TUTORIAL_TOTAL,
+      total,
+      mode,
       title: step.title,
       teach: step.teach,
       hint: step.hint,
       objective: step.title,
       progress: p.tutorialProgress,
       count: step.count,
-      portalOpen: tutorialReadyForPortal(p.tutorialStep),
+      portalOpen: tutorialReadyForPortal(p.tutorialStep, mode),
     };
     this.sendTo(p.id, payload);
   }
 
   private tutorialEvent(p: PlayerState, kind: TutorialKind, n = 1) {
     if (!this.inTutorial() || p.tutorialDone) return;
-    const step = tutorialStepAt(p.tutorialStep);
+    const mode = p.tutorialMode ?? "quick";
+    const step = tutorialStepAt(p.tutorialStep, mode);
     if (!step || step.kind !== kind) return;
     p.tutorialProgress += n;
     if (p.tutorialProgress >= step.count) {
-      p.tutorialStep = Math.min(TUTORIAL_TOTAL, p.tutorialStep + 1);
+      p.tutorialStep = Math.min(tutorialTotal(mode), p.tutorialStep + 1);
       p.tutorialProgress = 0;
       p.dirty = true;
       this.sendTo(p.id, { t: "sys", text: `✓ ${step.title} — cleared` });
@@ -2006,8 +2017,9 @@ export class WorldDO {
   }
 
   private async graduateTutorial(p: PlayerState, ws: WebSocket, skipped: boolean) {
+    const mode = p.tutorialMode ?? "quick";
     p.tutorialDone = true;
-    p.tutorialStep = TUTORIAL_TOTAL;
+    p.tutorialStep = tutorialTotal(mode);
     p.tutorialProgress = 0;
     p.x = SAFEHOUSE_SPAWN.x;
     p.y = SAFEHOUSE_SPAWN.y;
@@ -2025,8 +2037,9 @@ export class WorldDO {
       p.look,
       p.equipped,
       true,
-      TUTORIAL_TOTAL,
+      tutorialTotal(mode),
       "safe",
+      mode,
     );
     this.send(ws, {
       t: "redirect",
@@ -2045,12 +2058,22 @@ export class WorldDO {
   private onTutorial(ws: WebSocket, msg: Extract<ClientMsg, { t: "tutorial" }>) {
     const p = this.playerFor(ws);
     if (!p || !this.inTutorial()) return;
+    if (msg.action === "mode" && (msg.mode === "quick" || msg.mode === "full")) {
+      if (p.tutorialStep === 0) {
+        p.tutorialMode = msg.mode;
+        p.dirty = true;
+        this.ensureTutorialSupplies(p);
+        this.sendTutorialState(p);
+      }
+      return;
+    }
     if (msg.action === "skip") {
       void this.graduateTutorial(p, ws, true);
       return;
     }
     if (msg.action === "graduate") {
-      if (!tutorialReadyForPortal(p.tutorialStep)) {
+      const mode = p.tutorialMode ?? "quick";
+      if (!tutorialReadyForPortal(p.tutorialStep, mode)) {
         this.send(ws, { t: "sys", text: "finish the remaining drills first — or press SKIP" });
         return;
       }
@@ -2060,6 +2083,13 @@ export class WorldDO {
     if (msg.action === "progress" && msg.kind) {
       this.tutorialEvent(p, msg.kind as TutorialKind);
     }
+  }
+
+  /** Full drill — spare bag items for forge practice; costs are waived server-side. */
+  private ensureTutorialSupplies(p: PlayerState) {
+    if (p.tutorialMode !== "full") return;
+    while (p.inventory.length < 2) p.inventory.push(rollItem(1, 0.4));
+    this.sendTo(p.id, { t: "inv", items: p.inventory });
   }
 
   // ── achievements + leaderboards (cross-zone counters, persisted to D1) ──────
@@ -2306,8 +2336,10 @@ export class WorldDO {
     const p = this.playerFor(ws);
     if (!p) return;
     const fail = (text: string) => this.send(ws, { t: "sys", text });
-    const afford = (c: Cost) => p.credits >= c.credits && p.cores >= c.cores;
+    const drill = this.inTutorial();
+    const afford = (c: Cost) => drill || (p.credits >= c.credits && p.cores >= c.cores);
     const pay = (c: Cost) => {
+      if (drill) return;
       p.credits -= c.credits;
       p.cores -= c.cores;
     };
@@ -2335,11 +2367,14 @@ export class WorldDO {
       const i = p.inventory.findIndex((it) => it.id === msg.itemId);
       if (i < 0) return fail("can only salvage items in the bag (unequip first)");
       const it = p.inventory[i];
-      const y = salvageYield(it);
       p.inventory.splice(i, 1);
-      p.credits += y.credits;
-      p.cores += y.cores;
-      fail(`✂ salvaged ${it.name} → +${y.cores}◈ +₵${y.credits}`);
+      if (drill) fail(`✂ salvaged ${it.name} (drill — no payout)`);
+      else {
+        const y = salvageYield(it);
+        p.credits += y.credits;
+        p.cores += y.cores;
+        fail(`✂ salvaged ${it.name} → +${y.cores}◈ +₵${y.credits}`);
+      }
     } else if (msg.action === "fuse") {
       const i = p.inventory.findIndex((it) => it.id === msg.itemId);
       const j = p.inventory.findIndex((it) => it.id === msg.itemId2);
@@ -2362,6 +2397,7 @@ export class WorldDO {
     } else return;
 
     p.dirty = true;
+    if (drill) this.tutorialEvent(p, "craft");
     this.send(ws, { t: "inv", items: p.inventory });
     this.sendLoadout(ws, p);
   }
@@ -3002,6 +3038,8 @@ export class WorldDO {
           p.equipped,
           p.tutorialDone,
           p.tutorialStep,
+          undefined,
+          p.tutorialMode ?? "quick",
         );
       }
       await this.flushStats(p); // lifetime counters / achievements may change without `dirty`
@@ -3102,12 +3140,13 @@ export class WorldDO {
     tutorialDone = false,
     tutorialStep = 0,
     zoneOverride?: string,
+    tutorialMode: TutorialMode = "quick",
   ) {
     const zone = zoneOverride ?? this.zoneName;
     try {
       await this.env.DB.prepare(
-        "INSERT INTO players (id, name, x, y, zone, credits, xp, cores, campaign, tutorial_done, tutorial_step, inventory, look, equipped, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) " +
-          "ON CONFLICT(id) DO UPDATE SET x=excluded.x, y=excluded.y, zone=excluded.zone, credits=excluded.credits, xp=excluded.xp, cores=excluded.cores, campaign=excluded.campaign, tutorial_done=excluded.tutorial_done, tutorial_step=excluded.tutorial_step, inventory=excluded.inventory, look=excluded.look, equipped=excluded.equipped, updated_at=excluded.updated_at",
+        "INSERT INTO players (id, name, x, y, zone, credits, xp, cores, campaign, tutorial_done, tutorial_step, tutorial_mode, inventory, look, equipped, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) " +
+          "ON CONFLICT(id) DO UPDATE SET x=excluded.x, y=excluded.y, zone=excluded.zone, credits=excluded.credits, xp=excluded.xp, cores=excluded.cores, campaign=excluded.campaign, tutorial_done=excluded.tutorial_done, tutorial_step=excluded.tutorial_step, tutorial_mode=excluded.tutorial_mode, inventory=excluded.inventory, look=excluded.look, equipped=excluded.equipped, updated_at=excluded.updated_at",
       )
         .bind(
           id,
@@ -3121,6 +3160,7 @@ export class WorldDO {
           serializeCampaign(campaign),
           tutorialDone ? 1 : 0,
           Math.round(tutorialStep),
+          tutorialMode,
           JSON.stringify(inventory.slice(0, INVENTORY_CAP)),
           look ? JSON.stringify(look) : null,
           JSON.stringify(equipped),
@@ -3156,6 +3196,8 @@ export class WorldDO {
         p.equipped,
         p.tutorialDone,
         p.tutorialStep,
+        undefined,
+        p.tutorialMode ?? "quick",
       );
       await this.flushStats(p);
       await this.flushDailies(p);

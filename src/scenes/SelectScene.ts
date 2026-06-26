@@ -6,6 +6,7 @@ import { CLASSES } from "../game/classes";
 import OptionsPanel from "../ui/OptionsPanel";
 import NeonPipeline from "../render/NeonPipeline";
 import MusicDirector from "../audio/MusicDirector";
+import { getSettings, updateSettings } from "../systems/Settings";
 
 /**
  * Class-select screen. Boot -> Select -> Game. Picks a ClassDef, stashes its id in
@@ -189,8 +190,23 @@ export default class SelectScene extends Phaser.Scene {
     onlineBtn.on("pointerout", () => onlineBtn.setColor("#39ff88"));
     onlineBtn.on("pointerdown", () => {
       if (this.options?.isOpen) return;
+      const mode = getSettings().tutorialMode;
+      this.registry.set("tutorialMode", mode);
       this.cameras.main.fadeOut(250, 2, 2, 8);
-      this.cameras.main.once("camerafadeoutcomplete", () => this.scene.start("Online", { zone: "tutorial" }));
+      this.cameras.main.once("camerafadeoutcomplete", () => this.scene.start("Online", { zone: "tutorial", tutorialMode: mode }));
+    });
+
+    const drillLbl = () => `drill: ${getSettings().tutorialMode === "full" ? "FULL TRAINING" : "QUICK"} (click)`;
+    const drillToggle = this.add
+      .text(16, 36, drillLbl(), { fontFamily: "Courier New, monospace", fontSize: uiFont(10), color: "#9aa3b2" })
+      .setInteractive({ useHandCursor: true });
+    drillToggle.on("pointerover", () => drillToggle.setColor("#eafdff"));
+    drillToggle.on("pointerout", () => drillToggle.setColor("#9aa3b2"));
+    drillToggle.on("pointerdown", () => {
+      if (this.options?.isOpen) return;
+      const next = getSettings().tutorialMode === "full" ? "quick" : "full";
+      updateSettings({ tutorialMode: next });
+      drillToggle.setText(drillLbl());
     });
 
     this.drawFrames();

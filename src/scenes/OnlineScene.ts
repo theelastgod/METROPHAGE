@@ -38,7 +38,8 @@ import {
   TUTORIAL_NODE_TILE,
   isWall,
 } from "../world/district";
-import { TUTORIAL_ZONE, TUTORIAL_STEPS, tutorialStepAt } from "../net/tutorial";
+import { TUTORIAL_ZONE, tutorialStepAt, type TutorialMode } from "../net/tutorial";
+import { getSettings } from "../systems/Settings";
 import { DISTRICTS } from "../game/districts";
 import { ENEMY_BARKS } from "../game/enemies";
 import { WORLD_W, WORLD_H } from "../net/sim";
@@ -212,7 +213,7 @@ export default class OnlineScene extends Phaser.Scene {
     super("Online");
   }
 
-  create(data?: { zone?: string; from?: string }) {
+  create(data?: { zone?: string; from?: string; tutorialMode?: TutorialMode }) {
     const rawCust = this.registry.get("customization") as Customization | undefined;
     const cust = sanitizeCustomization(rawCust, this.registry.get("classId") as string | undefined);
     this.callsign = (rawCust?.callsign || "runner").toLowerCase();
@@ -425,10 +426,15 @@ export default class OnlineScene extends Phaser.Scene {
     // Send your look so every other player renders your customization (not a generic body).
     this.baseLook = customizationToLook(cust); // cosmetics merge onto this for the rendered avatar
     this.net = new NetClient(grid, this.callsign, url, this.faction, this.baseLook);
+    const tutorialMode =
+      data?.tutorialMode ?? (this.registry.get("tutorialMode") as TutorialMode | undefined) ?? getSettings().tutorialMode;
+    if (this.isTutorial) this.registry.set("tutorialMode", tutorialMode);
+
     this.net.onWelcome = (x, y) => {
       this.me.setPosition(x, y).setVisible(true);
       this.cameras.main.startFollow(this.me, true, 0.18, 0.18);
       setOnlinePlayer(this.net.id);
+      if (this.isTutorial) this.net.setTutorialMode(tutorialMode);
     };
     this.net.onRedirect = (zone) => {
       this.net.disconnect();
@@ -695,6 +701,13 @@ export default class OnlineScene extends Phaser.Scene {
         if (e.key === "Escape" || e.key === "v" || e.key === "V") this.closeWheel();
         return;
       }
+      if (e.key === " " && this.isTutorial) {
+        const step = tutorialStepAt(this.net.tutorialStep, this.net.tutorialMode);
+        if (step && ["faction", "campaign", "pvp", "singularity", "trade", "travel"].includes(step.kind)) {
+          this.net.reportTutorial(step.kind);
+          return;
+        }
+      }
       if (e.key === "i" || e.key === "I") {
         this.inv.toggle();
         return;
@@ -705,7 +718,7 @@ export default class OnlineScene extends Phaser.Scene {
       }
       if (e.key === "b" || e.key === "B") {
         this.shop.toggle();
-        if (this.shop.open) this.maybeTutorialPanel();
+        if (this.shop.open) this.reportTutorialPanel("vendor");
         return;
       }
       if (this.shop.open && e.key === "Escape") {
@@ -727,7 +740,6 @@ export default class OnlineScene extends Phaser.Scene {
       if (e.key === "g" || e.key === "G") {
         this.forge.setState(this.net.inventory, this.net.equipped, this.net.credits, this.net.cores);
         this.forge.toggle();
-        if (this.forge.open) this.maybeTutorialPanel();
         return;
       }
       if (this.forge.open && e.key === "Escape") {
@@ -736,7 +748,7 @@ export default class OnlineScene extends Phaser.Scene {
       }
       if (e.key === "l" || e.key === "L") {
         this.board.toggle(this.net.achievements, this.net.id);
-        if (this.board.open) this.maybeTutorialPanel();
+        if (this.board.open) this.reportTutorialPanel("board");
         return;
       }
       if (this.board.open && e.key === "Escape") {
@@ -746,7 +758,7 @@ export default class OnlineScene extends Phaser.Scene {
       if (e.key === "c" || e.key === "C") {
         this.net.guildAction("info"); // pull a fresh summary before showing
         this.guildPanel.toggle(this.net.guild, this.net.id);
-        if (this.guildPanel.open) this.maybeTutorialPanel();
+        if (this.guildPanel.open) this.reportTutorialPanel("guild");
         return;
       }
       if (this.guildPanel.open && e.key === "Escape") {
@@ -755,7 +767,7 @@ export default class OnlineScene extends Phaser.Scene {
       }
       if (e.key === "k" || e.key === "K") {
         this.market.toggle(this.net.marketListings, this.net.inventory, this.net.id, this.net.credits);
-        if (this.market.open) this.maybeTutorialPanel();
+        if (this.market.open) this.reportTutorialPanel("market");
         return;
       }
       if (this.market.open && e.key === "Escape") {
@@ -764,7 +776,7 @@ export default class OnlineScene extends Phaser.Scene {
       }
       if (e.key === "j" || e.key === "J") {
         this.contracts.toggle(this.net.contracts, this.net.rep);
-        if (this.contracts.open) this.maybeTutorialPanel();
+        if (this.contracts.open) this.reportTutorialPanel("contracts");
         return;
       }
       if (this.contracts.open && e.key === "Escape") {
@@ -773,7 +785,7 @@ export default class OnlineScene extends Phaser.Scene {
       }
       if (e.key === "y" || e.key === "Y") {
         this.cosmetics.toggle(this.net.cosmeticsOwned, this.net.cosmeticEquipped, this.net.credits);
-        if (this.cosmetics.open) this.maybeTutorialPanel();
+        if (this.cosmetics.open) this.reportTutorialPanel("cosmetics");
         return;
       }
       if (this.cosmetics.open && e.key === "Escape") {
@@ -782,7 +794,7 @@ export default class OnlineScene extends Phaser.Scene {
       }
       if (e.key === "m" || e.key === "M") {
         this.mapPanel.toggle(this.net.discovered, this.zone);
-        if (this.mapPanel.open) this.maybeTutorialPanel();
+        if (this.mapPanel.open) this.reportTutorialPanel("map");
         return;
       }
       if (this.mapPanel.open && e.key === "Escape") {
@@ -958,7 +970,17 @@ export default class OnlineScene extends Phaser.Scene {
         this.cosmetics.toggle(n.cosmeticsOwned, n.cosmeticEquipped, n.credits);
         break;
     }
-    this.maybeTutorialPanel();
+    const panelKind: Record<string, string> = {
+      forge: "craft",
+      vendor: "vendor",
+      market: "market",
+      contracts: "contracts",
+      board: "board",
+      guild: "guild",
+      cosmetics: "cosmetics",
+    };
+    const kind = panelKind[svc];
+    if (kind && kind !== "craft") this.reportTutorialPanel(kind);
   }
 
   /** Drill yard — signage, skip control, lesson panel, and the one-way deploy portal. */
@@ -1037,8 +1059,10 @@ export default class OnlineScene extends Phaser.Scene {
     this.tutorialSkipBtn.on("pointerdown", () => this.net.tutorialSkip());
   }
 
-  private maybeTutorialPanel() {
-    if (this.isTutorial) this.net.reportTutorial("panel");
+  private reportTutorialPanel(kind: string) {
+    if (!this.isTutorial) return;
+    if (this.net.tutorialMode === "full") this.net.reportTutorial(kind);
+    else this.net.reportTutorial("panel");
   }
 
   /** Build an authored, talkable citizen at a world position (baked from its PlayerLook).
@@ -1227,7 +1251,7 @@ export default class OnlineScene extends Phaser.Scene {
 
     // tutorial drill — lesson panel, portal proximity, deploy prompt
     if (this.isTutorial && this.tutorialPanel) {
-      const step = tutorialStepAt(this.net.tutorialStep);
+      const step = tutorialStepAt(this.net.tutorialStep, this.net.tutorialMode);
       const count = step?.count ?? 1;
       const prog = this.net.tutorialProgress;
       const stepLine = step ? `◢ ${step.title}  (${Math.min(prog, count)}/${count})` : "◢ DRILL COMPLETE";
@@ -1418,7 +1442,9 @@ export default class OnlineScene extends Phaser.Scene {
       this.hud.setColor("#39ff88");
       const lesson = this.net.tutorialStep + 1;
       this.hud.setText([
-        st.connected ? `◢ DRILL YARD  ${this.callsign}  ·  lesson ${Math.min(lesson, TUTORIAL_STEPS.length)}/${TUTORIAL_STEPS.length}` : "connecting to drill yard…",
+        st.connected
+          ? `◢ DRILL YARD  ${this.callsign}  ·  ${this.net.tutorialMode === "full" ? "FULL" : "QUICK"}  ·  lesson ${Math.min(lesson, this.net.tutorialTotal)}/${this.net.tutorialTotal}`
+          : "connecting to drill yard…",
         "no XP · no leveling · rewards unlock in the live city",
         `players: ${st.players}   hostiles: ${this.net.enemies.size}   nodes: ${this.net.nodes.size}`,
         `HP ${Math.round(this.net.hp)}   ₵ ${this.net.credits}  ◈ ${this.net.cores}  (drill only — not saved)`,

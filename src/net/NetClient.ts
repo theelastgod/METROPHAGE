@@ -104,6 +104,8 @@ export default class NetClient {
   campaignObjective = "";
   tutorialStep = 0;
   tutorialProgress = 0;
+  tutorialTotal = 9;
+  tutorialMode: "quick" | "full" = "quick";
   tutorialDone = false;
   inTutorial = false;
   tutorialPortalOpen = false;
@@ -372,6 +374,8 @@ export default class NetClient {
     } else if (msg.t === "tutorial") {
       this.tutorialStep = msg.step;
       this.tutorialProgress = msg.progress;
+      this.tutorialTotal = msg.total;
+      this.tutorialMode = msg.mode;
       this.tutorialPortalOpen = msg.portalOpen;
       this.tutorialTitle = msg.title;
       this.tutorialTeach = msg.teach;
@@ -454,6 +458,10 @@ export default class NetClient {
   }
   tutorialGraduate() {
     this.sendMsg({ t: "tutorial", action: "graduate" });
+  }
+  setTutorialMode(mode: "quick" | "full") {
+    this.tutorialMode = mode;
+    if (this.connected) this.sendMsg({ t: "tutorial", action: "mode", mode });
   }
   reportTutorial(kind: string) {
     this.sendMsg({ t: "tutorial", action: "progress", kind });
