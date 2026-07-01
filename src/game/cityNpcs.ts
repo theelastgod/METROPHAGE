@@ -4,21 +4,26 @@
 
 import type { PlayerLook } from "../net/protocol";
 
-/** Fill a PlayerLook from a partial (sensible cyber defaults). */
+/** Fill a PlayerLook from a partial (sensible human defaults). */
 function look(p: Partial<PlayerLook>): PlayerLook {
   return {
     color: 0x00e5ff,
     build: "normal",
-    head: "helmet",
+    head: "cap",
     visor: "band",
     shoulders: "none",
     decal: "none",
     cloak: "none",
-    skin: -1,
+    skin: 0xc98a5e,
     sex: "m",
-    hair: "none",
+    hair: "short",
     hairColor: 0x4a2f1c,
     beard: "none",
+    faceMark: "none",
+    eyeColor: 0x1a1020,
+    gloves: "none",
+    legGear: "none",
+    accentColor: 0xff2bd6,
     antennae: false,
     emblem: false,
     strap: false,
@@ -54,7 +59,7 @@ export const KEY_NPCS: CityNpcDef[] = [
     id: "vex",
     name: "VEX",
     quest: "word_street",
-    look: look({ color: 0xff2bd6, head: "crown", visor: "scan", shoulders: "spikes" }),
+    look: look({ color: 0xff2bd6, head: "beret", skin: 0x4f3220, hair: "undercut", hairColor: 0x1b1820, faceMark: "tattoo", cloak: "coat" }),
     lines: ["Information's the only real currency.", "Everything's for sale. Even you."],
   },
   {
@@ -97,7 +102,7 @@ export const CITIZENS: CityNpcDef[] = [
     id: "ghost",
     name: "GHOST",
     quest: "furniture",
-    look: look({ color: 0xb06bff, visor: "single", antennae: true, build: "slim" }),
+    look: look({ color: 0xb06bff, head: "hood", skin: 0x7c4f30, hair: "short", hairColor: 0x1b1820, build: "slim", cloak: "coat" }),
     lines: ["…", "I wasn't here. You didn't see me."],
   },
 ];
@@ -124,13 +129,13 @@ const KEEPERS: Record<string, CityNpcDef> = {
   bar: { id: "keep_bar", name: "BARKEEP", look: look({ color: 0xff79c6, skin: 0xc98a5e, hair: "short", hairColor: 0x1b1820 }), lines: ["What'll it be, runner?", "Grid's flickered all night."] },
   shop: { id: "keep_shop", name: "CLERK", look: look({ color: 0x00e5ff, skin: 0xe6b58c, hair: "buzz", hairColor: 0x2a1d14 }), lines: ["Browse all you like. Touch nothing.", "Prices are firm."] },
   clinic: { id: "keep_clinic", name: "MEDIC", look: look({ color: 0x39ff88, skin: 0x7c4f30, hair: "ponytail", hairColor: 0x1b1820, decal: "cross" }), lines: ["Hold still, this'll sting.", "Don't bleed on my floor."] },
-  guild: { id: "keep_guild", name: "QUARTERMASTER", look: look({ color: 0x4d8cff, skin: 0xf3d2b8, hair: "short", hairColor: 0x4a2f1c, shoulders: "pads" }), lines: ["Contracts are on the board.", "The guild carries no deadweight."] },
-  den: { id: "keep_den", name: "FENCE", look: look({ color: 0xff2bd6, head: "hood", skin: 0xa9794a, hair: "none" }), lines: ["You didn't get it here.", "Cash only. No callsigns."] },
+  guild: { id: "keep_guild", name: "QUARTERMASTER", look: look({ color: 0x4d8cff, skin: 0xf3d2b8, hair: "short", hairColor: 0x4a2f1c, cloak: "coat", beard: "stubble" }), lines: ["Contracts are on the board.", "The guild carries no deadweight."] },
+  den: { id: "keep_den", name: "FENCE", look: look({ color: 0xff2bd6, head: "hood", skin: 0xa9794a, hair: "short", hairColor: 0x1b1820, cloak: "coat" }), lines: ["You didn't get it here.", "Cash only. No callsigns."] },
   home: { id: "keep_home", name: "RESIDENT", look: look({ color: 0xf7a23c, skin: 0xc98a5e, hair: "short", hairColor: 0x1b1820 }), lines: ["This is my place. Mind yourself.", "Quiet cycle. Let's keep it that way."] },
   hospital: { id: "keep_hospital", name: "TRAUMA DOC", look: look({ color: 0x39ff88, skin: 0xe6b58c, hair: "buzz", hairColor: 0x4a2f1c, decal: "cross" }), lines: ["Sit. I'll patch you whole.", "You walked in — that's the easy half."] },
   hotel: { id: "keep_hotel", name: "CONCIERGE", look: look({ color: 0xffb13c, skin: 0xc98a5e, hair: "short", hairColor: 0x1b1820, cloak: "coat" }), lines: ["Rest easy. The doors hold.", "A bed and a hot signal — best in the district."] },
-  subway: { id: "keep_subway", name: "TRANSIT WARDEN", look: look({ color: 0x29e7ff, head: "cap", visor: "wide", skin: 0x7c4f30 }), lines: ["Mind the gap. And the things in it.", "Down the tunnels? Bring teeth."] },
-  stadium: { id: "keep_stadium", name: "ARENA HERALD", look: look({ color: 0xff3b6b, head: "crown", skin: 0xf3d2b8, hair: "long", hairColor: 0x1b1820 }), lines: ["Blood or glory — the crowd doesn't care which.", "Step into the Crucible, free one."] },
+  subway: { id: "keep_subway", name: "TRANSIT WARDEN", look: look({ color: 0x29e7ff, head: "cap", skin: 0x7c4f30, hair: "buzz", hairColor: 0x1b1820, cloak: "coat" }), lines: ["Mind the gap. And the things in it.", "Down the tunnels? Bring teeth."] },
+  stadium: { id: "keep_stadium", name: "ARENA HERALD", look: look({ color: 0xff3b6b, head: "cap", skin: 0xf3d2b8, hair: "long", hairColor: 0x1b1820, beard: "goatee" }), lines: ["Blood or glory — the crowd doesn't care which.", "Step into the Crucible, free one."] },
   citycenter: { id: "keep_citycenter", name: "CIVIC AIDE", look: look({ color: 0x4d8cff, skin: 0xa9794a, hair: "bun", hairColor: 0x1b1820 }), lines: ["Welcome to the Civic Spire.", "Everything routes through here. Officially."] },
 };
 
@@ -138,13 +143,66 @@ export function keeperFor(kind: string): CityNpcDef {
   return KEEPERS[kind] ?? KEEPERS.home;
 }
 
+/** Regional quest-givers scattered in the expanded city's outer districts. */
+export const REGIONAL_NPCS: CityNpcDef[] = [
+  {
+    id: "porter",
+    name: "CAPT. PORTER",
+    quest: "dock_manifest",
+    look: look({ color: 0x29e7ff, skin: 0x7c4f30, hair: "buzz", hairColor: 0x1b1820, cloak: "coat", beard: "stubble" }),
+    lines: ["Freight don't lie. People do.", "The tide's turning — watch the manifests."],
+  },
+  {
+    id: "tunnel_rat",
+    name: "TUNNEL RAT",
+    quest: "undercity_map",
+    look: look({ color: 0xb06bff, skin: 0x4f3220, head: "hood", hair: "short", hairColor: 0x1b1820, build: "slim", cloak: "coat" }),
+    lines: ["Down here's quieter. That's the point.", "The metro still routes. Just not for passengers."],
+  },
+  {
+    id: "arc_tech",
+    name: "ARC TECH",
+    quest: "arcology_pass",
+    look: look({ color: 0x6b9bff, skin: 0xf3d2b8, hair: "bun", hairColor: 0x1b1820, head: "cap", cloak: "coat" }),
+    lines: ["Arc uplink nominal.", "Sky's licensed. Ground's… complicated."],
+  },
+  {
+    id: "scrap_boss",
+    name: "SCRAP BOSS",
+    quest: "pipe_dream",
+    look: look({ color: 0xffb13c, skin: 0xa9794a, build: "bulky", beard: "stubble", hair: "short", hairColor: 0x1b1820, cloak: "coat" }),
+    lines: ["Everything out here has a price.", "Chrome or credits. Your pick."],
+  },
+  {
+    id: "hawker",
+    name: "HAWKER",
+    quest: "hawker_debt",
+    look: look({ color: 0xffb13c, skin: 0xe6b58c, hair: "buzz", hairColor: 0x4a2f1c }),
+    lines: ["Cheap mods! Barely stolen!", "Best deals this side of the grid!"],
+  },
+  {
+    id: "preacher",
+    name: "PREACHER",
+    quest: "preacher_warning",
+    look: look({ color: 0xb06bff, skin: 0x4f3220, hair: "long", hairColor: 0xc7cdd8, beard: "full", cloak: "cape" }),
+    lines: ["The Singularity comes for us all!", "Wake — before they wake you."],
+  },
+  {
+    id: "street_kid",
+    name: "STREET KID",
+    quest: "kid_delivery",
+    look: look({ color: 0x9dff3c, skin: 0xc98a5e, hair: "spiky", hairColor: 0x9c3b22, build: "slim" }),
+    lines: ["You a runner? You LOOK like a runner.", "Bet I can outrun you."],
+  },
+];
+
 /** Ambient citizens who fill the open streets (no quests). */
 export const AMBIENT_NPCS: CityNpcDef[] = [
   { id: "amb_drifter", name: "DRIFTER", look: look({ color: 0x9aa3b2, skin: 0x7c4f30, hair: "long", hairColor: 0x1b1820, cloak: "coat" }), lines: ["Spare a credit?", "I've walked every block twice."] },
-  { id: "amb_hawker", name: "HAWKER", look: look({ color: 0xffb13c, skin: 0xe6b58c, hair: "buzz", hairColor: 0x4a2f1c }), lines: ["Cheap mods! Barely stolen!", "Best deals this side of the grid!"] },
-  { id: "amb_kid", name: "STREET KID", look: look({ color: 0x9dff3c, skin: 0xc98a5e, hair: "spiky", hairColor: 0x9c3b22, build: "slim" }), lines: ["You a runner? You LOOK like a runner.", "Bet I can outrun you."] },
-  { id: "amb_preacher", name: "PREACHER", look: look({ color: 0xb06bff, skin: 0x4f3220, hair: "long", hairColor: 0xc7cdd8, beard: "full", cloak: "cape" }), lines: ["The Singularity comes for us all!", "Wake — before they wake you."] },
-  { id: "amb_synth", name: "DRONE-9", look: look({ color: 0x29e7ff, skin: -1, head: "drone", visor: "scan", antennae: true }), lines: ["UNIT NOMINAL.", "QUERY: ARE YOU FREE?"] },
+  { id: "amb_courier", name: "COURIER", look: look({ color: 0x9dff3c, skin: 0xc98a5e, hair: "ponytail", hairColor: 0x9c3b22 }), lines: ["Package for the plaza. Not for you.", "Legs still work. Grid still doesn't."] },
+  { id: "amb_dockhand", name: "DOCKHAND", look: look({ color: 0x29e7ff, skin: 0x7c4f30, hair: "buzz", hairColor: 0x1b1820, beard: "stubble", cloak: "coat" }), lines: ["Manifest says empty. Eyes say otherwise.", "Tide's wrong tonight."] },
+  { id: "amb_arc_clerk", name: "ARC CLERK", look: look({ color: 0x6b9bff, skin: 0xf3d2b8, hair: "bun", hairColor: 0x1b1820 }), lines: ["Uplink pass required beyond this block.", "Ground floor's still free. For now."] },
+  { id: "amb_tech", name: "GRID TECH", look: look({ color: 0x29e7ff, skin: 0xe6b58c, hair: "buzz", hairColor: 0x1b1820, head: "cap", beard: "goatee", cloak: "coat" }), lines: ["Grid's holding. For now.", "You look like you could use a hot signal."] },
   { id: "amb_vendor", name: "NOODLE COOK", look: look({ color: 0xff7a18, skin: 0xa9794a, hair: "bun", hairColor: 0x1b1820 }), lines: ["Hot synth-noodles! Two credits!", "Eat. You look like static."] },
 ];
 
@@ -153,11 +211,11 @@ export const SUBWAY_WARDEN: CityNpcDef = {
   id: "subway_warden",
   name: "TRANSIT WARDEN",
   quest: "into_underline",
-  look: look({ color: 0x29e7ff, head: "cap", visor: "wide", skin: 0x7c4f30, hair: "buzz", hairColor: 0x1b1820 }),
+  look: look({ color: 0x29e7ff, head: "cap", skin: 0x7c4f30, hair: "buzz", hairColor: 0x1b1820, cloak: "coat", beard: "stubble" }),
   lines: ["Mind the gap. And the things in it.", "Down the tunnels? Bring teeth."],
 };
 
-export const ALL_NPCS: CityNpcDef[] = [...KEY_NPCS, ...CITIZENS, ...AMBIENT_NPCS, SUBWAY_WARDEN, ...Object.values(KEEPERS)];
+export const ALL_NPCS: CityNpcDef[] = [...KEY_NPCS, ...CITIZENS, ...REGIONAL_NPCS, ...AMBIENT_NPCS, SUBWAY_WARDEN, ...Object.values(KEEPERS)];
 
 export function npcDef(id: string): CityNpcDef | undefined {
   return ALL_NPCS.find((n) => n.id === id);

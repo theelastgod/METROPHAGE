@@ -1,0 +1,40 @@
+import Phaser from "phaser";
+import {
+  GLOW_KEY,
+  SPARK_KEY,
+  BULLET_KEY,
+  NODE_KEY,
+  NODE_INFECTED_KEY,
+  PORTRAIT_PLAYER_KEY,
+  PORTRAIT_NPC_KEY,
+  UI_FRAME_KEY,
+  UI_GUN_KEY,
+} from "./manifest";
+
+/** Soft radial / gradient textures — LINEAR avoids blocky banding when scaled. */
+const LINEAR_KEYS = new Set([
+  GLOW_KEY,
+  SPARK_KEY,
+  BULLET_KEY,
+  NODE_KEY,
+  NODE_INFECTED_KEY,
+  PORTRAIT_PLAYER_KEY,
+  PORTRAIT_NPC_KEY,
+  UI_FRAME_KEY,
+  UI_GUN_KEY,
+]);
+
+/**
+ * Apply consistent sampling filters after manifest load + procedural bake.
+ * Pixel sheets and the photo tileset stay NEAREST (crisp at downscale); glows and
+ * gradient FX stay LINEAR (smooth when scaled / tinted).
+ */
+export function applyTextureFilters(scene: Phaser.Scene): void {
+  for (const key of scene.textures.getTextureKeys()) {
+    if (key.startsWith("__") || !scene.textures.exists(key)) continue;
+    const mode = LINEAR_KEYS.has(key)
+      ? Phaser.Textures.FilterMode.LINEAR
+      : Phaser.Textures.FilterMode.NEAREST;
+    scene.textures.get(key).setFilter(mode);
+  }
+}

@@ -1,5 +1,8 @@
 // METROPHAGE — global constants.
 // Kept as plain data so game logic stays independent of Phaser/render code.
+// Also imported by the Workers server (server/src/world.ts) — nothing here may
+// touch DOM globals or client-only modules; render-tier selection lives in
+// render/renderTier.ts and feeds back through setRenderResolution().
 
 export const TILE = 32;
 
@@ -12,12 +15,21 @@ export const TILE = 32;
  */
 export const TILESET_PX = 96;
 
-/** District grid dimensions, in tiles. */
+/** Base grid for tutorial / subway / small interiors (tiles). */
 export const GRID_W = 40;
 export const GRID_H = 30;
 
-export const WORLD_W = GRID_W * TILE;
-export const WORLD_H = GRID_H * TILE;
+/** Combat districts + wilderness bridges: scale authored 40×30 layouts for MMO density. */
+export const DISTRICT_SCALE = 3;
+export const DISTRICT_GRID_W = GRID_W * DISTRICT_SCALE;
+export const DISTRICT_GRID_H = GRID_H * DISTRICT_SCALE;
+
+/** Online hub city scale (base 180×144 tiles). 2.5× → 450×360 (~4.5× area for 500+ runners). */
+export const CITY_SCALE = 2.5;
+
+/** Legacy default world size (district-scale); prefer gridDims() for per-zone bounds. */
+export const WORLD_W = DISTRICT_GRID_W * TILE;
+export const WORLD_H = DISTRICT_GRID_H * TILE;
 
 /**
  * Render/backing resolution. The canvas scales to fit the window (Phaser.Scale.FIT),
@@ -36,12 +48,20 @@ export const WORLD_H = GRID_H * TILE;
 export const DESIGN_W = 960;
 export const DESIGN_H = 540;
 /** Backing buffer (exact integers — these are the real canvas dimensions). */
-export const VIEW_W = 2560;
-export const VIEW_H = 1440;
+export let VIEW_W = 2560;
+export let VIEW_H = 1440;
 /** Supersample factor: each world camera zooms by this to keep the 960×540 framing. */
-export const RENDER_SCALE = VIEW_W / DESIGN_W; // 8/3
+export let RENDER_SCALE = VIEW_W / DESIGN_W; // 8/3
 /** Screen-space UI scale — keeps typography/layout proportional at higher backing resolution. */
-export const UI_SCALE = RENDER_SCALE;
+export let UI_SCALE = RENDER_SCALE;
+
+/** Set the backing buffer before Phaser.Game init (called by render/renderTier.ts). */
+export function setRenderResolution(w: number, h: number): void {
+  VIEW_W = w;
+  VIEW_H = h;
+  RENDER_SCALE = VIEW_W / DESIGN_W;
+  UI_SCALE = RENDER_SCALE;
+}
 /** Scale a design-space pixel dimension to the current backing buffer. */
 export const uiDim = (px: number) => Math.round(px * UI_SCALE);
 /** Scale a design-space font size for Phaser text styles. */

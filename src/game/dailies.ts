@@ -29,6 +29,11 @@ const POOL: DailyContract[] = [
   { id: "cap_4", name: "TERRITORIAL", desc: "Capture 4 territory nodes", objective: "capture", count: 4, rewardCredits: 650, rewardRep: 38 },
   { id: "boss_1", name: "DECAPITATION", desc: "Fell a world boss", objective: "boss", count: 1, rewardCredits: 800, rewardRep: 45 },
   { id: "k_elite", name: "DEEP PURGE", desc: "Purge 40 HSS units", objective: "kill", count: 40, rewardCredits: 1000, rewardRep: 55 },
+  { id: "k_docks", name: "TIDAL SWEEP", desc: "Purge 18 HSS in any district", objective: "kill", count: 18, rewardCredits: 420, rewardRep: 24 },
+  { id: "cap_6", name: "DOMINION", desc: "Capture 6 territory nodes", objective: "capture", count: 6, rewardCredits: 900, rewardRep: 48 },
+  { id: "boss_2", name: "DOUBLE DECAP", desc: "Fell 2 world bosses", objective: "boss", count: 2, rewardCredits: 1400, rewardRep: 70 },
+  { id: "k_wastes", name: "OUTER RING CULL", desc: "Purge 50 HSS units", objective: "kill", count: 50, rewardCredits: 1200, rewardRep: 62 },
+  { id: "cap_3", name: "TRI-NODE", desc: "Capture 3 territory nodes", objective: "capture", count: 3, rewardCredits: 500, rewardRep: 30 },
 ];
 
 export const DAILY_COUNT = 3;

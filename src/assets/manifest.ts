@@ -86,17 +86,15 @@ const ICON_NAMES = [
 ];
 
 export const ASSETS: Record<string, AssetEntry[]> = {
-  // 512×256 image = 8×4 grid of 64px cells, sliced by addTilesetImage at config.TILESET_PX
-  // (the world grid stays 32px; tiles are downscaled at render for crispness). Real-art tileset
-  // assembled from the asset-drop terrain atlases (tools/tileset-gen.mjs) — index→tile contract
-  // preserved exactly (see src/world/district.ts), incl. variant cells 18–31. To revert to the
-  // procedural bake (textures.ts makeTileset, 256×128): set file=null AND config.TILESET_PX=32.
+  // 768×480 image = 8×5 grid of 96px cells (default), sliced at config.TILESET_PX and drawn
+  // at 32px world tiles. Assembled by tools/tileset-gen.mjs — index→tile contract in district.ts
+  // (canonical 0–17, variants 18–39). Procedural fallback: file=null + TILESET_PX=32.
   tilesets: [{ key: TILESET_KEY, file: "assets/tilesets/metrophage_tiles.png" }],
   sprites: [
     { key: PLAYER_KEY, file: null, ...CHAR }, // code-authored pixel art (charart.ts)
-    { key: COP_KEY, file: null, ...CHAR }, // code-authored pixel art (charart.ts)
+    { key: COP_KEY, file: "assets/sprites/cop.png", ...CHAR }, // authored 4-dir sheet
     { key: BOSS_KEY, file: null, ...CHAR }, // code-authored hulking sentinel
-    { key: NPC_KEY, file: null, ...CHAR }, // code-authored pixel art (charart.ts)
+    { key: NPC_KEY, file: "assets/sprites/npc.png", ...CHAR }, // authored 4-dir sheet
     { key: BULLET_KEY, file: null }, // procedural (no bullet art in pack)
     { key: AGENT_KEY, file: null }, // procedural light figure (tinted crowd)
   ],
@@ -113,7 +111,7 @@ export const ASSETS: Record<string, AssetEntry[]> = {
     { key: FX_IMPACT_KEY, file: "assets/fx/fx_impact.png" }, // real kill explosion (pack)
   ],
   portraits: [
-    { key: PORTRAIT_PLAYER_KEY, file: null }, // code-authored cyberian bust
+    { key: PORTRAIT_PLAYER_KEY, file: null }, // code-authored human runner bust
     { key: PORTRAIT_NPC_KEY, file: null }, // code-authored FIXER bust (frame 0 registered)
   ],
   ui: [

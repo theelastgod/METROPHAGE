@@ -42,7 +42,8 @@ export const ACHIEVEMENTS: Achievement[] = [
   { id: "rich_10k", name: "FIXER", desc: "Earn 10,000 credits", stat: "credits", threshold: 10000, reward: 500 },
   { id: "rich_100k", name: "KINGPIN", desc: "Earn 100,000 credits", stat: "credits", threshold: 100000, reward: 3000 },
   { id: "deep_3", name: "DOWN THE STACK", desc: "Reach the 3rd district", stat: "deepest", threshold: 3, reward: 120 },
-  { id: "deep_all", name: "THE WHOLE MACHINE", desc: "Reach the deepest district", stat: "deepest", threshold: 4, reward: 800 },
+  { id: "deep_5", name: "BELOW THE PLAZA", desc: "Reach the 5th district", stat: "deepest", threshold: 5, reward: 280 },
+  { id: "deep_all", name: "THE WHOLE MACHINE", desc: "Reach the deepest district", stat: "deepest", threshold: 8, reward: 1200 },
 ];
 
 /** Achievements whose threshold a given stat could newly cross (for the server check). */

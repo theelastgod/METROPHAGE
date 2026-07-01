@@ -21,3 +21,16 @@ export function suggestedPrice(item: Item): number {
 /** Price sanity bounds the server enforces (stops ₵0 / absurd listings). */
 export const MIN_PRICE = 5;
 export const MAX_PRICE = 100_000_000;
+
+/** $METRO listing floor (whole units — matches offline Black-Market scale). */
+export const MIN_METRO_PRICE = 1;
+
+/** Non-refundable $METRO listing fee: 5% of ask, min ◈1. */
+export function metroListingFee(price: number): number {
+  return Math.max(1, Math.round(price * 0.05));
+}
+
+/** Default $METRO ask for quick-list (≈ item value ÷ 25 — scarce-token scale). */
+export function suggestedMetroPrice(item: Item): number {
+  return Math.max(MIN_METRO_PRICE, Math.round(itemValue(item) / 25));
+}

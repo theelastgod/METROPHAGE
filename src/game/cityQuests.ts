@@ -201,6 +201,110 @@ export const CITY_QUESTS: CityQuestDef[] = [
     reward: { xp: 300, credits: 260, loot: 2, lootBoost: 1.4 },
   },
 
+  // ── Regional hub quests — outer districts of the expanded city ────────────────
+  {
+    id: "hawker_debt",
+    name: "Hawker's Debt",
+    giver: "hawker",
+    offer: ["Vex stiffed me on a shipment. Three signal chips, still glowing in the bazaar.", "Find them. I'll pay you in mods — the good kind."],
+    accepted: ["They pulse cyan. You won't miss them."],
+    stages: [{ label: "Recover 3 signal chips from the streets", kind: "collect", item: "signal_chip", count: 3, reminder: ["Signal chips glow cyan — sweep the bazaar blocks."] }],
+    complete: ["Vex'll hear about this. …Thanks, runner. Take these — pulled off a repo van."],
+    reward: { xp: 200, credits: 160, loot: 1, lootBoost: 1 },
+  },
+  {
+    id: "preacher_warning",
+    name: "The Warning",
+    giver: "preacher",
+    offer: ["The meltdown's not doom — it's the door. But the corps are moving the core OFFSITE.", "Warn KESSLER and DOC. They still listen to street prophets."],
+    accepted: ["Quietly. The towers have ears even in the plaza."],
+    stages: [
+      { label: "Warn KESSLER about the offsite move", kind: "talk", target: "kessler", targetLine: ["Offsite? …Vex's whisper and your preacher agree. I'll spread the word through the guild."] },
+      { label: "Warn DOC HALO about the offsite move", kind: "talk", target: "doc", targetLine: ["If they move the core, my patients won't survive the transit.", "Tell the preacher: Halo's documenting everything."], reminder: ["KESSLER and DOC — before the cycle turns."] },
+    ],
+    complete: ["Two witnesses. The corps hate witnesses. Here — blessed chrome, if that means anything to you."],
+    reward: { xp: 240, credits: 190, loot: 1, lootBoost: 1.1 },
+  },
+  {
+    id: "kid_delivery",
+    name: "Runner's Errand",
+    giver: "street_kid",
+    offer: ["Bet you can't beat me to the docks and back.", "…Fine. Carry this relay tag to CAPT. PORTER. Don't drop it."],
+    accepted: ["Run fast. Porter's north-east, past the water blocks."],
+    stages: [
+      { label: "Deliver the relay tag to CAPT. PORTER", kind: "talk", target: "porter", targetLine: ["Relay tag? Kid's got nerve. …Tell them the manifest's still missing three lines.", "And tell them the tide's wrong tonight."] },
+    ],
+    complete: ["You actually ran it. Respect. Take this — lifted it off a dockhand who wasn't looking."],
+    reward: { xp: 180, credits: 150, loot: 1, lootBoost: 1 },
+  },
+  {
+    id: "pipe_dream",
+    name: "Pipe Dream",
+    giver: "scrap_boss",
+    offer: ["The Works need pipe cores for a smelter patch. Three of them, scattered in the industrial ring.", "Bring them. I pay better than the corps."],
+    accepted: ["Glow green. Don't melt your gloves."],
+    stages: [{ label: "Recover 3 pipe cores from the streets", kind: "collect", item: "pipe_core", count: 3, reminder: ["Pipe cores hum in the industrial blocks — south-west ring."] }],
+    complete: ["Solid haul. Smelter'll run another cycle. Here — tuned salvage, not corp grade."],
+    reward: { xp: 260, credits: 210, loot: 1, lootBoost: 1.2 },
+  },
+  {
+    id: "dock_manifest",
+    name: "Blackwater Manifest",
+    giver: "porter",
+    offer: ["Blackwater's scrubbing manifests — minds listed as cargo.", "Recover 4 manifest shards from the tidal blocks. I'll file the truth."],
+    accepted: ["Shards glow blue. The tide hasn't claimed them yet."],
+    stages: [{ label: "Recover 4 manifest shards from the docks", kind: "collect", item: "manifest_shard", count: 4, reminder: ["Manifest shards pulse near the water blocks — north-east docks."] }],
+    complete: ["Four shards. That's a story the corps can't sink. Credits and gear — off the books."],
+    reward: { xp: 280, credits: 230, loot: 1, lootBoost: 1.2 },
+  },
+  {
+    id: "arcology_pass",
+    name: "Arc Pass",
+    giver: "arc_tech",
+    requires: "dock_manifest",
+    offer: ["Uplink's locked without a ground pass. GHOST knows the back doors — the quiet ones always do.", "Get their word. I'll forge the pass."],
+    accepted: ["GHOST keeps to the edges. Go gently."],
+    stages: [{ label: "Get GHOST's word for the arcology pass", kind: "talk", target: "ghost", targetLine: ["Arc pass? …I wasn't here. You didn't see me.", "But the furniture's still standing. Tell ARC TECH: the quiet route holds."] }],
+    complete: ["Pass forged. Uplink nominal — for now. Take this relay tag. You'll need it online."],
+    reward: { xp: 300, credits: 250, loot: 1, lootBoost: 1.3 },
+  },
+  {
+    id: "undercity_map",
+    name: "Buried Map",
+    giver: "tunnel_rat",
+    offer: ["The metro vaults still route — I mapped two signal echoes down there.", "Collect them. I'll mark the Undercity entrance for you."],
+    accepted: ["Echoes glow violet. Don't fall in."],
+    stages: [{ label: "Recover 2 undercity echoes from the streets", kind: "collect", item: "undercity_echo", count: 2, reminder: ["Violet echoes cluster in the undercity blocks — far west ring."] }],
+    complete: ["Map's updated. The buried ones remember the surface. Here — black-ice salvage from the tunnels."],
+    reward: { xp: 320, credits: 270, loot: 1, lootBoost: 1.3 },
+  },
+  {
+    id: "market_heist",
+    name: "Stall Sweep",
+    giver: "mira",
+    requires: "the_quiet_one",
+    offer: ["Someone's skimming my stall — three credit caches, lifted overnight.", "Sweep the market blocks. Bring them back."],
+    accepted: ["They glow gold. Thief's still out there."],
+    stages: [{ label: "Recover 3 credit caches from the market", kind: "collect", item: "credit_cache", count: 3, reminder: ["Credit caches pulse gold in the bazaar blocks."] }],
+    complete: ["All three. Stall's whole again. Take your cut — and this, from the back room."],
+    reward: { xp: 260, credits: 220, loot: 1, lootBoost: 1.2 },
+  },
+  {
+    id: "runners_initiation",
+    name: "Cell Initiation",
+    giver: "kessler",
+    requires: "furniture",
+    offer: ["You've walked the whole hub line. Time the guild noticed.", "Get word from JUNO, SABLE, and RIN that you'll carry the cell's name online."],
+    accepted: ["Three signatures. Then you're one of us — officially."],
+    stages: [
+      { label: "Get JUNO's endorsement", kind: "talk", target: "juno", targetLine: ["Guild wants your name? …You earned it. Tell Kessler I vouch."] },
+      { label: "Get SABLE's endorsement", kind: "talk", target: "sable", targetLine: ["A drink for the new operative. …Tell Kessler the Feral Cat's got your back."] },
+      { label: "Get RIN's endorsement", kind: "talk", target: "rin", targetLine: ["Gear's one thing. Trust's another. You've got both. Tell Kessler: Rin signs off."], reminder: ["JUNO, SABLE, RIN — three endorsements for the guild."] },
+    ],
+    complete: ["Three signatures. You're guild-listed now. Take this — quartermaster issue, tuned for the live city."],
+    reward: { xp: 400, credits: 320, loot: 2, lootBoost: 1.5 },
+  },
+
   // ── Subway dungeon quest — sends you down into THE UNDERLINE ──────────────────
   {
     id: "into_underline",
@@ -234,6 +338,13 @@ interface QState {
   status: Status;
   stage: number;
   progress: number; // collect count so far
+}
+
+/** Serializable snapshot for localStorage persistence across page reloads. */
+export interface CityQuestsData {
+  xp: number;
+  credits: number;
+  states: Record<string, { status: Status; stage: number; progress: number }>;
 }
 
 /** What talking to an NPC should produce, for CityScene to render via the DialogueBox. */
@@ -357,6 +468,23 @@ export class CityQuests {
     }
     // 3) Flavour.
     return { kind: "lines", speaker: npcName, lines: flavor };
+  }
+
+  toData(): CityQuestsData {
+    const states: CityQuestsData["states"] = {};
+    for (const [id, s] of this.states) states[id] = { status: s.status, stage: s.stage, progress: s.progress };
+    return { xp: this.xp, credits: this.credits, states };
+  }
+
+  static fromData(data?: CityQuestsData): CityQuests {
+    const q = new CityQuests();
+    if (!data) return q;
+    q.xp = data.xp ?? 0;
+    q.credits = data.credits ?? 0;
+    for (const [id, s] of Object.entries(data.states ?? {})) {
+      q.states.set(id, { status: s.status, stage: s.stage, progress: s.progress });
+    }
+    return q;
   }
 
   /** Active quests + their current objective, for the journal. */

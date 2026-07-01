@@ -4,18 +4,27 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>METROPHAGE</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&family=Orbitron:wght@500;700;900&display=swap"
+      rel="stylesheet"
+    />
     <style>
       :root {
         color-scheme: dark;
+        --void: #04020a;
+        --cyan: #00e5ff;
+        --magenta: #ff2bd6;
       }
       html,
       body {
         margin: 0;
         padding: 0;
         height: 100%;
-        background: #04020a;
+        background: var(--void);
         overflow: hidden;
-        font-family: "Courier New", ui-monospace, monospace;
+        font-family: "IBM Plex Mono", "Courier New", ui-monospace, monospace;
       }
       #game-root {
         position: fixed;
@@ -25,29 +34,77 @@
         justify-content: center;
       }
       #game-root canvas {
-        image-rendering: crisp-edges;
-        image-rendering: pixelated;
-        filter: contrast(1.04) saturate(1.08);
+        image-rendering: auto;
+        filter: contrast(1.04) saturate(1.14) brightness(1.03);
+        box-shadow:
+          0 0 120px rgba(0, 229, 255, 0.06),
+          0 0 280px rgba(255, 43, 214, 0.04),
+          inset 0 0 80px rgba(0, 0, 0, 0.35);
+        border-radius: 2px;
       }
-      /* Boot flash while the bundle loads */
       #boot {
         position: fixed;
         inset: 0;
         display: flex;
+        flex-direction: column;
         align-items: center;
         justify-content: center;
-        color: #ff2bd6;
-        letter-spacing: 0.4em;
-        text-shadow: 0 0 12px #ff2bd6;
-        font-size: clamp(14px, 1.1vw, 20px);
+        gap: 1.25rem;
+        background: radial-gradient(ellipse at 50% 42%, #120a24 0%, var(--void) 68%);
         pointer-events: none;
-        transition: opacity 0.6s ease;
+        transition: opacity 0.8s ease;
+        z-index: 4;
+      }
+      #boot .logo {
+        font-family: "Orbitron", sans-serif;
+        font-weight: 900;
+        font-size: clamp(22px, 2.4vw, 36px);
+        letter-spacing: 0.38em;
+        color: var(--magenta);
+        text-shadow: 0 0 18px rgba(255, 43, 214, 0.55), 0 0 42px rgba(0, 229, 255, 0.2);
+        animation: bootPulse 2.4s ease-in-out infinite;
+      }
+      #boot .tag {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: clamp(10px, 0.85vw, 13px);
+        letter-spacing: 0.28em;
+        color: #6b7184;
+      }
+      #boot .bar {
+        width: min(280px, 52vw);
+        height: 3px;
+        background: #141026;
+        border: 1px solid rgba(0, 229, 255, 0.25);
+        overflow: hidden;
+      }
+      #boot .bar > span {
+        display: block;
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, var(--cyan), var(--magenta));
+        box-shadow: 0 0 12px rgba(0, 229, 255, 0.45);
+        transition: width 0.15s ease;
+      }
+      @keyframes bootPulse {
+        0%,
+        100% {
+          opacity: 0.92;
+          transform: scale(1);
+        }
+        50% {
+          opacity: 1;
+          transform: scale(1.02);
+        }
       }
     </style>
   </head>
   <body>
     <div id="game-root"></div>
-    <div id="boot">METROPHAGE // BOOTING</div>
+    <div id="boot">
+      <div class="logo">METROPHAGE</div>
+      <div class="tag">INITIALIZING NEON GRID</div>
+      <div class="bar"><span id="boot-bar"></span></div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

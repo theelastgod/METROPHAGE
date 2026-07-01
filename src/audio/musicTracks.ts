@@ -70,10 +70,10 @@ const BASE_TRACKS: Omit<MusicTrack, "url">[] = [
   { env: "subway", key: "mus_subway", stem: "subway", gain: 0.55 },
   { env: "dive", key: "mus_dive", stem: "dive", gain: 0.6 },
   { env: "online", key: "mus_online", stem: "online", gain: 0.55 },
-  { env: "district_downtown", key: "mus_downtown", stem: "downtown", gain: 0.58 },
-  { env: "district_stacks", key: "mus_stacks", stem: "stacks", gain: 0.58 },
-  { env: "district_spire", key: "mus_spire", stem: "spire", gain: 0.58 },
-  { env: "district_core", key: "mus_core", stem: "core", gain: 0.62 },
+  { env: "district_downtown", key: "mus_downtown", stem: "district_downtown", gain: 0.58 },
+  { env: "district_stacks", key: "mus_stacks", stem: "district_stacks", gain: 0.58 },
+  { env: "district_spire", key: "mus_spire", stem: "district_spire", gain: 0.58 },
+  { env: "district_core", key: "mus_core", stem: "district_core", gain: 0.62 },
   { env: "meltdown", key: "mus_meltdown", stem: "meltdown", gain: 0.7 },
 ];
 
@@ -95,7 +95,14 @@ export function districtEnv(id: string): MusicEnv {
       return "district_spire";
     case "core":
       return "district_core";
+    case "docks":
+    case "undercity":
+      return "district_spire";
+    case "relay":
+      return "district_stacks";
+    case "wastes":
+      return "district_core";
     default:
-      return "district_downtown"; // downtown + any future / unknown id
+      return "district_downtown";
   }
 }

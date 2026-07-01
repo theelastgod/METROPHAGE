@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { GLOW_KEY, SPARK_KEY, FX_MUZZLE_KEY, FX_IMPACT_KEY } from "../assets/manifest";
-import { getSettings } from "../systems/Settings";
+import { effectiveLowFx } from "../systems/Settings";
 
 /**
  * Particles — pooled additive spark + glow images. Hit sparks and muzzle flashes
@@ -41,7 +41,7 @@ export default class Particles {
   }
 
   spark(x: number, y: number, color: number, scale = 1.6) {
-    if (getSettings().lowFx && Math.random() < 0.55) return; // thin out on low-FX
+    if (effectiveLowFx() && Math.random() < 0.55) return; // thin out on low-FX
     const s = this.sparks[this.si];
     this.si = (this.si + 1) % this.sparks.length;
     this.scene.tweens.killTweensOf(s);
@@ -57,7 +57,7 @@ export default class Particles {
 
   /** Muzzle flash — a brief additive glow. Dropped on the low-FX tier. */
   flash(x: number, y: number, color: number, scale = 0.45) {
-    if (getSettings().lowFx) return;
+    if (effectiveLowFx()) return;
     const f = this.glows[this.gi];
     this.gi = (this.gi + 1) % this.glows.length;
     this.scene.tweens.killTweensOf(f);
@@ -73,7 +73,7 @@ export default class Particles {
 
   /** Real muzzle flame jutting along the aim. No-op if the pack art didn't load. */
   muzzle(x: number, y: number, angle: number, scale = 1) {
-    if (!this.hasMuzzle || getSettings().lowFx) return;
+    if (!this.hasMuzzle || effectiveLowFx()) return;
     const m = this.muzzles[this.mi];
     this.mi = (this.mi + 1) % this.muzzles.length;
     this.scene.tweens.killTweensOf(m);

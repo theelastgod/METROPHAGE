@@ -1,14 +1,13 @@
 import Phaser from "phaser";
 import { getSettings } from "./Settings";
+import type NeonPipeline from "../render/NeonPipeline";
 
 // METROPHAGE — central game-feel helpers. ALL screen shake + camera flash routes
-// through here so the accessibility settings (shake intensity, reduce-flashing)
-// apply everywhere, with no per-call-site logic. Use juiceShake / juiceFlash
-// instead of cameras.main.shake / .flash.
+// through here so accessibility settings apply everywhere.
 
 export function juiceShake(scene: Phaser.Scene, duration: number, intensity: number) {
   const shake = getSettings().shake;
-  if (shake <= 0.001) return; // motion comfort: shake disabled
+  if (shake <= 0.001) return;
   scene.cameras.main.shake(duration, intensity * shake);
 }
 
@@ -20,7 +19,6 @@ export function juiceFlash(
   b: number,
 ) {
   if (getSettings().reduceFlashing) {
-    // Soften to a brief, dim pulse — never a strobe.
     scene.cameras.main.flash(
       Math.min(duration, 140),
       Math.round(r * 0.35),
@@ -30,4 +28,47 @@ export function juiceFlash(
     return;
   }
   scene.cameras.main.flash(duration, r, g, b);
+}
+
+/** Brief time dilation on impactful hits — premium combat punch. */
+export function juiceHitStop(scene: Phaser.Scene, ms = 48): void {
+  if (getSettings().reduceFlashing) return;
+  const prev = scene.time.timeScale;
+  scene.time.timeScale = 0.08;
+  scene.time.delayedCall(ms, () => {
+    scene.time.timeScale = prev;
+  });
+}
+
+/** Micro zoom punch toward the action. */
+export function juiceZoomPunch(scene: Phaser.Scene, amount = 0.04, duration = 120): void {
+  const cam = scene.cameras.main;
+  const base = cam.zoom;
+  scene.tweens.add({
+    targets: cam,
+    zoom: base * (1 + amount),
+    duration: duration * 0.4,
+    yoyo: true,
+    ease: "Quad.out",
+    onComplete: () => cam.setZoom(base),
+  });
+}
+
+/** Pulse the neon pipeline — heat spike without changing gameplay heat. */
+export function juiceNeonPulse(scene: Phaser.Scene, amount = 0.22, duration = 180): void {
+  if (scene.renderer.type !== Phaser.WEBGL) return;
+  const p = scene.cameras.main.getPostPipeline("Neon");
+  const neon = (Array.isArray(p) ? p[0] : p) as NeonPipeline | undefined;
+  if (!neon) return;
+  const base = neon.heat;
+  scene.tweens.add({
+    targets: neon,
+    heat: Math.min(1, base + amount),
+    duration: duration * 0.35,
+    yoyo: true,
+    ease: "Sine.out",
+    onComplete: () => {
+      neon.heat = base;
+    },
+  });
 }

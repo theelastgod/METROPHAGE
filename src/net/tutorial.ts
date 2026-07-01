@@ -25,7 +25,6 @@ export type TutorialKind =
   | "chat"
   | "campaign"
   | "pvp"
-  | "singularity"
   | "trade"
   | "travel"
   | "panel"
@@ -53,8 +52,8 @@ export const TUTORIAL_STEPS_QUICK: TutorialStepDef[] = [
   {
     id: "fire",
     title: "WEAPON",
-    teach: "Hold the mouse where you want to shoot. Every bolt is aimed intent — the server validates rate and hit.",
-    hint: "Click / hold to fire",
+    teach: "Your ARC-BLADE is melee from the start — hold the mouse toward a target and swing. The server validates range, arc, and rate.",
+    hint: "Click / hold to slash",
     kind: "fire",
     count: 5,
   },
@@ -93,7 +92,7 @@ export const TUTORIAL_STEPS_QUICK: TutorialStepDef[] = [
   {
     id: "chat",
     title: "UPLINK",
-    teach: "Other free minds share this world. Zone chat reaches everyone in your district.",
+    teach: "Other free minds share this world. Press ENTER — your message appears in the area chat box and as a speech bubble above your character for everyone here.",
     hint: "Press ENTER · type a line",
     kind: "chat",
     count: 1,
@@ -188,7 +187,7 @@ export const TUTORIAL_STEPS_FULL: TutorialStepDef[] = [
   {
     id: "map",
     title: "NAVIGATION",
-    teach: "The map (M) shows discovered zones. Black tiles are unknown until you arrive; lit districts can be fast-traveled once explored.",
+    teach: "The map (M) shows what you've seen. Fast travel only unlocks after you reach a zone on foot — deploy gate, transit operatives, or H from districts.",
     hint: "Press M · open the map",
     kind: "map",
     count: 1,
@@ -214,18 +213,9 @@ export const TUTORIAL_STEPS_FULL: TutorialStepDef[] = [
   {
     id: "pvp",
     title: "PVP ARENAS",
-    teach: "Marked red zones in the districts are free-for-all arenas — players can damage each other only inside them. The server enforces damage; you'll get a warning on entry.",
+    teach: "PvP is only in THE CRUCIBLE — a marked arena in the southeast corner of combat districts, away from story beats. Chat, emotes, and trade work everywhere. The server enforces arena damage.",
     hint: "Press SPACE to continue",
     kind: "pvp",
-    count: 1,
-  },
-  {
-    id: "singularity",
-    title: "SINGULARITY",
-    teach:
-      "Every kill and node hold feeds a shared Singularity meter. When it maxes, meltdown triggers a server-wide era shift — tougher enemies, new season, everyone feels it.",
-    hint: "Press SPACE to continue",
-    kind: "singularity",
     count: 1,
   },
   {
@@ -239,7 +229,7 @@ export const TUTORIAL_STEPS_FULL: TutorialStepDef[] = [
   {
     id: "travel",
     title: "TRAVEL",
-    teach: "H recalls you to the safehouse hub from any district. M fast-travels to discovered zones. Building doors and the subway dungeon are separate combat spaces.",
+    teach: "After tutorial you spawn in the conflict-free safehouse. Accept THE WAKE from THE FIXER, then use the DEPLOY GATE. Transit gates chain districts organically; M and number keys teleport only to zones you've walked into.",
     hint: "Press SPACE to continue",
     kind: "travel",
     count: 1,

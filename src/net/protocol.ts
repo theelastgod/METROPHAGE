@@ -25,11 +25,16 @@ export interface PlayerLook {
   shoulders: string;
   decal: string;
   cloak: string;
-  skin: number; // -1 = SYNTH (cyber), else a human skin tone
+  skin: number; // human skin tone (legacy -1 repaired client-side to a default)
   sex: string; // "f" | "m" — human body type
   hair: string;
   hairColor: number;
   beard: string;
+  faceMark: string;
+  eyeColor: number;
+  gloves: string;
+  legGear: string;
+  accentColor: number;
   antennae: boolean;
   emblem: boolean;
   strap: boolean;
@@ -48,7 +53,20 @@ export function loginMessage(wallet: string, ts: number): string {
 export type ClientMsg =
   // login: a signed wallet (wallet+sig+ts) is a durable identity; without one the
   // server falls back to a guest id derived from the callsign (dev / no-wallet play).
-  | { t: "login"; name: string; faction?: number; look?: PlayerLook; wallet?: string; sig?: string; ts?: number }
+  | {
+      t: "login";
+      name: string;
+      faction?: number;
+      look?: PlayerLook;
+      wallet?: string;
+      sig?: string;
+      ts?: number;
+      /** organic = walked/deployed in; fast = map/teleport (fog only, no fast-travel unlock). */
+      arrival?: "organic" | "fast";
+      /** Zone the runner travelled from — sets trail-gate spawn on wilderness corridors. */
+      from?: string;
+    }
+  | { t: "inv_move"; from: number; to: number }
   | { t: "input"; seq: number; mx: number; my: number }
   | { t: "fire"; seq: number; aim: number } // aim in radians; server validates rate
   | { t: "chat"; ch: "zone" | "party" | "whisper" | "guild"; to?: string; text: string }
@@ -108,6 +126,7 @@ export interface PlayerSnap {
   dead: boolean;
   credits: number;
   cores: number;
+  metro: number;
   xp: number;
   level: number;
   faction: number;
@@ -121,6 +140,10 @@ export interface PlayerSnap {
   tutorialDone: boolean;
   inTutorial: boolean;
   look?: PlayerLook; // appearance, so remotes render this player's customization
+  /** In THE CRUCIBLE with an active $METRO buy-in. */
+  pvpInArena?: boolean;
+  /** Buy-in + elimination loot (local player only). */
+  pvpEscrow?: number;
 }
 export interface EnemySnap {
   id: number;
@@ -184,16 +207,13 @@ export type ServerMsg =
       pickups: PickupSnap[];
       hazards: HazardSnap[]; // telegraphed boss AoE zones (raid mechanics)
       nodes: NodeSnap[];
-      sing: number; // shared server-wide Singularity meter (0..SING_MAX)
-      meltdown: boolean;
-      season: number; // current era — increments each time a meltdown resets the world
       factions: number[]; // global faction contribution scores (server-wide)
       control: number; // faction controlling THIS district (NEUTRAL if none)
       roster: RosterEntry[]; // presence — everyone in this zone
       // zone-wide world-boss status (not AOI-culled) so any player can locate it:
       boss?: { name: string; x: number; y: number; hp: number; hpMax: number; alive: boolean; respawnSec: number };
     }
-  | { t: "chat"; from: string; faction: number; ch: string; text: string }
+  | { t: "chat"; from: string; faction: number; ch: string; text: string; x?: number; y?: number }
   | { t: "party"; members: string[] }
   | { t: "sys"; text: string }
   | { t: "emote"; from: string; kind: number; ping: boolean; x: number; y: number } // relayed emote/ping
@@ -239,7 +259,7 @@ export type ServerMsg =
   // authored NPC bounty — the player's active job (or null), sent on login + on change
   | { t: "bounty"; active: { id: string; name: string; desc: string; objective: string; count: number; progress: number } | null }
   // map discovery — the set of zones this account has arrived at (drives fast travel), on login
-  | { t: "discovered"; zones: string[] }
+  | { t: "discovered"; zones: string[]; unlocked: string[] }
   // guild ("Cell") state — full summary + roster, or "none" when not in a cell
   | {
       t: "guild";

@@ -1,13 +1,13 @@
 import Phaser from "phaser";
 import { installUiCamera } from "../render/cameras";
-import { applyTileVariants } from "../render/tileVariants";
-import { paintWetStreets } from "../render/wetStreets";
+import { createTerrainLayer } from "../render/terrainLayer";
+import { buildingExteriorAccent, paintCityBuildingFacades } from "../render/buildingFacades";
+import { paintCityEnvWash, paintCityStorefrontReflections } from "../render/cityTerrainPolish";
 import { paintRooftopLights } from "../render/rooftopLights";
 import { PlayerLight } from "../render/PlayerLight";
 import MusicDirector from "../audio/MusicDirector";
-import { TILE, TILESET_PX, COLORS, NPC } from "../config";
+import { TILE, COLORS, NPC } from "../config";
 import {
-  TILESET_KEY,
   PORTRAIT_NPC_KEY,
   GLOW_KEY,
   PROP_PLANTER_KEY,
@@ -51,7 +51,7 @@ import BlackMarketPanel from "../ui/BlackMarketPanel";
 import CityMinimap from "../ui/CityMinimap";
 import NeonPipeline from "../render/NeonPipeline";
 import Atmosphere from "../render/Atmosphere";
-import { shadeWalls } from "../render/wallShade";
+
 import { getClass } from "../game/classes";
 import { sanitizeCustomization, bakeCustomPlayer, PLAYER_CUSTOM_KEY, type Customization } from "../game/customization";
 
@@ -62,6 +62,9 @@ interface CityEnter {
 }
 
 /**
+ * @legacy Unregistered — superseded by OnlineScene zone "safe" + building interiors.
+ * Kept for reference/porting only. Do not route players here.
+ *
  * CityScene — the big, walkable RuneScape-style city hub, and the building interiors
  * you enter from it. Walking onto a building's door transitions inside; stepping on the
  * interior's exit returns you to the street. The player roams freely (no combat
@@ -151,12 +154,18 @@ export default class CityScene extends Phaser.Scene {
 
     const worldW = grid[0].length * TILE;
     const worldH = grid.length * TILE;
-    const map = this.make.tilemap({ data: grid, tileWidth: TILE, tileHeight: TILE });
-    const tileset = map.addTilesetImage(TILESET_KEY, TILESET_KEY, TILESET_PX, TILESET_PX)!;
-    this.wallLayer = map.createLayer(0, tileset, 0, 0)!;
-    applyTileVariants(this.wallLayer); // scatter real-art tile variants (render-only) to break repetition
+    const W = grid[0].length;
+    const H = grid.length;
+    this.wallLayer = createTerrainLayer(this, grid, {
+      profile: this.mode === "interior" ? "interior" : "city",
+      accent: 0x29e7ff,
+      accentAt:
+        this.mode === "city" && this.cityMap
+          ? (tx, ty) => ENV_IDENTITY[envAt(tx, ty, W, H)].accent
+          : undefined,
+      lightweight: this.mode === "city",
+    });
     this.wallLayer.setCollision(COLLIDING_TILES);
-    shadeWalls(this, grid, 0x29e7ff); // raise buildings off the floor (edge light + cast shadow)
 
     this.cameras.main.setBackgroundColor(COLORS.bgVoid);
     this.physics.world.setBounds(0, 0, worldW, worldH);
@@ -203,11 +212,18 @@ export default class CityScene extends Phaser.Scene {
     // NPCs + quests + dialogue
     this.npcs = [];
     this.collectibles = [];
-    this.quests = (this.registry.get("cityQuests") as CityQuests) ?? new CityQuests();
+    const cached = this.registry.get("cityQuests") as CityQuests | undefined;
+    if (cached) {
+      this.quests = cached;
+    } else {
+      const save = loadSave();
+      this.quests = save?.cityQuests ? CityQuests.fromData(save.cityQuests) : new CityQuests();
+    }
     this.registry.set("cityQuests", this.quests); // persists across city ↔ interior
     this.dialogue = new DialogueBox(this);
     this.buildQuestHud();
     if (this.mode === "city") {
+      if (this.cityMap) paintCityBuildingFacades(this, this.cityMap.buildings);
       this.assignResidents();
       this.drawEnvWash();
       this.drawWetStreets();
@@ -372,47 +388,21 @@ export default class CityScene extends Phaser.Scene {
 
   // ── environments: per-district colour, props + a "you are entering X" nameplate ──
 
-  /** A translucent mood-wash over every block, coloured by its district. */
   private drawEnvWash() {
     if (!this.cityMap) return;
-    const g = this.add.graphics().setDepth(1);
-    for (const z of this.cityMap.zones) {
-      const id = ENV_IDENTITY[z.env];
-      g.fillStyle(id.wash, id.washAlpha);
-      g.fillRect(z.rect.x1 * TILE, z.rect.y1 * TILE, (z.rect.x2 - z.rect.x1 + 1) * TILE, (z.rect.y2 - z.rect.y1 + 1) * TILE);
-    }
+    paintCityEnvWash(this, this.cityMap.zones);
   }
 
-  /**
-   * Rain-slicked streets: overhead light-pools on a streetlamp grid + vertical neon
-   * "reflection" smears under the pools and the storefront doors, plus sparse specular
-   * glints. Pure additive ambiance on the ground (depth 2 — above the env wash, below
-   * props/entities), so the real-art floor reads as wet neon-lit pavement (the procedural
-   * floor baked this in; the photographed tiles don't). The city is always "rain" weather.
-   */
   private drawWetStreets() {
     if (!this.cityMap) return;
-    const grid = this.cityMap.grid;
-    const W = this.cityMap.w, H = this.cityMap.h;
-    // Shared rain-slicked lighting — the SAME renderer the unified online world uses
-    // (src/render/wetStreets.ts) — coloured per district here.
-    paintWetStreets(this, grid, (tx, ty) => ENV_IDENTITY[envAt(tx, ty, W, H)].accent);
-    // City-only extra: storefront neon reflected on the wet street under each signed door.
-    const KIND_NEON: Record<string, number> = { bar: 0xff2bd6, clinic: 0x39ff88, guild: 0xf7ff3c, hospital: 0x39ff88, hotel: 0x39ff88, stadium: 0xff3b6b };
-    for (const b of this.cityMap.buildings) {
-      if (!b.door) continue;
-      const col = KIND_NEON[b.kind] ?? 0x29e7ff;
-      const x = b.door[0] * TILE + TILE / 2, y = b.door[1] * TILE + TILE / 2;
-      this.add.image(x, y + 2, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(col).setDepth(2).setScale(1.1).setAlpha(0.16);
-      this.add.image(x, y + 8, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(col).setDepth(2).setScale(0.5, 2.1).setAlpha(0.13).setOrigin(0.5, 0.1);
-    }
+    paintCityStorefrontReflections(this, this.cityMap.buildings);
   }
 
   /** Sparse emissive rooftop accents (beacons + roof-sign glows) so the skyline reads lit —
    *  same shared renderer the unified online world uses, coloured per district here. */
   private drawRooftopLights() {
     if (!this.cityMap) return;
-    paintRooftopLights(this, this.cityMap.buildings, (b) => b.rect, (b) => ENV_IDENTITY[b.env].accent);
+    paintRooftopLights(this, this.cityMap.buildings, (b) => b.rect, (b) => buildingExteriorAccent(b.kind));
   }
 
   /** Spawn the env-specific street props the generator placed. */
@@ -623,7 +613,10 @@ export default class CityScene extends Phaser.Scene {
     if (!this.registry.get("subwayCleared")) return;
     this.registry.set("subwayCleared", false);
     const name = this.quests.clearObjective("subway");
-    if (name) this.toast(`${name}: THE UNDERLINE is dead — report to the TRANSIT WARDEN`);
+    if (name) {
+      this.persistCityQuests();
+      this.toast(`${name}: THE UNDERLINE is dead — report to the TRANSIT WARDEN`);
+    }
   }
 
   /** Assign each named NPC to the nearest enterable building of their kind (cached in the
@@ -714,6 +707,14 @@ export default class CityScene extends Phaser.Scene {
   }
 
   /** Full-heal the persisted HP — the hospital / hotel / clinic service. */
+  /** Write hub quest progress to localStorage so the journal survives page reloads. */
+  private persistCityQuests() {
+    const save = loadSave();
+    if (!save) return;
+    save.cityQuests = this.quests.toData();
+    writeSave(save);
+  }
+
   private healPlayer() {
     const save = loadSave();
     if (!save) {
@@ -741,6 +742,7 @@ export default class CityScene extends Phaser.Scene {
       this.dialogue.show(pages, undefined, (choice) => {
         if (choice === 0) {
           this.quests.accept(res.questId);
+          this.persistCityQuests();
           this.spawnCollectibles();
           this.renderJournal();
           this.toast(`Quest accepted — ${res.name}`);
@@ -751,6 +753,7 @@ export default class CityScene extends Phaser.Scene {
       this.dialogue.show(
         res.lines.map((text) => ({ speaker: res.speaker, text, portrait })),
         () => {
+          this.persistCityQuests();
           this.refreshWallet();
           this.renderJournal();
           const gearMsg = gear.length ? `    +${gear.length} GEAR` : "";
@@ -759,7 +762,9 @@ export default class CityScene extends Phaser.Scene {
         },
       );
     } else {
+      this.persistCityQuests();
       this.dialogue.show(res.lines.map((text) => ({ speaker: res.speaker, text, portrait })));
+      this.renderJournal();
     }
   }
 
@@ -834,6 +839,7 @@ export default class CityScene extends Phaser.Scene {
         this.collectibles.splice(i, 1);
         const msg = this.quests.collect(c.item);
         if (msg) {
+          this.persistCityQuests();
           this.toast(msg);
           this.renderJournal();
         }

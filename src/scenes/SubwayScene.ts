@@ -1,12 +1,12 @@
 import Phaser from "phaser";
 import { installUiCamera } from "../render/cameras";
-import { TILE, TILESET_PX, COLORS, BULLET, ENEMY_BULLET } from "../config";
+import { TILE, COLORS, BULLET, ENEMY_BULLET } from "../config";
 import { getClass, ClassDef, PrimaryDef } from "../game/classes";
 import { ENEMY_TIERS, EnemyHost } from "../game/enemies";
 import { getBoss } from "../game/bosses";
 import { makeWeaponItem } from "../game/items";
 import { PLAYER_CUSTOM_KEY, sanitizeCustomization } from "../game/customization";
-import { TILESET_KEY } from "../assets/manifest";
+
 import Player, { PlayerInput } from "../entities/Player";
 import Bullets from "../entities/Bullets";
 import TuringCop from "../entities/TuringCop";
@@ -15,7 +15,7 @@ import BossBar from "../ui/BossBar";
 import Inventory from "../systems/Inventory";
 import { loadSave, writeSave } from "../systems/Save";
 import NeonPipeline from "../render/NeonPipeline";
-import { applyTileVariants } from "../render/tileVariants";
+import { createTerrainLayer } from "../render/terrainLayer";
 import { TILE_VARIANTS } from "../world/district";
 import { juiceShake, juiceFlash } from "../systems/juice";
 import Synth from "../audio/Synth";
@@ -40,6 +40,8 @@ const WAVES: Array<Array<[string, number]>> = [
 ];
 
 /**
+ * @legacy Unregistered — superseded by OnlineScene zone "subway". Kept for reference only.
+ *
  * SubwayScene — THE UNDERLINE: an instanced combat dungeon entered from the city's
  * subway. Fight down through waves of vermin, dogs and mutants, then THE UNDERLINE
  * boss; clearing it yields a unique weapon (the first time) + a payout. Reuses the
@@ -125,10 +127,7 @@ export default class SubwayScene extends Phaser.Scene implements EnemyHost {
     for (const [x, y] of [[8, 6], [8, 11], [17, 5], [17, 12], [26, 6], [26, 11]] as Array<[number, number]>) grid[y][x] = TILE_WALL;
     for (let x = 2; x < AW - 2; x++) grid[1][x] = TILE_TRACK;
 
-    const map = this.make.tilemap({ data: grid, tileWidth: TILE, tileHeight: TILE });
-    const tileset = map.addTilesetImage(TILESET_KEY, TILESET_KEY, TILESET_PX, TILESET_PX)!;
-    this.wallLayer = map.createLayer(0, tileset, 0, 0)!;
-    applyTileVariants(this.wallLayer); // scatter real-art tile variants (render-only)
+    this.wallLayer = createTerrainLayer(this, grid, { profile: "subway", accent: 0x6b9bff });
     this.wallLayer.setCollision([...TILE_VARIANTS[TILE_WALL], TILE_TRACK]);
     this.physics.world.setBounds(0, 0, AW * TILE, AH * TILE);
     this.cameras.main.setBackgroundColor(0x05060c);

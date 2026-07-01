@@ -7,6 +7,7 @@
 // simply yields silence — never an error.
 
 import { getSettings } from "../systems/Settings";
+import SfxBank from "./SfxBank";
 
 const A_MINOR_BASS = [33, 29, 36, 31]; // A1, F1, C2, G1 — brooding i-VI-III-VII
 const MASTER_BASE = 0.26; // master ceiling before the user volume scales it
@@ -35,6 +36,8 @@ export default class Synth {
   private nextNoteTime = 0;
   private timer?: number;
   private arp = 0;
+  private sfxBank = new SfxBank();
+  private combatLayer = 0;
 
   /** Call from a user-gesture handler (browsers block audio until then). */
   ensureStarted() {
@@ -62,7 +65,13 @@ export default class Synth {
   }
 
   setIntensity(v: number) {
-    this.intensity = clamp01(v);
+    this.intensity = clamp01(Math.max(v, this.combatLayer));
+  }
+
+  /** Adaptive music combat layer — drums/hats swell under authored beds. */
+  setCombatLayer(v: number) {
+    this.combatLayer = clamp01(v);
+    this.intensity = clamp01(Math.max(this.intensity, this.combatLayer));
   }
 
   /** Enable/mute the procedural MUSIC layer (lead/bass/hats) without touching SFX.
@@ -109,6 +118,7 @@ export default class Synth {
     this.sfxBus = ctx.createGain();
     this.sfxBus.gain.value = s.sfx;
     this.sfxBus.connect(this.master);
+    this.sfxBank.attach(ctx, this.sfxBus);
 
     this.reverb = ctx.createConvolver();
     this.reverb.buffer = this.impulse(2.6, 2.2);
@@ -263,13 +273,19 @@ export default class Synth {
   // ---- one-shot SFX ----
 
   shoot() {
-    this.blip("square", 900, 320, 0.08, 0.05);
+    this.sfxBank.play("shoot");
   }
   hit() {
-    this.blip("sawtooth", 260, 90, 0.1, 0.07);
+    this.sfxBank.play("hit");
+  }
+  crit() {
+    this.sfxBank.play("crit", { pitch: 1 + Math.random() * 0.08 });
+  }
+  footstep() {
+    this.sfxBank.play("footstep", { pitch: 0.92 + Math.random() * 0.16, gain: 0.55 });
   }
   kill() {
-    this.blip("sawtooth", 170, 48, 0.24, 0.09);
+    this.sfxBank.play("kill");
     this.burst(0.18, 0.1);
   }
   infect() {
@@ -281,17 +297,15 @@ export default class Synth {
   }
   /** Item picked up — short bright tick. */
   pickup() {
-    this.blip("square", 1180, 1480, 0.07, 0.05);
+    this.sfxBank.play("pickup");
   }
   /** Dash — quick downward woosh. */
   dash() {
-    this.burst(0.16, 0.05);
-    this.blip("sawtooth", 700, 220, 0.12, 0.035);
+    this.sfxBank.play("dash");
   }
   /** Level up — rising two-note flourish. */
   levelUp() {
-    this.blip("triangle", 660, 990, 0.18, 0.08);
-    this.delayed(90, () => this.blip("triangle", 990, 1320, 0.22, 0.08));
+    this.sfxBank.play("levelUp");
   }
   /** Heat tier crossed — a rising power swell (bigger at the top tiers). */
   tierUp(tier: number) {

@@ -4,6 +4,7 @@
 // can be entered, Step 2), plus plazas/parks and NPC/landmark spots. Pure data — no
 // Phaser — so the sim/UI can reason about it; deterministic via a seed.
 
+import { TILE, CITY_SCALE } from "../config";
 import {
   TILE_FLOOR,
   TILE_SIDEWALK,
@@ -27,11 +28,23 @@ import {
   type TileGrid,
 } from "./district";
 
-export const CITY_W = 120; // tiles  → 3840 px wide
-export const CITY_H = 96; // tiles  → 3072 px tall
+const CITY_BASE_W = 180;
+const CITY_BASE_H = 144;
+export const CITY_W = Math.round(CITY_BASE_W * CITY_SCALE);
+export const CITY_H = Math.round(CITY_BASE_H * CITY_SCALE);
 
 /** A cyberpunk environment/zone with its own ground + building palette. */
-export type Env = "downtown" | "corporate" | "market" | "residential" | "industrial" | "slum" | "park";
+export type Env =
+  | "downtown"
+  | "corporate"
+  | "market"
+  | "residential"
+  | "industrial"
+  | "slum"
+  | "park"
+  | "docks"
+  | "undercity"
+  | "arcology";
 
 interface EnvPalette {
   ground: number; // open ground inside the block
@@ -47,6 +60,9 @@ const ENV: Record<Env, EnvPalette> = {
   industrial: { ground: TILE_GRATE, sidewalk: TILE_FLOOR, wall: TILE_WALL_IND },
   slum: { ground: TILE_DIRT, sidewalk: TILE_DIRT, wall: TILE_WALL_SLUM },
   park: { ground: TILE_GRASS, sidewalk: TILE_GRASS, wall: TILE_WALL_RES },
+  docks: { ground: TILE_WATER, sidewalk: TILE_SIDEWALK, wall: TILE_WALL_IND },
+  undercity: { ground: TILE_GRATE, sidewalk: TILE_DIRT, wall: TILE_WALL_SLUM },
+  arcology: { ground: TILE_NEON, sidewalk: TILE_PLAZA, wall: TILE_WALL_CORP },
 };
 
 /** Decorative prop kinds scattered per-environment (rendered by CityScene). */
@@ -82,6 +98,9 @@ export const ENV_IDENTITY: Record<Env, EnvIdentity> = {
   industrial: { name: "THE WORKS", accent: 0x8bff6a, tint: [0.5, 1.0, 0.45], wash: 0x49632a, washAlpha: 0.12, props: ["pipe", "barrel", "pipe"] },
   slum: { name: "THE SPRAWL", accent: 0xff5a3c, tint: [1.0, 0.45, 0.32], wash: 0x6e2c1c, washAlpha: 0.12, props: ["fire", "trash", "barrel"] },
   park: { name: "GREENWAY", accent: 0x39ff88, tint: [0.4, 1.0, 0.6], wash: 0x216e3c, washAlpha: 0.1, props: ["tree", "tree", "bench"] },
+  docks: { name: "TIDAL YARDS", accent: 0x29e7ff, tint: [0.3, 0.85, 1.0], wash: 0x1a4a6e, washAlpha: 0.14, props: ["barrel", "pipe", "lantern"] },
+  undercity: { name: "THE UNDERCITY", accent: 0xb06bff, tint: [0.7, 0.4, 1.0], wash: 0x3a1a5e, washAlpha: 0.14, props: ["pipe", "trash", "fire"] },
+  arcology: { name: "ARC ROW", accent: 0x6b9bff, tint: [0.45, 0.7, 1.0], wash: 0x2a3a8e, washAlpha: 0.12, props: ["billboard", "planter", "billboard"] },
 };
 
 /** Which environment a world tile belongs to (for the colour-wash + district nameplate). */
@@ -95,11 +114,26 @@ function envForBlock(nx: number, ny: number): Env {
   const dx = nx - 0.5;
   const dy = ny - 0.5;
   const r = Math.hypot(dx, dy);
-  if (r < 0.15) return "downtown";
-  if (r < 0.3) return dx < 0 ? "corporate" : "market";
-  if (dy < -0.12) return dx < 0 ? "corporate" : "residential";
-  if (dy > 0.12) return dx < 0 ? "industrial" : "slum";
-  return dx < 0 ? "industrial" : "market";
+  if (r < 0.1) return "downtown";
+  if (r < 0.2) return dx < 0 ? "corporate" : "market";
+  if (r < 0.3) {
+    if (dy < -0.08) return "arcology";
+    if (dy > 0.08) return "residential";
+    return dx < 0 ? "corporate" : "market";
+  }
+  if (r < 0.4) {
+    if (dy > 0.14) return "industrial";
+    if (dy < -0.14) return "docks";
+    return dx < 0 ? "industrial" : "slum";
+  }
+  if (r < 0.5) {
+    if (dx < -0.18) return "undercity";
+    if (dx > 0.18) return "docks";
+    return dy < 0 ? "arcology" : "slum";
+  }
+  if (dy < -0.22) return "docks";
+  if (dy > 0.22) return "industrial";
+  return dx < 0 ? "undercity" : "slum";
 }
 
 export interface Rect {
@@ -127,6 +161,50 @@ export const HEAL_KINDS: ReadonlyArray<BuildingKind> = ["hospital", "hotel", "cl
 
 /** Unique landmark buildings — exactly one each, placed near the plaza so they're findable. */
 export const LANDMARK_KINDS: ReadonlyArray<BuildingKind> = ["hospital", "hotel", "subway", "stadium", "citycenter"];
+
+/** Roof tile per building kind — makes exteriors read as different structures at a glance. */
+export function roofTileForKind(kind: BuildingKind, env: Env): number {
+  switch (kind) {
+    case "hospital":
+    case "hotel":
+    case "citycenter":
+      return TILE_WALL_CORP;
+    case "home":
+      return TILE_WALL_RES;
+    case "den":
+      return TILE_WALL_SLUM;
+    case "guild":
+    case "subway":
+      return TILE_WALL_IND;
+    case "shop":
+      return TILE_MARKET;
+    case "bar":
+      return TILE_NEON;
+    case "clinic":
+      return TILE_WALL_CORP;
+    case "stadium":
+      return TILE_WALL;
+    default:
+      return ENV[env].wall;
+  }
+}
+
+function fillRect(grid: TileGrid, r: Rect, tile: number) {
+  for (let y = r.y1; y <= r.y2; y++) {
+    for (let x = r.x1; x <= r.x2; x++) grid[y][x] = tile;
+  }
+}
+
+/** Repaint each building footprint with its kind-specific roof tile (restores doors). */
+export function applyBuildingRoofTiles(grid: TileGrid, buildings: CityBuilding[]) {
+  for (const b of buildings) {
+    fillRect(grid, b.rect, roofTileForKind(b.kind, b.env));
+    if (!b.door) continue;
+    const pal = ENV[b.env];
+    grid[b.door[1]][b.door[0]] = pal.sidewalk;
+    if (b.door[1] + 1 < grid.length) grid[b.door[1] + 1][b.door[0]] = pal.sidewalk;
+  }
+}
 
 export interface CityBuilding {
   rect: Rect; // wall footprint
@@ -220,7 +298,9 @@ export function buildCity(seed = 1337): CityMap {
   const cx = Math.round(w / 2);
   const cy = Math.round(h / 2);
   const plazas: Rect[] = [];
-  const central: Rect = { x1: cx - 6, y1: cy - 5, x2: cx + 6, y2: cy + 5 };
+  const plazaRx = Math.max(8, Math.round(w * 0.022));
+  const plazaRy = Math.max(7, Math.round(h * 0.019));
+  const central: Rect = { x1: cx - plazaRx, y1: cy - plazaRy, x2: cx + plazaRx, y2: cy + plazaRy };
   fill(grid, central, TILE_PLAZA);
   plazas.push(central);
 
@@ -261,7 +341,7 @@ export function buildCity(seed = 1337): CityMap {
       zones.push({ rect: { x1: bx1, y1: ry1, x2: bx2, y2: ry2 }, env });
 
       const roll = rand();
-      if (roll < 0.16) {
+      if (roll < 0.22) {
         // an open square / park — keep the ground; parks get a small pond
         if (env === "park" || env === "residential") {
           const px1 = Math.round(mcx) - 2;
@@ -312,8 +392,19 @@ export function buildCity(seed = 1337): CityMap {
     if (homes[i]) homes[i].kind = lk;
   });
 
+  applyBuildingRoofTiles(grid, buildings);
+
   return { grid, w, h, spawn: [cx, cy], buildings, plazas, npcSpots, zones, decorations };
 }
+
+/** Shared online city hub — deterministic seed so every client + server agree. */
+export const ONLINE_CITY = buildCity(1337);
+
+/** World-pixel spawn at the central plaza (online hub default). */
+export const CITY_HUB_SPAWN = {
+  x: ONLINE_CITY.spawn[0] * TILE + TILE / 2,
+  y: ONLINE_CITY.spawn[1] * TILE + TILE / 2,
+};
 
 // ── interiors ───────────────────────────────────────────────────────────────
 // Each building entered opens a small room. Rooms are generated per `kind` so a shop

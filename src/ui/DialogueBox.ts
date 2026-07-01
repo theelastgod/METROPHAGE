@@ -1,7 +1,8 @@
 import Phaser from "phaser";
 import { COLORS, VIEW_W, VIEW_H } from "../config";
 import { UI_FRAME_KEY } from "../assets/manifest";
-import { uiDim, uiFont } from "./uiLayout";
+import { panelPad, uiDim, uiFont, uiGap } from "./uiLayout";
+import { bodyFont, displayFont } from "./typography";
 
 export interface DialoguePage {
   speaker: string;
@@ -40,12 +41,12 @@ export default class DialogueBox {
   private choiceTexts: Phaser.GameObjects.Text[] = [];
   private choicesActive = false;
 
-  private readonly boxX = uiDim(40);
-  private readonly boxY = VIEW_H - uiDim(156);
-  private readonly boxW = VIEW_W - uiDim(80);
-  private readonly boxH = uiDim(138);
-  private readonly textX = this.boxX + uiDim(132);
-  private readonly choiceStep = uiDim(20);
+  private readonly boxX = uiDim(44);
+  private readonly boxY = VIEW_H - uiDim(168);
+  private readonly boxW = VIEW_W - uiDim(88);
+  private readonly boxH = uiDim(148);
+  private readonly textX = this.boxX + uiDim(140);
+  private readonly choiceStep = uiDim(24);
   private readonly portraitSize = uiDim(100);
   private readonly portraitInner = uiDim(82);
 
@@ -70,30 +71,15 @@ export default class DialogueBox {
       .setDisplaySize(this.portraitInner, this.portraitInner);
 
     this.nameText = scene.add
-      .text(this.textX, this.boxY + uiDim(16), "", {
-        fontFamily: "Courier New, monospace",
-        fontSize: uiFont(17),
-        color: "#f7ff3c",
-        fontStyle: "bold",
-      })
+      .text(this.textX, this.boxY + panelPad(), "", displayFont(17, { color: "#f7ff3c", fontStyle: "bold" }))
       .setScrollFactor(0)
       .setDepth(D + 2);
     this.bodyText = scene.add
-      .text(this.textX, this.boxY + uiDim(48), "", {
-        fontFamily: "Courier New, monospace",
-        fontSize: uiFont(17),
-        color: "#eafdff",
-        wordWrap: { width: this.boxW - uiDim(168) },
-        lineSpacing: uiDim(6),
-      })
+      .text(this.textX, this.boxY + uiDim(48), "", bodyFont(16, { color: "#eafdff", wordWrap: { width: this.boxW - uiDim(176) } }))
       .setScrollFactor(0)
       .setDepth(D + 2);
     this.arrow = scene.add
-      .text(this.boxX + this.boxW - uiDim(28), this.boxY + this.boxH - uiDim(28), "▼", {
-        fontFamily: "Courier New, monospace",
-        fontSize: uiFont(17),
-        color: "#00e5ff",
-      })
+      .text(this.boxX + this.boxW - uiGap("xl"), this.boxY + this.boxH - uiGap("xl"), "▼", bodyFont(17, { color: "#00e5ff" }))
       .setScrollFactor(0)
       .setDepth(D + 2);
 

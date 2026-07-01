@@ -66,6 +66,7 @@ function trackState(ws, id, store) {
         store.dead = me.dead;
         store.credits = me.credits;
         store.cores = me.cores;
+        store.metro = me.metro ?? 0;
         store.xp = me.xp;
         store.level = me.level;
         store.questStep = me.questStep;
@@ -80,9 +81,7 @@ function trackState(ws, id, store) {
       store.factions = m.factions || [];
       store.control = m.control ?? -1;
       store.roster = m.roster || [];
-      store.sing = m.sing ?? 0;
-      store.meltdown = !!m.meltdown;
-      store.season = m.season ?? 1;
+
     }
   });
 }
@@ -204,11 +203,9 @@ async function combat() {
   };
 
   const startEnemies = store.enemies.length;
-  const startSing = store.sing ?? 0;
   let minEnemyHp = 999;
   let maxCredits = 0;
   let maxXp = 0;
-  let maxSing = startSing;
   let sawPlayerShot = false;
   let sawPickup = false;
   let tookDamage = false;
@@ -230,7 +227,6 @@ async function combat() {
     if ((store.pickups || []).length > 0) sawPickup = true;
     maxCredits = Math.max(maxCredits, store.credits || 0);
     maxXp = Math.max(maxXp, store.xp || 0);
-    maxSing = Math.max(maxSing, store.sing || 0);
     if ((store.hp ?? 100) < 100) tookDamage = true;
     await sleep(50);
   }
@@ -240,19 +236,17 @@ async function combat() {
     serverResolvedHit: minEnemyHp < 75 || maxCredits > 0, // cop damaged, or a kill paid out
     progressionGained: maxXp > 0, // server awarded XP
     lootDropped: sawPickup, // server rolled a loot drop
-    singularityRose: maxSing > startSing, // shared server-wide meter pushed by kills
   };
   ws.close();
   await sleep(300);
   report(
-    "COMBAT — server resolves hits + awards credits/XP + loot + shared Singularity",
+    "COMBAT — server resolves hits + awards credits/XP + loot",
     {
       startEnemies,
       minEnemyHp: minEnemyHp === 999 ? null : round(minEnemyHp),
       credits: maxCredits,
       xp: maxXp,
       level: store.level ?? 1,
-      singularity: round(maxSing),
       sawPlayerShot,
       tookEnemyDamage: tookDamage,
     },
@@ -944,10 +938,69 @@ async function market() {
   S2.close();
   await sleep(200);
 
-  const checks = { haveItem, listed, sawListing, bought, doubleBuyRejected, sellerPaidViaMailbox, cancelled };
+  // $METRO listings — fund via bridge deposit, then list/buy in ◈
+  const httpBase = WS_URL.replace(/^ws/, "http").replace(/\/ws$/, "");
+  const WALLET = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+  const post = async (p, body) =>
+    (await fetch(httpBase + p, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).json();
+  const depSeller = await post("/metro/deposit", { player: "mseller", wallet: WALLET, txSig: "MKT_S_" + Date.now(), metro: 50 });
+  const depBuyer = await post("/metro/deposit", { player: "mbuyer", wallet: WALLET, txSig: "MKT_B_" + Date.now(), metro: 50 });
+
+  const M = await connect();
+  const sm = { inventory: [], metro: 0, listings: [], sys: [] };
+  M.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "inv") sm.inventory = m.items;
+    if (m.t === "market") sm.listings = m.listings;
+    if (m.t === "sys") sm.sys.push(m.text);
+  });
+  const wm = await login(M, "mseller", 0);
+  trackState(M, wm.id, sm);
+  await sleep(500);
+  M.send(JSON.stringify({ t: "buy", sku: "cache_standard" }));
+  await sleep(500);
+  const mItem = sm.inventory[sm.inventory.length - 1];
+  const mMetro0 = sm.metro;
+  M.send(JSON.stringify({ t: "market", action: "list", itemId: mItem.id, price: 20, currency: "metro" }));
+  await sleep(550);
+  const mListId = sm.listings.find((l) => l.item.id === mItem.id && l.currency === "metro")?.id;
+  const metroListed = !!mListId && sm.metro < mMetro0;
+  M.close();
+  await sleep(400);
+
+  const MB = await connect();
+  const sbm = { inventory: [], metro: 0, listings: [] };
+  MB.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "inv") sbm.inventory = m.items;
+    if (m.t === "market") sbm.listings = m.listings;
+  });
+  const wbm = await login(MB, "mbuyer", 0);
+  trackState(MB, wbm.id, sbm);
+  await sleep(450);
+  MB.send(JSON.stringify({ t: "market", action: "browse" }));
+  await sleep(400);
+  const mMetroBuy0 = sbm.metro;
+  MB.send(JSON.stringify({ t: "market", action: "buy", id: mListId }));
+  await sleep(650);
+  const metroBought = sbm.inventory.some((it) => it.id === mItem.id) && sbm.metro === mMetroBuy0 - 20;
+  MB.close();
+
+  const checks = {
+    haveItem,
+    listed,
+    sawListing,
+    bought,
+    doubleBuyRejected,
+    sellerPaidViaMailbox,
+    cancelled,
+    metroDepositOk: depSeller.ok && depBuyer.ok,
+    metroListed,
+    metroBought,
+  };
   report(
-    "MARKET — escrow list, atomic buy, no double-buy, offline payout via mailbox, cancel",
-    { listingId, soldFor: 500, sellerCredits: ss2.credits, buyerCredits: sb.credits },
+    "MARKET — escrow list, atomic buy, mailbox payout, cancel + $METRO listings",
+    { listingId, soldFor: 500, sellerCredits: ss2.credits, buyerCredits: sb.credits, mListId },
     Object.values(checks).every(Boolean),
     checks,
   );
@@ -1635,8 +1688,8 @@ async function zones() {
   const wa = await login(a, "ax");
   const b = await connect(base + "?zone=d1");
   const wb = await login(b, "bx");
-  const sa = { x: wa.x, y: wa.y, players: [], enemies: [], sing: 0 };
-  const sb = { x: wb.x, y: wb.y, players: [], enemies: [], sing: 0 };
+  const sa = { x: wa.x, y: wa.y, players: [], enemies: [] };
+  const sb = { x: wb.x, y: wb.y, players: [], enemies: [] };
   trackState(a, wa.id, sa);
   trackState(b, wb.id, sb);
   await sleep(600);
@@ -1644,9 +1697,6 @@ async function zones() {
   const aSeesB = (sa.players || []).some((p) => p.id === wb.id);
   const bSeesA = (sb.players || []).some((p) => p.id === wa.id);
   const differentSpawns = Math.hypot(wa.x - wb.x, wa.y - wb.y) > 1;
-  const startSingB = sb.sing ?? 0;
-
-  // 'a' farms cops in d0; the shared meter should rise for 'b' in d1 (via D1 sync).
   let seq = 0;
   const t0 = Date.now();
   while (Date.now() - t0 < 6000) {
@@ -1669,20 +1719,16 @@ async function zones() {
     }
     await sleep(50);
   }
-  await sleep(3000); // let D1 sync the shared meter into zone d1
-  const endSingB = sb.sing ?? 0;
-
   const checks = {
     zonesIsolated: !aSeesB && !bSeesA, // different DOs → can't see each other
     differentSpawns, // each district has its own spawn point
-    sharedSingularityAcrossZones: endSingB > startSingB, // d0 kills raised d1's meter
   };
   a.close();
   b.close();
   await sleep(300);
   report(
-    "ZONES — per-district DOs: cross-zone isolation + shared Singularity",
-    { aSpawn: [round(wa.x), round(wa.y)], bSpawn: [round(wb.x), round(wb.y)], aSeesB, bSeesA, singB: [round(startSingB), round(endSingB)] },
+    "ZONES — per-district DOs: cross-zone isolation",
+    { aSpawn: [round(wa.x), round(wa.y)], bSpawn: [round(wb.x), round(wb.y)], aSeesB, bSeesA },
     Object.values(checks).every(Boolean),
     checks,
   );
@@ -1748,60 +1794,6 @@ async function territory() {
   report(
     "TERRITORY — capture a node for your faction; score + district control",
     { nodes: (store.nodes || []).length, myFaction: myFac, score: [round(startScore), round(endScore)], captured, controlMine },
-    Object.values(checks).every(Boolean),
-    checks,
-  );
-}
-
-async function meltdown() {
-  // The harness pre-sets world_meta.singularity near SING_MAX; a few kills tip it
-  // over, triggering the server-wide meltdown + era reset.
-  const ws = await connect();
-  const w = await login(ws, "ender", 0);
-  const store = { x: w.x, y: w.y, enemies: [], sing: 0, meltdown: false, season: 1 };
-  trackState(ws, w.id, store);
-  await sleep(600);
-  const startSeason = store.season;
-
-  let sawMeltdown = false;
-  let peakSing = 0;
-  let resetAfterMeltdown = false;
-  let seq = 0;
-  const t0 = Date.now();
-  while (Date.now() - t0 < 17000) {
-    let best = null;
-    let bd = Infinity;
-    for (const e of store.enemies) {
-      const d = Math.hypot(e.x - store.x, e.y - store.y);
-      if (d < bd) {
-        bd = d;
-        best = e;
-      }
-    }
-    if (best) {
-      const dx = best.x - store.x;
-      const dy = best.y - store.y;
-      const d = Math.hypot(dx, dy) || 1;
-      seq++;
-      ws.send(JSON.stringify({ t: "input", seq, mx: d > 110 ? dx / d : 0, my: d > 110 ? dy / d : 0 }));
-      ws.send(JSON.stringify({ t: "fire", seq, aim: Math.atan2(dy, dx) }));
-    }
-    peakSing = Math.max(peakSing, store.sing);
-    if (store.meltdown) sawMeltdown = true;
-    if (sawMeltdown && !store.meltdown && store.sing < 50) resetAfterMeltdown = true;
-    await sleep(50);
-  }
-
-  const checks = {
-    reachedMeltdown: sawMeltdown, // Singularity capped → meltdown went active
-    eraReset: resetAfterMeltdown, // meltdown ended and the meter reset
-    seasonIncremented: store.season > startSeason, // a new era began
-  };
-  ws.close();
-  await sleep(300);
-  report(
-    "MELTDOWN — Singularity caps → server-wide meltdown → new era",
-    { startSeason, endSeason: store.season, peakSing: round(peakSing), sawMeltdown },
     Object.values(checks).every(Boolean),
     checks,
   );
@@ -2288,7 +2280,6 @@ try {
   else if (mode === "mp") await mp();
   else if (mode === "zones") await zones();
   else if (mode === "territory") await territory();
-  else if (mode === "meltdown") await meltdown();
   else if (mode === "social") await social();
   else if (mode === "trade") await trade();
   else if (mode === "quest") await quest();

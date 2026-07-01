@@ -22,7 +22,12 @@
 //     mistaken mint can never silently move real money. Stays disarmed until a
 //     deliberate, post-counsel switch.
 
-const env = import.meta.env as Record<string, string | undefined>;
+/** Safe on the Vite client and the Workers server bundle (no import.meta.env there —
+ * read through a cast so the server tsconfig, which lacks vite/client types, stays green). */
+const env: Record<string, string | undefined> =
+  (typeof import.meta !== "undefined" &&
+    (import.meta as unknown as { env?: Record<string, string | undefined> }).env) ||
+  {};
 
 /** The $METRO SPL mint address (the "CA"). Empty string = layer off. */
 export const METRO_MINT = env.VITE_METRO_MINT ?? "";

@@ -1,16 +1,16 @@
 import Phaser from "phaser";
-import { VIEW_W, VIEW_H, COLORS, UI_SCALE, uiDim, uiFont } from "../config";
+import { VIEW_W, VIEW_H, COLORS, UI_SCALE, uiDim } from "../config";
 import { getClass, ClassDef } from "../game/classes";
 import MusicDirector from "../audio/MusicDirector";
 import {
   Customization,
-  defaultCustomization,
+  randomCustomization,
   bakeCustomPlayer,
   PLAYER_CUSTOM_KEY,
   CUSTOM_COLORS,
   CUSTOM_BUILDS,
-  CUSTOM_HEADS,
-  CUSTOM_VISORS,
+  HUMAN_HEADS,
+  HUMAN_VISORS,
   CUSTOM_SHOULDERS,
   CUSTOM_DECALS,
   CUSTOM_CLOAKS,
@@ -20,6 +20,10 @@ import {
   HAIR_STYLES,
   HAIR_COLORS,
   BEARDS,
+  FACE_MARKS,
+  EYE_COLORS,
+  CUSTOM_GLOVES,
+  CUSTOM_LEG_GEAR,
   HEAD_LABELS,
   VISOR_LABELS,
   BUILD_LABELS,
@@ -28,11 +32,19 @@ import {
   CLOAK_LABELS,
   HAIR_LABELS,
   BEARD_LABELS,
+  FACE_MARK_LABELS,
+  GLOVES_LABELS,
+  LEG_GEAR_LABELS,
   CALLSIGN_MAX,
   randomCallsign,
 } from "../game/customization";
-import NeonPipeline from "../render/NeonPipeline";
-import { drawMenuBackdrop, MENU_FOOTER_Y, MENU_PAD } from "../ui/menuChrome";
+import { applyMenuNeon } from "../render/ensureNeon";
+import { fadeInScene, transitionTo } from "../systems/transitions";
+import { asMenuUi, installMenuCameras, pinMenuUiLayer } from "../render/menuCameras";
+import { drawMenuBackdrop, drawPreviewPedestal, MenuAtmosphere, MENU_PAD, MENU_SECTION_GAP } from "../ui/menuChrome";
+import { panelPad, uiGap } from "../ui/spacing";
+import { bodyFont, displayFont, uiFont } from "../ui/typography";
+import { drawPanelFrame } from "../ui/panelChrome";
 import { connectedWallet } from "../economy/wallet";
 
 interface Row {
@@ -51,8 +63,6 @@ export default class CustomizeScene extends Phaser.Scene {
   private cust!: Customization;
   private rowIndex = 0;
   private rows: Row[] = [];
-  private neon?: NeonPipeline;
-
   private preview!: Phaser.GameObjects.Container;
   private callsignText!: Phaser.GameObjects.Text;
   private caretOn = true;
@@ -69,11 +79,11 @@ export default class CustomizeScene extends Phaser.Scene {
   private readonly panelX = Math.round(VIEW_W * 0.52);
   private readonly panelW = VIEW_W - this.panelX - MENU_PAD;
   private readonly previewX = MENU_PAD;
-  private readonly previewW = this.panelX - MENU_PAD * 2;
-  private readonly listTop = uiDim(168);
-  private readonly listBottom = MENU_FOOTER_Y - uiDim(28);
-  private readonly rowH = uiDim(28);
-  private readonly visibleRows = Math.max(4, Math.floor((MENU_FOOTER_Y - uiDim(28) - uiDim(168)) / uiDim(28)));
+  private readonly previewW = this.panelX - this.previewX - uiDim(6);
+  private readonly listTop = uiDim(176);
+  private readonly listBottom = VIEW_H - uiDim(88);
+  private readonly rowH = uiDim(32);
+  private readonly visibleRows = Math.max(4, Math.floor((this.listBottom - this.listTop) / this.rowH));
 
   constructor() {
     super("Customize");
@@ -84,95 +94,61 @@ export default class CustomizeScene extends Phaser.Scene {
       this.scene.start("Select");
       return;
     }
-    if (!connectedWallet() && !this.registry.get("walletAddress")) {
+    if (!connectedWallet() && !this.registry.get("walletAddress") && !this.registry.get("offlinePlay")) {
       this.scene.start("Select");
       return;
     }
 
     this.classDef = getClass(this.registry.get("classId") as string | undefined);
-    this.cust = defaultCustomization(this.classDef.id);
-    this.cust.skin = SKIN_TONES.find((s) => s.value >= 0)?.value ?? 0xc98a5e;
+    this.cust = randomCustomization(this.classDef.id);
 
     this.cameras.main.setBackgroundColor(COLORS.bgVoid);
-    this.cameras.main.fadeIn(350, 2, 2, 8);
+    installMenuCameras(this);
+    fadeInScene(this);
     MusicDirector.for(this)?.play("menu", this);
     this.applyNeon();
     drawMenuBackdrop(this);
+    new MenuAtmosphere(this);
 
     this.add
-      .text(VIEW_W / 2, uiDim(48), "CREATE YOUR CYBERIAN", {
-        fontFamily: "Courier New, monospace",
-        fontSize: uiFont(32),
-        color: "#00e5ff",
-        fontStyle: "bold",
-      })
+      .text(VIEW_W / 2, uiDim(52), "CREATE YOUR RUNNER", displayFont(32, { color: "#00e5ff", fontStyle: "bold" }))
       .setOrigin(0.5)
       .setShadow(0, 0, "#ff2bd6", 6, true, true);
 
     const wallet = (this.registry.get("walletAddress") as string | undefined) ?? connectedWallet() ?? "—";
     const short = wallet.length > 12 ? `${wallet.slice(0, 4)}…${wallet.slice(-4)}` : wallet;
     this.add
-      .text(VIEW_W / 2, uiDim(88), `ONE-TIME CREATION  ·  bound to wallet ${short}  ·  ${this.classDef.name}`, {
-        fontFamily: "Courier New, monospace",
-        fontSize: uiFont(13),
-        color: "#f7ff3c",
-      })
+      .text(VIEW_W / 2, uiDim(96), `ONE-TIME CREATION  ·  bound to wallet ${short}  ·  ${this.classDef.name}`, bodyFont(13, { color: "#f7ff3c" }))
       .setOrigin(0.5);
 
-    const pg = this.add.graphics();
-    const py = uiDim(120);
-    const ph = VIEW_H - py - uiDim(80);
-    pg.fillStyle(0x0b0716, 0.88).fillRect(this.previewX, py, this.previewW, ph);
-    pg.lineStyle(uiDim(2), this.classDef.color, 0.75).strokeRect(this.previewX, py, this.previewW, ph);
-    pg.fillStyle(0x05060f, 0.9).fillEllipse(this.previewX + this.previewW / 2, py + ph - uiDim(36), uiDim(180), uiDim(36));
-
-    this.preview = this.add.container(0, 0);
+    const py = uiDim(128);
+    const ph = VIEW_H - py - uiDim(104);
+    const pg = asMenuUi(this.add.graphics().setDepth(8));
+    drawPanelFrame(pg, this.previewX, py, this.previewW, ph);
+    const previewLabelY = py + uiDim(13);
+    const previewLabelG = asMenuUi(this.add.graphics().setDepth(10));
+    previewLabelG.fillStyle(0x04030c, 0.92).fillRect(this.previewX + uiDim(12), previewLabelY - uiDim(4), this.previewW - uiDim(24), uiDim(22));
+    asMenuUi(
+      this.add
+        .text(this.previewX + this.previewW / 2, previewLabelY + uiDim(7), "RUNNER PREVIEW", displayFont(12, { color: "#9aa3b2", fontStyle: "bold" }))
+        .setOrigin(0.5)
+        .setDepth(11),
+    );
+    drawPreviewPedestal(this, this.previewX + this.previewW / 2, py + ph - uiDim(36), this.classDef.color, 10);
+    this.preview = asMenuUi(this.add.container(0, 0).setDepth(12));
     this.makeCallsignField();
     this.makeListViewport();
     this.defineRows();
     this.bakeAndRefresh();
     this.renderRows();
     this.scrollHint = this.add
-      .text(this.panelX + this.panelW / 2, this.listBottom + uiDim(6), "", {
-        fontFamily: "Courier New, monospace",
-        fontSize: uiFont(10),
-        color: "#6b7184",
-      })
+      .text(this.panelX + this.panelW / 2, this.listBottom + uiDim(6), "", bodyFont(10, { color: "#6b7184" }))
       .setOrigin(0.5, 0);
 
-    const back = this.add
-      .text(MENU_PAD, MENU_FOOTER_Y, "◀ BACK", {
-        fontFamily: "Courier New, monospace",
-        fontSize: uiFont(15),
-        color: "#9aa3b2",
-      })
-      .setInteractive({ useHandCursor: true });
-    back.on("pointerover", () => back.setColor("#eafdff"));
-    back.on("pointerout", () => back.setColor("#9aa3b2"));
-    back.on("pointerdown", () => this.goBack());
-
-    const confirm = this.add
-      .text(VIEW_W - MENU_PAD, MENU_FOOTER_Y, "LOCK IN & DEPLOY ▶", {
-        fontFamily: "Courier New, monospace",
-        fontSize: uiFont(16),
-        color: "#39ff88",
-        fontStyle: "bold",
-      })
-      .setOrigin(1, 0)
-      .setInteractive({ useHandCursor: true });
-    confirm.on("pointerover", () => confirm.setColor("#eafdff"));
-    confirm.on("pointerout", () => confirm.setColor("#39ff88"));
-    confirm.on("pointerdown", () => this.confirm());
-
-    this.add
-      .text(VIEW_W / 2, MENU_FOOTER_Y, "TYPE callsign · ↑↓ row · ←→ option · scroll wheel on list · ENTER to lock in", {
-        fontFamily: "Courier New, monospace",
-        fontSize: uiFont(11),
-        color: "#6b7184",
-      })
-      .setOrigin(0.5);
+    this.buildFooter();
 
     this.setupInput();
+    pinMenuUiLayer(this);
   }
 
   private defineRows() {
@@ -209,8 +185,8 @@ export default class CustomizeScene extends Phaser.Scene {
       },
       {
         label: "SKIN",
-        value: () => SKIN_TONES.find((s) => s.value === this.cust.skin)?.name ?? "SYNTH",
-        swatch: () => (this.cust.skin >= 0 ? this.cust.skin : 0x2a2a3a),
+        value: () => SKIN_TONES.find((s) => s.value === this.cust.skin)?.name ?? "TAN",
+        swatch: () => this.cust.skin,
         cycle: (d) => {
           const i = Math.max(0, SKIN_TONES.findIndex((s) => s.value === this.cust.skin));
           this.cust.skin = SKIN_TONES[(i + d + SKIN_TONES.length) % SKIN_TONES.length].value;
@@ -244,10 +220,38 @@ export default class CustomizeScene extends Phaser.Scene {
         },
       },
       {
+        label: "EYE COLOUR",
+        value: () => EYE_COLORS.find((c) => c.value === this.cust.eyeColor)?.name ?? "CUSTOM",
+        swatch: () => this.cust.eyeColor,
+        cycle: (d) => {
+          const i = Math.max(0, EYE_COLORS.findIndex((c) => c.value === this.cust.eyeColor));
+          this.cust.eyeColor = EYE_COLORS[(i + d + EYE_COLORS.length) % EYE_COLORS.length].value;
+          this.bakeAndRefresh();
+        },
+      },
+      {
+        label: "FACE MARK",
+        value: () => FACE_MARK_LABELS[this.cust.faceMark],
+        cycle: (d) => {
+          this.cust.faceMark = cycleIn(FACE_MARKS, this.cust.faceMark, d);
+          this.bakeAndRefresh();
+        },
+      },
+      {
+        label: "TRIM COLOUR",
+        value: () => CUSTOM_COLORS.find((c) => c.value === this.cust.accentColor)?.name ?? "CUSTOM",
+        swatch: () => this.cust.accentColor,
+        cycle: (d) => {
+          const i = Math.max(0, CUSTOM_COLORS.findIndex((c) => c.value === this.cust.accentColor));
+          this.cust.accentColor = CUSTOM_COLORS[(i + d + CUSTOM_COLORS.length) % CUSTOM_COLORS.length].value;
+          this.bakeAndRefresh();
+        },
+      },
+      {
         label: "HEADGEAR",
         value: () => HEAD_LABELS[this.cust.head],
         cycle: (d) => {
-          this.cust.head = cycleIn(CUSTOM_HEADS, this.cust.head, d);
+          this.cust.head = cycleIn(HUMAN_HEADS, this.cust.head, d);
           this.bakeAndRefresh();
         },
       },
@@ -255,7 +259,7 @@ export default class CustomizeScene extends Phaser.Scene {
         label: "OPTIC",
         value: () => VISOR_LABELS[this.cust.visor],
         cycle: (d) => {
-          this.cust.visor = cycleIn(CUSTOM_VISORS, this.cust.visor, d);
+          this.cust.visor = cycleIn(HUMAN_VISORS, this.cust.visor, d);
           this.bakeAndRefresh();
         },
       },
@@ -280,6 +284,22 @@ export default class CustomizeScene extends Phaser.Scene {
         value: () => DECAL_LABELS[this.cust.decal],
         cycle: (d) => {
           this.cust.decal = cycleIn(CUSTOM_DECALS, this.cust.decal, d);
+          this.bakeAndRefresh();
+        },
+      },
+      {
+        label: "GLOVES",
+        value: () => GLOVES_LABELS[this.cust.gloves],
+        cycle: (d) => {
+          this.cust.gloves = cycleIn(CUSTOM_GLOVES, this.cust.gloves, d);
+          this.bakeAndRefresh();
+        },
+      },
+      {
+        label: "LEG GEAR",
+        value: () => LEG_GEAR_LABELS[this.cust.legGear],
+        cycle: (d) => {
+          this.cust.legGear = cycleIn(CUSTOM_LEG_GEAR, this.cust.legGear, d);
           this.bakeAndRefresh();
         },
       },
@@ -313,27 +333,29 @@ export default class CustomizeScene extends Phaser.Scene {
   private makeCallsignField() {
     const x = this.panelX;
     const w = this.panelW;
-    const y = uiDim(128);
-    const h = uiDim(32);
-    const g = this.add.graphics();
+    const y = uiDim(132);
+    const h = uiDim(36);
+    const g = asMenuUi(this.add.graphics().setDepth(9));
     g.fillStyle(0x0b0716, 0.9).fillRect(x, y, w, h);
     g.lineStyle(uiDim(2), 0x00e5ff, 0.7).strokeRect(x, y, w, h);
     g.fillStyle(0x00e5ff, 0.9).fillRect(x, y, uiDim(4), h);
-    this.add
-      .text(x + uiDim(14), y + h / 2, "CALLSIGN", {
-        fontFamily: "Courier New, monospace",
-        fontSize: uiFont(12),
-        color: "#6b7184",
-      })
-      .setOrigin(0, 0.5);
-    this.callsignText = this.add
-      .text(x + w - uiDim(14), y + h / 2, "", {
+    asMenuUi(
+      this.add
+        .text(x + uiDim(14), y + h / 2, "CALLSIGN", bodyFont(12, { color: "#6b7184" }))
+        .setOrigin(0, 0.5)
+        .setDepth(10),
+    );
+    this.callsignText = asMenuUi(
+      this.add
+        .text(x + w - uiDim(14), y + h / 2, "", {
         fontFamily: "Courier New, monospace",
         fontSize: uiFont(18),
         color: "#eafdff",
         fontStyle: "bold",
       })
-      .setOrigin(1, 0.5);
+        .setOrigin(1, 0.5)
+        .setDepth(10),
+    );
     this.renderCallsign();
     this.time.addEvent({
       delay: 420,
@@ -347,7 +369,12 @@ export default class CustomizeScene extends Phaser.Scene {
 
   private renderCallsign() {
     if (!this.callsignText) return;
-    this.callsignText.setText((this.cust.callsign || "") + (this.caretOn ? "_" : " "));
+    const typed = this.cust.callsign || "";
+    if (typed) {
+      this.callsignText.setText(typed + (this.caretOn ? "_" : " ")).setColor("#eafdff");
+    } else {
+      this.callsignText.setText((this.caretOn ? "TYPE CALLSIGN_" : "TYPE CALLSIGN")).setColor("#5a6172");
+    }
   }
 
   private bakeAndRefresh() {
@@ -355,23 +382,31 @@ export default class CustomizeScene extends Phaser.Scene {
     this.preview.removeAll(true);
     const cx = this.previewX + this.previewW / 2;
     const cy = uiDim(120) + (VIEW_H - uiDim(200)) * 0.42;
-    const hero = this.add.image(cx, cy, PLAYER_CUSTOM_KEY, 0).setScale(8.5 * UI_SCALE);
+    if (!this.textures.exists(PLAYER_CUSTOM_KEY)) return;
+    const hero = this.add.image(cx, cy, PLAYER_CUSTOM_KEY, 0).setScale(8.5 * UI_SCALE).setDepth(12);
     this.preview.add(hero);
     const facings = [1 * 4, 3 * 4, 2 * 4];
     facings.forEach((f, i) => {
       const img = this.add
         .image(cx - uiDim(100) + i * uiDim(100), cy + uiDim(140), PLAYER_CUSTOM_KEY, f)
         .setScale(3.6 * UI_SCALE)
-        .setAlpha(0.92);
+        .setAlpha(0.92)
+        .setDepth(12);
       this.preview.add(img);
     });
   }
 
   private makeListViewport() {
     const listH = this.listBottom - this.listTop;
-    const panelBg = this.add.graphics();
-    panelBg.fillStyle(0x0b0716, 0.96).fillRect(this.panelX, this.listTop - uiDim(8), this.panelW, listH + uiDim(16));
-    panelBg.lineStyle(uiDim(2), this.classDef.color, 0.5).strokeRect(this.panelX, this.listTop - uiDim(8), this.panelW, listH + uiDim(16));
+    const panelBg = asMenuUi(this.add.graphics().setDepth(8));
+    panelBg.fillStyle(0x0b0716, 0.96).fillRect(this.panelX, this.listTop - uiGap("sm"), this.panelW, listH + uiGap("lg"));
+    panelBg.lineStyle(uiDim(2), this.classDef.color, 0.5).strokeRect(this.panelX, this.listTop - uiGap("sm"), this.panelW, listH + uiGap("lg"));
+    asMenuUi(
+      this.add
+        .text(this.panelX + panelPad(), this.listTop - uiGap("xs"), "CUSTOMIZE", displayFont(12, { color: "#6b7184", fontStyle: "bold" }))
+        .setOrigin(0, 0)
+        .setDepth(9),
+    );
     this.add
       .zone(this.panelX, this.listTop, this.panelW, listH)
       .setOrigin(0)
@@ -402,25 +437,23 @@ export default class CustomizeScene extends Phaser.Scene {
   }
 
   private renderRows() {
-    this.rowG = this.add.graphics();
+    this.rowG = asMenuUi(this.add.graphics().setDepth(10));
     this.rows.forEach((row, i) => {
       this.rowTexts.push(
-        this.add
-          .text(this.panelX + uiDim(16), 0, row.label, {
-            fontFamily: "Courier New, monospace",
-            fontSize: uiFont(13),
-            color: "#9aa3b2",
-          })
-          .setOrigin(0, 0.5),
+        asMenuUi(
+          this.add
+            .text(this.panelX + uiDim(16), 0, row.label, bodyFont(13, { color: "#9aa3b2" }))
+            .setOrigin(0, 0.5)
+            .setDepth(11),
+        ),
       );
       this.rowValTexts.push(
-        this.add
-          .text(VIEW_W - MENU_PAD - uiDim(48), 0, "", {
-            fontFamily: "Courier New, monospace",
-            fontSize: uiFont(13),
-            color: "#eafdff",
-          })
-          .setOrigin(1, 0.5),
+        asMenuUi(
+          this.add
+            .text(VIEW_W - MENU_PAD - uiDim(48), 0, "", bodyFont(13, { color: "#eafdff" }))
+            .setOrigin(1, 0.5)
+            .setDepth(11),
+        ),
       );
       const sw = this.add
         .rectangle(0, 0, uiDim(14), uiDim(14), 0xffffff)
@@ -562,22 +595,76 @@ export default class CustomizeScene extends Phaser.Scene {
     });
   }
 
+  private buildFooter() {
+    const footerH = uiDim(56);
+    const footerY = VIEW_H - footerH;
+    const bar = asMenuUi(this.add.graphics().setDepth(90));
+    bar.fillStyle(0x05030c, 0.96).fillRect(0, footerY - uiDim(2), VIEW_W, footerH + uiDim(2));
+    bar.lineStyle(1, 0x00e5ff, 0.45).lineBetween(0, footerY, VIEW_W, footerY);
+
+    asMenuUi(
+      this.add
+        .text(
+          VIEW_W / 2,
+          footerY - MENU_SECTION_GAP,
+          "TYPE callsign · ↑↓ row · ←→ option · scroll wheel · ENTER to deploy",
+          bodyFont(10, { color: "#6b7184" }),
+        )
+        .setOrigin(0.5)
+        .setDepth(91),
+    );
+
+    const back = asMenuUi(
+      this.add
+        .text(MENU_PAD, footerY + footerH / 2, "◀ BACK", bodyFont(15, { color: "#9aa3b2" }))
+        .setOrigin(0, 0.5)
+        .setDepth(91)
+        .setInteractive({ useHandCursor: true }),
+    );
+    back.on("pointerover", () => back.setColor("#eafdff"));
+    back.on("pointerout", () => back.setColor("#9aa3b2"));
+    back.on("pointerdown", () => this.goBack());
+
+    const deployW = uiDim(248);
+    const deployH = uiDim(40);
+    const deployX = VIEW_W - MENU_PAD - deployW;
+    const deployY = footerY + (footerH - deployH) / 2;
+    const deployG = asMenuUi(this.add.graphics().setDepth(91));
+    const drawDeploy = (hover: boolean) => {
+      deployG.clear();
+      deployG.fillStyle(0x39ff88, hover ? 0.3 : 0.16).fillRoundedRect(deployX, deployY, deployW, deployH, 4);
+      const inset = uiDim(2);
+      deployG
+        .lineStyle(uiDim(2), 0x39ff88, hover ? 1 : 0.8)
+        .strokeRoundedRect(deployX + inset, deployY + inset, deployW - inset * 2, deployH - inset * 2, 4);
+    };
+    drawDeploy(false);
+    const deployLabel = asMenuUi(
+      this.add
+        .text(deployX + deployW / 2, deployY + deployH / 2, "LOCK IN & DEPLOY ▶", displayFont(16, { color: "#eafdff", fontStyle: "bold" }))
+        .setOrigin(0.5)
+        .setDepth(92),
+    );
+    const deployZone = asMenuUi(
+      this.add.zone(deployX, deployY, deployW, deployH).setOrigin(0).setDepth(93).setInteractive({ useHandCursor: true }),
+    );
+    deployZone.on("pointerover", () => {
+      drawDeploy(true);
+      deployLabel.setColor("#ffffff");
+    });
+    deployZone.on("pointerout", () => {
+      drawDeploy(false);
+      deployLabel.setColor("#eafdff");
+    });
+    deployZone.on("pointerdown", () => this.confirm());
+  }
+
   private applyNeon() {
-    if (this.renderer.type !== Phaser.WEBGL) return;
-    const cam = this.cameras.main;
-    cam.setPostPipeline("Neon");
-    const p = cam.getPostPipeline("Neon");
-    this.neon = (Array.isArray(p) ? p[0] : p) as NeonPipeline;
-    if (this.neon) {
-      this.neon.heat = 0.08;
-      this.neon.tint = [0, 0.9, 1];
-      this.neon.tintAmt = 0.12;
-    }
+    applyMenuNeon(this, { heat: 0.08, tint: [0, 0.9, 1], tintAmt: 0.12 });
   }
 
   private goBack() {
-    this.cameras.main.fadeOut(250, 2, 2, 8);
-    this.cameras.main.once("camerafadeoutcomplete", () => this.scene.start("Select"));
+    transitionTo(this, "Select", undefined, { style: "fade", accent: 0x9aa3b2 });
   }
 
   private confirm() {
@@ -586,7 +673,6 @@ export default class CustomizeScene extends Phaser.Scene {
     this.registry.set("customization", this.cust);
     this.registry.set("resume", false);
     this.registry.set("characterLocked", true);
-    this.cameras.main.fadeOut(350, 2, 2, 8);
-    this.cameras.main.once("camerafadeoutcomplete", () => this.scene.start("Prologue"));
+    transitionTo(this, "Prologue", undefined, { style: "deploy", accent: this.classDef.color });
   }
 }

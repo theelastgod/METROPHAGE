@@ -72,7 +72,7 @@ export default class StatsPanel {
     const g = this.g;
     g.clear();
     drawPanelFrame(g, this.x, this.y, this.w, this.h);
-    this.header.setText("CYBERIAN — CHARACTER");
+    this.header.setText("RUNNER — CHARACTER");
     const lines = this.provider();
     lines.forEach((ln, i) => {
       this.labelTexts[i]?.setText(ln.label);

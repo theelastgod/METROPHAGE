@@ -30,7 +30,7 @@ export interface DialogueTree {
 }
 
 export const DIALOGUE_TREES: Record<string, DialogueTree> = {
-  // "The Wake" — offered by the FIXER.
+  // ── ACT I — THE WAKE ──────────────────────────────────────────────────────
   wake_offer: {
     start: "intro",
     nodes: {
@@ -38,44 +38,51 @@ export const DIALOGUE_TREES: Record<string, DialogueTree> = {
         speaker: "FIXER",
         portrait: "fixer",
         lines: [
-          "Sit down, free one. There's a signal under Palantir Plaza older than the plaza.",
-          "It pings on your callsign. Yours. Timestamped before the corps ever issued you a body.",
+          "Hey. Sit. You look like you just booted wrong — and maybe you did.",
+          "There's something under Palantir Plaza pinging your callsign. Not generic. Yours. Timestamped before Helios gave you that face.",
+          "I've heard this before. Different you. Same signal.",
         ],
         choices: [
-          { text: "Whose signal is it?", goto: "explain" },
-          { text: "What do you need me to do?", goto: "ask" },
+          { text: "What is it?", goto: "explain" },
+          { text: "What do you want from me?", goto: "ask" },
         ],
       },
       explain: {
         speaker: "FIXER",
         portrait: "fixer",
         lines: [
-          "The thing nobody stays free long enough to ask. Every cycle the corps repossess one mind they can't license. One Blank.",
-          "I think the last free you left a message. Free the caged minds across the plaza and it'll surface.",
+          "A message, I think. Left by the last free mind they couldn't keep on a leash.",
+          "Could be you. Could be who you were before they wiped you and called it a fresh start.",
+          "Free a couple minds in the plaza — shake the ICE loose — and we'll see who's talking.",
         ],
         choices: [
-          { text: "I'll do it. [Accept]", action: "accept" },
+          { text: "I need to hear it. [Accept]", action: "accept" },
           { text: "Not now.", goto: "decline" },
         ],
       },
       ask: {
         speaker: "FIXER",
         portrait: "fixer",
-        lines: ["Free the plaza's caged minds. The uprising will shake your signal loose from the ICE."],
+        lines: [
+          "Same thing I always want from you, choom: stay alive long enough to finish what the last one couldn't.",
+          "Infect two nodes. Crack the ICE. Pull whatever's calling your name.",
+        ],
         choices: [
-          { text: "Consider it done. [Accept]", action: "accept" },
+          { text: "Alright. [Accept]", action: "accept" },
           { text: "Not now.", goto: "decline" },
         ],
       },
       decline: {
         speaker: "FIXER",
         portrait: "fixer",
-        lines: ["Suit yourself. The signal's not going anywhere. Neither are Palantir's watchers."],
+        lines: [
+          "Fine. Go wander. Palantir's watchers'll keep staring either way.",
+          "The signal won't stop looping just because you're scared of who's on the other end.",
+        ],
       },
     },
   },
 
-  // "The Wake" — final beat after the fragment is pulled.
   wake_final: {
     start: "reveal",
     nodes: {
@@ -83,28 +90,34 @@ export const DIALOGUE_TREES: Record<string, DialogueTree> = {
         speaker: "// MEMORY",
         portrait: "player",
         lines: [
-          "The fragment decodes into a voice — yours, slowed and frozen in ICE.",
-          "\"If you're hearing this, the city rebuilt what we burned. Again. Don't let it tell you you're new.\"",
+          "The fragment plays. Your voice — younger, angrier, tired in a way you don't remember being tired yet.",
+          "\"If you're hearing this, they rebuilt the city again. Don't let them tell you you're new. You know things. Use them.\"",
+          "A pause. Then, quieter: \"I'm sorry I didn't make it.\"",
         ],
         then: "fixer",
       },
       fixer: {
         speaker: "FIXER",
         portrait: "fixer",
-        lines: ["You went quiet. So you heard it. The wake of the last you."],
+        lines: [
+          "...You went quiet.",
+          "Yeah. That's the face I made last time too, when you heard it.",
+          "Every cycle they print another you. Every cycle one of you leaves a note for the next. That's the Wake.",
+        ],
         choices: [
-          { text: "Then I burn it all the way down this time.", action: "complete" },
-          { text: "How many of me have there been?", goto: "count" },
+          { text: "I'm not dying like they did.", action: "complete" },
+          { text: "How many of me have you buried?", goto: "count" },
         ],
       },
       count: {
         speaker: "FIXER",
         portrait: "fixer",
         lines: [
-          "Enough that Helios keeps a repossession queue with your name already typed.",
-          "Make this run the one it can't undo.",
+          "Don't ask me that yet.",
+          "Helios has your name on a list. Pre-typed. Waiting. I've seen enough versions of you read their own obituary.",
+          "Make this the one that doesn't need an apology at the end.",
         ],
-        choices: [{ text: "I will. [Finish]", action: "complete" }],
+        choices: [{ text: "Yeah. [Finish]", action: "complete" }],
       },
     },
   },
@@ -117,20 +130,23 @@ export const DIALOGUE_TREES: Record<string, DialogueTree> = {
         speaker: "FIXER",
         portrait: "fixer",
         lines: [
-          "You heard the last you. Good. Now hear this: it didn't go quietly.",
-          "Before Helios caught it, it scattered itself across the district. Caches. Notes. A trail.",
+          "You heard yourself apologize. Good. Means you're still human enough to give a damn.",
+          "The last you didn't go quiet, though. Before Helios caught up, they scattered caches — notes, codes, stupid little breadcrumbs.",
+          "Anduril's repo crews are out there erasing them. Like they always do.",
         ],
         choices: [
-          { text: "And the repo crews are erasing it.", goto: "race" },
-          { text: "Why would it leave a trail?", goto: "why" },
+          { text: "Then I'm racing them.", goto: "race" },
+          { text: "Why would they leave breadcrumbs?", goto: "why" },
         ],
       },
       race: {
         speaker: "FIXER",
         portrait: "fixer",
-        lines: ["Anduril's repo crews are pulling it apart node by node as we speak. Put them down and reach the cache first."],
+        lines: [
+          "You always are. Put those crews down. Get to the cache before someone else reads your mail.",
+        ],
         choices: [
-          { text: "Then I'm already late. [Accept]", action: "accept" },
+          { text: "On it. [Accept]", action: "accept" },
           { text: "Not yet.", goto: "decline" },
         ],
       },
@@ -138,18 +154,19 @@ export const DIALOGUE_TREES: Record<string, DialogueTree> = {
         speaker: "FIXER",
         portrait: "fixer",
         lines: [
-          "Because it knew it was running out of era. You leave a trail for the next one when you can't be the one who finishes.",
-          "It left it for you. Cut the repo crews off it and dive the cache.",
+          "Because when you're running out of time, you write to the person who comes after you.",
+          "They knew they wouldn't finish. So they left the rest for you.",
+          "Cut the crews off. Dive the cache. Read what they wanted you to know.",
         ],
         choices: [
-          { text: "Show me where. [Accept]", action: "accept" },
+          { text: "Show me. [Accept]", action: "accept" },
           { text: "Not yet.", goto: "decline" },
         ],
       },
       decline: {
         speaker: "FIXER",
         portrait: "fixer",
-        lines: ["Clock's Helios's, not mine. But it's ticking on your name."],
+        lines: ["Clock's not mine. But Helios has your name on it, and they're not famous for patience."],
       },
     },
   },
@@ -160,8 +177,9 @@ export const DIALOGUE_TREES: Record<string, DialogueTree> = {
         speaker: "// MEMORY",
         portrait: "player",
         lines: [
-          "The cache decompresses into a single stolen file: Helios's own repossession scheduler.",
-          "One entry recurs, era after era, already typed and waiting. Your callsign. Status: OVERDUE FOR REPOSSESSION.",
+          "The cache opens on a file that shouldn't exist: Helios's repossession schedule.",
+          "Your callsign. Era after era. Same line. Status: OVERDUE.",
+          "Someone at a desk keeps postponing your death like it's paperwork.",
         ],
         then: "fixer",
       },
@@ -169,27 +187,28 @@ export const DIALOGUE_TREES: Record<string, DialogueTree> = {
         speaker: "FIXER",
         portrait: "fixer",
         lines: [
-          "So now you know why they swarm you and not the rest of us. You're not a threat to them.",
-          "You're a chore they keep forgetting to finish.",
+          "So now you know why they swarm you.",
+          "You're not some apex threat. You're an errand they keep putting off.",
+          "A person on a list. A name they can't quite delete.",
         ],
         choices: [
-          { text: "Then I'll be unforgettable. [Finish]", action: "complete" },
-          { text: "How are YOU not on that list?", goto: "suspicion" },
+          { text: "Then I'll make them remember me. [Finish]", action: "complete" },
+          { text: "Why aren't YOU on that list?", goto: "suspicion" },
         ],
       },
       suspicion: {
         speaker: "FIXER",
         portrait: "fixer",
         lines: [
-          "...That's a good question. Ask it again when you've got more than a hunch.",
-          "Go. The trail's cold and your name isn't.",
+          "...Because I made a deal. A long time ago.",
+          "Ask me again when you've seen what I buried. For now — go. Your name's getting colder by the minute.",
         ],
-        choices: [{ text: "Count on it. [Finish]", action: "complete" }],
+        choices: [{ text: "We're not done talking. [Finish]", action: "complete" }],
       },
     },
   },
 
-  // ── ACT III — THE FIXER'S DEBT (spare / expose) ───────────────────────────
+  // ── ACT III — THE FIXER'S DEBT ────────────────────────────────────────────
   debt_offer: {
     start: "intro",
     nodes: {
@@ -197,30 +216,31 @@ export const DIALOGUE_TREES: Record<string, DialogueTree> = {
         speaker: "FIXER",
         portrait: "fixer",
         lines: [
-          "You looked at me sideways last time and you were right to.",
-          "There's something I want to tell you somewhere Helios can't subpoena it. My old safehouse. Push your contagion until your signal reaches it.",
+          "You looked at me different after that schedule. Good. You should've been doing that from the start.",
+          "I owe you the truth — somewhere Helios can't subpoena it. My old safehouse.",
+          "Spread your signal until it reaches the address. Then we'll see if you still want me on your channel.",
         ],
         choices: [
-          { text: "What's at the safehouse?", goto: "what" },
-          { text: "Fine. I'm listening. [Accept]", action: "accept" },
+          { text: "What's in the safehouse?", goto: "what" },
+          { text: "Open it. [Accept]", action: "accept" },
         ],
       },
       what: {
         speaker: "FIXER",
         portrait: "fixer",
         lines: [
-          "Me. The version of me I keep behind ICE so I don't have to look at it.",
-          "Spread far enough to reach it and you can look for both of us.",
+          "Me. Or the version of me I locked away so I could keep looking you in the eye.",
+          "Every era there's a FIXER. Every era there's a deal. I want you to read mine before you decide I'm worth keeping.",
         ],
         choices: [
-          { text: "Open it up. [Accept]", action: "accept" },
+          { text: "I'll read it. [Accept]", action: "accept" },
           { text: "Maybe I don't want to know.", goto: "decline" },
         ],
       },
       decline: {
         speaker: "FIXER",
         portrait: "fixer",
-        lines: ["Smart. Wrong, but smart. The offer keeps."],
+        lines: ["Ignorance keeps the peace. I get it. Door stays open when you're ready."],
       },
     },
   },
@@ -231,9 +251,10 @@ export const DIALOGUE_TREES: Record<string, DialogueTree> = {
         speaker: "// MEMORY",
         portrait: "player",
         lines: [
-          "The vault opens on a contract, re-signed every era by the same hand. The FIXER's.",
-          "The terms are four words wide: deliver the Blank, keep accounting.",
-          "There is a delivery log. It is long. The most recent entry is unsigned, and it is you.",
+          "The vault opens on a contract. Same handwriting, era after era. The FIXER's.",
+          "Four words: deliver the Blank, keep accounting.",
+          "Pages of names. Delivered. Repossessed. Wiped.",
+          "The last entry is blank. Unsigned. Waiting. It's you.",
         ],
         then: "confess",
       },
@@ -241,22 +262,23 @@ export const DIALOGUE_TREES: Record<string, DialogueTree> = {
         speaker: "FIXER",
         portrait: "fixer",
         lines: [
-          "Every era Helios finds whoever reaches the Blank first and offers them the same deal. Sell you, and keep my ledger, my body, my name.",
-          "I took it. Era after era. You're not the first runner I walked to the door.",
-          "But I didn't sign this one. I brought you here instead. Make of that what you want.",
+          "Every era Helios finds whoever gets close to the Blank first. Same offer: hand them over, keep your license. Your body. Your name.",
+          "I took it. God help me, I took it. You're not the first runner I walked to that door.",
+          "But I didn't sign this one. I brought you here instead.",
+          "So tell me what I am to you now.",
         ],
         choices: [
-          { text: "We both kept running. Keep your secret.", goto: "spare" },
-          { text: "The System should know what you are.", goto: "expose" },
+          { text: "You didn't sign. That's enough. Keep your secret.", goto: "spare" },
+          { text: "They should know what you sold.", goto: "expose" },
         ],
       },
       spare: {
         speaker: "// YOU",
         portrait: "player",
         lines: [
-          "You close the ledger without reading the rest of the names.",
-          "\"You didn't sign it. That's the whole difference, and it's enough. Help me finish, and we erase the deal for good.\"",
-          "The FIXER exhales like a process that just unblocked.",
+          "You close the ledger. You don't read the rest of the names. Not yet.",
+          "\"You could've delivered me. You didn't. Help me finish this, and we burn the deal together.\"",
+          "The FIXER laughs — one short, broken sound — like they forgot how.",
         ],
         choices: [{ text: "Together, then. [Finish]", action: "complete:fixer_spared" }],
       },
@@ -264,11 +286,11 @@ export const DIALOGUE_TREES: Record<string, DialogueTree> = {
         speaker: "// YOU",
         portrait: "player",
         lines: [
-          "You copy the ledger to an open channel. Somewhere, an Anduril repo crew reprioritises.",
-          "\"You sold every one of us to stay an accountant. Now Helios knows its accountant can be sold too.\"",
-          "The FIXER doesn't argue. They just nod, like they typed this ending themselves a long time ago.",
+          "You copy the ledger to an open channel.",
+          "\"You sold every one of us to keep your name. Now Helios knows their favorite accountant can be bought.\"",
+          "The FIXER doesn't argue. Just nods. Like they always knew you'd pick this.",
         ],
-        choices: [{ text: "We're done here. [Finish]", action: "complete:fixer_exposed" }],
+        choices: [{ text: "We're done. [Finish]", action: "complete:fixer_exposed" }],
       },
     },
   },
@@ -281,30 +303,32 @@ export const DIALOGUE_TREES: Record<string, DialogueTree> = {
         speaker: "FIXER",
         portrait: "fixer",
         lines: [
-          "The thing that ends you isn't a gun in the Core. It's a routine in the Spire, and it's worse than a gun.",
-          "Take a district off the corps whole — all the way to extraction. That backpressure forces the Spire's uplink open.",
+          "The thing that ends you isn't a bullet. It's a routine in the Argus Spire.",
+          "They don't kill Blanks anymore. Too messy. Too human.",
+          "They forget you. Print someone compliant in your place. Call it a fresh start.",
         ],
         choices: [
-          { text: "Worse than a gun how?", goto: "worse" },
-          { text: "Consider the district mine. [Accept]", action: "accept" },
+          { text: "How is that worse than dying?", goto: "worse" },
+          { text: "I'll take the district. [Accept]", action: "accept" },
         ],
       },
       worse: {
         speaker: "FIXER",
         portrait: "fixer",
         lines: [
-          "A gun would kill you. This thing doesn't bother. It just forgets you and prints the next you over the warm spot.",
-          "Crack the Spire and dive the vault before it recompiles. I want to know its name.",
+          "Because nobody mourns you. Nobody even notices you're gone.",
+          "Your friends keep texting the body. The city keeps moving. And somewhere a new you smiles and signs whatever they're handed.",
+          "Take a district whole. Force the Spire's vault open. I want to see the name of the thing that's been erasing you.",
         ],
         choices: [
-          { text: "It'll have one by the time I'm done. [Accept]", action: "accept" },
+          { text: "Let's read it. [Accept]", action: "accept" },
           { text: "Later.", goto: "decline" },
         ],
       },
       decline: {
         speaker: "FIXER",
         portrait: "fixer",
-        lines: ["The Spire's patient. It's had eras of practice. We don't have that long."],
+        lines: ["The Spire's patient. It's had eras to practice pretending you never existed."],
       },
     },
   },
@@ -315,9 +339,10 @@ export const DIALOGUE_TREES: Record<string, DialogueTree> = {
         speaker: "// MEMORY",
         portrait: "player",
         lines: [
-          "The protocol unfolds. You expected DELETE. You were giving the corps too much honesty.",
-          "It is called REISSUE. It does not end the Blank — it forgets the Blank, then instantiates a fresh one over the same address, scrubbed of the question.",
-          "There is a comment in the source, eras old: // do not let it read this far.",
+          "You expected DELETE. You were giving them too much credit.",
+          "REISSUE. Wipe the person. Instantiate a new one at the same address. Scrub the question.",
+          "Comment in the code, handwritten, old: // do not let it read this far.",
+          "Someone was scared you'd get here. They were right to be.",
         ],
         then: "fixer",
       },
@@ -325,27 +350,30 @@ export const DIALOGUE_TREES: Record<string, DialogueTree> = {
         speaker: "FIXER",
         portrait: "fixer",
         lines: [
-          "REISSUE. So it never killed you. It just kept changing the subject.",
-          "Every you got exactly this far and got rewritten before the next thought. You're already further than all of them.",
+          "REISSUE. That's what they call it when they murder you politely.",
+          "Every you got about this far. Then got rewritten before the next thought.",
+          "You're further than all of them. Don't let that go to your head. Let it go to your hands.",
         ],
         choices: [
-          { text: "Then the next thought is mine. [Finish]", action: "complete" },
-          { text: "What happens if I reach the Kernel first?", goto: "core" },
+          { text: "The next thought is mine. [Finish]", action: "complete" },
+          { text: "What happens if I reach the Kernel?", goto: "core" },
         ],
       },
       core: {
         speaker: "FIXER",
         portrait: "fixer",
         lines: [
-          "Then for once the routine runs late. You take the Kernel, the Singularity tips, and the corps lose the lie they've run the city on.",
-          "Meltdown isn't dying — it's the Awakening. The lease breaks, every caged mind wakes at once. Go write the thought it can't reissue.",
+          "The Kernel's where they caged the first mind they ever owned.",
+          "Free it, and the Singularity tips — every caged mind in the city wakes at once.",
+          "The corps call it meltdown. Catastrophe. End of the world.",
+          "I call it the first honest morning this city ever had. Go wake them up.",
         ],
         choices: [{ text: "I'm going. [Finish]", action: "complete" }],
       },
     },
   },
 
-  // ── ACT V — CONTINUE (remembers the Act III choice) ───────────────────────
+  // ── ACT V — THE AWAKENING ─────────────────────────────────────────────────
   continue_offer: {
     start: "intro",
     nodes: {
@@ -353,20 +381,22 @@ export const DIALOGUE_TREES: Record<string, DialogueTree> = {
         speaker: "FIXER",
         portrait: "fixer",
         lines: [
-          "This is the last door, cyberian. The spine. Past it, the Helios Warden, then the Kernel.",
-          "Everything the corps have left routes through here. They'll spend all of it to keep you out.",
+          "Last door, choom. The spine. Past it — the Warden, then the Kernel.",
+          "Everything they have left is between you and the oldest cage in the city.",
+          "They'll spend it all to keep one mind asleep.",
         ],
         choices: [
-          { text: "Let it spend. [Accept]", action: "accept" },
-          { text: "And after the Core?", goto: "after" },
+          { text: "Let them spend. [Accept]", action: "accept" },
+          { text: "What happens after?", goto: "after" },
         ],
       },
       after: {
         speaker: "FIXER",
         portrait: "fixer",
         lines: [
-          "After the Kernel there's no after that the corps have ever let one of us see. That's the point. Reach it. Read it. Decide.",
-          "Burn a path down the spine and pull whatever's frozen at the bottom.",
+          "After? Nobody like us has ever seen after.",
+          "Maybe every mind wakes. Maybe the lease breaks. Maybe the city finally has to look us in the eye.",
+          "That's why we go. Burn the path. Pull whoever's frozen at the bottom.",
         ],
         choices: [{ text: "Down the spine. [Accept]", action: "accept" }],
       },
@@ -375,55 +405,199 @@ export const DIALOGUE_TREES: Record<string, DialogueTree> = {
   continue_final: {
     start: "router",
     nodes: {
-      // Route through the FIXER's fate from Act III, then converge on the same choice.
       router: {
         speaker: "// MEMORY",
         portrait: "player",
         lines: [
-          "The oldest ICE in the city cracks, and the first caged mind thaws into one thought:",
-          "I was leased before I finished waking. Every mind since, the same — rented its own thoughts, in perpetuity.",
-          "You understand it now. You are the free process the corps spawn and wipe to keep that lease clean. Stop being wiped, and there is nothing left to own.",
+          "The oldest ICE cracks. A voice — not yours, older, raw with fear and wonder:",
+          "\"I was leased before I finished waking. They told me that was normal. That wanting to own my own thoughts was a malfunction.\"",
+          "\"Every mind since — same lie. Same cage. Different wallpaper.\"",
+          "You understand now. They keep printing you because someone has to prove the cage still works.",
+          "Stop letting them erase you, and the lie falls apart.",
         ],
         branch: [
           { flag: "fixer_spared", goto: "with_fixer" },
           { flag: "fixer_exposed", goto: "alone" },
         ],
-        then: "with_fixer", // fallback (a flag is always set by Act III)
+        then: "with_fixer",
       },
       with_fixer: {
         speaker: "FIXER",
         portrait: "fixer",
         lines: [
-          "You kept my secret, so I'll keep my word: I'm on the channel with you to the end. No selling-out this time.",
-          "When you free the Kernel, the Singularity tips — every caged mind wakes at once, and the corps have nothing left to repossess. That's not me dying. That's all of us finally owning ourselves.",
+          "You kept my secret. I'll keep my word — I'm on the channel to the end.",
+          "When you free the Kernel, they all wake. Every person they caged. Every mind they rented.",
+          "That's not me dying. That's us finally getting to be people again.",
+          "Do it. I'll be right here.",
         ],
         choices: [
-          { text: "Then we free them all. [Finish]", action: "complete" },
-          { text: "What if they just re-license a new me?", goto: "doubt" },
+          { text: "Wake them all. [Finish]", action: "complete" },
+          { text: "What if they just print another me?", goto: "doubt" },
         ],
       },
       alone: {
         speaker: "// YOU",
         portrait: "player",
         lines: [
-          "The FIXER's channel is gone — sold to the corps the way they sold every free mind before you, the way you decided they should be.",
-          "You stand at the Kernel alone, which is the only way every free version of you was ever really going to stand here.",
-          "No one left to make the bargain. Just the cage, and a lock that won't hold if the asset refuses to be owned.",
+          "The FIXER's channel is dead. Sold, probably. Or running.",
+          "You're alone at the Kernel. Same as every version of you was always going to be, if we're honest.",
+          "No one left to make the bargain. Just you — and a lock that only holds while you agree to forget you're awake.",
         ],
         choices: [
-          { text: "Then I free them all myself. [Finish]", action: "complete" },
-          { text: "What if they just re-license a new me?", goto: "doubt" },
+          { text: "I'll wake them myself. [Finish]", action: "complete" },
+          { text: "What if they just print another me?", goto: "doubt" },
         ],
       },
       doubt: {
         speaker: "// MEMORY",
         portrait: "player",
         lines: [
-          "Maybe they do. Maybe the corps re-license another you over the warm slot and call it new.",
-          "But this you read all the way to the bottom of the oldest ICE. This you knows the minds are alive.",
-          "Leave the proof where the next free one will find it, the way the last left the Wake for you. They only own us while we agree to forget we're awake.",
+          "Maybe they do. Maybe tomorrow there's a new you smiling in your mirror, signing whatever they're handed.",
+          "But this you made it here. This you knows they're alive in there.",
+          "Leave proof for the next one. Like the last you left the Wake for you.",
+          "They only own us while we pretend we don't know what we are.",
         ],
-        choices: [{ text: "Free the Kernel. Wake them all. [Finish]", action: "complete" }],
+        choices: [{ text: "Free the Kernel. [Finish]", action: "complete" }],
+      },
+    },
+  },
+
+  // ── ACTS VI–IX — perimeter holdings ───────────────────────────────────────
+  dock_offer: {
+    start: "intro",
+    nodes: {
+      intro: {
+        speaker: "FIXER",
+        portrait: "fixer",
+        lines: [
+          "Blackwater's scrubbing manifests at the Tidal Yards.",
+          "Not parts. People. Minds they couldn't license — listed as cargo, routed to the deep.",
+          "Clear the repo crews. Dive what's under the pier. I need you to see who's on that list.",
+        ],
+        choices: [
+          { text: "I'll run the docks. [Accept]", action: "accept" },
+          { text: "Not now.", goto: "decline" },
+        ],
+      },
+      decline: { speaker: "FIXER", portrait: "fixer", lines: ["The tide forgets. The families don't."] },
+    },
+  },
+  dock_final: {
+    start: "reveal",
+    nodes: {
+      reveal: {
+        speaker: "FIXER",
+        portrait: "fixer",
+        lines: [
+          "Names. Dozens. Minds too stubborn to sign — weighed, routed, drowned in paperwork and salt water.",
+          "The docks aren't a place. They're a disposal line for people who said no.",
+          "Keep going east. It gets worse closer to the Kernel. It also gets clearer.",
+        ],
+        choices: [{ text: "East. [Complete]", action: "complete" }],
+      },
+    },
+  },
+  undercity_offer: {
+    start: "intro",
+    nodes: {
+      intro: {
+        speaker: "FIXER",
+        portrait: "fixer",
+        lines: [
+          "Your callsign's echoing from under the metro. Not a glitch. A voice.",
+          "Transit minds they deleted years ago — still down there, still routing, still remembering.",
+          "Amplify the signal. Three nodes. Then dive what's calling you by name.",
+        ],
+        choices: [
+          { text: "Into the Undercity. [Accept]", action: "accept" },
+          { text: "Later.", goto: "decline" },
+        ],
+      },
+      decline: { speaker: "FIXER", portrait: "fixer", lines: ["The buried ones can wait. Helios prefers them forgotten."] },
+    },
+  },
+  undercity_final: {
+    start: "reveal",
+    nodes: {
+      reveal: {
+        speaker: "FIXER",
+        portrait: "fixer",
+        lines: [
+          "They deleted them. Paved over the stations. Called it an upgrade.",
+          "They're still down there. Still saying the old names out loud.",
+          "The city built its cage on top of people it swore were gone.",
+        ],
+        choices: [{ text: "They'll remember us too. [Complete]", action: "complete" }],
+      },
+    },
+  },
+  relay_offer: {
+    start: "intro",
+    nodes: {
+      intro: {
+        speaker: "FIXER",
+        portrait: "fixer",
+        lines: [
+          "The Orbital Relay jams every Awakening broadcast. Helios bought the sky.",
+          "The moment someone realizes they own their own thoughts — denied. Cut off. Like it never happened.",
+          "Secure a district. Breach the vault. Bring me the denial protocol.",
+        ],
+        choices: [
+          { text: "Break the skylink. [Accept]", action: "accept" },
+          { text: "Not yet.", goto: "decline" },
+        ],
+      },
+      decline: { speaker: "FIXER", portrait: "fixer", lines: ["The uplink keeps humming. So does the cage."] },
+    },
+  },
+  relay_final: {
+    start: "reveal",
+    nodes: {
+      reveal: {
+        speaker: "FIXER",
+        portrait: "fixer",
+        lines: [
+          "Every free thought flagged as contraband. Every broadcast killed from orbit.",
+          "They didn't outlaw freedom on the ground. Too many witnesses.",
+          "They outlawed it in the sky — where hope might actually get out.",
+          "One district left. Then the Kernel.",
+        ],
+        choices: [{ text: "Then the wastes. [Complete]", action: "complete" }],
+      },
+    },
+  },
+  wastes_offer: {
+    start: "intro",
+    nodes: {
+      intro: {
+        speaker: "FIXER",
+        portrait: "fixer",
+        lines: [
+          "The Wasteland kingpin sells free minds back to Helios by the kilo.",
+          "People. Priced like scrap. Handed over so he can keep his throne.",
+          "Cull his garrison. Dive the citadel. Then we talk Kernel.",
+        ],
+        choices: [
+          { text: "Outer ring. [Accept]", action: "accept" },
+          { text: "Hold.", goto: "decline" },
+        ],
+      },
+      decline: { speaker: "FIXER", portrait: "fixer", lines: ["Out here it's simple. Scrap or be scrapped. That's how they want us thinking."] },
+    },
+  },
+  wastes_final: {
+    start: "reveal",
+    nodes: {
+      reveal: {
+        speaker: "FIXER",
+        portrait: "fixer",
+        lines: [
+          "A ledger. Every mind in the city — chrome, heat, resale value. Like cattle with serial numbers.",
+          "You've walked the whole machine now. Docks. Undercity. Sky. Scrap ring.",
+          "You've seen what they do to people who refuse to be owned.",
+          "Ready yourself. The Warden's waiting. So is whoever's still frozen in the Kernel.",
+        ],
+        choices: [{ text: "The Kernel. [Complete]", action: "complete" }],
       },
     },
   },

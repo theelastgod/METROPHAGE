@@ -1,16 +1,16 @@
 import Phaser from "phaser";
 import { installUiCamera } from "../render/cameras";
-import { TILE, TILESET_PX, COLORS, BULLET, ENEMY_BULLET } from "../config";
+import { TILE, COLORS, BULLET, ENEMY_BULLET } from "../config";
 import { getClass, ClassDef, PrimaryDef } from "../game/classes";
 import { ENEMY_TIERS, EnemyHost } from "../game/enemies";
 import { DiveDef, DiveResult } from "../game/dives";
 import { PLAYER_CUSTOM_KEY } from "../game/customization";
-import { TILESET_KEY, GLOW_KEY } from "../assets/manifest";
+import { GLOW_KEY } from "../assets/manifest";
 import Player, { PlayerInput } from "../entities/Player";
 import Bullets from "../entities/Bullets";
 import TuringCop from "../entities/TuringCop";
 import NeonPipeline from "../render/NeonPipeline";
-import { applyTileVariants } from "../render/tileVariants";
+import { createTerrainLayer } from "../render/terrainLayer";
 import { TILE_VARIANTS } from "../world/district";
 import { juiceShake, juiceFlash } from "../systems/juice";
 import Synth from "../audio/Synth";
@@ -126,10 +126,7 @@ export default class DiveScene extends Phaser.Scene implements EnemyHost {
     ];
     for (const [x, y] of blocks) grid[y][x] = TILE_WALL;
 
-    const map = this.make.tilemap({ data: grid, tileWidth: TILE, tileHeight: TILE });
-    const tileset = map.addTilesetImage(TILESET_KEY, TILESET_KEY, TILESET_PX, TILESET_PX)!;
-    this.wallLayer = map.createLayer(0, tileset, 0, 0)!;
-    applyTileVariants(this.wallLayer); // scatter real-art tile variants (render-only)
+    this.wallLayer = createTerrainLayer(this, grid, { profile: "dungeon", accent: 0x29e7ff });
     this.wallLayer.setCollision(TILE_VARIANTS[TILE_WALL]); // base wall + its roof variant
     this.physics.world.setBounds(0, 0, AW * TILE, AH * TILE);
     this.cameras.main.setBackgroundColor(COLORS.bgVoid);

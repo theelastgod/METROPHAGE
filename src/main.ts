@@ -1,17 +1,22 @@
 import Phaser from "phaser";
 import { VIEW_W, VIEW_H, COLORS } from "./config";
+import { applyRenderTier } from "./render/renderTier";
 import BootScene from "./scenes/BootScene";
 import SelectScene from "./scenes/SelectScene";
 import CustomizeScene from "./scenes/CustomizeScene";
 import Prologue from "./scenes/Prologue";
 import OnlineScene from "./scenes/OnlineScene";
+
+
 import { getMetroStatus } from "./economy/metro";
 import { mountMetroPanel } from "./ui/MetroPanel";
 import { getOnlinePlayer } from "./economy/session";
+import { randomCustomization } from "./game/customization";
 
 // METROPHAGE — Path A: one server-authoritative world; personal campaign per player.
+applyRenderTier();
 const config: Phaser.Types.Core.GameConfig = {
-  type: Phaser.AUTO,
+  type: Phaser.WEBGL,
   parent: "game-root",
   backgroundColor: COLORS.bgVoid,
   pixelArt: true,
@@ -33,6 +38,9 @@ const config: Phaser.Types.Core.GameConfig = {
       debug: false,
     },
   },
+  input: {
+    gamepad: true,
+  },
   scene: [BootScene, SelectScene, CustomizeScene, Prologue, OnlineScene],
 };
 
@@ -43,7 +51,26 @@ mountMetroPanel(getOnlinePlayer);
 
 // Dev-only handle for debugging/verification in the browser console.
 if (import.meta.env.DEV) {
-  (window as unknown as { __game: Phaser.Game }).__game = game;
+  (window as unknown as { __game: Phaser.Game; __enterCity: () => void }).__game = game;
+  const w = window as unknown as {
+    __game: Phaser.Game;
+    __enterCity: () => void;
+    __playtest: { offline: () => void; drill: () => void };
+  };
+  w.__enterCity = () => {
+    if (!game.registry.get("classId")) game.registry.set("classId", "metrophage");
+    if (!game.registry.get("customization")) game.registry.set("customization", randomCustomization("metrophage"));
+    game.scene.start("Online", { zone: "safe" });
+  };
+  w.__playtest = {
+    offline: () => {
+      game.registry.set("offlinePlay", true);
+      game.registry.remove("characterLocked");
+      game.registry.remove("walletAddress");
+      game.scene.start("Select");
+    },
+    drill: () => game.scene.start("Online", { zone: "tutorial", tutorialMode: "quick" }),
+  };
   // Surface the $METRO gate state so it's obvious whether the on-chain layer is live.
   const m = getMetroStatus();
   console.info(

@@ -1,7 +1,9 @@
 import Phaser from "phaser";
-import { COLORS, UI_SCALE, uiDim, uiFont } from "../config";
+import { COLORS, UI_SCALE, uiDim } from "../config";
 import { UI_FRAME_KEY, UI_GUN_KEY } from "../assets/manifest";
 import { fmtMetro } from "../economy/metro";
+import { drawHudPanel, drawPremiumBar } from "./panelChrome";
+import { displayFont, hudFont } from "./typography";
 
 export interface HudState {
   hp: number;
@@ -57,8 +59,8 @@ export default class Hud {
   private readonly px = uiDim(14);
   private readonly py = uiDim(14);
   private readonly pw = uiDim(250);
-  private readonly ph = uiDim(84);
-  private readonly barX = uiDim(92);
+  private readonly ph = uiDim(92);
+  private readonly barX = uiDim(96);
   private readonly barW = uiDim(150);
 
   constructor(scene: Phaser.Scene) {
@@ -66,63 +68,36 @@ export default class Hud {
 
     const label = (y: number, color: string, sizePx = 12) =>
       scene.add
-        .text(this.px + uiDim(8), y, "", {
-          fontFamily: "Courier New, monospace",
-          fontSize: uiFont(sizePx),
-          color,
-        })
+        .text(this.px + uiDim(8), y, "", hudFont(sizePx, { color }))
         .setScrollFactor(0)
         .setDepth(1001);
 
-    this.hpText = label(this.py + uiDim(12), "#39ff88");
-    this.heatText = label(this.py + uiDim(34), "#ff2bd6");
-    this.singText = label(this.py + uiDim(56), "#00e5ff");
-    this.abilityText = label(this.py + this.ph + uiDim(6), "#9aa3b2", 11);
-    this.ultText = label(this.py + this.ph + uiDim(22), "#9aa3b2", 11);
-    this.overdriveText = label(this.py + this.ph + uiDim(38), "#f7ff3c", 12);
-    this.skillText = label(this.py + this.ph + uiDim(54), "#9aa3b2", 11);
-    this.consumeText = label(this.py + this.ph + uiDim(70), "#9aa3b2", 10);
+    this.hpText = label(this.py + uiDim(14), "#39ff88");
+    this.heatText = label(this.py + uiDim(38), "#ff2bd6");
+    this.singText = label(this.py + uiDim(62), "#00e5ff");
+    this.abilityText = label(this.py + this.ph + uiDim(8), "#9aa3b2", 11);
+    this.ultText = label(this.py + this.ph + uiDim(26), "#9aa3b2", 11);
+    this.overdriveText = label(this.py + this.ph + uiDim(44), "#f7ff3c", 12);
+    this.skillText = label(this.py + this.ph + uiDim(62), "#9aa3b2", 11);
+    this.consumeText = label(this.py + this.ph + uiDim(80), "#9aa3b2", 10);
     this.metaText = scene.add
-      .text(this.px + this.pw - uiDim(10), this.py + uiDim(8), "", {
-        fontFamily: "Courier New, monospace",
-        fontSize: uiFont(11),
-        color: "#00e5ff",
-        align: "right",
-      })
+      .text(this.px + this.pw - uiDim(10), this.py + uiDim(8), "", hudFont(11, { color: "#00e5ff", align: "right" }))
       .setOrigin(1, 0)
       .setScrollFactor(0)
       .setDepth(1001);
-    // Player callsign — top-right corner of the screen.
     this.callsignText = scene.add
-      .text(scene.scale.width - uiDim(12), uiDim(10), "", {
-        fontFamily: "Courier New, monospace",
-        fontSize: uiFont(13),
-        color: "#eafdff",
-        fontStyle: "bold",
-        align: "right",
-      })
+      .text(scene.scale.width - uiDim(12), uiDim(10), "", displayFont(13, { color: "#eafdff", fontStyle: "bold", align: "right" }))
       .setOrigin(1, 0)
       .setScrollFactor(0)
-      .setDepth(1001);
-    // Contract tracker, top-center.
+      .setDepth(1001)
+      .setShadow(0, 0, "#00e5ff", 6, true, true);
     this.contractText = scene.add
-      .text(scene.scale.width / 2, uiDim(12), "", {
-        fontFamily: "Courier New, monospace",
-        fontSize: uiFont(12),
-        color: "#f7ff3c",
-        align: "center",
-      })
+      .text(scene.scale.width / 2, uiDim(14), "", hudFont(12, { color: "#f7ff3c", align: "center" }))
       .setOrigin(0.5, 0)
       .setScrollFactor(0)
       .setDepth(1001);
-    // Active quest tracker, just under the contract line.
     this.questText = scene.add
-      .text(scene.scale.width / 2, uiDim(28), "", {
-        fontFamily: "Courier New, monospace",
-        fontSize: uiFont(11),
-        color: "#8a5cff",
-        align: "center",
-      })
+      .text(scene.scale.width / 2, uiDim(34), "", hudFont(11, { color: "#8a5cff", align: "center" }))
       .setOrigin(0.5, 0)
       .setScrollFactor(0)
       .setDepth(1001);
@@ -143,34 +118,31 @@ export default class Hud {
     const g = this.g;
     g.clear();
 
-    g.fillStyle(0x07061a, 0.72).fillRect(this.px, this.py, this.pw, this.ph);
-    g.lineStyle(uiDim(2), COLORS.neonCyan, 0.85).strokeRect(this.px, this.py, this.pw, this.ph);
-    g.lineStyle(uiDim(2), COLORS.neonMagenta, 0.9);
-    g.beginPath();
-    g.moveTo(this.px, this.py + uiDim(12));
-    g.lineTo(this.px, this.py);
-    g.lineTo(this.px + uiDim(12), this.py);
-    g.strokePath();
+    drawHudPanel(g, this.px, this.py, this.pw, this.ph);
 
     const hpNorm = s.hpMax > 0 ? Math.max(0, s.hp / s.hpMax) : 0;
-    this.bar(this.py + uiDim(14), hpNorm, hpNorm > 0.3 ? COLORS.hp : COLORS.hpLow);
+    drawPremiumBar(g, this.barX, this.py + uiDim(16), this.barW, uiDim(10), hpNorm, hpNorm > 0.3 ? COLORS.hp : COLORS.hpLow);
     // shield overlay on the HP bar (cyan), only when the player has shields
     if (s.shieldMax > 0) {
       const w = this.barW - 2;
       this.g.fillStyle(COLORS.neonCyan, 0.9).fillRect(
         this.barX + 1,
-        this.py + uiDim(14) + 1,
+        this.py + uiDim(16) + 1,
         w * Phaser.Math.Clamp(s.shield / s.shieldMax, 0, 1),
         3,
       );
     }
-    this.bar(
-      this.py + uiDim(36),
+    drawPremiumBar(
+      g,
+      this.barX,
+      this.py + uiDim(40),
+      this.barW,
+      uiDim(10),
       s.heatNorm,
       s.overclock ? COLORS.neonYellow : COLORS.neonMagenta,
       true,
     );
-    this.bar(this.py + uiDim(58), s.contagionNorm, COLORS.singularity);
+    drawPremiumBar(g, this.barX, this.py + uiDim(64), this.barW, uiDim(10), s.contagionNorm, COLORS.singularity);
 
     this.hpText.setText(`HP ${Math.ceil(s.hp)}`);
     this.heatText
@@ -197,8 +169,7 @@ export default class Hud {
     );
 
     this.callsignText.setText(s.callsign ? `▸ ${s.callsign}` : "").setColor(hex(s.classColor));
-    const xpLine = s.xpNext > 0 ? `XP ${s.xpInto}/${s.xpNext}` : "XP ▲MAX";
-    this.metaText.setText(`LV ${s.level}   ₵ ${s.credits}   ◈ ${fmtMetro(s.metro)}\n${xpLine}`);
+    this.metaText.setText(`LV ${s.level}   ₵ ${s.credits.toLocaleString()}   ◈ ${fmtMetro(s.metro)}`);
     this.contractText.setText(s.contract ? `◢ ${s.contract}` : "");
     this.questText.setText(s.quest ? `◆ ${s.quest}` : "");
     this.consumeText.setText(s.consumables);
@@ -217,18 +188,4 @@ export default class Hud {
     );
   }
 
-  private bar(y: number, norm: number, color: number, tickAt50 = false) {
-    const g = this.g;
-    const x = this.barX;
-    const w = this.barW;
-    const bh = uiDim(9);
-    g.fillStyle(0x140a1e, 0.9).fillRect(x, y, w, bh);
-    g.fillStyle(color, 1).fillRect(
-      x + 1,
-      y + 1,
-      Math.max(0, (w - 2) * Phaser.Math.Clamp(norm, 0, 1)),
-      bh - 2,
-    );
-    if (tickAt50) g.fillStyle(COLORS.neonCyan, 0.8).fillRect(x + w * 0.5, y - 1, 1, bh + 2);
-  }
 }

@@ -4,6 +4,7 @@
 // config, plus an ability + ultimate whose effects are tiny hooks calling the
 // generic AbilityHost. Classes stay config, not bespoke systems.
 
+import type { PlayerLook } from "../net/protocol";
 import type { AbilityDef } from "./ability";
 // PrimaryDef now lives with the weapons, keeping the class → ability → render chain out
 // of the shared weapon/item model; re-exported here so existing importers don't move.
@@ -164,4 +165,9 @@ export const CLASSES: ClassDef[] = [
 
 export function getClass(id: string | undefined): ClassDef {
   return CLASSES.find((c) => c.id === id) ?? CLASSES[0];
+}
+
+/** Infer class from a saved server look (signature colour is the stable key). */
+export function classIdFromLook(look: PlayerLook): string {
+  return CLASSES.find((c) => c.color === look.color)?.id ?? CLASSES[0].id;
 }

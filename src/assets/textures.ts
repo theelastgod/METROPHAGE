@@ -27,10 +27,11 @@ import {
 import { bakeCanvas } from "./pixelart";
 import { bakeWalkSheet, bakeAgentSheet } from "./anim";
 import { playerKeyFor } from "./manifest";
+import { classPreviewSpec } from "../game/customization";
+import { CLASSES } from "../game/classes";
 import {
   AGENT_W,
   AGENT_H,
-  PLAYER_SPECS,
   PLAYER_IDS,
   COP_SPEC,
   BOSS_SPEC,
@@ -364,28 +365,33 @@ function makeTileset(scene: Phaser.Scene) {
   });
 }
 
-/** Player sprites — a detailed grayscale cyberian per class (tinted in-scene), plus a
- *  default key. 4 facings × WALK_STEPS animated frames each, 32×32. */
+/** Player sprites — human runners per class (jacket colour baked in; render untinted).
+ *  4 facings × WALK_STEPS animated frames each, 32×32. */
 function makePlayer(scene: Phaser.Scene) {
-  const bake = (key: string, id: string) => bakeWalkSheet(scene, key, PLAYER_SPECS[id]);
-  bake(PLAYER_KEY, "wintermute"); // default / fallback
+  const colorFor = (id: string) => CLASSES.find((c) => c.id === id)?.color ?? 0x00e5ff;
+  const bake = (key: string, id: string) => bakeWalkSheet(scene, key, classPreviewSpec(id, colorFor(id)));
+  bake(PLAYER_KEY, "wintermute");
   for (const id of PLAYER_IDS) bake(playerKeyFor(id), id);
 }
 
 /** Projectile: a hot white bolt with a soft glow (tinted to the class per shot). */
 function makeBullet(scene: Phaser.Scene) {
-  bakeCanvas(scene, BULLET_KEY, 16, 8, (ctx) => {
-    const grad = ctx.createRadialGradient(10, 4, 0.2, 10, 4, 8);
-    grad.addColorStop(0, "rgba(255,255,255,1)");
-    grad.addColorStop(0.35, "rgba(255,255,255,0.75)");
-    grad.addColorStop(1, "rgba(255,255,255,0)");
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, 16, 8);
-    ctx.fillStyle = "rgba(255,255,255,0.55)";
-    ctx.fillRect(2, 3, 6, 2); // motion trail
+  bakeCanvas(scene, BULLET_KEY, 20, 8, (ctx) => {
+    const trail = ctx.createLinearGradient(0, 4, 14, 4);
+    trail.addColorStop(0, "rgba(255,255,255,0)");
+    trail.addColorStop(0.35, "rgba(255,255,255,0.35)");
+    trail.addColorStop(0.75, "rgba(255,255,255,0.75)");
+    trail.addColorStop(1, "rgba(255,255,255,1)");
+    ctx.fillStyle = trail;
+    ctx.fillRect(0, 2, 16, 4);
+    const head = ctx.createRadialGradient(15, 4, 0.2, 15, 4, 5);
+    head.addColorStop(0, "rgba(255,255,255,1)");
+    head.addColorStop(0.5, "rgba(255,255,255,0.7)");
+    head.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = head;
+    ctx.fillRect(8, 0, 12, 8);
     ctx.fillStyle = "#ffffff";
-    ctx.fillRect(10, 3, 3, 2);
-    ctx.fillRect(11, 3, 1, 2); // hot core
+    ctx.fillRect(16, 3, 3, 2);
   });
 }
 
@@ -489,47 +495,50 @@ function makeNpc(scene: Phaser.Scene) {
 /** Soft additive glow disc (white — tinted per use: muzzle, gate, light). */
 function makeGlow(scene: Phaser.Scene) {
   bakeCanvas(scene, GLOW_KEY, 64, 64, (ctx) => {
-    const core = ctx.createRadialGradient(32, 32, 0, 32, 32, 10);
-    core.addColorStop(0, "rgba(255,255,255,1)");
-    core.addColorStop(0.5, "rgba(255,255,255,0.7)");
-    core.addColorStop(1, "rgba(255,255,255,0)");
-    ctx.fillStyle = core;
+    const outer = ctx.createRadialGradient(32, 32, 8, 32, 32, 31);
+    outer.addColorStop(0, "rgba(255,255,255,0.22)");
+    outer.addColorStop(0.55, "rgba(255,255,255,0.06)");
+    outer.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = outer;
     ctx.fillRect(0, 0, 64, 64);
-    const mid = ctx.createRadialGradient(32, 32, 4, 32, 32, 22);
-    mid.addColorStop(0, "rgba(255,255,255,0.45)");
+    const mid = ctx.createRadialGradient(32, 32, 2, 32, 32, 20);
+    mid.addColorStop(0, "rgba(255,255,255,0.55)");
+    mid.addColorStop(0.65, "rgba(255,255,255,0.12)");
     mid.addColorStop(1, "rgba(255,255,255,0)");
     ctx.fillStyle = mid;
     ctx.fillRect(0, 0, 64, 64);
-    const outer = ctx.createRadialGradient(32, 32, 10, 32, 32, 31);
-    outer.addColorStop(0, "rgba(255,255,255,0.18)");
-    outer.addColorStop(1, "rgba(255,255,255,0)");
-    ctx.fillStyle = outer;
+    const core = ctx.createRadialGradient(32, 32, 0, 32, 32, 9);
+    core.addColorStop(0, "rgba(255,255,255,1)");
+    core.addColorStop(0.4, "rgba(255,255,255,0.82)");
+    core.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = core;
     ctx.fillRect(0, 0, 64, 64);
   });
 }
 
 /** Hit spark — a hot 4-point star (white, tinted per impact). */
 function makeSpark(scene: Phaser.Scene) {
-  bakeCanvas(scene, SPARK_KEY, 20, 20, (ctx) => {
+  bakeCanvas(scene, SPARK_KEY, 24, 24, (ctx) => {
     const a = (x: number, y: number, w: number, h: number, al: number) => {
       ctx.globalAlpha = al;
       ctx.fillStyle = "#ffffff";
       ctx.fillRect(x, y, w, h);
       ctx.globalAlpha = 1;
     };
-    const halo = ctx.createRadialGradient(10, 10, 0.5, 10, 10, 9);
-    halo.addColorStop(0, "rgba(255,255,255,0.9)");
+    const halo = ctx.createRadialGradient(12, 12, 0.5, 12, 12, 11);
+    halo.addColorStop(0, "rgba(255,255,255,0.95)");
+    halo.addColorStop(0.45, "rgba(255,255,255,0.35)");
     halo.addColorStop(1, "rgba(255,255,255,0)");
     ctx.fillStyle = halo;
-    ctx.fillRect(0, 0, 20, 20);
-    a(9, 0, 2, 20, 0.5);
-    a(0, 9, 20, 2, 0.5);
-    a(4, 4, 2, 2, 0.4);
-    a(14, 4, 2, 2, 0.4);
-    a(4, 14, 2, 2, 0.4);
-    a(14, 14, 2, 2, 0.4);
-    a(8, 8, 4, 4, 1);
-    a(9, 9, 2, 2, 1);
+    ctx.fillRect(0, 0, 24, 24);
+    a(11, 0, 2, 24, 0.55);
+    a(0, 11, 24, 2, 0.55);
+    a(5, 5, 2, 2, 0.45);
+    a(17, 5, 2, 2, 0.45);
+    a(5, 17, 2, 2, 0.45);
+    a(17, 17, 2, 2, 0.45);
+    a(10, 10, 4, 4, 1);
+    a(11, 11, 2, 2, 1);
   });
 }
 
@@ -653,7 +662,7 @@ function makeAgent(scene: Phaser.Scene) {
   bakeAgentSheet(scene, AGENT_KEY, AGENT_W, AGENT_H);
 }
 
-/** Player dialogue portrait: a detailed neon cyberian bust against the city. */
+/** Player dialogue portrait: a human runner bust against the neon city. */
 function makePortraitPlayer(scene: Phaser.Scene) {
   bakeCanvas(scene, PORTRAIT_PLAYER_KEY, 96, 96, (ctx) => {
     const cssc = (c: number) => "#" + (c & 0xffffff).toString(16).padStart(6, "0");
@@ -663,7 +672,6 @@ function makePortraitPlayer(scene: Phaser.Scene) {
       ctx.fillRect(x, y, w, h);
       ctx.globalAlpha = 1;
     };
-    // backdrop city + faint grid + distant window lights
     px(0, 0, 96, 96, 0x080a14);
     for (let i = 8; i < 96; i += 8) {
       px(0, i, 96, 1, 0x0e1422, 0.5);
@@ -679,52 +687,46 @@ function makePortraitPlayer(scene: Phaser.Scene) {
     ctx.fillStyle = vg;
     ctx.fillRect(0, 0, 96, 96);
 
-    // shoulders / armor
+    // jacket shoulders
     px(12, 72, 72, 24, 0x141a2c);
     px(12, 72, 72, 3, 0x222a44);
     px(12, 72, 3, 24, 0x2a3450);
     px(19, 78, 7, 14, 0x29e7ff, 0.35);
     px(70, 78, 7, 14, 0xff2bd6, 0.3);
-    // neck
-    px(40, 62, 16, 12, 0x1a2236);
-    px(40, 62, 2, 12, 0x2a3450);
+    px(40, 62, 16, 12, 0xe6b58c);
+    px(40, 62, 2, 12, 0xf3d2b8);
 
-    // head / helmet
-    px(28, 16, 40, 50, 0x161c30);
-    px(28, 16, 3, 50, 0x33405e); // left neon rim
-    px(28, 16, 40, 3, 0x222a44); // top
-    px(65, 16, 3, 50, 0x0d1120); // right shadow
-    px(31, 66, 34, 2, 0x0a0c16); // jaw shadow
-    // crest
-    px(43, 9, 10, 8, 0x1a2236);
-    px(45, 7, 6, 2, 0x29e7ff, 0.75);
+    // hair
+    px(26, 14, 44, 14, 0x1b1820);
+    px(27, 15, 42, 4, 0x2a1d14);
+    px(28, 12, 40, 4, 0x1b1820);
+    px(30, 10, 36, 3, 0x2a1d14);
 
-    // visor — glowing band with scanlines + reflection
-    px(31, 34, 34, 15, 0x06121e);
-    px(33, 36, 30, 11, 0x0a3a52);
-    px(33, 37, 30, 3, 0x29e7ff, 0.95);
-    px(33, 41, 30, 1, 0x29e7ff, 0.5);
-    px(33, 44, 30, 2, 0x18708e, 0.85);
-    px(36, 37, 6, 4, 0xffffff, 0.9); // hot reflection
-    px(54, 38, 4, 2, 0xffffff, 0.5);
+    // face
+    px(28, 24, 40, 42, 0xe6b58c);
+    px(29, 25, 38, 10, 0xf3d2b8);
+    px(29, 25, 24, 4, 0xfff0e0);
+    px(62, 30, 6, 32, 0xc98a5e, 0.55);
+    px(28, 30, 3, 30, 0x9ad6ff, 0.35);
+    px(36, 40, 8, 8, 0xf0f0f5);
+    px(52, 40, 8, 8, 0xf0f0f5);
+    px(38, 42, 4, 4, 0x1a4a8a);
+    px(54, 42, 4, 4, 0x1a4a8a);
+    px(38, 40, 2, 2, 0xffffff, 0.9);
+    px(54, 40, 2, 2, 0xffffff, 0.9);
+    px(34, 36, 10, 2, 0x2a1d14);
+    px(46, 36, 10, 2, 0x2a1d14);
+    px(42, 48, 12, 2, 0xc98a5e);
+    px(44, 50, 8, 2, 0xf3d2b8, 0.65);
+    px(40, 58, 16, 3, 0xc98a5e);
+    px(41, 60, 14, 1, 0xa9794a);
 
-    // data-jack (right temple, magenta) + mouth grille
-    px(64, 28, 6, 3, 0xff2bd6);
-    px(67, 31, 2, 9, 0x8a1a6a);
-    px(40, 54, 16, 2, 0x0d1120);
-    px(41, 52, 14, 1, 0x222a44);
-
-    // ── detail pass: rim light, visor gloss, HUD reticle, atmosphere ──
-    px(28, 17, 1, 48, 0x4ad6ff, 0.5); // cyan rim down the lit helmet edge
-    px(29, 16, 1, 4, 0x9af0ff, 0.6);
-    px(45, 7, 6, 2, 0x29e7ff, 0.5); // crest glow
-    px(45, 38, 11, 1, 0x9af0ff, 0.4); // visor gloss
-    px(57, 39, 3, 3, 0xffffff, 0.75); // bright glint
-    px(46, 41, 3, 1, 0xeafdff, 0.6); // tiny HUD reticle in the visor
-    px(47, 40, 1, 3, 0xeafdff, 0.6);
-    px(19, 78, 2, 12, 0x29e7ff, 0.4); // shoulder rim accents
+    // neon earpiece + collar accent
+    px(64, 34, 5, 3, 0x29e7ff, 0.9);
+    px(66, 35, 2, 8, 0xff2bd6, 0.75);
+    px(19, 78, 2, 12, 0x29e7ff, 0.4);
     px(75, 78, 2, 12, 0xff2bd6, 0.32);
-    const haze = ctx.createLinearGradient(0, 0, 0, 46); // volumetric top haze
+    const haze = ctx.createLinearGradient(0, 0, 0, 46);
     haze.addColorStop(0, "rgba(41,231,255,0.10)");
     haze.addColorStop(1, "rgba(0,0,0,0)");
     ctx.fillStyle = haze;

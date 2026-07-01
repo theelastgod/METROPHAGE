@@ -4,6 +4,7 @@ import type { ContractsData } from "./Contracts";
 import type { CityData } from "./City";
 import type { MemoryData } from "./Memory";
 import type { QuestsData } from "./Quests";
+import type { CityQuestsData } from "../game/cityQuests";
 import type { Customization } from "../game/customization";
 
 // METROPHAGE — local save (localStorage). Single slot.
@@ -18,6 +19,7 @@ export interface SaveState {
   contracts?: ContractsData;
   memory?: MemoryData; // recovered story fragments
   quests?: QuestsData; // quest progress + flags
+  cityQuests?: CityQuestsData; // hub quest journal (RuneScape-style city quests)
   customization?: Customization; // player character look (colour + silhouette)
 }
 

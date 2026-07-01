@@ -20,7 +20,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 const CELL = +(process.argv[2] || 32);
-const COLS = 8, ROWS = 4;
+const COLS = 8, ROWS = 5; // 40 cells: 0–17 canonical, 18–39 variants
 const T = "art-source/terrain";
 const poolByPrefix = (prefix) => fs.readdirSync(T)
   .filter((d) => d.startsWith(prefix) && fs.statSync(path.join(T, d)).isDirectory())
@@ -74,10 +74,11 @@ const SPEC = {
   17: { pool: "framed", t: [30, 28, 42], mode: "framed" },
 };
 
-// which bases get extra variants, and the free cell slots (18–31) that hold them
+// which bases get extra variants, and the free cell slots (18–39) that hold them
 const VAR_SLOTS = {
-  0: [18, 19], 2: [20], 1: [21], 3: [22], 10: [23], 14: [24],
-  4: [25], 7: [26], 8: [27], 9: [28], 15: [29], 16: [30], 11: [31],
+  0: [18, 19], 2: [20, 38], 1: [21, 37], 3: [22], 10: [23], 14: [24],
+  4: [25], 7: [26], 8: [27], 9: [28], 15: [29], 16: [30, 39], 11: [31],
+  5: [32], 6: [33], 12: [34], 13: [35], 17: [36],
 };
 
 const fieldStats = await Promise.all(FIELD.map(stats));
@@ -122,15 +123,16 @@ for (const baseS of Object.keys(VAR_SLOTS)) {
     for (const c of sorted[base]) {
       if (VARIANTS[base].length - 1 >= VAR_SLOTS[base].length) break;
       if (used.has(c.file)) continue;
-      if (dist(c.mean, pick[base].mean) > TONE) continue;            // same surface tone (not a different material)
+      const toneLimit = SPEC[base]?.mode === "neon" ? 58 : TONE;
+      if (dist(c.mean, pick[base].mean) > toneLimit) continue;       // same surface tone (not a different material)
       if (requireNewDir && chosenDirs.has(srcDir(c.file))) continue; // different source file → different detail
       const slot = VAR_SLOTS[base][VARIANTS[base].length - 1];
       slotCell[slot] = c; slotBase[slot] = base; used.add(c.file); chosenDirs.add(srcDir(c.file));
       VARIANTS[base].push(slot);
     }
   };
-  take(true);   // prefer different source files (visible variety)
-  take(false);  // relax to same-file swatches if we still need more
+  take(false);  // prefer same-source swatches (cohesive tiled fields)
+  take(true);   // fill remaining slots from other sources if needed
 }
 
 // ── composite the 8×4 tileset ─────────────────────────────────────────────────
@@ -148,7 +150,8 @@ for (let idx = 0; idx < COLS * ROWS; idx++) {
   let img = sharp(cell.file);
   if (!framed) {
     const m = await img.metadata();
-    const cw = Math.round(m.width * 0.78), ch = Math.round(m.height * 0.78);
+    // Tighter centre crop drops atlas cell borders so tiled fields read continuous.
+    const cw = Math.round(m.width * 0.86), ch = Math.round(m.height * 0.86);
     img = sharp(cell.file).extract({ left: (m.width - cw) >> 1, top: (m.height - ch) >> 1, width: cw, height: ch });
   }
   img = img.resize(CELL, CELL, { kernel: "lanczos3" });
@@ -159,15 +162,13 @@ for (let idx = 0; idx < COLS * ROWS; idx++) {
   placed[idx] = cell ? srcDir(cell.file) + "/" + path.basename(cell.file) : "(concrete)";
 }
 const out = "public/assets/tilesets/metrophage_tiles.png";
-// Noir grade: pull the floor DOWN in brightness + saturation so terrain recedes and the
-// characters / neon / signage read on top of it (these source tiles are too hot/busy raw).
-// Slightly brighter + less desaturated than the old grade so roof/floor detail survives
-// the wall-shade pass and blooms more naturally through the neon post-FX.
-const DARKEN = 0.68, DESAT = 0.84;
+// Noir grade: terrain recedes so characters / neon / signage read on top. Bright enough that
+// floor grain survives 96→32 downscale + the wall-shade / wet-street overlays.
+const DARKEN = 0.82, DESAT = 0.91;
 await sharp({ create: { width: COLS * CELL, height: ROWS * CELL, channels: 3, background: { r: 8, g: 8, b: 12 } } })
   .composite(comps)
   .modulate({ brightness: DARKEN, saturation: DESAT })
-  .sharpen({ sigma: 0.85, m1: 0.5, m2: 0.35, x1: 2, y2: 10, y3: 20 })
+  .sharpen({ sigma: 1.05, m1: 0.55, m2: 0.4, x1: 2, y2: 10, y3: 20 })
   .png({ compressionLevel: 9 })
   .toFile(out);
 

@@ -1,8 +1,24 @@
 import Phaser from "phaser";
 import { COLORS } from "../config";
 import { Item, RARITIES, SLOT_NAMES, itemStatLines } from "../game/items";
-import { suggestedPrice, listingFee } from "../game/market";
-import { dimBackdrop, modalRect, uiDim, uiFont } from "./uiLayout";
+import { suggestedPrice, listingFee, suggestedMetroPrice, metroListingFee } from "../game/market";
+import { fmtMetro } from "../economy/metro";
+import { drawPanelFrame } from "./panelChrome";
+import { dimBackdrop, modalRect, uiDim } from "./uiLayout";
+import { bodyFont, displayFont } from "./typography";
+import {
+  STUDIO,
+  addPanelGlow,
+  animatePanelIn,
+  drawScanlines,
+  drawStudioBtn,
+  drawStudioHeaderBand,
+  drawStudioListCard,
+  drawStudioTabs,
+} from "./studioChrome";
+
+type Currency = "credits" | "metro";
+type Filter = "all" | Currency;
 
 interface Listing {
   id: number;
@@ -17,39 +33,52 @@ export default class OnlineMarket {
   open = false;
   onBuy?: (id: number) => void;
   onCancel?: (id: number) => void;
-  onList?: (itemId: string, price: number) => void;
+  onList?: (itemId: string, price: number, currency: Currency) => void;
   onRefresh?: () => void;
   private scene: Phaser.Scene;
   private listings: Listing[] = [];
   private bag: Item[] = [];
   private selfId = "";
   private credits = 0;
+  private metro = 0;
+  private filter: Filter = "all";
   private objs: Phaser.GameObjects.GameObject[] = [];
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
   }
 
-  setState(listings: Listing[], bag: Item[], selfId: string, credits: number) {
+  setState(listings: Listing[], bag: Item[], selfId: string, credits: number, metro = 0) {
     this.listings = listings ?? [];
     this.bag = bag ?? [];
     this.selfId = selfId;
     this.credits = credits;
+    this.metro = metro;
     if (this.open) this.build();
   }
-  toggle(listings: Listing[], bag: Item[], selfId: string, credits: number) {
+
+  refreshBalances(credits: number, metro: number) {
+    if (this.credits === credits && this.metro === metro) return;
+    this.credits = credits;
+    this.metro = metro;
+    if (this.open) this.build();
+  }
+
+  toggle(listings: Listing[], bag: Item[], selfId: string, credits: number, metro = 0) {
     this.open = !this.open;
     if (this.open) {
-      this.setState(listings, bag, selfId, credits);
+      this.setState(listings, bag, selfId, credits, metro);
       this.onRefresh?.();
       this.build();
     } else this.clear();
   }
+
   close() {
     if (!this.open) return;
     this.open = false;
     this.clear();
   }
+
   private clear() {
     for (const o of this.objs) o.destroy();
     this.objs = [];
@@ -63,100 +92,185 @@ export default class OnlineMarket {
       return o;
     };
     const D = 1700;
-    const { x, y, w, h } = modalRect(1120, 660);
+    const { x, y, w, h } = modalRect(1120, 680);
     const listRowH = uiDim(60);
     const listCardH = uiDim(58);
     const stallRowH = uiDim(38);
-    const btnH = uiDim(24);
+    const btnH = uiDim(26);
 
-    add(dimBackdrop(scene, D, 0.66));
-    const g = add(scene.add.graphics().setScrollFactor(0).setDepth(D + 1));
-    g.fillStyle(0x0a0818, 0.97).fillRect(x, y, w, h);
-    g.lineStyle(uiDim(2), COLORS.neonYellow, 0.85).strokeRect(x, y, w, h);
+    add(dimBackdrop(scene, D, 0.68).setAlpha(0));
+    add(addPanelGlow(scene, x, y, w, h, COLORS.neonMagenta, 0.1).setScrollFactor(0).setDepth(D + 1).setAlpha(0));
+    const g = add(scene.add.graphics().setScrollFactor(0).setDepth(D + 2).setAlpha(0));
+    drawPanelFrame(g, x, y, w, h);
+    drawScanlines(g, x + uiDim(12), y + uiDim(60), w - uiDim(24), h - uiDim(72));
 
     const tx = (s: string, fx: number, fy: number, size: number, color: string, bold = false, origin = 0) =>
       add(
         scene.add
-          .text(fx, fy, s, {
-            fontFamily: "Courier New, monospace",
-            fontSize: uiFont(size),
-            color,
-            fontStyle: bold ? "bold" : "normal",
-          })
+          .text(fx, fy, s, bold ? displayFont(size, { color, fontStyle: "bold" }) : bodyFont(size, { color }))
           .setOrigin(origin, 0)
           .setScrollFactor(0)
-          .setDepth(D + 3),
+          .setDepth(D + 4),
       );
-    const btn = (bx: number, by: number, bw: number, label: string, color: number, enabled: boolean, fn: () => void) => {
-      g.fillStyle(enabled ? 0x161232 : 0x0e0c1c, 0.96).fillRect(bx, by, bw, btnH);
-      g.lineStyle(uiDim(1.2), color, enabled ? 0.95 : 0.3).strokeRect(bx, by, bw, btnH);
-      tx(label, bx + bw / 2, by + uiDim(6), 11, enabled ? "#cfe8ff" : "#4a5266", false, 0.5);
-      if (enabled) {
-        const z = add(
-          scene.add.zone(bx, by, bw, btnH).setOrigin(0).setScrollFactor(0).setInteractive({ useHandCursor: true }).setDepth(D + 4),
-        );
-        z.on("pointerdown", fn);
-      }
-    };
+
     const itemLine = (it: Item) => `${RARITIES[it.rarity].name} · ${SLOT_NAMES[it.slot]}${(it.ilvl ?? 0) > 0 ? ` +${it.ilvl}` : ""}`;
+    const priceLabel = (l: Listing) => (l.currency === "metro" ? `◈${fmtMetro(l.price)}` : `₵${l.price}`);
+    const matchesFilter = (l: Listing) => this.filter === "all" || l.currency === this.filter;
 
-    tx("▦ AUCTION HOUSE", x + uiDim(22), y + uiDim(16), 17, "#f7ff3c", true);
-    tx(`₵ ${this.credits}`, x + w / 2 - uiDim(22), y + uiDim(18), 14, "#f7ff3c", true, 1);
-    tx("K / ESC close · custom: /list <bagSlot> <price>", x + w - uiDim(20), y + uiDim(18), 12, "#9aa3b2", false, 1);
+    const headerEnd = drawStudioHeaderBand(
+      g,
+      scene,
+      x,
+      y,
+      w,
+      "▦ WORLD MARKET",
+      { subtitle: "cross-zone player exchange · premium $METRO listings", accent: COLORS.neonYellow, rightLabel: "K / ESC close" },
+      add,
+    );
+
+    // balance chips
+    const chipY = y + uiDim(62);
+    const chipW = uiDim(168);
+    g.fillStyle(0x0a1020, 0.9).fillRoundedRect(x + uiDim(22), chipY, chipW, uiDim(30), 5);
+    g.lineStyle(1, COLORS.neonYellow, 0.7).strokeRoundedRect(x + uiDim(22), chipY, chipW, uiDim(30), 5);
+    tx(`₵ ${this.credits.toLocaleString()}`, x + uiDim(22) + chipW / 2, chipY + uiDim(8), 12, STUDIO.credits, true, 0.5);
+
+    g.fillStyle(0x120a24, 0.9).fillRoundedRect(x + uiDim(22) + chipW + uiDim(10), chipY, chipW, uiDim(30), 5);
+    g.lineStyle(1, COLORS.neonMagenta, 0.75).strokeRoundedRect(x + uiDim(22) + chipW + uiDim(10), chipY, chipW, uiDim(30), 5);
+    tx(`◈ ${fmtMetro(this.metro)} $METRO`, x + uiDim(22) + chipW + uiDim(10) + chipW / 2, chipY + uiDim(8), 12, STUDIO.metro, true, 0.5);
+
+    tx("/list <slot> <price> [metro]", x + w - uiDim(22), chipY + uiDim(8), 10, STUDIO.dim, false, 1);
+
+    const tabY = headerEnd + uiDim(36);
+    const tabW = uiDim(108);
+    drawStudioTabs(
+      g,
+      scene,
+      x + uiDim(22),
+      tabY,
+      [
+        { id: "all", label: "ALL", color: COLORS.neonCyan },
+        { id: "credits", label: "₵ CREDITS", color: COLORS.neonYellow },
+        { id: "metro", label: "◈ $METRO", color: COLORS.neonMagenta },
+      ],
+      this.filter,
+      tabW,
+      (id) => {
+        this.filter = id as Filter;
+        this.build();
+      },
+      add,
+      D,
+    );
+
     const colMid = x + w * 0.52;
-    g.lineStyle(uiDim(1), 0x2a2440, 0.9).lineBetween(colMid, y + uiDim(48), colMid, y + h - uiDim(18));
+    g.lineStyle(uiDim(1), 0x2a2440, 0.9).lineBetween(colMid, tabY + uiDim(38), colMid, y + h - uiDim(18));
 
-    tx("OPEN LISTINGS", x + uiDim(22), y + uiDim(52), 13, "#29e7ff", true);
-    const others = this.listings.filter((l) => l.seller !== this.selfId);
-    let ly = y + uiDim(76);
+    tx("OPEN LISTINGS", x + uiDim(22), tabY + uiDim(44), 12, "#29e7ff", true);
+    const others = this.listings.filter((l) => l.seller !== this.selfId && matchesFilter(l));
+    let ly = tabY + uiDim(68);
     const lw = colMid - x - uiDim(38);
-    if (others.length === 0) tx("no listings — be the first to sell", x + uiDim(22), ly + uiDim(12), 12, "#5a6172");
+    if (others.length === 0) {
+      tx(
+        this.filter === "all" ? "no listings — be the first broker on the exchange" : `no ${this.filter === "metro" ? "$METRO" : "credit"} listings yet`,
+        x + uiDim(22),
+        ly + uiDim(12),
+        11,
+        STUDIO.dim,
+      );
+    }
     for (const l of others.slice(0, 8)) {
       const r = RARITIES[l.item.rarity];
-      g.fillStyle(0x12102a, 0.92).fillRect(x + uiDim(22), ly, lw, listCardH);
-      g.lineStyle(uiDim(1.4), r.color, 1).strokeRect(x + uiDim(22), ly, lw, listCardH);
-      tx(l.item.name, x + uiDim(32), ly + uiDim(8), 13, r.hex, true);
-      tx(itemLine(l.item), x + uiDim(32), ly + uiDim(24), 10, "#9aa3b2");
-      tx(itemStatLines(l.item).filter((s) => !s.startsWith("◈")).join("  ") || "—", x + uiDim(32), ly + uiDim(38), 10, "#cfe8ff");
-      tx(`by ${l.sellerName}`, x + uiDim(32), ly + uiDim(49), 9, "#5a6172");
-      const afford = this.credits >= l.price;
-      btn(x + uiDim(22) + lw - uiDim(120), ly + uiDim(18), uiDim(112), `BUY ₵${l.price}`, COLORS.neonGreen, afford, () => this.onBuy?.(l.id));
+      const isMetro = l.currency === "metro";
+      drawStudioListCard(g, x + uiDim(22), ly, lw, listCardH, r.color, isMetro);
+      tx(l.item.name, x + uiDim(32), ly + uiDim(8), 12, r.hex, true);
+      tx(itemLine(l.item), x + uiDim(32), ly + uiDim(24), 9, STUDIO.muted);
+      tx(itemStatLines(l.item).filter((s) => !s.startsWith("◈")).join("  ") || "—", x + uiDim(32), ly + uiDim(38), 9, STUDIO.ink);
+      tx(`by ${l.sellerName}`, x + uiDim(32), ly + uiDim(49), 8, STUDIO.dim);
+      const afford = isMetro ? this.metro >= l.price : this.credits >= l.price;
+      const buyLabel = isMetro ? `BUY ◈${fmtMetro(l.price)}` : `BUY ₵${l.price}`;
+      drawStudioBtn(g, scene, {
+        x: x + uiDim(22) + lw - uiDim(120),
+        y: ly + uiDim(16),
+        w: uiDim(112),
+        h: btnH,
+        label: buyLabel,
+        color: isMetro ? COLORS.neonMagenta : COLORS.neonGreen,
+        enabled: afford,
+        onClick: () => this.onBuy?.(l.id),
+      }, add, D);
       ly += listRowH;
     }
 
     const rx = colMid + uiDim(18);
     const rw = x + w - uiDim(18) - rx;
     const mine = this.listings.filter((l) => l.seller === this.selfId);
-    tx(`YOUR LISTINGS (${mine.length})`, rx, y + uiDim(52), 13, "#ff2bd6", true);
-    let my = y + uiDim(76);
-    if (mine.length === 0) tx("nothing listed", rx, my + uiDim(8), 12, "#5a6172");
+    tx(`YOUR STALL (${mine.length})`, rx, tabY + uiDim(44), 12, STUDIO.metro, true);
+    let my = tabY + uiDim(68);
+    if (mine.length === 0) tx("nothing listed", rx, my + uiDim(8), 11, STUDIO.dim);
     for (const l of mine.slice(0, 4)) {
       const r = RARITIES[l.item.rarity];
-      g.fillStyle(0x1a1230, 0.92).fillRect(rx, my, rw, stallRowH);
-      g.lineStyle(uiDim(1.2), r.color, 1).strokeRect(rx, my, rw, stallRowH);
-      tx(l.item.name, rx + uiDim(12), my + uiDim(6), 12, r.hex, true);
-      tx(`₵${l.price}`, rx + uiDim(12), my + uiDim(21), 11, "#f7ff3c");
-      btn(rx + rw - uiDim(92), my + uiDim(6), uiDim(84), "CANCEL", COLORS.neonMagenta, true, () => this.onCancel?.(l.id));
+      const isMetro = l.currency === "metro";
+      drawStudioListCard(g, rx, my, rw, stallRowH, r.color, isMetro);
+      tx(l.item.name, rx + uiDim(12), my + uiDim(6), 11, r.hex, true);
+      tx(priceLabel(l), rx + uiDim(12), my + uiDim(21), 10, isMetro ? STUDIO.metro : STUDIO.credits);
+      drawStudioBtn(g, scene, {
+        x: rx + rw - uiDim(92),
+        y: my + uiDim(6),
+        w: uiDim(84),
+        h: btnH,
+        label: "CANCEL",
+        color: COLORS.neonMagenta,
+        enabled: true,
+        primary: false,
+        onClick: () => this.onCancel?.(l.id),
+      }, add, D);
       my += stallRowH + uiDim(2);
     }
 
     const sellY = my + uiDim(16);
-    tx("SELL FROM BAG  (quick-list at 2× value)", rx, sellY, 13, "#39ff88", true);
+    tx("QUICK-LIST FROM BAG  (2× appraised value)", rx, sellY, 12, STUDIO.ready, true);
     let sy = sellY + uiDim(24);
-    if (this.bag.length === 0) tx("bag empty", rx, sy + uiDim(6), 12, "#5a6172");
-    for (const it of this.bag.slice(0, 6)) {
+    if (this.bag.length === 0) tx("bag empty", rx, sy + uiDim(6), 11, STUDIO.dim);
+    for (const it of this.bag.slice(0, 5)) {
       const r = RARITIES[it.rarity];
-      const price = suggestedPrice(it);
-      const fee = listingFee(price);
-      g.fillStyle(0x12102a, 0.92).fillRect(rx, sy, rw, stallRowH);
-      g.lineStyle(uiDim(1.2), r.color, 1).strokeRect(rx, sy, rw, stallRowH);
-      tx(`${it.name}${(it.ilvl ?? 0) > 0 ? ` +${it.ilvl}` : ""}`, rx + uiDim(12), sy + uiDim(6), 12, r.hex, true);
-      tx(itemLine(it), rx + uiDim(12), sy + uiDim(21), 10, "#9aa3b2");
-      btn(rx + rw - uiDim(156), sy + uiDim(6), uiDim(148), `LIST ₵${price} (fee ₵${fee})`, COLORS.neonGreen, this.credits >= fee, () =>
-        this.onList?.(it.id, price),
-      );
-      sy += stallRowH + uiDim(2);
+      const cPrice = suggestedPrice(it);
+      const cFee = listingFee(cPrice);
+      const mPrice = suggestedMetroPrice(it);
+      const mFee = metroListingFee(mPrice);
+      const cardH = stallRowH + uiDim(4);
+      drawStudioListCard(g, rx, sy, rw, cardH, r.color);
+      tx(`${it.name}${(it.ilvl ?? 0) > 0 ? ` +${it.ilvl}` : ""}`, rx + uiDim(12), sy + uiDim(6), 11, r.hex, true);
+      tx(itemLine(it), rx + uiDim(12), sy + uiDim(21), 9, STUDIO.muted);
+      drawStudioBtn(g, scene, {
+        x: rx + rw - uiDim(310),
+        y: sy + uiDim(30),
+        w: uiDim(148),
+        h: btnH,
+        label: `₵${cPrice} (fee ₵${cFee})`,
+        color: COLORS.neonGreen,
+        enabled: this.credits >= cFee,
+        primary: false,
+        onClick: () => this.onList?.(it.id, cPrice, "credits"),
+      }, add, D);
+      drawStudioBtn(g, scene, {
+        x: rx + rw - uiDim(156),
+        y: sy + uiDim(30),
+        w: uiDim(148),
+        h: btnH,
+        label: `◈${mPrice} (fee ◈${mFee})`,
+        color: COLORS.neonMagenta,
+        enabled: this.metro >= mFee,
+        onClick: () => this.onList?.(it.id, mPrice, "metro"),
+      }, add, D);
+      sy += stallRowH + uiDim(8);
     }
+
+    g.fillStyle(0x0e1830, 0.45).fillRect(x + uiDim(18), y + h - uiDim(30), w - uiDim(36), uiDim(20));
+    tx("premium $METRO listings cross every combat zone · credits stay local", x + w / 2, y + h - uiDim(24), 9, STUDIO.dim, false, 0.5);
+
+    const animTargets = this.objs.filter((o) => "setAlpha" in o);
+    animatePanelIn(scene, animTargets);
   }
 
   destroy() {

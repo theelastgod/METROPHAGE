@@ -20,9 +20,9 @@ export const COSMETICS: Cosmetic[] = [
   { id: "ghost_visor", name: "GHOST VISOR", desc: "Spectral cyan optics", price: 300, swatch: 0x29e7ff, look: { visor: "scan", color: 0x29e7ff } },
   { id: "void_cloak", name: "VOID CLOAK", desc: "A cloak that drinks the light", price: 500, swatch: 0x6b3df5, look: { cloak: "cape", color: 0x6b3df5 } },
   { id: "warlord", name: "WARLORD PLATE", desc: "Spiked pauldrons, skull mark", price: 900, swatch: 0xff3b3b, look: { shoulders: "spikes", decal: "skull", color: 0xff3b3b } },
-  { id: "chrome_synth", name: "CHROME SYNTH", desc: "Mirror-polished synthetic frame", price: 700, swatch: 0xcfe8ff, look: { skin: -1, color: 0xcfe8ff } },
+  { id: "chrome_synth", name: "CHROME LINES", desc: "Mirror-polished facial chrome", price: 700, swatch: 0xcfe8ff, look: { skin: 0xf3d2b8, faceMark: "chrome", color: 0xcfe8ff } },
   { id: "gilded", name: "GILDED CROWN", desc: "Worn by those who hold the deepest ground", price: 1500, swatch: 0xf7ff3c, look: { head: "crown", emblem: true, color: 0xf7ff3c } },
-  { id: "genesis", name: "GENESIS // NFT", desc: "On-chain founder skin — mainnet-gated", price: 0, nft: true, swatch: 0xff2bd6, look: { head: "crown", cloak: "cape", decal: "skull", color: 0xff2bd6, emblem: true, antennae: true } },
+  { id: "genesis", name: "GENESIS // NFT", desc: "On-chain founder skin — mainnet-gated", price: 0, nft: true, swatch: 0xff2bd6, look: { head: "crown", cloak: "cape", decal: "skull", color: 0xff2bd6, emblem: true, skin: 0xe6b58c, hair: "long", hairColor: 0x1b1820 } },
 ];
 
 const BY_ID = new Map(COSMETICS.map((c) => [c.id, c]));

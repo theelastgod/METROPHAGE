@@ -43,6 +43,7 @@ export default class MusicDirector {
   private ducked = false;
   private fades: Fade[] = [];
   private raf?: number;
+  private combatIntensity = 0;
 
   constructor(game: Phaser.Game) {
     this.mgr = game.sound;
@@ -81,6 +82,13 @@ export default class MusicDirector {
     if (this.current && this.currentEnv) {
       this.fadeTo(this.current, this.target(this.currentEnv), DUCK_MS, false);
     }
+  }
+
+  /** 0..1 combat heat — drives adaptive drum layer under authored beds via Synth. */
+  setCombatIntensity(v: number, scene: Phaser.Scene) {
+    this.combatIntensity = Math.max(0, Math.min(1, v));
+    const synth = scene.registry.get("synth") as import("./Synth").default | undefined;
+    synth?.setCombatLayer(this.combatIntensity);
   }
 
   /** Fade out and forget the current bed (e.g. returning to a procedural scene). */

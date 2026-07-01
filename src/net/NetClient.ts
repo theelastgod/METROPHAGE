@@ -70,6 +70,9 @@ export default class NetClient {
   dead = false;
   credits = 0;
   cores = 0;
+  metro = 0;
+  pvpInArena = false;
+  pvpEscrow = 0;
   inventory: Item[] = []; // server-authoritative held gear (sent on login + on change)
   equipped: Item[] = []; // currently equipped items (one per slot), server-authoritative
   maxHp = PLAYER_HP; // derived from equipped +HP mods
@@ -82,9 +85,6 @@ export default class NetClient {
   } = null;
   level = 1;
   xp = 0;
-  singularity = 0;
-  meltdown = false;
-  season = 1;
   pickups = new Map<number, { id: number; x: number; y: number; kind: number }>();
   hazards: Array<{ id: number; x: number; y: number; r: number; frac: number }> = []; // boss AoE telegraphs
   faction = 0;
@@ -95,7 +95,16 @@ export default class NetClient {
   /** Zone world-boss status (location + respawn countdown), for the locator UI. */
   boss: { name: string; x: number; y: number; hp: number; hpMax: number; alive: boolean; respawnSec: number } | null = null;
   party: string[] = [];
-  chatLog: Array<{ from: string; ch: string; text: string; faction: number; sys: boolean }> = [];
+  chatLog: Array<{
+    from: string;
+    ch: string;
+    text: string;
+    faction: number;
+    sys: boolean;
+    at: number;
+    x?: number;
+    y?: number;
+  }> = [];
   /** Recent emotes/pings relayed by the server (rendered + aged out by the scene). */
   emotes: Array<{ from: string; kind: number; ping: boolean; x: number; y: number; at: number }> = [];
   campaignQuest: string | null = null;
@@ -137,7 +146,12 @@ export default class NetClient {
   onCosmetics?: () => void;
   bounty: { id: string; name: string; desc: string; objective: string; count: number; progress: number } | null = null;
   onBounty?: () => void;
-  discovered: string[] = []; // zones this account has arrived at (fast-travel unlocks)
+  discovered: string[] = []; // zones seen on the map (fog of war)
+  unlocked: string[] = []; // zones reached organically — fast travel allowed
+  /** How this connection arrived — sent on login. */
+  arrival: "organic" | "fast" = "organic";
+  /** Prior zone — trail-gate spawn for wilderness corridors. */
+  travelFrom?: string;
   onDiscovered?: () => void;
   story: {
     quest: string;
@@ -156,8 +170,14 @@ export default class NetClient {
   onWelcome?: (x: number, y: number) => void;
   onInventory?: () => void; // fired when the server pushes an inventory update
   onRedirect?: (zone: string) => void;
+  /** connecting | connected | reconnecting | offline */
+  onConnectionState?: (state: "connecting" | "connected" | "reconnecting" | "offline") => void;
 
   private ws?: WebSocket;
+  private manualClose = false;
+  private reconnectAttempts = 0;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingGraduate = false;
   private intent = { mx: 0, my: 0 };
   private seq = 0;
   private pending: InputCmd[] = [];
@@ -183,6 +203,9 @@ export default class NetClient {
   unequip(slot: string) {
     this.ws?.send(JSON.stringify({ t: "unequip", slot } satisfies ClientMsg));
   }
+  moveInv(from: number, to: number) {
+    this.ws?.send(JSON.stringify({ t: "inv_move", from, to } satisfies ClientMsg));
+  }
   buy(sku: string) {
     this.ws?.send(JSON.stringify({ t: "buy", sku } satisfies ClientMsg));
   }
@@ -192,6 +215,16 @@ export default class NetClient {
   }
 
   connect() {
+    this.manualClose = false;
+    this.openSocket();
+  }
+
+  private openSocket() {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.onConnectionState?.(this.reconnectAttempts > 0 ? "reconnecting" : "connecting");
     const ws = new WebSocket(this.url);
     this.ws = ws;
     ws.onopen = () =>
@@ -201,20 +234,53 @@ export default class NetClient {
           name: this.name,
           faction: this.loginFaction,
           look: this.look,
+          arrival: this.arrival,
+          ...(this.travelFrom ? { from: this.travelFrom } : {}),
           ...(this.auth ?? {}),
         } satisfies ClientMsg),
       );
     ws.onmessage = (e) => this.onMessage(e.data);
-    ws.onclose = () => (this.connected = false);
-    ws.onerror = () => (this.connected = false);
+    ws.onclose = () => {
+      this.connected = false;
+      if (!this.manualClose) this.scheduleReconnect();
+    };
+    ws.onerror = () => {
+      this.connected = false;
+    };
+  }
+
+  private scheduleReconnect() {
+    if (this.manualClose) return;
+    if (this.reconnectAttempts >= 8) {
+      this.onConnectionState?.("offline");
+      return;
+    }
+    const delay = Math.min(16000, Math.round(800 * Math.pow(1.6, this.reconnectAttempts)));
+    this.reconnectAttempts++;
+    this.onConnectionState?.("reconnecting");
+    this.reconnectTimer = setTimeout(() => {
+      if (!this.manualClose) this.openSocket();
+    }, delay);
   }
 
   disconnect() {
+    this.manualClose = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     try {
       this.ws?.close();
     } catch {
       /* already closed */
     }
+    this.connected = false;
+  }
+
+  retryConnect() {
+    this.reconnectAttempts = 0;
+    this.manualClose = false;
+    this.openSocket();
   }
 
   /** Set the local movement intent (called every render frame by the scene). */
@@ -269,9 +335,15 @@ export default class NetClient {
       this.id = msg.id;
       this.faction = msg.faction;
       this.connected = true;
+      this.reconnectAttempts = 0;
+      this.onConnectionState?.("connected");
       this.pred = { x: msg.x, y: msg.y };
       this.serverPos = { x: msg.x, y: msg.y };
       this.onWelcome?.(msg.x, msg.y);
+      if (this.pendingGraduate) {
+        this.pendingGraduate = false;
+        this.tutorialGraduate();
+      }
     } else if (msg.t === "state") {
       this.playersOnline = msg.players.length;
       const live = new Set<string>();
@@ -283,6 +355,9 @@ export default class NetClient {
           this.dead = sp.dead;
           this.credits = sp.credits;
           this.cores = sp.cores;
+          this.metro = sp.metro ?? 0;
+          this.pvpInArena = !!sp.pvpInArena;
+          this.pvpEscrow = sp.pvpEscrow ?? 0;
           this.xp = sp.xp;
           this.level = sp.level;
           this.campaignQuest = sp.campaignQuest;
@@ -355,15 +430,20 @@ export default class NetClient {
       }
       for (const id of [...this.nodes.keys()]) if (!liveN.has(id)) this.nodes.delete(id);
 
-      this.singularity = msg.sing;
-      this.meltdown = msg.meltdown;
-      this.season = msg.season;
       this.factions = msg.factions;
       this.control = msg.control;
       this.roster = msg.roster;
       this.boss = msg.boss ?? null;
     } else if (msg.t === "chat") {
-      this.pushChat({ from: msg.from, ch: msg.ch, text: msg.text, faction: msg.faction, sys: false });
+      this.pushChat({
+        from: msg.from,
+        ch: msg.ch,
+        text: msg.text,
+        faction: msg.faction,
+        sys: false,
+        x: msg.x,
+        y: msg.y,
+      });
     } else if (msg.t === "sys") {
       this.pushChat({ from: "", ch: "sys", text: msg.text, faction: -1, sys: true });
     } else if (msg.t === "emote") {
@@ -414,6 +494,7 @@ export default class NetClient {
       this.onBounty?.();
     } else if (msg.t === "discovered") {
       this.discovered = msg.zones;
+      this.unlocked = msg.unlocked ?? msg.zones;
       this.onDiscovered?.();
     } else if (msg.t === "cosmetics") {
       this.cosmeticsOwned = msg.owned;
@@ -457,6 +538,10 @@ export default class NetClient {
     this.sendMsg({ t: "tutorial", action: "skip" });
   }
   tutorialGraduate() {
+    if (!this.connected) {
+      this.pendingGraduate = true;
+      return;
+    }
     this.sendMsg({ t: "tutorial", action: "graduate" });
   }
   setTutorialMode(mode: "quick" | "full") {
@@ -483,8 +568,16 @@ export default class NetClient {
     this.sendMsg({ t: "trade", action: "cancel" });
   }
 
-  private pushChat(line: { from: string; ch: string; text: string; faction: number; sys: boolean }) {
-    this.chatLog.push(line);
+  private pushChat(line: {
+    from: string;
+    ch: string;
+    text: string;
+    faction: number;
+    sys: boolean;
+    x?: number;
+    y?: number;
+  }) {
+    this.chatLog.push({ ...line, at: performance.now() });
     if (this.chatLog.length > 40) this.chatLog.shift();
   }
 

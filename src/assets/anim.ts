@@ -1,7 +1,10 @@
 import Phaser from "phaser";
 import { CHAR, WALK_STEPS, drawCharacter, drawAgent, type CharSpec } from "./charart";
 import { bakeDrawnFrames } from "./pixelart";
-import { faceFrame } from "./manifest";
+import { faceFrame, COP_KEY, NPC_KEY } from "./manifest";
+
+/** Authored sheets with one frame per facing (no walk cycle). */
+const SIMPLE_SHEETS = new Set([COP_KEY, NPC_KEY]);
 
 // METROPHAGE — character animation. The procedural sheets bake 4 facings × WALK_STEPS
 // frames (facing-major: index = facing*WALK_STEPS + step). This module owns the bake
@@ -60,6 +63,11 @@ export function driveChar(
 ) {
   const key = sprite.texture.key;
   const dir = faceFrame(vx, vy); // 0=down 1=left 2=right 3=up
+  if (SIMPLE_SHEETS.has(key)) {
+    sprite.anims.stop();
+    sprite.setFrame(dir);
+    return;
+  }
   if (moving) {
     ensureCharAnims(sprite.scene, key);
     sprite.anims.play(`${key}__walk_${DIRS[dir]}`, true);

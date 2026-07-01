@@ -23,8 +23,15 @@ function rimColors(accent: number) {
   return { rim, hot, dim };
 }
 
-export function shadeWalls(scene: Phaser.Scene, grid: TileGrid, accent = 0x00e5ff): Phaser.GameObjects.Graphics {
-  const g = scene.add.graphics().setDepth(2.5); // above floor + light pools, below actors
+export function shadeWalls(
+  scene: Phaser.Scene,
+  grid: TileGrid,
+  accent = 0x00e5ff,
+  depth = 2.5,
+  realArt = false,
+): Phaser.GameObjects.Graphics {
+  const g = scene.add.graphics().setDepth(depth);
+  const muteA = realArt ? 0.08 : 0.22;
   const { rim: RIM, hot: RIM_HOT, dim: DIM } = rimColors(accent);
   const wallAt = (x: number, y: number) => {
     const row = grid[y];
@@ -43,8 +50,7 @@ export function shadeWalls(scene: Phaser.Scene, grid: TileGrid, accent = 0x00e5f
       const X = tx * TILE;
       const Y = ty * TILE;
 
-      // Light mute — keep photographed roof detail, just unify the mass slightly.
-      g.fillStyle(0x070a14, 0.28).fillRect(X, Y, TILE, TILE);
+      g.fillStyle(0x070a14, muteA).fillRect(X, Y, TILE, TILE);
 
       // Sparse rooftop windows (warm + accent) — reads as inhabited blocks at night.
       const h = hash(tx, ty);
@@ -61,14 +67,14 @@ export function shadeWalls(scene: Phaser.Scene, grid: TileGrid, accent = 0x00e5f
       // ── cast shadow + dark wall faces (south / east) ──
       if (openBelow) {
         g.fillStyle(0x02030a, 0.72).fillRect(X, Y + TILE - 7, TILE, 7); // south wall face
-        g.fillStyle(0x000000, 0.5).fillRect(X, Y + TILE, TILE, 11); // cast shadow on floor
-        g.fillStyle(0x000000, 0.24).fillRect(X, Y + TILE + 11, TILE, 6);
+        g.fillStyle(0x000000, 0.42).fillRect(X, Y + TILE, TILE, 11); // cast shadow on floor
+        g.fillStyle(0x000000, 0.18).fillRect(X, Y + TILE + 11, TILE, 6);
         g.fillStyle(DIM, 0.7).fillRect(X, Y + TILE - 1, TILE, 1); // dim base outline
       }
       if (openRight) {
         g.fillStyle(0x02030a, 0.58).fillRect(X + TILE - 6, Y, 6, TILE); // east face
-        g.fillStyle(0x000000, 0.42).fillRect(X + TILE, Y, 9, TILE); // cast shadow on floor
-        g.fillStyle(0x000000, 0.18).fillRect(X + TILE + 9, Y, 5, TILE);
+        g.fillStyle(0x000000, 0.34).fillRect(X + TILE, Y, 9, TILE); // cast shadow on floor
+        g.fillStyle(0x000000, 0.14).fillRect(X + TILE + 9, Y, 5, TILE);
         g.fillStyle(DIM, 0.6).fillRect(X + TILE - 1, Y, 1, TILE);
       }
       if (openBelow && openRight) g.fillStyle(0x000000, 0.36).fillRect(X + TILE, Y + TILE, 11, 11);

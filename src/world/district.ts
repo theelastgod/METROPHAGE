@@ -2,8 +2,38 @@
 // No Phaser imports: this is the "world model" the renderer consumes. Later AI/sim
 // work can read this grid without touching draw code.
 
-import { GRID_W, GRID_H, TILE } from "../config";
+import { GRID_W, GRID_H, DISTRICT_SCALE, DISTRICT_GRID_W, DISTRICT_GRID_H, TILE } from "../config";
 import { DISTRICTS, type DistrictDef, type Rect } from "../game/districts";
+import {
+  type BridgeDef,
+  type PathSegment,
+  type WildernessBiome,
+  travelSpawnTile,
+  bridgeWestTile,
+  bridgeEastTile,
+  getBridge,
+} from "../game/bridges";
+import {
+  TUTORIAL_CHAMBERS,
+  TUTORIAL_DIVIDERS,
+  TUTORIAL_SPAWN,
+  TUTORIAL_PORTAL,
+  TUTORIAL_PORTAL_RADIUS,
+  TUTORIAL_SPAWN_TILE,
+  TUTORIAL_COP_TILE,
+  TUTORIAL_NODE_TILE,
+  TUTORIAL_PORTAL_TILE,
+} from "../game/tutorialLayout";
+
+export {
+  TUTORIAL_SPAWN,
+  TUTORIAL_PORTAL,
+  TUTORIAL_PORTAL_RADIUS,
+  TUTORIAL_SPAWN_TILE,
+  TUTORIAL_COP_TILE,
+  TUTORIAL_NODE_TILE,
+  TUTORIAL_PORTAL_TILE,
+};
 
 // Indices into the code-authored tileset (textures.ts; 256×128, 32 cells of 32×32).
 // Walkable ground 0–3,5,10–14; building/blocking tiles 4,6–9,15 (see isWall).
@@ -45,36 +75,57 @@ const WALL_TILES = new Set<number>([
  * in the grid; only the *rendered* tile index varies (see src/render/tileVariants.ts), so the
  * wall-variant cells (roofs 25–29) must also be marked colliding below.
  */
-export const TILE_VARIANTS: Record<number, number[]> = { 0: [0, 18, 19], 1: [1, 21], 2: [2, 20], 3: [3, 22], 4: [4, 25], 7: [7, 26], 8: [8, 27], 9: [9, 28], 10: [10, 23], 11: [11, 31], 14: [14, 24], 15: [15, 29], 16: [16, 30] };
+export const TILE_VARIANTS: Record<number, number[]> = {
+  0: [0, 18, 19], 1: [1, 21, 37], 2: [2, 20, 38], 3: [3, 22], 4: [4, 25], 5: [5, 32], 6: [6, 33],
+  7: [7, 26], 8: [8, 27], 9: [9, 28], 10: [10, 23], 11: [11, 31], 12: [12, 34], 13: [13, 35], 14: [14, 24],
+  15: [15, 29], 16: [16, 30, 39], 17: [17, 36],
+};
 /** Roof-variant cells (variants of the colliding building bases 4/7/8/9/15). */
 const WALL_VARIANTS = [25, 26, 27, 28, 29];
+/** Interior-wall variant (base 17) — must still collide when scattered. */
+const INNER_WALL_VARIANTS = [36];
 
-/** Deterministic per-tile variant pick (stable across reloads). Biased toward the primary
- *  swatch so districts feel cohesive, with scattered alternates to break repetition. */
+/** Deterministic per-tile variant pick (stable across reloads). ~25% of tiles use an
+ *  alternate swatch — enough to break repetition without patchwork mismatched photos. */
 export function variantOf(base: number, tx: number, ty: number): number {
   const vs = TILE_VARIANTS[base];
   if (!vs || vs.length < 2) return base;
   const h = ((tx * 73856093) ^ (ty * 19349663) ^ (base * 83492791)) >>> 0;
-  if ((h & 3) === 0) return base;
+  if ((h & 3) !== 0) return base;
   return vs[1 + (h % (vs.length - 1))];
 }
 
 /** Every building/blocking tile index — scenes pass this to setCollision(). Includes the
  *  roof-variant cells so a varied building top still collides. */
-export const COLLIDING_TILES: number[] = [...WALL_TILES, ...WALL_VARIANTS];
+export const COLLIDING_TILES: number[] = [...WALL_TILES, ...WALL_VARIANTS, ...INNER_WALL_VARIANTS];
 
 export type TileGrid = number[][];
 
+function gridW(grid: TileGrid) {
+  return grid[0]?.length ?? GRID_W;
+}
+function gridH(grid: TileGrid) {
+  return grid.length;
+}
+
 function fill(grid: TileGrid, r: Rect, tile: number) {
+  const gw = gridW(grid);
+  const gh = gridH(grid);
   for (let y = r.y1; y <= r.y2; y++) {
     for (let x = r.x1; x <= r.x2; x++) {
-      if (y >= 0 && y < GRID_H && x >= 0 && x < GRID_W) grid[y][x] = tile;
+      if (y >= 0 && y < gh && x >= 0 && x < gw) grid[y][x] = tile;
     }
   }
 }
 
+const S = DISTRICT_SCALE;
+const scaleRect = (r: Rect): Rect => ({ x1: r.x1 * S, y1: r.y1 * S, x2: r.x2 * S, y2: r.y2 * S });
+const scaleTile = (t: [number, number]): [number, number] => [t[0] * S, t[1] * S];
+
 /** Carve a single tile (and its 4-neighbours) walkable — keeps key points reachable. */
 function carve(grid: TileGrid, tx: number, ty: number, tile = TILE_FLOOR) {
+  const gw = gridW(grid);
+  const gh = gridH(grid);
   const pts: Array<[number, number]> = [
     [tx, ty],
     [tx - 1, ty],
@@ -83,7 +134,7 @@ function carve(grid: TileGrid, tx: number, ty: number, tile = TILE_FLOOR) {
     [tx, ty + 1],
   ];
   for (const [x, y] of pts) {
-    if (x > 0 && x < GRID_W - 1 && y > 0 && y < GRID_H - 1 && isWall(grid[y][x])) {
+    if (x > 0 && x < gw - 1 && y > 0 && y < gh - 1 && isWall(grid[y][x])) {
       grid[y][x] = tile;
     }
   }
@@ -91,47 +142,173 @@ function carve(grid: TileGrid, tx: number, ty: number, tile = TILE_FLOOR) {
 
 /** Build a district's tile grid deterministically from its DistrictDef. */
 export function buildGrid(def: DistrictDef = DISTRICTS[0]): TileGrid {
+  const gw = DISTRICT_GRID_W;
+  const gh = DISTRICT_GRID_H;
   const grid: TileGrid = [];
-  for (let y = 0; y < GRID_H; y++) {
-    grid.push(new Array(GRID_W).fill(TILE_FLOOR));
+  for (let y = 0; y < gh; y++) {
+    grid.push(new Array(gw).fill(TILE_FLOOR));
   }
 
   // Outer wall ring.
-  for (let x = 0; x < GRID_W; x++) {
+  for (let x = 0; x < gw; x++) {
     grid[0][x] = TILE_WALL;
-    grid[GRID_H - 1][x] = TILE_WALL;
+    grid[gh - 1][x] = TILE_WALL;
   }
-  for (let y = 0; y < GRID_H; y++) {
+  for (let y = 0; y < gh; y++) {
     grid[y][0] = TILE_WALL;
-    grid[y][GRID_W - 1] = TILE_WALL;
+    grid[y][gw - 1] = TILE_WALL;
   }
 
   const { buildings, plaza, laneRows, laneCols } = def.layout;
-  for (const b of buildings) fill(grid, b, TILE_WALL);
-  if (plaza) fill(grid, plaza, TILE_PLAZA); // carve walkable, even over a building
+  const ROOF_CYCLE = [TILE_WALL, TILE_WALL_CORP, TILE_WALL_RES, TILE_WALL_IND, TILE_WALL_SLUM];
+  buildings.forEach((b, i) => fill(grid, scaleRect(b), ROOF_CYCLE[i % ROOF_CYCLE.length]));
+  if (plaza) fill(grid, scaleRect(plaza), TILE_PLAZA);
 
-  // Lane markings down the chosen cross-streets (only over floor tiles).
   for (const y of laneRows) {
-    if (y <= 0 || y >= GRID_H - 1) continue;
-    for (let x = 1; x < GRID_W - 1; x++) {
-      if (grid[y][x] === TILE_FLOOR) grid[y][x] = TILE_LANE;
+    const sy = y * S;
+    if (sy <= 0 || sy >= gh - 1) continue;
+    for (let x = 1; x < gw - 1; x++) {
+      if (grid[sy][x] === TILE_FLOOR) grid[sy][x] = TILE_LANE;
     }
   }
   for (const x of laneCols) {
-    if (x <= 0 || x >= GRID_W - 1) continue;
-    for (let y = 1; y < GRID_H - 1; y++) {
-      if (grid[y][x] === TILE_FLOOR) grid[y][x] = TILE_LANE;
+    const sx = x * S;
+    if (sx <= 0 || sx >= gw - 1) continue;
+    for (let y = 1; y < gh - 1; y++) {
+      if (grid[y][sx] === TILE_FLOOR) grid[y][sx] = TILE_LANE;
     }
   }
 
-  // Safety: guarantee the player start, the dive entrance, and every territory
-  // node (and neighbours) are walkable, regardless of how the layout was authored.
-  carve(grid, def.spawnTile[0], def.spawnTile[1]);
-  carve(grid, def.diveTile[0], def.diveTile[1]);
-  carve(grid, def.boardTile[0], def.boardTile[1]);
-  carve(grid, def.shopTile[0], def.shopTile[1]);
-  for (const n of def.nodes) carve(grid, n.tile[0], n.tile[1]);
+  carve(grid, ...scaleTile(def.spawnTile));
+  carve(grid, ...scaleTile(def.diveTile));
+  carve(grid, ...scaleTile(def.boardTile));
+  carve(grid, ...scaleTile(def.shopTile));
+  for (const n of def.nodes) carve(grid, ...scaleTile(n.tile));
 
+  return grid;
+}
+
+const bridgeHash = (x: number, y: number, salt = 0) => ((x * 9283711) ^ (y * 6892871) ^ salt) >>> 0;
+
+type BiomeStyle = { path: number; flank: number; ruin: number; clearing: number; border: number };
+
+const BIOME_STYLE: Record<WildernessBiome, BiomeStyle> = {
+  ruined_urban: { path: TILE_LANE, flank: TILE_SIDEWALK, ruin: TILE_WALL, clearing: TILE_PLAZA, border: TILE_WALL_SLUM },
+  industrial_cut: { path: TILE_GRATE, flank: TILE_DIRT, ruin: TILE_WALL_IND, clearing: TILE_MARKET, border: TILE_WALL_IND },
+  floodplain: { path: TILE_DIRT, flank: TILE_GRASS, ruin: TILE_WALL_SLUM, clearing: TILE_GRASS, border: TILE_WALL_SLUM },
+  undercity: { path: TILE_DIRT, flank: TILE_NEON, ruin: TILE_WALL_CORP, clearing: TILE_NEON, border: TILE_WALL_CORP },
+  debris_field: { path: TILE_DIRT, flank: TILE_GRASS, ruin: TILE_WALL_IND, clearing: TILE_MARKET, border: TILE_WALL_IND },
+  ash_wastes: { path: TILE_DIRT, flank: TILE_DIRT, ruin: TILE_WALL_SLUM, clearing: TILE_NEON, border: TILE_WALL_SLUM },
+  meltdown: { path: TILE_NEON, flank: TILE_DIRT, ruin: TILE_WALL, clearing: TILE_PLAZA, border: TILE_WALL },
+};
+
+function wildBaseTile(biome: WildernessBiome, x: number, y: number, salt: number): number {
+  const h = bridgeHash(x, y, salt);
+  switch (biome) {
+    case "ruined_urban":
+      if (h % 13 === 0) return TILE_SIDEWALK;
+      if (h % 9 === 0) return TILE_GRASS;
+      return TILE_DIRT;
+    case "industrial_cut":
+      if (h % 11 === 0) return TILE_GRATE;
+      return h % 6 === 0 ? TILE_GRASS : TILE_DIRT;
+    case "floodplain":
+      return h % 4 === 0 ? TILE_DIRT : TILE_GRASS;
+    case "undercity":
+      if (h % 17 === 0) return TILE_NEON;
+      return h % 5 === 0 ? TILE_GRASS : TILE_DIRT;
+    case "debris_field":
+      if (h % 10 === 0) return TILE_MARKET;
+      return h % 4 === 0 ? TILE_GRASS : TILE_DIRT;
+    case "ash_wastes":
+      if (h % 19 === 0) return TILE_GRASS;
+      if (h % 23 === 0) return TILE_NEON;
+      return TILE_DIRT;
+    case "meltdown":
+      if (h % 15 === 0) return TILE_NEON;
+      if (h % 9 === 0) return TILE_PLAZA;
+      return TILE_DIRT;
+  }
+}
+
+function paintPathStrip(grid: TileGrid, seg: PathSegment, style: BiomeStyle, width = 2) {
+  const gw = gridW(grid);
+  const gh = gridH(grid);
+  const sy = seg.y * S;
+  const x0 = Math.max(1, seg.x1 * S);
+  const x1 = Math.min(gw - 2, seg.x2 * S);
+  if (sy <= 0 || sy >= gh - 1) return;
+  for (let x = x0; x <= x1; x++) {
+    for (let dy = -width; dy <= width; dy++) {
+      const ry = sy + dy;
+      if (ry <= 0 || ry >= gh - 1) continue;
+      if (isWall(grid[ry][x])) continue;
+      grid[ry][x] = dy === 0 ? style.path : style.flank;
+    }
+  }
+}
+
+function connectPathSegments(grid: TileGrid, segments: PathSegment[], style: BiomeStyle) {
+  for (let i = 0; i < segments.length - 1; i++) {
+    const a = segments[i];
+    const b = segments[i + 1];
+    const overlapX0 = Math.max(a.x1, b.x1);
+    const overlapX1 = Math.min(a.x2, b.x2);
+    if (overlapX0 > overlapX1) continue;
+    const xMid = Math.floor(((overlapX0 + overlapX1) / 2) * S);
+    const y0 = Math.min(a.y, b.y) * S;
+    const y1 = Math.max(a.y, b.y) * S;
+    for (let y = y0; y <= y1; y++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const x = xMid + dx;
+        if (x <= 0 || x >= gridW(grid) - 1) continue;
+        if (isWall(grid[y]?.[x])) continue;
+        grid[y][x] = dx === 0 ? style.path : style.flank;
+      }
+    }
+  }
+}
+
+/** Wilderness corridor between two districts — biome-specific ground, winding trails, ruins. */
+export function buildBridgeGrid(def: BridgeDef = getBridge(0)): TileGrid {
+  const gw = DISTRICT_GRID_W;
+  const gh = DISTRICT_GRID_H;
+  const biome = def.layout.biome;
+  const style = BIOME_STYLE[biome];
+  const salt = def.fromDistrict * 31337 + 17;
+  const grid: TileGrid = [];
+  for (let y = 0; y < gh; y++) {
+    const row: number[] = [];
+    for (let x = 0; x < gw; x++) {
+      row.push(wildBaseTile(biome, x, y, salt));
+    }
+    grid.push(row);
+  }
+  for (let x = 0; x < gw; x++) {
+    grid[0][x] = style.border;
+    grid[gh - 1][x] = style.border;
+  }
+  for (let y = 0; y < gh; y++) {
+    grid[y][0] = style.border;
+    grid[y][gw - 1] = style.border;
+  }
+  for (const g of def.layout.groves) fill(grid, scaleRect(g), TILE_GRASS);
+  for (const c of def.layout.clearings ?? []) fill(grid, scaleRect(c), style.clearing);
+  for (const r of def.layout.ruins) fill(grid, scaleRect(r), style.ruin);
+  for (const h of def.layout.hazards) fill(grid, scaleRect(h), TILE_WATER);
+
+  const segments =
+    def.layout.pathSegments ??
+    def.layout.pathRows.map((y) => ({ y, x1: 2, x2: 38 }));
+  for (const seg of segments) paintPathStrip(grid, seg, style);
+  if (segments.length > 1) connectPathSegments(grid, segments, style);
+  if (def.layout.spur) paintPathStrip(grid, def.layout.spur, style, 1);
+
+  const [wx, wy] = bridgeWestTile(def);
+  const [ex, ey] = bridgeEastTile(def);
+  carve(grid, wx, wy, style.path);
+  carve(grid, ex, ey, style.path);
+  carve(grid, ...scaleTile(def.guideTile), style.flank);
   return grid;
 }
 
@@ -194,8 +371,7 @@ export function buildSubway(): TileGrid {
 export const SUBWAY_SPAWN = { x: 4 * TILE + TILE / 2, y: 7 * TILE + TILE / 2 };
 
 /**
- * THE DRILL YARD — tutorial zone. A linear training floor: spawn + skip on the west,
- * combat drill + infection node in the middle, one-way deploy portal on the east wall.
+ * THE DRILL YARD — linear training facility with distinct west→east chambers.
  * Shared by client render and server sim (zone "tutorial").
  */
 export function buildTutorial(): TileGrid {
@@ -208,34 +384,59 @@ export function buildTutorial(): TileGrid {
     }
     g.push(row);
   }
-  // central corridor dividers (open archways)
-  for (let y = 8; y < GRID_H - 8; y++) {
-    if (y === 14 || y === 15) continue;
-    g[y][14] = TILE_INNER_WALL;
-    g[y][26] = TILE_INNER_WALL;
+  for (const ch of TUTORIAL_CHAMBERS) {
+    for (let y = ch.y1; y <= ch.y2; y++) {
+      for (let x = ch.x1; x <= ch.x2; x++) {
+        if (g[y]?.[x] !== TILE_INNER_WALL) g[y][x] = ch.floor;
+      }
+    }
+  }
+  for (let x = 4; x <= 36; x++) {
+    for (let y = 14; y <= 16; y++) g[y][x] = TILE_CROSSWALK;
+  }
+  for (const dx of TUTORIAL_DIVIDERS) {
+    for (let y = 5; y <= 25; y++) {
+      if (y >= 14 && y <= 16) continue;
+      g[y][dx] = TILE_INNER_WALL;
+    }
   }
   return g;
 }
 
-export const TUTORIAL_SPAWN = { x: 6 * TILE + TILE / 2, y: 15 * TILE + TILE / 2 };
-/** East gate — the one-way portal into the live city. */
-export const TUTORIAL_PORTAL = { x: 36 * TILE + TILE / 2, y: 15 * TILE + TILE / 2 };
-/** Infection-node drill tile (centre chamber). */
-export const TUTORIAL_NODE_TILE: [number, number] = [20, 15];
-
 /** Player start in world (pixel) coordinates, at tile center, from the district def. */
 export function spawnPoint(grid: TileGrid, def: DistrictDef = DISTRICTS[0]): { x: number; y: number } {
-  const [sx, sy] = def.spawnTile;
+  const [sx, sy] = scaleTile(def.spawnTile);
   if (grid[sy]?.[sx] !== undefined && !isWall(grid[sy][sx])) {
     return { x: sx * TILE + TILE / 2, y: sy * TILE + TILE / 2 };
   }
-  // Fallback: first walkable interior tile.
-  for (let y = 1; y < GRID_H - 1; y++) {
-    for (let x = 1; x < GRID_W - 1; x++) {
+  const gw = gridW(grid);
+  const gh = gridH(grid);
+  for (let y = 1; y < gh - 1; y++) {
+    for (let x = 1; x < gw - 1; x++) {
       if (!isWall(grid[y][x])) {
         return { x: x * TILE + TILE / 2, y: y * TILE + TILE / 2 };
       }
     }
   }
   return { x: TILE * 1.5, y: TILE * 1.5 };
+}
+
+/** Spawn at a trail gate when entering from another zone; falls back to district spawn. */
+export function spawnPointForTravel(
+  grid: TileGrid,
+  zone: string,
+  fromZone: string | undefined,
+  def?: DistrictDef,
+): { x: number; y: number } {
+  const tile = travelSpawnTile(zone, fromZone);
+  if (tile) {
+    const [tx, ty] = tile;
+    carve(grid, tx, ty, TILE_DIRT);
+    if (grid[ty]?.[tx] !== undefined && !isWall(grid[ty][tx])) {
+      return { x: tx * TILE + TILE / 2, y: ty * TILE + TILE / 2 };
+    }
+  }
+  if (def) return spawnPoint(grid, def);
+  const [wx, wy] = bridgeWestTile(getBridge(0));
+  return { x: wx * TILE + TILE / 2, y: wy * TILE + TILE / 2 };
 }

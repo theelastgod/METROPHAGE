@@ -82,7 +82,7 @@ const DOWNTOWN: DistrictDef = {
   accent: 0xff2bd6,
   accentHex: "#ff2bd6",
   threat: 0,
-  contagion: 22,
+  contagion: 10,
   weather: "rain",
   enemyWeights: { patrol: 1, enforcer: 0, purge: 0 },
   layout: {
@@ -127,7 +127,7 @@ const STACKS: DistrictDef = {
   accent: 0xf7ff3c,
   accentHex: "#f7ff3c",
   threat: 1,
-  contagion: 24,
+  contagion: 11,
   weather: "smog",
   bossId: "sentinel",
   enemyWeights: { patrol: 0.7, enforcer: 0.3, purge: 0 },
@@ -177,7 +177,7 @@ const SPIRE: DistrictDef = {
   accent: 0x00e5ff,
   accentHex: "#00e5ff",
   threat: 2,
-  contagion: 26,
+  contagion: 12,
   weather: "rain",
   bossId: "oracle",
   enemyWeights: { patrol: 0.5, enforcer: 0.35, purge: 0.15 },
@@ -214,7 +214,189 @@ const SPIRE: DistrictDef = {
   ],
 };
 
-// ── District 4 — HSS CORE ───────────────────────────────────────────────────
+// ── District 4 — THE DOCKS ──────────────────────────────────────────────────
+// Flooded freight yards: long piers, container stacks, open sightlines to the water edge.
+const DOCKS: DistrictDef = {
+  id: "docks",
+  name: "TIDAL YARDS",
+  subtitle: "BLACKWATER FREIGHT · SECTOR 12",
+  accent: 0x29e7ff,
+  accentHex: "#29e7ff",
+  threat: 3,
+  contagion: 13,
+  weather: "rain",
+  bossId: "leviathan",
+  enemyWeights: { patrol: 0.55, enforcer: 0.3, purge: 0.15 },
+  layout: {
+    buildings: [
+      { x1: 3, y1: 3, x2: 11, y2: 8 },
+      { x1: 14, y1: 3, x2: 22, y2: 8 },
+      { x1: 27, y1: 3, x2: 36, y2: 8 },
+      { x1: 3, y1: 11, x2: 9, y2: 17 },
+      { x1: 30, y1: 11, x2: 36, y2: 17 },
+      { x1: 3, y1: 20, x2: 10, y2: 25 },
+      { x1: 29, y1: 20, x2: 36, y2: 25 },
+    ],
+    plaza: { x1: 12, y1: 11, x2: 27, y2: 22 },
+    laneRows: [9, 18],
+    laneCols: [11, 28],
+  },
+  spawnTile: [19, 24],
+  diveTile: [16, 24],
+  boardTile: [14, 14],
+  shopTile: [25, 14],
+  nodes: [
+    { tile: [19, 16], links: [1, 2] },
+    { tile: [8, 14], links: [0] },
+    { tile: [30, 14], links: [0] },
+  ],
+  copPosts: [
+    [7, 6, "patrol"],
+    [32, 6, "enforcer"],
+    [7, 14, "patrol"],
+    [32, 14, "patrol"],
+    [19, 22, "enforcer"],
+  ],
+};
+
+// ── District 5 — THE UNDERCITY ─────────────────────────────────────────────
+// Collapsed metro vaults: tight corridors, branching chambers, heavy patrol pressure.
+const UNDERCITY: DistrictDef = {
+  id: "undercity",
+  name: "THE UNDERCITY",
+  subtitle: "BURIED METRO VAULTS · SECTOR 19",
+  accent: 0xb06bff,
+  accentHex: "#b06bff",
+  threat: 4,
+  contagion: 13,
+  weather: "ash",
+  bossId: "maw",
+  enemyWeights: { patrol: 0.4, enforcer: 0.35, purge: 0.25 },
+  layout: {
+    buildings: [
+      { x1: 4, y1: 4, x2: 12, y2: 9 },
+      { x1: 27, y1: 4, x2: 35, y2: 9 },
+      { x1: 4, y1: 20, x2: 12, y2: 25 },
+      { x1: 27, y1: 20, x2: 35, y2: 25 },
+      { x1: 16, y1: 4, x2: 23, y2: 7 },
+      { x1: 16, y1: 22, x2: 23, y2: 25 },
+      { x1: 8, y1: 12, x2: 11, y2: 17 },
+      { x1: 28, y1: 12, x2: 31, y2: 17 },
+    ],
+    plaza: { x1: 13, y1: 10, x2: 26, y2: 19 },
+    laneRows: [11, 19],
+    laneCols: [14, 25],
+  },
+  spawnTile: [19, 26],
+  diveTile: [22, 26],
+  boardTile: [14, 15],
+  shopTile: [24, 15],
+  nodes: [
+    { tile: [19, 14], links: [1, 2] },
+    { tile: [10, 14], links: [0] },
+    { tile: [28, 14], links: [0] },
+  ],
+  copPosts: [
+    [8, 7, "enforcer"],
+    [31, 7, "patrol"],
+    [8, 22, "patrol"],
+    [31, 22, "enforcer"],
+    [19, 10, "patrol"],
+    [19, 20, "enforcer"],
+  ],
+};
+
+// ── District 6 — ORBITAL RELAY ───────────────────────────────────────────────
+// Uplink spires on a ridgeline: elevated platforms, exposed nodes, sniper pressure.
+const RELAY: DistrictDef = {
+  id: "relay",
+  name: "ORBITAL RELAY",
+  subtitle: "SKYLINK ARRAY · UPLINK TIER",
+  accent: 0x6b9bff,
+  accentHex: "#6b9bff",
+  threat: 5,
+  contagion: 14,
+  weather: "smog",
+  bossId: "beacon",
+  enemyWeights: { patrol: 0.45, enforcer: 0.35, purge: 0.2 },
+  layout: {
+    buildings: [
+      { x1: 5, y1: 5, x2: 12, y2: 11 },
+      { x1: 27, y1: 5, x2: 34, y2: 11 },
+      { x1: 5, y1: 18, x2: 12, y2: 24 },
+      { x1: 27, y1: 18, x2: 34, y2: 24 },
+      { x1: 17, y1: 3, x2: 22, y2: 6 },
+      { x1: 17, y1: 23, x2: 22, y2: 26 },
+    ],
+    plaza: { x1: 14, y1: 11, x2: 25, y2: 18 },
+    laneRows: [14],
+    laneCols: [19],
+  },
+  spawnTile: [19, 24],
+  diveTile: [22, 24],
+  boardTile: [15, 14],
+  shopTile: [25, 14],
+  nodes: [
+    { tile: [19, 14], links: [1, 2] },
+    { tile: [9, 14], links: [0] },
+    { tile: [29, 14], links: [0] },
+  ],
+  copPosts: [
+    [9, 8, "enforcer"],
+    [30, 8, "patrol"],
+    [9, 21, "patrol"],
+    [30, 21, "enforcer"],
+    [19, 8, "patrol"],
+    [19, 21, "enforcer"],
+  ],
+};
+
+// ── District 7 — THE WASTELAND ─────────────────────────────────────────────
+// Outer ring salvage zone: sparse cover, roaming packs, a fortified scrap citadel.
+const WASTELAND: DistrictDef = {
+  id: "wastes",
+  name: "THE WASTELAND",
+  subtitle: "OUTER RING SALVAGE · SECTOR 31",
+  accent: 0xffb13c,
+  accentHex: "#ffb13c",
+  threat: 6,
+  contagion: 14,
+  weather: "ash",
+  bossId: "scavenger",
+  enemyWeights: { patrol: 0.38, enforcer: 0.32, purge: 0.3 },
+  layout: {
+    buildings: [
+      { x1: 4, y1: 4, x2: 10, y2: 9 },
+      { x1: 29, y1: 4, x2: 35, y2: 9 },
+      { x1: 4, y1: 20, x2: 10, y2: 25 },
+      { x1: 29, y1: 20, x2: 35, y2: 25 },
+      { x1: 16, y1: 5, x2: 23, y2: 8 },
+      { x1: 16, y1: 21, x2: 23, y2: 24 },
+    ],
+    plaza: { x1: 12, y1: 10, x2: 27, y2: 19 },
+    laneRows: [12, 18],
+    laneCols: [15, 24],
+  },
+  spawnTile: [19, 26],
+  diveTile: [22, 26],
+  boardTile: [14, 14],
+  shopTile: [25, 14],
+  nodes: [
+    { tile: [19, 14], links: [1, 2] },
+    { tile: [7, 14], links: [0] },
+    { tile: [31, 14], links: [0] },
+  ],
+  copPosts: [
+    [7, 7, "patrol"],
+    [32, 7, "patrol"],
+    [7, 22, "enforcer"],
+    [32, 22, "enforcer"],
+    [19, 10, "patrol"],
+    [19, 20, "patrol"],
+  ],
+};
+
+// ── District 8 — HSS CORE ───────────────────────────────────────────────────
 // The Human Security System's spine. A fortress chamber: thick structures funnel
 // into a central arena. Final district — taking its node melts the city down.
 const CORE: DistrictDef = {
@@ -223,8 +405,8 @@ const CORE: DistrictDef = {
   subtitle: "HELIOS MASTER GRID · THE CAGE",
   accent: 0xff3b6b,
   accentHex: "#ff3b6b",
-  threat: 3,
-  contagion: 28,
+  threat: 7,
+  contagion: 13,
   weather: "embers",
   isFinal: true,
   bossId: "overmind",
@@ -264,7 +446,7 @@ const CORE: DistrictDef = {
 };
 
 /** The campaign, in order. Index 0 plays first; the final district ends the cycle. */
-export const DISTRICTS: DistrictDef[] = [DOWNTOWN, STACKS, SPIRE, CORE];
+export const DISTRICTS: DistrictDef[] = [DOWNTOWN, STACKS, SPIRE, DOCKS, UNDERCITY, RELAY, WASTELAND, CORE];
 
 export function getDistrict(index: number): DistrictDef {
   return DISTRICTS[clamp(index, 0, DISTRICTS.length - 1)];

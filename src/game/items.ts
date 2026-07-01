@@ -2,7 +2,7 @@
 // Item mods feed the same ModBag pipeline as skills (game/stats.ts).
 
 import type { ModBag } from "./stats";
-import { WEAPON_IDS, getWeapon } from "./weapons";
+import { WEAPON_IDS, getWeapon, weaponDamageLine } from "./weapons";
 
 export type Slot = "weapon" | "implant" | "armor" | "chip";
 export const SLOTS: Slot[] = ["weapon", "implant", "armor", "chip"];
@@ -215,7 +215,11 @@ export function itemStatLines(item: Item): string[] {
     return `${sd.good}${val} ${sd.label}`;
   });
   const w = getWeapon(item.weaponId);
-  if (w) lines.unshift(`◈ ${w.klass} — ${w.desc}`);
-  if ((item.ilvl ?? 0) > 0) lines.unshift(`▲ +${item.ilvl}`);
+  if (w) {
+    lines.unshift(weaponDamageLine(item, item.weaponId));
+    lines.unshift(`◈ ${w.klass} — ${w.desc}`);
+  }
+  if ((item.ilvl ?? 0) > 0 && !item.weaponId) lines.unshift(`▲ +${item.ilvl}`);
+  else if ((item.ilvl ?? 0) > 0 && item.weaponId) lines.unshift(`▲ FORGE +${item.ilvl} — damage scales`);
   return lines;
 }

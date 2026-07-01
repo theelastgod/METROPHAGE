@@ -1,13 +1,17 @@
 import Phaser from "phaser";
-import { ASSETS, TILESET_KEY, GLOW_KEY } from "../assets/manifest";
+import { ASSETS } from "../assets/manifest";
 import { generatePlaceholders } from "../assets/textures";
+import { applyTextureFilters } from "../assets/textureFilters";
 import { ensureItemIcons } from "../assets/itemIcons";
-import NeonPipeline from "../render/NeonPipeline";
+import { ensureNeonPipeline } from "../render/ensureNeon";
 import MusicDirector from "../audio/MusicDirector";
+import Synth from "../audio/Synth";
+import { COLORS } from "../config";
+import { detectDeviceTier, hasSavedSettings, updateSettings } from "../systems/Settings";
+
 
 /**
- * BootScene — loads any real asset files declared in the manifest, then fills in
- * procedural placeholders for everything still missing, and hands off to GameScene.
+ * BootScene — loads manifest assets, bakes procedural fallbacks, registers pipelines.
  */
 export default class BootScene extends Phaser.Scene {
   constructor() {
@@ -15,6 +19,13 @@ export default class BootScene extends Phaser.Scene {
   }
 
   preload() {
+    const barEl = document.getElementById("boot-bar");
+    const tagEl = document.querySelector("#boot .tag");
+    this.load.on("progress", (v: number) => {
+      if (barEl) barEl.style.width = `${Math.round(v * 100)}%`;
+      if (tagEl) tagEl.textContent = `LOADING ASSETS ${Math.round(v * 100)}%`;
+    });
+
     for (const [category, list] of Object.entries(ASSETS)) {
       for (const a of list) {
         if (!a.file) continue;
@@ -33,27 +44,36 @@ export default class BootScene extends Phaser.Scene {
   }
 
   create() {
+    this.cameras.main.setBackgroundColor(COLORS.bgVoid);
+    if (!hasSavedSettings()) {
+      const tier = detectDeviceTier();
+      updateSettings({
+        graphicsQuality: "auto",
+        lowFx: tier === "low",
+        uiScale: tier === "low" ? 1.1 : 1,
+      });
+    }
     generatePlaceholders(this);
-    ensureItemIcons(this); // bake procedural item icons (weapons / gear / consumables)
+    ensureItemIcons(this);
+    applyTextureFilters(this);
 
-    // High-res tileset is downscaled at render — linear filtering keeps floor detail smooth.
-    for (const key of [TILESET_KEY, GLOW_KEY]) {
-      if (this.textures.exists(key)) this.textures.get(key).setFilter(Phaser.Textures.FilterMode.LINEAR);
-    }
+    ensureNeonPipeline(this);
 
-    // Register the neon post-FX pipeline once (WebGL only).
-    if (this.renderer.type === Phaser.WEBGL) {
-      (this.renderer as Phaser.Renderer.WebGL.WebGLRenderer).pipelines.addPostPipeline(
-        "Neon",
-        NeonPipeline,
-      );
-    }
-
-    // Game-level music director — one shared bed that crossfades per environment
-    // and survives scene changes. Created before the first scene so the title
-    // screen has music. Falls back to the procedural Synth where no bed exists.
     this.registry.set("music", new MusicDirector(this.game));
+    if (!this.registry.get("synth")) this.registry.set("synth", new Synth());
 
-    this.scene.start("Select");
+    const tagEl = document.querySelector("#boot .tag");
+    if (tagEl) tagEl.textContent = "ENTERING NEON GRID";
+    const barEl = document.getElementById("boot-bar");
+    if (barEl) barEl.style.width = "100%";
+
+    this.time.delayedCall(280, () => {
+      const boot = document.getElementById("boot");
+      if (boot) {
+        boot.style.opacity = "0";
+        window.setTimeout(() => boot.remove(), 700);
+      }
+      this.scene.start("Select");
+    });
   }
 }

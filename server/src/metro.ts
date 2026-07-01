@@ -95,7 +95,7 @@ const normId = (player: string): string => (player || "").toLowerCase().replace(
 
 export async function getAccount(db: D1Database, player: string): Promise<BridgeResponse> {
   const id = normId(player);
-  const row = await db.prepare("SELECT credits FROM players WHERE id = ?").bind(id).first<{ credits: number }>();
+  const row = await db.prepare("SELECT credits, metro FROM players WHERE id = ?").bind(id).first<{ credits: number; metro: number }>();
   if (!row) return { ok: false, reason: "unknown player" };
   const agg = await db
     .prepare(
@@ -109,6 +109,7 @@ export async function getAccount(db: D1Database, player: string): Promise<Bridge
     ok: true,
     player: id,
     credits: row.credits,
+    metro: row.metro ?? 0,
     rate: BRIDGE.creditsPerMetro,
     metroValue: creditsToMetro(row.credits),
     minWithdrawCredits: BRIDGE.minWithdrawCredits,
@@ -202,6 +203,10 @@ export async function deposit(
     .run();
   if (claim.meta.changes === 0) return { ok: false, reason: "deposit already claimed" };
 
-  await db.prepare("UPDATE players SET credits = credits + ? WHERE id = ?").bind(credits, id).run();
-  return { ok: true, player: id, txSig, metro, credits };
+  const metroUnits = Math.max(1, Math.round(metro));
+  await db
+    .prepare("UPDATE players SET credits = credits + ?, metro = metro + ? WHERE id = ?")
+    .bind(credits, metroUnits, id)
+    .run();
+  return { ok: true, player: id, txSig, metro, metroGranted: metroUnits, credits };
 }

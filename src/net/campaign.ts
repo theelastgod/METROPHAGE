@@ -178,10 +178,10 @@ export function campaignHud(c: Campaign): string {
     return `◈ ${q.name} — ${s.objective}${prog}`;
   }
   const next = c.nextOffer();
-  if (next) return `◈ ${next.name} — visit THE FIXER`;
-  if (c.done) return "◈ THE AWAKENING — the cycle is yours";
-  return "◈ METROPHAGE — the city waits";
+  if (next) return `◈ ${next.name} — talk to THE FIXER`;
+  if (c.done) return "◈ THE AWAKENING — you woke them. the city remembers";
+  return "◈ METROPHAGE — THE FIXER is waiting";
 }
 
 export const CAMPAIGN_DONE_TEXT =
-  "You are the Wake. The grid resets, the warrens fill again — and somewhere a new Blank opens its eyes.";
+  "You did it. Every caged mind woke — meltdown, Awakening, the first honest morning this city ever had. The grid will reset. They'll try REISSUE again. Somewhere a new Blank opens their eyes and finds the note you left. You are the Wake. Don't let them tell the next one they're new.";

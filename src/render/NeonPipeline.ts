@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { getSettings } from "../systems/Settings";
+import { bloomIntensity, effectiveLowFx, getSettings } from "../systems/Settings";
 
 /**
  * Neon post-FX: radial chromatic aberration + cheap bright-pass bloom +
@@ -17,6 +17,7 @@ uniform vec2 uResolution;
 uniform vec3 uTint;     // district accent (0..1)
 uniform float uTintAmt; // how hard to bias toward the accent
 uniform float uLowFx;   // 1 = low-FX tier: skip bloom + chromatic aberration
+uniform float uBloomAmt; // 0..1 quality scaler (medium tier = lighter bloom)
 varying vec2 outTexCoord;
 
 float rand(vec2 c) { return fract(sin(dot(c, vec2(12.9898, 78.233))) * 43758.5453); }
@@ -25,7 +26,7 @@ float rand(vec2 c) { return fract(sin(dot(c, vec2(12.9898, 78.233))) * 43758.545
 // knee sits high so only genuinely emissive neon blooms — ordinary UI text doesn't.
 vec3 brightPass(vec3 s) {
   float bright = max(s.r, max(s.g, s.b));
-  return s * smoothstep(0.48, 0.94, bright);
+  return s * smoothstep(0.58, 0.96, bright);
 }
 
 void main() {
@@ -75,19 +76,22 @@ void main() {
     bloom += brightPass(texture2D(uMainSampler, uv + vec2( out2.x, -out2.y)).rgb) * 0.22;
     bloom += brightPass(texture2D(uMainSampler, uv + vec2(-out2.x, -out2.y)).rgb) * 0.22;
     bloom /= 4.7; // normalize by total weight
-    col += bloom * (0.92 + uHeat * 1.85 + uGlitch * 1.7);
+    col += bloom * (0.92 + uHeat * 1.85 + uGlitch * 1.7) * uBloomAmt;
   }
 
-  // saturation lift with heat + a subtle noir teal/magenta split-tone in the shadows
+  // cinematic grade — lifted blacks, teal shadows, warm highlights
   float l = dot(col, vec3(0.299, 0.587, 0.114));
-  col = mix(vec3(l), col, 1.08 + uHeat * 0.75 + uGlitch * 0.6);
-  vec3 shadowTint = mix(vec3(0.04, 0.08, 0.14), vec3(0.12, 0.02, 0.10), 0.5 + 0.5 * sin(uTime * 0.08));
-  col = mix(col, col * shadowTint + shadowTint * 0.06, smoothstep(0.0, 0.42, 1.0 - l) * 0.22);
+  col = max(col, vec3(0.014, 0.016, 0.022));
+  col = mix(vec3(l), col, 1.03 + uHeat * 0.72 + uGlitch * 0.55);
+  vec3 shadowTint = mix(vec3(0.05, 0.10, 0.16), vec3(0.14, 0.04, 0.12), 0.5 + 0.5 * sin(uTime * 0.06));
+  col = mix(col, col * shadowTint + shadowTint * 0.07, smoothstep(0.0, 0.45, 1.0 - l) * 0.24);
+  vec3 hiTint = vec3(1.04, 1.02, 0.98);
+  col = mix(col, col * hiTint, smoothstep(0.52, 0.92, l) * 0.14);
 
   // fine scanlines + a slow rolling brightness band (CRT feel), stronger with heat.
   // Kept light at rest so it doesn't stripe small UI text; ramps up in hot combat.
-  float scan = 0.94 + 0.06 * sin(uv.y * uResolution.y * 1.6 + uTime * 3.0);
-  col *= mix(1.0, scan, 0.08 + uHeat * 0.28);
+  float scan = 0.96 + 0.04 * sin(uv.y * uResolution.y * 1.6 + uTime * 3.0);
+  col *= mix(1.0, scan, 0.02 + uHeat * 0.26);
   float roll = 0.985 + 0.015 * sin(uv.y * 5.0 - uTime * 1.4);
   col *= roll;
 
@@ -103,8 +107,9 @@ void main() {
     col += (nz - 0.5) * 0.18 * uGlitch;
   }
 
-  // vignette (deeper for noir framing — pulls the eye in off the busy floor)
-  col *= 1.0 - dist * dist * (0.32 + uHeat * 0.28);
+  // vignette — soft indie-studio framing without crushing mids
+  float vig = smoothstep(0.25, 1.05, dist * 1.35);
+  col *= mix(1.0, 0.72, vig * (0.38 + uHeat * 0.22));
   // gentle highlight lift on emissive peaks so neon reads hotter at high resolution
   col = mix(col, col * 1.08 + vec3(0.02, 0.03, 0.05), smoothstep(0.55, 0.95, l) * 0.18);
 
@@ -144,6 +149,7 @@ export default class NeonPipeline extends Phaser.Renderer.WebGL.Pipelines
     this.set2f("uResolution", this.renderer.width, this.renderer.height);
     this.set3f("uTint", this.tint[0], this.tint[1], this.tint[2]);
     this.set1f("uTintAmt", this.tintAmt);
-    this.set1f("uLowFx", getSettings().lowFx ? 1 : 0);
+    this.set1f("uLowFx", effectiveLowFx() ? 1 : 0);
+    this.set1f("uBloomAmt", bloomIntensity());
   }
 }

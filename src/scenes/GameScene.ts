@@ -2,7 +2,6 @@ import Phaser from "phaser";
 import { installUiCamera } from "../render/cameras";
 import {
   TILE,
-  TILESET_PX,
   WORLD_W,
   WORLD_H,
   COLORS,
@@ -22,10 +21,10 @@ import { AbilityHost, AbilityDef } from "../game/ability";
 import { ENEMY_TIERS, ENEMY_BARKS, EnemyHost } from "../game/enemies";
 import { rollElite, type EliteModifier } from "../game/elites";
 import { buildGrid, spawnPoint, isWall, TILE_WALL, TILE_VARIANTS, TileGrid } from "../world/district";
-import { applyTileVariants } from "../render/tileVariants";
+import { createTerrainLayer } from "../render/terrainLayer";
+import { paintRooftopLights } from "../render/rooftopLights";
 import { DistrictDef, DISTRICTS } from "../game/districts";
 import {
-  TILESET_KEY,
   PORTRAIT_PLAYER_KEY,
   PORTRAIT_NPC_KEY,
   VO_MELTDOWN_KEY,
@@ -58,7 +57,7 @@ import {
 import { CONSUMABLES, CONSUMABLE_KEYS } from "../game/consumables";
 import { ModBag, ZERO_MODS, addMods } from "../game/stats";
 import { rollItem } from "../game/items";
-import { getWeapon } from "../game/weapons";
+import { getWeapon, weaponIlvlMult, weaponHitDamage } from "../game/weapons";
 import { Contract, objectiveLabel } from "../game/contracts";
 import { getFragment, FRAGMENTS } from "../game/fragments";
 import { generateDive, DiveResult } from "../game/dives";
@@ -69,12 +68,12 @@ import Boss from "../entities/Boss";
 import { getBoss, BossDef } from "../game/bosses";
 import NeonPipeline from "../render/NeonPipeline";
 import Atmosphere from "../render/Atmosphere";
-import { shadeWalls } from "../render/wallShade";
+
 import Synth from "../audio/Synth";
 import MusicDirector from "../audio/MusicDirector";
 import Pops from "../render/Pops";
 import Particles from "../render/Particles";
-import { juiceShake, juiceFlash } from "../systems/juice";
+import { juiceShake, juiceFlash, juiceNeonPulse } from "../systems/juice";
 import Hud from "../ui/Hud";
 import Minimap from "../ui/Minimap";
 import DialogueBox, { DialoguePage } from "../ui/DialogueBox";
@@ -91,6 +90,9 @@ import { DIALOGUE_TREES } from "../game/dialogue";
 import BossBar from "../ui/BossBar";
 
 /**
+ * @legacy Unregistered — superseded by OnlineScene (server-authoritative districts).
+ * Kept for reference/porting meltdown/Heat systems only.
+ *
  * GameScene — Phase 0.
  * Step 1: movable, colliding player. Step 2: mouse-aim, dash, projectile weapon.
  * Step 3: Turing Cops with a patrol->chase->attack FSM that take damage and die.
@@ -386,10 +388,11 @@ export default class GameScene
     const prim = this.activePrimary();
     this.player.fireRateMs = prim.fireRateMs;
     if (prim.kind !== "beam" && prim.kind !== "melee") {
+      const wpn = this.inventory.equipped.weapon;
       this.bullets.configure({
         speed: prim.speed,
         lifetimeMs: prim.lifetimeMs,
-        damage: prim.damage,
+        damage: Math.round(prim.damage * weaponIlvlMult(wpn)),
         tint: this.weaponTint(),
       });
     }
@@ -815,16 +818,13 @@ export default class GameScene
 
   private buildDistrict() {
     this.grid = buildGrid(this.district);
-    const map = this.make.tilemap({
-      data: this.grid,
-      tileWidth: TILE,
-      tileHeight: TILE,
+    this.wallLayer = createTerrainLayer(this, this.grid, {
+      profile: "district",
+      accent: this.district.accent,
+      buildings: this.district.layout.buildings,
     });
-    const tileset = map.addTilesetImage(TILESET_KEY, TILESET_KEY, TILESET_PX, TILESET_PX)!;
-    this.wallLayer = map.createLayer(0, tileset, 0, 0)!;
-    applyTileVariants(this.wallLayer); // scatter real-art tile variants (render-only)
     this.wallLayer.setCollision(TILE_VARIANTS[TILE_WALL]); // base wall + its roof variant
-    shadeWalls(this, this.grid, this.district.accent); // raise buildings off the floor (edge light + cast shadow)
+    paintRooftopLights(this, this.district.layout.buildings, (b) => b, () => this.district.accent);
 
     this.physics.world.setBounds(0, 0, WORLD_W, WORLD_H);
     this.cameras.main.setBackgroundColor(COLORS.bgVoid);
@@ -1956,6 +1956,7 @@ export default class GameScene
     }
     juiceFlash(this, 320, 40, 120, 60);
     juiceShake(this, 320, 0.01);
+    juiceNeonPulse(this, 0.35, 420);
     this.boss = undefined;
 
     // Guardian down → core exposed. On the HSS CORE this is the OVERMIND: take the
@@ -2211,7 +2212,9 @@ export default class GameScene
 
   /** Swung energy blade — hits every cop in a cone in front, draws a glowing slash arc. */
   private fireMelee(angle: number, prim: Extract<PrimaryDef, { kind: "melee" }>) {
-    const dmg = prim.damage * this.dmgMult;
+    const wpn = this.inventory.equipped.weapon;
+    const heat = this.inOverdrive ? OVERDRIVE.damageMult : this.heat.damageMult;
+    const dmg = weaponHitDamage(wpn, prim, this.mods) * heat;
     const halfArc = Phaser.Math.DegToRad(prim.arcDeg);
     const tint = this.weaponTint();
     this.enemies.getChildren().forEach((go) => {
@@ -2292,7 +2295,9 @@ export default class GameScene
     const py = this.player.y;
     const ex = px + Math.cos(angle) * prim.range;
     const ey = py + Math.sin(angle) * prim.range;
-    const dmg = prim.damage * this.dmgMult;
+    const wpn = this.inventory.equipped.weapon;
+    const heat = this.inOverdrive ? OVERDRIVE.damageMult : this.heat.damageMult;
+    const dmg = weaponHitDamage(wpn, prim, this.mods) * heat;
     const tint = this.weaponTint();
 
     // Pierce: hit every cop near the beam line.
