@@ -10,11 +10,15 @@ export interface TransitionOpts {
   onMid?: () => void;
 }
 
+/** Fade colour: near-black kissed with the accent. Fading through the FULL accent
+ *  looked like poster paint — zone create() bakes + the server connect can hold the
+ *  fade colour on screen for seconds, and a solid green/orange frame reads broken.
+ *  Near-black reads as a moody loading dip while still whispering the district hue. */
 function accentRgb(accent: number) {
   return {
-    r: (accent >> 16) & 0xff,
-    g: (accent >> 8) & 0xff,
-    b: accent & 0xff,
+    r: Math.round(((accent >> 16) & 0xff) * 0.14),
+    g: Math.round(((accent >> 8) & 0xff) * 0.14),
+    b: Math.round((accent & 0xff) * 0.14),
   };
 }
 
@@ -54,7 +58,7 @@ export function transitionTo(
 }
 
 /** Soft entrance used in scene create(). */
-export function fadeInScene(scene: Phaser.Scene, accent = 0x04020a, duration = 480): void {
+export function fadeInScene(scene: Phaser.Scene, accent = 0x04020a, duration = 360): void {
   const { r, g, b } = accentRgb(accent);
   scene.cameras.main.fadeIn(duration, r, g, b);
 }
