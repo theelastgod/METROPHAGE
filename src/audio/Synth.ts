@@ -303,6 +303,10 @@ export default class Synth {
   dash() {
     this.sfxBank.play("dash");
   }
+  /** Class ability cast — a taut synth zap (Q/E, all classes). */
+  cast() {
+    this.blip("square", 700, 210, 0.16, 0.08);
+  }
   /** Level up — rising two-note flourish. */
   levelUp() {
     this.sfxBank.play("levelUp");

@@ -795,6 +795,31 @@ export default class OnlineScene extends Phaser.Scene {
         .setInteractive({ useHandCursor: true });
       surface.on("pointerdown", () => this.travelOrganic(this.fromZone));
     }
+    // touch kit — no SPACE/Q/E on a phone: three thumb buttons above the action bar
+    if (this.sys.game.device.input.touch && !this.isTutorial) {
+      const stack = onlineHudStack(this.scale.height);
+      const bSize = uiDim(46);
+      const bx0 = this.scale.width - uiDim(12) - bSize / 2;
+      const by = stack.actionY - uiGap("md") - bSize / 2;
+      const mkKitBtn = (dx: number, label: string, color: string, fn: () => void) => {
+        const b = this.add
+          .text(bx0 - dx, by, label, displayFont(15, {
+            color,
+            fontStyle: "bold",
+            backgroundColor: "#0b0716dd",
+            padding: { x: uiDim(12), y: uiDim(10) },
+          }))
+          .setOrigin(0.5)
+          .setScrollFactor(0)
+          .setDepth(1200)
+          .setAlpha(0.85)
+          .setInteractive({ useHandCursor: true });
+        b.on("pointerdown", fn);
+      };
+      mkKitBtn(0, "⇢", "#00e5ff", () => this.tryDash());
+      mkKitBtn(bSize + uiGap("sm"), "Q", "#ff2bd6", () => this.tryAbility());
+      mkKitBtn((bSize + uiGap("sm")) * 2, "E", "#f7ff3c", () => this.tryAbility2());
+    }
 
     // Local player — your full customization (build/head/visor/shoulders/decal/cloak/
     // accessories), baked and tinted by your signature colour, the same as singleplayer.
@@ -2970,7 +2995,7 @@ export default class OnlineScene extends Phaser.Scene {
   private tryAbility2() {
     const aim = this.pointerAim();
     if (!this.net.ability2(aim, this.ability2CooldownMs())) return;
-    this.synth?.kill();
+    this.synth?.cast();
     const cls = this.net.classId;
     if (cls === "k-guerilla") {
       // airstrike called — the telegraph ring renders from the server hazard
@@ -3022,7 +3047,7 @@ export default class OnlineScene extends Phaser.Scene {
     }
     if (!this.net.dash(dx, dy)) return;
     // FX — afterimages peel off along the burst
-    this.synth?.shoot();
+    this.synth?.dash();
     juiceZoomPunch(this, 0.02, 90);
     const frame = this.me.frame.name;
     for (let i = 0; i < 3; i++) {
@@ -3039,7 +3064,7 @@ export default class OnlineScene extends Phaser.Scene {
   private tryAbility() {
     const aim = this.pointerAim();
     if (!this.net.ability(aim, this.abilityCooldownMs())) return;
-    this.synth?.kill();
+    this.synth?.cast();
     juiceShake(this, 90, 0.003);
     const cls = this.net.classId;
     if (cls === "k-guerilla") {
