@@ -310,6 +310,7 @@ interface Pickup {
   y: number;
   kind: number; // PICKUP_CREDIT | PICKUP_CORE
   dieTick: number;
+  bornTick: number; // collection grace — the drop must visibly pop first
 }
 
 interface TerritoryNode {
@@ -677,6 +678,7 @@ export class WorldDO {
         y: sty * TILE + TILE / 2,
         kind,
         dieTick: this.tick + ticks(120_000),
+        bornTick: this.tick,
       });
     }
   }
@@ -3274,7 +3276,7 @@ export class WorldDO {
     if (this.inTutorial()) {
       this.tutorialEvent(killer, "kill");
       const pid = this.nextPickupId++;
-      this.pickups.set(pid, { id: pid, x: e.x, y: e.y, kind: PICKUP_CORE, dieTick: this.tick + ticks(PICKUP_TTL_MS) });
+      this.pickups.set(pid, { id: pid, x: e.x, y: e.y, kind: PICKUP_CORE, dieTick: this.tick + ticks(PICKUP_TTL_MS), bornTick: this.tick });
       return;
     }
     const mult = isBoss ? 12 : 1;
@@ -3308,7 +3310,7 @@ export class WorldDO {
       if (Math.random() < LOOT_DROP_CHANCE) {
         const kind = Math.random() < 0.42 ? PICKUP_CORE : PICKUP_CREDIT;
         const pid = this.nextPickupId++;
-        this.pickups.set(pid, { id: pid, x: e.x, y: e.y, kind, dieTick: this.tick + ticks(PICKUP_TTL_MS) });
+        this.pickups.set(pid, { id: pid, x: e.x, y: e.y, kind, dieTick: this.tick + ticks(PICKUP_TTL_MS), bornTick: this.tick });
       }
       if (Math.random() < 0.08) {
         killer.cores += 1;
@@ -3551,6 +3553,7 @@ export class WorldDO {
                     y: e.y,
                     kind: PICKUP_CORE,
                     dieTick: this.tick + ticks(PICKUP_TTL_MS),
+                    bornTick: this.tick,
                   });
                 } else {
                   const mult = isBoss ? 12 : 1;
@@ -3594,6 +3597,7 @@ export class WorldDO {
                     y: e.y,
                     kind,
                     dieTick: this.tick + ticks(PICKUP_TTL_MS),
+                    bornTick: this.tick,
                   });
                 }
               }
@@ -3659,13 +3663,17 @@ export class WorldDO {
       this.hazards = liveHz;
     }
 
-    // 4) pickups — collected by walkover, expire on TTL (server decides the grant)
+    // 4) pickups — collected by walkover, expire on TTL (server decides the grant).
+    // A short grace after spawn lets the drop VISIBLY pop before it can be eaten —
+    // melee kills otherwise consume loot the same tick it appears (nobody ever saw it).
     const PR2 = PICKUP_RADIUS * PICKUP_RADIUS;
+    const PICKUP_GRACE = ticks(350);
     for (const [pid, pu] of this.pickups) {
       if (this.tick >= pu.dieTick) {
         this.pickups.delete(pid);
         continue;
       }
+      if (this.tick - pu.bornTick < PICKUP_GRACE) continue;
       for (const p of this.players.values()) {
         if (p.dead) continue;
         if (dist2(p.x, p.y, pu.x, pu.y) <= PR2) {
