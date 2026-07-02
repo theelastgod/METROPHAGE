@@ -12,7 +12,8 @@ export interface ChatLine {
   sys: boolean;
 }
 
-const MAX_LINES = 8;
+const MAX_LINES = 8; // composing — the full framed feed
+const TICKER_LINES = 4; // idle — a frameless whisper above the hotbar
 
 function factionColor(faction: number): string {
   const c = FACTION_COLORS[faction] ?? COLORS.neonCyan;
@@ -29,7 +30,11 @@ function formatLine(c: ChatLine): { text: string; color: string } {
   return { text: `${tag}${c.from}: ${c.text}`, color: factionColor(c.faction) };
 }
 
-/** Persistent area chat — messages from everyone in the same zone/environment. */
+/**
+ * Persistent area chat. IDLE it is just the last few lines of frameless text
+ * hugging the hotbar — the game stays visible behind it. Pressing ENTER expands
+ * the framed panel with the full feed + the compose line.
+ */
 export default class OnlineChatPanel {
   private scene: Phaser.Scene;
   private x: number;
@@ -40,8 +45,11 @@ export default class OnlineChatPanel {
   private frame!: Phaser.GameObjects.Graphics;
   private title!: Phaser.GameObjects.Text;
   private body!: Phaser.GameObjects.Text;
-  private hint!: Phaser.GameObjects.Text;
   private input!: Phaser.GameObjects.Text;
+  private expanded = false;
+  private lines: ChatLine[] = [];
+  private areaName = "";
+  private shown = true;
 
   constructor(scene: Phaser.Scene, x: number, y: number, w: number, h: number, depth = 1000) {
     this.scene = scene;
@@ -54,7 +62,7 @@ export default class OnlineChatPanel {
   }
 
   private build() {
-    this.frame = this.scene.add.graphics().setScrollFactor(0).setDepth(this.depth);
+    this.frame = this.scene.add.graphics().setScrollFactor(0).setDepth(this.depth).setVisible(false);
     drawPanelFrame(this.frame, this.x, this.y, this.w, this.h);
 
     this.title = this.scene.add
@@ -65,30 +73,25 @@ export default class OnlineChatPanel {
         fontStyle: "bold",
       })
       .setScrollFactor(0)
-      .setDepth(this.depth + 1);
+      .setDepth(this.depth + 1)
+      .setVisible(false);
 
+    // grows upward from its anchor so idle lines hug the hotbar
     this.body = this.scene.add
-      .text(this.x + uiDim(12), this.y + uiDim(28), "", {
+      .text(this.x + uiDim(12), this.y + this.h - uiDim(10), "", {
         fontFamily: "Courier New, monospace",
         fontSize: uiFont(11),
         color: "#cdd6e6",
         lineSpacing: uiDim(3),
         wordWrap: { width: this.w - uiDim(24) },
       })
+      .setOrigin(0, 1)
       .setScrollFactor(0)
-      .setDepth(this.depth + 1);
-
-    this.hint = this.scene.add
-      .text(this.x + uiDim(12), this.y + this.h - uiDim(22), "ENTER — talk to this area", {
-        fontFamily: "Courier New, monospace",
-        fontSize: uiFont(10),
-        color: "#6b7184",
-      })
-      .setScrollFactor(0)
-      .setDepth(this.depth + 1);
+      .setDepth(this.depth + 1)
+      .setShadow(0, uiDim(1), "#05060f", uiDim(3), true, true);
 
     this.input = this.scene.add
-      .text(this.x + uiDim(12), this.y + this.h - uiDim(40), "", {
+      .text(this.x + uiDim(12), this.y + this.h - uiDim(28), "", {
         fontFamily: "Courier New, monospace",
         fontSize: uiFont(12),
         color: "#f7ff3c",
@@ -98,42 +101,52 @@ export default class OnlineChatPanel {
       .setVisible(false);
   }
 
+  private refresh() {
+    const recent = this.lines.slice(-(this.expanded ? MAX_LINES : TICKER_LINES));
+    this.body.setText(recent.map((c) => formatLine(c).text).join("\n"));
+    this.body.setColor("#eafdff");
+    this.body.setAlpha(this.expanded ? 1 : 0.8);
+    // expanded: keep the feed clear of the compose line
+    this.body.setY(this.y + this.h - (this.expanded ? uiDim(34) : uiDim(10)));
+    this.title.setText(`◢ CHAT — ${this.areaName}`);
+    const chrome = this.shown && this.expanded;
+    this.frame.setVisible(chrome);
+    this.title.setVisible(chrome);
+  }
+
   setArea(name: string) {
-    this.title.setText(`◢ CHAT — ${name}`);
+    this.areaName = name;
+    this.refresh();
   }
 
   setMessages(lines: ChatLine[]) {
-    const recent = lines.slice(-MAX_LINES);
-    const parts: string[] = [];
-    const colors: string[] = [];
-    for (const c of recent) {
-      const f = formatLine(c);
-      parts.push(f.text);
-      colors.push(f.color);
-    }
-    this.body.setText(parts.join("\n"));
-    this.body.setColor("#eafdff");
+    this.lines = lines;
+    this.refresh();
   }
 
   setComposing(open: boolean, buffer: string) {
-    this.input.setVisible(open);
-    this.hint.setVisible(!open);
+    this.expanded = open;
+    this.input.setVisible(this.shown && open);
     if (open) this.input.setText(`> ${buffer}_`);
+    this.refresh();
   }
 
   setVisible(visible: boolean) {
-    this.frame.setVisible(visible);
-    this.title.setVisible(visible);
+    this.shown = visible;
     this.body.setVisible(visible);
-    this.hint.setVisible(visible);
-    if (!visible) this.input.setVisible(false);
+    if (!visible) {
+      this.frame.setVisible(false);
+      this.title.setVisible(false);
+      this.input.setVisible(false);
+    } else {
+      this.refresh();
+    }
   }
 
   destroy() {
     this.frame.destroy();
     this.title.destroy();
     this.body.destroy();
-    this.hint.destroy();
     this.input.destroy();
   }
 }

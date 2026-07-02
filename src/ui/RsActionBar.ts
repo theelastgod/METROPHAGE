@@ -21,13 +21,13 @@ export default class RsActionBar {
   private readonly x: number;
   private readonly y: number;
   private readonly w: number;
-  private readonly h = uiDim(56);
+  private readonly h = uiDim(40);
   private activeKey: string | null = null;
 
   constructor(scene: Phaser.Scene, slots: ActionBarSlot[]) {
     this.scene = scene;
     this.slots = slots;
-    const slotW = uiDim(72);
+    const slotW = uiDim(54);
     const gap = uiGap("sm");
     this.w = slots.length * slotW + (slots.length - 1) * gap + uiGap("lg");
     const stack = onlineHudStack(scene.scale.height);
@@ -53,24 +53,24 @@ export default class RsActionBar {
     this.zones = [];
 
     drawHudPanel(g, this.x, this.y, this.w, this.h);
-    const slotW = uiDim(72);
+    const slotW = uiDim(54);
     const gap = uiDim(6);
     let sx = this.x + uiDim(8);
     for (const slot of this.slots) {
       const active = this.activeKey === slot.key;
-      g.fillStyle(active ? 0x1a1830 : 0x0e0c1c, active ? 0.98 : 0.92).fillRoundedRect(sx, this.y + uiGap("sm"), slotW, this.h - uiGap("md"), 3);
-      g.lineStyle(active ? 2 : 1, slot.color, active ? 1 : 0.65).strokeRoundedRect(sx, this.y + uiGap("sm"), slotW, this.h - uiGap("md"), 3);
-      if (active) g.fillStyle(slot.color, 0.12).fillRoundedRect(sx + 1, this.y + uiGap("sm") + 1, slotW - 2, this.h - uiGap("md") - 2, 2);
+      g.fillStyle(active ? 0x1a1830 : 0x0e0c1c, active ? 0.98 : 0.92).fillRoundedRect(sx, this.y + uiGap("xs"), slotW, this.h - uiGap("sm"), 3);
+      g.lineStyle(active ? 2 : 1, slot.color, active ? 1 : 0.65).strokeRoundedRect(sx, this.y + uiGap("xs"), slotW, this.h - uiGap("sm"), 3);
+      if (active) g.fillStyle(slot.color, 0.12).fillRoundedRect(sx + 1, this.y + uiGap("xs") + 1, slotW - 2, this.h - uiGap("sm") - 2, 2);
 
       const label = this.scene.add
-        .text(sx + slotW / 2, this.y + uiGap("md"), slot.label, displayFont(11, { color: active ? "#ffffff" : "#eafdff", fontStyle: "bold" }))
+        .text(sx + slotW / 2, this.y + uiDim(7), slot.label, displayFont(10, { color: active ? "#ffffff" : "#eafdff", fontStyle: "bold" }))
         .setOrigin(0.5, 0)
         .setScrollFactor(0)
         .setDepth(1051);
       this.texts.push(label);
       if (slot.sub) {
         const sub = this.scene.add
-          .text(sx + slotW / 2, this.y + uiDim(34), slot.sub, bodyFont(8, { color: active ? "#cfe8ff" : "#6b7184" }))
+          .text(sx + slotW / 2, this.y + uiDim(23), slot.sub, bodyFont(7, { color: active ? "#cfe8ff" : "#6b7184" }))
           .setOrigin(0.5, 0)
           .setScrollFactor(0)
           .setDepth(1051);

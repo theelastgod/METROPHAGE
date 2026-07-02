@@ -25,8 +25,8 @@ export default class OnlineMinimap {
   private hint: Phaser.GameObjects.Text;
   private readonly ox: number;
   private readonly oy: number;
-  private readonly mw = uiDim(156);
-  private readonly mh = uiDim(118);
+  private readonly mw = uiDim(118);
+  private readonly mh = uiDim(88);
   private readonly pad = uiDim(3);
   private readonly sx: number;
   private readonly sy: number;
@@ -41,7 +41,7 @@ export default class OnlineMinimap {
     this.sx = this.mw / worldW;
     this.sy = this.mh / worldH;
     this.ox = scene.scale.width - this.mw - uiDim(14);
-    this.oy = uiDim(108);
+    this.oy = uiDim(96);
 
     // Terrain + chrome are BAKED to a texture once. As live Graphics this was tens of
     // thousands of wall fillRects (450×360 city tiles) re-executed by the renderer

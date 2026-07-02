@@ -1122,7 +1122,7 @@ export default class OnlineScene extends Phaser.Scene {
     this.chatPanel.setArea(this.chatAreaLabel());
     // online roster — right edge, tucked under the area map
     this.rosterText = this.add
-      .text(this.scale.width - uiDim(14), uiDim(244), "", hudFont(9, { color: "#9aa3b2", align: "right" }))
+      .text(this.scale.width - uiDim(14), uiDim(206), "", hudFont(9, { color: "#9aa3b2", align: "right" }))
       .setOrigin(1, 0)
       .setScrollFactor(0)
       .setDepth(1000);
@@ -2697,7 +2697,6 @@ export default class OnlineScene extends Phaser.Scene {
   private refreshHudPanels() {
     const st = this.net.stats();
     const ctrl = this.net.control === NEUTRAL ? "—" : FACTION_NAMES[this.net.control];
-    const war = FACTION_NAMES.map((nm, i) => `${nm[0]}:${this.net.factions[i]}`).join("  ");
     if (!st.connected && (this.connectionState === "offline" || Date.now() - this.connectStartedAt > 24000)) {
       this.hud.setColor("#ff6a6a");
       if (this.isTutorial) {
@@ -2720,16 +2719,16 @@ export default class OnlineScene extends Phaser.Scene {
       this.hud.setColor("#39ff88");
       const lesson = this.net.tutorialStep + 1;
       const dots = ".".repeat(this.connectDots);
+      // the lesson card carries the teaching — this panel stays a two-line status strip
       this.hud.setText([
         st.connected
           ? `◢ DRILL YARD  ${this.callsign}  ·  ${this.net.tutorialMode === "full" ? "FULL" : "QUICK"}  ·  lesson ${Math.min(lesson, this.net.tutorialTotal)}/${this.net.tutorialTotal}`
           : this.connectionState === "reconnecting"
             ? `reconnecting to drill yard${dots}`
             : `connecting to drill yard${dots}`,
-        "no XP · no leveling · rewards unlock in the live city",
-        `players: ${st.players}   hostiles: ${this.net.enemies.size}   nodes: ${this.net.nodes.size}`,
-        `HP ${Math.round(this.net.hp)}   ₵ ${this.net.credits}  ◈ ${this.net.cores}  (drill only — not saved)`,
-        this.net.tutorialPortalOpen ? "portal open — deploy east when ready (one way)" : "complete each lesson to unlock the portal",
+        this.net.tutorialPortalOpen
+          ? "portal open — deploy east when ready (one way)"
+          : `₵ ${this.net.credits}  ◈ ${this.net.cores}  (drill only — not saved)`,
       ]);
     } else {
       this.hud.setColor("#39ff88");
@@ -2742,34 +2741,30 @@ export default class OnlineScene extends Phaser.Scene {
             ? "▼ THE UNDERLINE"
             : `${this.zone.toUpperCase()} ${DISTRICTS[this.districtIndex].name}`;
       const soloWander = !!this.drillLocal && !st.connected && (this.isCityHub || (this.interior && !this.isSubway));
+      // two compact lines — cell/war detail lives in the L leaderboard, HP is the bar
       this.hud.setText([
         st.connected
-          ? `◢ ONLINE  ${this.callsign}  ·  ${zoneTitle}`
+          ? `◢ ${this.callsign}  ·  ${zoneTitle}  ·  ${st.players} online${ctrl !== "—" ? `  ·  CTRL ${ctrl}` : ""}`
           : soloWander
             ? `◢ ${this.isCityHub ? "CITY PREVIEW" : "SOLO PREVIEW"}  ${this.callsign}${this.connectionState === "reconnecting" ? `  ·  ${t("online.reconnecting")}${dots}` : `  ·  ${t("online.connecting")}${dots}`}`
             : this.connectionState === "reconnecting"
               ? `${t("online.reconnecting")}${dots}`
               : `${t("online.connecting")}${dots}`,
         soloWander && !st.connected
-          ? "walk the city while the server links · quests & trade need the live grid"
-          : `CELL ${FACTION_NAMES[this.net.faction]}   ·   DISTRICT CONTROL: ${ctrl}`,
-        `players: ${st.players}   enemies: ${this.net.enemies.size}   nodes: ${this.net.nodes.size}`,
-        st.connected
-          ? `LV ${this.net.level}  XP ${xpIntoLevel(this.net.xp)}/100   ₵ ${this.net.credits}  ◈ ${this.net.cores}   HP ${Math.round(this.net.hp)}`
-          : soloWander
-            ? `preview mode · press R to retry link · ESC for menu`
-            : `LV ${this.net.level}  XP ${xpIntoLevel(this.net.xp)}/100   ₵ ${this.net.credits}  ◈ ${this.net.cores}   HP ${Math.round(this.net.hp)}`,
-        st.connected ? `FACTION WAR  ${war}  (server-wide contribution)` : "",
+          ? "walk the city while the server links · R retry · ESC menu"
+          : `LV ${this.net.level}  XP ${xpIntoLevel(this.net.xp)}/100   ₵ ${this.net.credits}  ◈ ${this.net.cores}`,
       ].filter(Boolean));
     }
 
     this.chatPanel.setArea(this.chatAreaLabel());
     this.chatPanel.setMessages(this.net.chatLog);
+    // roster stays a whisper — headcount + a few names, never a column of text
     this.rosterText.setText([
       `◢ ONLINE (${this.net.roster.length})`,
       ...this.net.roster
-        .slice(0, 12)
+        .slice(0, 6)
         .map((r) => `${this.net.party.includes(r.id) ? "◆" : "·"} ${r.id} L${r.level}`),
+      ...(this.net.roster.length > 6 ? [`  +${this.net.roster.length - 6} more`] : []),
     ]);
 
     const tr = this.net.trade;
@@ -2863,7 +2858,10 @@ export default class OnlineScene extends Phaser.Scene {
     }
     const frameW = maxW + pad * 2;
     const frameH = y - uiGap("xs") + pad - uiDim(12);
-    drawHudPanel(this.trackerG, cx - frameW / 2, uiDim(12), frameW, frameH, 0xb06bff);
+    // never let the tracker frame lap the status panel — slide right until clear
+    const tcx = Math.max(cx, px + innerW + pad * 2 + uiGap("md") + frameW / 2);
+    for (const row of rows) row.setX(tcx);
+    drawHudPanel(this.trackerG, tcx - frameW / 2, uiDim(12), frameW, frameH, 0xb06bff);
     this.trackerBottomY = uiDim(12) + frameH;
   }
 
@@ -3594,11 +3592,11 @@ export default class OnlineScene extends Phaser.Scene {
   }
 
   private controlHint() {
-    if (this.isTutorial) return "WASD move · CLICK fire · I bag · J/G/B/K panels · ENTER chat · SKIP (top-right)";
+    if (this.isTutorial) return "WASD move · CLICK fire · ENTER chat · SKIP (top-right)";
     if (getSettings().rsControls) {
-      return "CLICK walk · RIGHT-CLICK menu · M map (shift+click walk) · minimap · J quests · Q/E abilities · R ult (HEAT) · SPACE dash";
+      return "CLICK walk · RIGHT-CLICK menu · Q/E/R abilities · SPACE dash · M map · ENTER chat";
     }
-    return "WASD · HOLD CLICK fire · I bag · K market · J jobs · M map · H safehouse · O options";
+    return "WASD · HOLD CLICK fire · Q/E/R abilities · SPACE dash · M map · ENTER chat";
   }
 
   private blockRsInput() {
