@@ -18,7 +18,7 @@ export interface MiniBlip {
  */
 export default class OnlineMinimap {
   onWalk?: (worldX: number, worldY: number) => void;
-  private frame: Phaser.GameObjects.Graphics;
+  private frame: Phaser.GameObjects.Image;
   private g: Phaser.GameObjects.Graphics;
   private zone: Phaser.GameObjects.Zone;
   private title: Phaser.GameObjects.Text;
@@ -43,22 +43,35 @@ export default class OnlineMinimap {
     this.ox = scene.scale.width - this.mw - uiDim(14);
     this.oy = uiDim(108);
 
-    this.frame = scene.add.graphics().setScrollFactor(0).setDepth(1400);
-    this.frame.fillStyle(0x05060f, 0.9).fillRect(this.ox - this.pad, this.oy - this.pad, this.mw + this.pad * 2, this.mh + this.pad * 2);
-    this.frame.fillStyle(0x0a1428, 0.35).fillRect(this.ox - this.pad + 2, this.oy - this.pad + 2, this.mw + this.pad * 2 - 4, uiDim(12));
-    this.frame.lineStyle(uiDim(2), 0x29e7ff, 0.72).strokeRect(this.ox - this.pad, this.oy - this.pad, this.mw + this.pad * 2, this.mh + this.pad * 2);
-    this.frame.lineStyle(1, 0xff2bd6, 0.22).strokeRect(this.ox - this.pad + 3, this.oy - this.pad + 3, this.mw + this.pad * 2 - 6, this.mh + this.pad * 2 - 6);
-    drawCornerBrackets(this.frame, this.ox - this.pad, this.oy - this.pad, this.mw + this.pad * 2, this.mh + this.pad * 2, 0x29e7ff, 0.5, uiDim(8));
-
-    this.frame.fillStyle(0x1c2842, 0.85);
+    // Terrain + chrome are BAKED to a texture once. As live Graphics this was tens of
+    // thousands of wall fillRects (450×360 city tiles) re-executed by the renderer
+    // every single frame — the dominant draw cost of the whole city HUD.
+    const bw = Math.ceil(this.mw + this.pad * 2);
+    const bh = Math.ceil(this.mh + this.pad * 2);
+    const bake = scene.make.graphics({ x: 0, y: 0 }, false);
+    bake.fillStyle(0x05060f, 0.9).fillRect(0, 0, bw, bh);
+    bake.fillStyle(0x0a1428, 0.35).fillRect(2, 2, bw - 4, uiDim(12));
+    bake.fillStyle(0x1c2842, 0.85);
     const tw = TILE * this.sx + 0.6;
     const th = TILE * this.sy + 0.6;
     for (let ty = 0; ty < grid.length; ty++) {
       const row = grid[ty];
       for (let tx = 0; tx < row.length; tx++) {
-        if (isWall(row[tx])) this.frame.fillRect(this.ox + tx * TILE * this.sx, this.oy + ty * TILE * this.sy, tw, th);
+        if (isWall(row[tx])) bake.fillRect(this.pad + tx * TILE * this.sx, this.pad + ty * TILE * this.sy, tw, th);
       }
     }
+    bake.lineStyle(uiDim(2), 0x29e7ff, 0.72).strokeRect(0, 0, bw, bh);
+    bake.lineStyle(1, 0xff2bd6, 0.22).strokeRect(3, 3, bw - 6, bh - 6);
+    drawCornerBrackets(bake, 0, 0, bw, bh, 0x29e7ff, 0.5, uiDim(8));
+    const key = "minimap_bake"; // one minimap per scene; re-baked on every zone entry
+    if (scene.textures.exists(key)) scene.textures.remove(key);
+    bake.generateTexture(key, bw, bh);
+    bake.destroy();
+    this.frame = scene.add
+      .image(this.ox - this.pad, this.oy - this.pad, key)
+      .setOrigin(0)
+      .setScrollFactor(0)
+      .setDepth(1400);
 
     this.title = scene.add
       .text(this.ox + this.mw / 2, this.oy - uiDim(14), "AREA MAP", displayFont(9, { color: "#29e7ff", fontStyle: "bold" }))

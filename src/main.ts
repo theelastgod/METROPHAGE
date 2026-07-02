@@ -41,6 +41,7 @@ const config: Phaser.Types.Core.GameConfig = {
   },
   input: {
     gamepad: true,
+    activePointers: 3, // touch devices: tap-to-move + UI taps can overlap
   },
   scene: [BootScene, SelectScene, CustomizeScene, Prologue, OnlineScene],
 };

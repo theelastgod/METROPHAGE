@@ -770,6 +770,21 @@ export default class OnlineScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(1200)
       .setVisible(false);
+    // touch devices have no H key — give dungeons/interiors a tappable way back up
+    if (this.sys.game.device.input.touch && (this.isSubway || this.isDive || (this.interior && !this.isCityHub))) {
+      const surface = this.add
+        .text(this.scale.width / 2, uiDim(36), "▲ SURFACE", displayFont(13, {
+          color: "#eafdff",
+          fontStyle: "bold",
+          backgroundColor: "#0b0716dd",
+          padding: { x: uiDim(14), y: uiDim(8) },
+        }))
+        .setOrigin(0.5, 0)
+        .setScrollFactor(0)
+        .setDepth(1200)
+        .setInteractive({ useHandCursor: true });
+      surface.on("pointerdown", () => this.travelOrganic(this.fromZone));
+    }
 
     // Local player — your full customization (build/head/visor/shoulders/decal/cloak/
     // accessories), baked and tinted by your signature colour, the same as singleplayer.

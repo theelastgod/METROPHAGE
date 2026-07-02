@@ -7,6 +7,8 @@
   "scripts": {
     "dev": "wrangler dev",
     "migrate:local": "wrangler d1 migrations apply metrophage --local",
+    "migrate:remote": "wrangler d1 migrations apply metrophage --remote",
+    "deploy": "wrangler deploy",
     "smoke": "node scripts/smoke.mjs",
     "typecheck": "tsc --noEmit"
   },

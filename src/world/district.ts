@@ -376,7 +376,7 @@ export const SUBWAY_SPAWN = { x: 4 * TILE + TILE / 2, y: 7 * TILE + TILE / 2 };
  * where a memory fragment is channelled free (the fragment core reuses the territory-
  * node channel mechanic). Shared by client render and server sim.
  */
-export const DIVE_ZONE_IDS = ["v0", "v1", "v2", "v3", "v4", "v5", "v6"] as const;
+export const DIVE_ZONE_IDS = ["v0", "v1", "v2", "v3", "v4", "v5", "v6", "v7"] as const;
 /** v0–v6 → district index, or -1 when the zone isn't a dive. */
 export function parseDiveZone(zone: string | null | undefined): number {
   if (!zone || zone[0] !== "v") return -1;

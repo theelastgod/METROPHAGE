@@ -178,11 +178,12 @@ export function getFragment(id: string): FragmentDef | undefined {
  * own fragmentId — the server picks stage fragment first, then this fallback.
  */
 export const DIVE_DEFAULT_FRAGMENTS: string[] = [
-  "frag_first_boot", // v0 — Palantir core
-  "frag_ice", // v1
-  "frag_the_docks", // v2 — Tidal
-  "frag_undercity", // v3
-  "frag_relay", // v4 — Orbital
-  "frag_wastes", // v5
-  "frag_the_protocol", // v6 — the Kernel
+  "frag_first_boot", // v0 — Palantir Plaza
+  "frag_why_they_hunt", // v1 — Anduril Yards
+  "frag_the_others", // v2 — Argus Spire
+  "frag_the_docks", // v3 — Tidal Yards
+  "frag_undercity", // v4 — the Undercity
+  "frag_relay", // v5 — Orbital Relay
+  "frag_wastes", // v6 — the Wasteland
+  "frag_continue", // v7 — the Kernel (Helios' oldest cage)
 ];
