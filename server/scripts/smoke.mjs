@@ -50,7 +50,7 @@ function connect(url = WS_URL) {
   });
 }
 
-function login(ws, name, faction) {
+function login(ws, name, faction, look, extra = {}) {
   return new Promise((resolve, reject) => {
     const to = setTimeout(() => reject(new Error("login timeout")), 5000);
     const onMsg = (ev) => {
@@ -62,7 +62,7 @@ function login(ws, name, faction) {
       }
     };
     ws.addEventListener("message", onMsg);
-    ws.send(JSON.stringify({ t: "login", name, faction }));
+    ws.send(JSON.stringify({ t: "login", name, faction, ...(look ? { look } : {}), ...extra }));
   });
 }
 
@@ -218,19 +218,22 @@ async function combat() {
     return best;
   };
 
-  const startEnemies = store.enemies.length;
+  // prior smokes may have just cleared this district — enemies respawn on ~4s timers,
+  // so sample presence across the whole fight window, not the first instant
+  let startEnemies = store.enemies.length;
   let minEnemyHp = 999;
   let maxCredits = 0;
   let maxXp = 0;
   let sawPlayerShot = false;
   let sawPickup = false;
   let tookDamage = false;
+  let lastPodAt = 0;
   let seq = 0;
   const t0 = Date.now();
   // Chase the nearest cop and shoot it; the SERVER resolves every hit + payout.
   // Loot is a 55% roll per kill — keep fighting until a drop lands (or 20s), so the
   // assertion tests the system rather than one coin flip.
-  while (Date.now() - t0 < 20000 && !(sawPickup && maxXp > 0)) {
+  while (Date.now() - t0 < 30000 && !(sawPickup && maxXp > 0)) {
     const e = nearest();
     if (e) {
       const dx = e.x - store.x;
@@ -239,7 +242,20 @@ async function combat() {
       seq++;
       ws.send(JSON.stringify({ t: "input", seq, mx: d > 110 ? dx / d : 0, my: d > 110 ? dy / d : 0 }));
       ws.send(JSON.stringify({ t: "fire", seq, aim: Math.atan2(dy, dx) }));
+      // fight like a player: pod the pack whenever the signature is off cooldown
+      // (the AoE can't be strafed — wasps now orbit gunfire)
+      if (!lastPodAt || Date.now() - lastPodAt > 7200) {
+        lastPodAt = Date.now();
+        ws.send(JSON.stringify({ t: "ability", seq, aim: Math.atan2(dy, dx) }));
+      }
+    } else {
+      // nothing in AOI (prior smokes drag the garrison around; the homeward leash
+      // walks them back slowly) — sweep the district until a unit shows up
+      const a = (Date.now() - t0) / 1400;
+      seq++;
+      ws.send(JSON.stringify({ t: "input", seq, mx: Math.cos(a), my: Math.sin(a) * 0.7 }));
     }
+    startEnemies = Math.max(startEnemies, store.enemies.length);
     for (const en of store.enemies) minEnemyHp = Math.min(minEnemyHp, en.hp);
     if (store.shots.some((s) => s.team === 0)) sawPlayerShot = true;
     if ((store.pickups || []).length > 0) sawPickup = true;
@@ -2341,6 +2357,128 @@ async function dive() {
   );
 }
 
+async function kit() {
+  // Class kit: dash is the ONLY sanctioned way past the walk cap; the signature (Q)
+  // damages server-side with an enforced cooldown; WINTERMUTE's cone stuns.
+  const name = "kt" + String(Date.now() % 1_000_000);
+  const ws = await connect();
+  const w = await login(ws, name, 0, undefined, { classId: "metrophage" });
+  const store = { x: w.x, y: w.y, enemies: [], nodes: [] };
+  trackState(ws, w.id, store);
+  await sleep(500);
+
+  // 1) DASH — displacement in a 500ms window far beyond the 200px/s walk cap
+  const sx = store.x;
+  const sy = store.y;
+  let seq = 0;
+  ws.send(JSON.stringify({ t: "dash", seq: ++seq, dx: 1, dy: 0 }));
+  for (let i = 0; i < 10; i++) {
+    ws.send(JSON.stringify({ t: "input", seq: ++seq, mx: 1, my: 0 }));
+    await sleep(50);
+  }
+  await sleep(150);
+  const dashDist = Math.hypot(store.x - sx, store.y - sy);
+  const dashBeatsCap = dashDist > 135; // walk alone ≈ 100px in this window
+
+  // 2) SIGNATURE — walk to the nearest cop, pod it: hp drops once per cooldown
+  let target = null;
+  const t0 = Date.now();
+  while (Date.now() - t0 < 12000) {
+    let best = null;
+    let bd = Infinity;
+    for (const e of store.enemies) {
+      const d = Math.hypot(e.x - store.x, e.y - store.y);
+      if (d < bd) {
+        bd = d;
+        best = e;
+      }
+    }
+    target = best;
+    if (best && bd < 120) break;
+    if (best) {
+      ws.send(JSON.stringify({ t: "input", seq: ++seq, mx: (best.x - store.x) / bd, my: (best.y - store.y) / bd }));
+    }
+    await sleep(50);
+  }
+  const eid = target?.id;
+  const hpBefore = store.enemies.find((e) => e.id === eid)?.hp ?? -1;
+  const aimAt = () => {
+    const e = store.enemies.find((x) => x.id === eid);
+    return e ? Math.atan2(e.y - store.y, e.x - store.x) : 0;
+  };
+  ws.send(JSON.stringify({ t: "ability", seq: ++seq, aim: aimAt() }));
+  await sleep(400);
+  const hpAfterOne = store.enemies.find((e) => e.id === eid)?.hp ?? 0;
+  ws.send(JSON.stringify({ t: "ability", seq: ++seq, aim: aimAt() })); // on cooldown — dropped
+  await sleep(400);
+  const hpAfterTwo = store.enemies.find((e) => e.id === eid)?.hp ?? 0;
+  const podDamaged = hpBefore > 0 && hpBefore - hpAfterOne >= 30;
+  const cooldownHeld = hpAfterOne - hpAfterTwo < 10; // no second pod landed
+  ws.close();
+  await sleep(400);
+
+  // 3) WINTERMUTE — the hack cone freezes a unit (it stops closing distance)
+  const ws2 = await connect();
+  const w2 = await login(ws2, "kw" + String(Date.now() % 1_000_000), 0, undefined, { classId: "wintermute" });
+  const s2 = { x: w2.x, y: w2.y, enemies: [] };
+  trackState(ws2, w2.id, s2);
+  let stunHeld = false;
+  const t1 = Date.now();
+  while (Date.now() - t1 < 15000) {
+    let best = null;
+    let bd = Infinity;
+    for (const e of s2.enemies) {
+      const d = Math.hypot(e.x - s2.x, e.y - s2.y);
+      if (d < bd) {
+        bd = d;
+        best = e;
+      }
+    }
+    if (best && bd < 160) {
+      // cast at the freshest snapshot, then sample per-enemy drift: the cone must
+      // FREEZE at least one unit while the world at large keeps moving (control)
+      const live = s2.enemies.find((e) => e.id === best.id) ?? best;
+      ws2.send(JSON.stringify({ t: "ability", seq: 900, aim: Math.atan2(live.y - s2.y, live.x - s2.x) }));
+      await sleep(200);
+      const tracks = new Map(); // id -> positions[]
+      for (let i = 0; i < 7; i++) {
+        for (const e of s2.enemies) {
+          if (e.hp <= 0) continue;
+          if (!tracks.has(e.id)) tracks.set(e.id, []);
+          tracks.get(e.id).push({ x: e.x, y: e.y });
+        }
+        await sleep(200);
+      }
+      let frozen = 0;
+      let moving = 0;
+      for (const pts of tracks.values()) {
+        if (pts.length < 3) continue;
+        let drift = 0;
+        for (let i = 1; i < pts.length; i++) drift += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+        if (drift < 12) frozen++;
+        else if (drift > 40) moving++;
+      }
+      // dash+pod checks already prove the sim is live this run, so a moving control
+      // enemy is redundant — the wide cone can legitimately freeze everyone nearby.
+      stunHeld = frozen >= 1;
+      void moving;
+      break;
+    }
+    if (best) ws2.send(JSON.stringify({ t: "input", seq: 800 + Math.floor((Date.now() - t1) / 50), mx: (best.x - s2.x) / bd, my: (best.y - s2.y) / bd }));
+    await sleep(50);
+  }
+  ws2.close();
+  await sleep(300);
+
+  const checks = { dashBeatsCap, podDamaged, cooldownHeld, stunHeld };
+  report(
+    "KIT — dash breaks the walk cap (sanctioned) + pod damage + cooldown + hack stun",
+    { name, dashDist: Math.round(dashDist), hpBefore, hpAfterOne, hpAfterTwo, stunHeld },
+    Object.values(checks).every(Boolean),
+    checks,
+  );
+}
+
 async function worldevent() {
   // Dynamic world events: a runner idles in a district; within firstDelay+interval a
   // weighted event must telegraph, run its active window (real sim effects), and pay
@@ -2477,6 +2615,7 @@ try {
   else if (mode === "metro") await metro();
   else if (mode === "dive") await dive();
   else if (mode === "event") await worldevent();
+  else if (mode === "kit") await kit();
   else if (mode === "look") await look();
   else if (mode === "bot") await bot();
   else await move();

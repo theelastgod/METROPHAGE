@@ -79,7 +79,7 @@ import {
   type TutorialMode,
 } from "../../src/net/tutorial";
 import { DISTRICTS } from "../../src/game/districts";
-import { DISTRICT_SCALE } from "../../src/config";
+import { DISTRICT_SCALE, PLAYER } from "../../src/config";
 import { ONLINE_CITY, CITY_HUB_SPAWN } from "../../src/world/city";
 import { rollItem, rollModsFor, effectiveMods, nextRarity, makeWeaponItem, SLOTS, type Item, type Slot, type Rarity } from "../../src/game/items";
 import { getWeapon, weaponHitDamage } from "../../src/game/weapons";
@@ -260,6 +260,14 @@ interface PlayerState {
   campaign: Campaign;
   // memory fragments recovered at ICE-dive cores (claim-once per player, D1-persisted)
   fragments: string[];
+  // class kit (server-authoritative): dash burst + the class signature ability
+  classId: string;
+  dashUntilTick: number; // mid-dash while tick < this (dash velocity + i-frames)
+  dashCdUntilTick: number;
+  dashDx: number;
+  dashDy: number;
+  iframeUntilTick: number; // invulnerable to enemy shots/hazards (dash grace)
+  abilityCdUntilTick: number;
   // tutorial drill yard — onboarding before the one-way deploy portal
   tutorialDone: boolean;
   tutorialStep: number;
@@ -337,6 +345,7 @@ interface Enemy {
   name?: string;
   tint?: number; // boss accent colour (corp identity), for the client
   add?: boolean; // a boss-summoned add (cleaned up when the boss falls/reforms)
+  stunUntilTick?: number; // WINTERMUTE hack cone — frozen mid-thought (no move/fire)
   // raid runtime (bosses only)
   baseMaxHp?: number; // roster HP before player-count scaling
   phaseIdx?: number; // current raid phase
@@ -1086,9 +1095,12 @@ export class WorldDO {
         ts: msg.ts,
         arrival: msg.arrival,
         from: msg.from,
+        classId: msg.classId,
       });
     if (msg.t === "input") return this.onInput(ws, msg);
     if (msg.t === "fire") return this.onFire(ws, msg);
+    if (msg.t === "dash") return this.onDash(ws, msg);
+    if (msg.t === "ability") return this.onAbility(ws, msg);
     if (msg.t === "equip") return this.onEquip(ws, msg);
     if (msg.t === "unequip") return this.onUnequip(ws, msg);
     if (msg.t === "inv_move") return this.onInvMove(ws, msg);
@@ -1865,7 +1877,7 @@ export class WorldDO {
     rawName: string,
     faction?: number,
     look?: PlayerLook,
-    proof?: { wallet?: string; sig?: string; ts?: number; arrival?: "organic" | "fast"; from?: string },
+    proof?: { wallet?: string; sig?: string; ts?: number; arrival?: "organic" | "fast"; from?: string; classId?: string },
   ) {
     const name = (rawName || "").trim().slice(0, 16) || "blank";
     // Identity: a signature-verified Solana wallet is the durable id; otherwise a guest
@@ -1893,6 +1905,22 @@ export class WorldDO {
     const fac = Number.isInteger(faction) && faction! >= 0 && faction! < FACTION_COUNT ? faction! : 0;
     const p = this.players.get(id) ?? (await this.loadPlayer(id, name, fac));
     p.faction = fac;
+    // warm-path spawn sanitation: an in-memory player can be wall-locked too
+    // (loadPlayer's check only covers cold loads)
+    if (
+      tileIsWall(p.x, p.y, this.grid) ||
+      (tileIsWall(p.x + TILE, p.y, this.grid) &&
+        tileIsWall(p.x - TILE, p.y, this.grid) &&
+        tileIsWall(p.x, p.y + TILE, this.grid) &&
+        tileIsWall(p.x, p.y - TILE, this.grid))
+    ) {
+      p.x = this.spawn.x;
+      p.y = this.spawn.y;
+      p.dirty = true;
+    }
+    // class selects the signature ability (validated against the known roster)
+    const CLASS_IDS = new Set(["metrophage", "k-guerilla", "wintermute", "swarm"]);
+    if (proof?.classId && CLASS_IDS.has(proof.classId)) p.classId = proof.classId;
     if (proof?.from) {
       const def = this.bridgeIndex >= 0 ? undefined : DISTRICTS[this.districtIndex];
       const s = spawnPointForTravel(this.grid, this.zoneName, proof.from, def);
@@ -2055,6 +2083,19 @@ export class WorldDO {
       } else if (row.zone === this.zoneName) {
         x = row.x;
         y = row.y;
+        // sanitize: a save can land in (or be sealed inside) geometry — if the spot
+        // itself is wall, or every one-tile step out of it is wall, respawn at the
+        // zone spawn instead of trapping the player forever
+        const stuck =
+          tileIsWall(x, y, this.grid) ||
+          (tileIsWall(x + TILE, y, this.grid) &&
+            tileIsWall(x - TILE, y, this.grid) &&
+            tileIsWall(x, y + TILE, this.grid) &&
+            tileIsWall(x, y - TILE, this.grid));
+        if (stuck) {
+          x = this.spawn.x;
+          y = this.spawn.y;
+        }
       }
     } else {
       await this.upsert(id, name, x, y, 0, 0, 0, 0, campaign.toData(), [], undefined, {}, false, 0);
@@ -2166,6 +2207,13 @@ export class WorldDO {
       lastEmoteTick: -999,
       campaign,
       fragments,
+      classId: "metrophage",
+      dashUntilTick: 0,
+      dashCdUntilTick: 0,
+      dashDx: 0,
+      dashDy: 0,
+      iframeUntilTick: 0,
+      abilityCdUntilTick: 0,
       tutorialDone,
       tutorialStep,
       tutorialMode,
@@ -2971,6 +3019,97 @@ export class WorldDO {
     });
   }
 
+  /** Dash — a server-sanctioned speed burst with i-frames. The ONLY way to move faster
+   *  than the walk cap, so the anti-cheat speed validation stays honest. */
+  private onDash(ws: WebSocket, msg: Extract<ClientMsg, { t: "dash" }>) {
+    const p = this.playerFor(ws);
+    if (!p || p.dead) return;
+    if (this.tick < p.dashCdUntilTick) return; // still recharging — silently dropped
+    let dx = Number(msg.dx);
+    let dy = Number(msg.dy);
+    const len = Math.hypot(dx, dy);
+    if (!Number.isFinite(len) || len < 1e-4) {
+      dx = Math.cos(p.aim);
+      dy = Math.sin(p.aim);
+    } else {
+      dx /= len;
+      dy /= len;
+    }
+    p.dashDx = dx;
+    p.dashDy = dy;
+    p.dashUntilTick = this.tick + ticks(PLAYER.dashDurationMs);
+    p.dashCdUntilTick = this.tick + ticks(PLAYER.dashCooldownMs);
+    p.iframeUntilTick = this.tick + ticks(PLAYER.dashIframeMs);
+  }
+
+  /** The class signature (Q) — resolved entirely server-side so damage, stuns, and
+   *  cooldowns can't be spoofed. Kill payouts ride the same pipeline as gunfire. */
+  private onAbility(ws: WebSocket, msg: Extract<ClientMsg, { t: "ability" }>) {
+    const p = this.playerFor(ws);
+    if (!p || p.dead) return;
+    if (this.tick < p.abilityCdUntilTick) return;
+    const aim = Number.isFinite(msg.aim) ? msg.aim : p.aim;
+    p.aim = aim;
+    const lvl = 1 + (p.mods.dmgPct || 0);
+    switch (p.classId) {
+      case "k-guerilla": {
+        // DASH-STRIKE — an attack dash: everything along the blink line takes blade damage
+        this.onDash(ws, { t: "dash", seq: msg.seq, dx: Math.cos(aim), dy: Math.sin(aim) });
+        const reach = PLAYER.dashSpeed * (PLAYER.dashDurationMs / 1000);
+        const ex = p.x + Math.cos(aim) * reach;
+        const ey = p.y + Math.sin(aim) * reach;
+        const dmg = this.rollPlayerCritDamage(p, Math.round(34 * lvl));
+        for (const e of this.enemies.values()) {
+          if (e.hp <= 0) continue;
+          if (segPointDist2(e.x, e.y, p.x, p.y, ex, ey) <= 42 * 42) this.applyPlayerHitToEnemy(e, p, dmg);
+        }
+        p.abilityCdUntilTick = this.tick + ticks(6000);
+        break;
+      }
+      case "wintermute": {
+        // HACK CONE — freeze the security floor mid-thought (stun) + chip damage.
+        // Generous arc: strafing wasps must not slip a point-blank cone.
+        const halfArc = 0.85;
+        const dmg = Math.round(18 * lvl);
+        for (const e of this.enemies.values()) {
+          if (e.hp <= 0) continue;
+          const dx = e.x - p.x;
+          const dy = e.y - p.y;
+          if (Math.hypot(dx, dy) > 270) continue;
+          let diff = Math.atan2(dy, dx) - aim;
+          while (diff > Math.PI) diff -= 2 * Math.PI;
+          while (diff < -Math.PI) diff += 2 * Math.PI;
+          if (Math.abs(diff) > halfArc) continue;
+          e.stunUntilTick = this.tick + ticks(e.boss ? 900 : 2000); // bosses shrug it off fast
+          this.applyPlayerHitToEnemy(e, p, dmg);
+        }
+        p.abilityCdUntilTick = this.tick + ticks(8000);
+        break;
+      }
+      case "swarm": {
+        // SWARM TIDE — a radial burst of bolts that buzz outward (shot pipeline = full payouts)
+        const dmg = this.rollPlayerCritDamage(p, Math.round(13 * lvl));
+        for (let i = 0; i < 8; i++) {
+          this.pushPlayerShot(p, aim + (i / 8) * Math.PI * 2, PROJ_SPEED * 0.85, PROJ_TTL_MS, dmg);
+        }
+        p.abilityCdUntilTick = this.tick + ticks(6500);
+        break;
+      }
+      default: {
+        // METROPHAGE — INFECTION POD: lob contagion at the aim point; it bursts in an AoE
+        const px = p.x + Math.cos(aim) * 170;
+        const py = p.y + Math.sin(aim) * 170;
+        const dmg = this.rollPlayerCritDamage(p, Math.round(42 * lvl));
+        for (const e of this.enemies.values()) {
+          if (e.hp <= 0) continue;
+          if (dist2(e.x, e.y, px, py) <= 105 * 105) this.applyPlayerHitToEnemy(e, p, dmg);
+        }
+        p.abilityCdUntilTick = this.tick + ticks(7000);
+        break;
+      }
+    }
+  }
+
   private onFire(ws: WebSocket, msg: Extract<ClientMsg, { t: "fire" }>) {
     const p = this.playerFor(ws);
     if (!p || p.dead) return;
@@ -3169,7 +3308,11 @@ export class WorldDO {
         p.mx = 0;
         p.my = 0;
       }
-      if (p.mx !== 0 || p.my !== 0) {
+      if (this.tick < p.dashUntilTick) {
+        // mid-dash: the burst vector overrides walk intent at dash speed
+        stepMove(p, { mx: p.dashDx, my: p.dashDy }, this.grid, NET_TICK_MS, PLAYER.dashSpeed);
+        p.dirty = true;
+      } else if (p.mx !== 0 || p.my !== 0) {
         stepMove(p, { mx: p.mx, my: p.my }, this.grid, NET_TICK_MS);
         p.dirty = true;
         if (this.inTutorial() && dist2(p.x, p.y, p.tutorialAnchorX, p.tutorialAnchorY) > 96 * 96) {
@@ -3202,16 +3345,49 @@ export class WorldDO {
         }
         continue;
       }
+      // WINTERMUTE's hack cone freezes a unit mid-thought — no move, no fire
+      if (e.stunUntilTick && this.tick < e.stunUntilTick) continue;
       // BLACKOUT blinds the Human Security System — aggro radius collapses
       const aggro = this.eventActive("blackout") ? ENEMY_AGGRO * 0.5 : ENEMY_AGGRO;
       const target = this.nearestLivePlayer(e.x, e.y, aggro);
-      if (!target) continue;
+      if (!target) {
+        // no prey: drift back to the assigned post. Without this leash, chases and
+        // orbit-strafes scatter the garrison across the district until whole zones
+        // read empty — units must HOLD their ground when the fight moves on.
+        const hx = e.ox - e.x;
+        const hy = e.oy - e.y;
+        const hd = Math.hypot(hx, hy);
+        if (hd > 48) stepMove(e, { mx: hx / hd, my: hy / hd }, this.grid, NET_TICK_MS, arch.speed * 0.55);
+        continue;
+      }
       const dx = target.x - e.x;
       const dy = target.y - e.y;
       const d = Math.hypot(dx, dy) || 1;
-      const eSpeed = arch.speed;
+      let eSpeed = arch.speed;
       const eFireMs = arch.fireMs;
-      stepMove(e, { mx: dx / d, my: dy / d }, this.grid, NET_TICK_MS, eSpeed);
+      // Archetype movement personalities — the security floor reads as different MINDS,
+      // not one AI in seven skins. (kinds: 1 wasp, 2 lancer, 3 hound, 5 sniper)
+      let mvx = dx / d;
+      let mvy = dy / d;
+      if (e.kind === 1) {
+        // WASP — orbits its prey: heavy strafe blended with a light approach
+        const s = Math.sin(this.tick / 14 + e.id) >= 0 ? 1 : -1;
+        mvx = mvx * 0.45 + (-dy / d) * 0.9 * s;
+        mvy = mvy * 0.45 + (dx / d) * 0.9 * s;
+      } else if (e.kind === 2 && d < arch.fireRange * 0.6) {
+        // LANCER — a duellist: backs off to hold its preferred range
+        mvx = -mvx;
+        mvy = -mvy;
+      } else if (e.kind === 3 && d < 300) {
+        // HOUND — lunges the moment it smells blood
+        eSpeed = arch.speed * 1.7;
+      } else if (e.kind === 5 && (this.tick - e.lastFireTick) * NET_TICK_MS < 900) {
+        // SNIPER — relocates right after every shot (never in the same window twice)
+        const s = e.id % 2 === 0 ? 1 : -1;
+        mvx = (-dy / d) * s;
+        mvy = (dx / d) * s;
+      }
+      stepMove(e, { mx: mvx, my: mvy }, this.grid, NET_TICK_MS, eSpeed);
       if (d <= arch.fireRange && (this.tick - e.lastFireTick) * NET_TICK_MS >= eFireMs) {
         e.lastFireTick = this.tick;
         const aim = Math.atan2(target.y - e.y, target.x - e.x);
@@ -3338,7 +3514,7 @@ export class WorldDO {
         if (!consumed && this.resolvePvpHit(s, ax, ay)) consumed = true;
       } else {
         for (const p of this.players.values()) {
-          if (p.dead) continue;
+          if (p.dead || this.tick < p.iframeUntilTick) continue; // dash grace — untouchable
           if (segPointDist2(p.x, p.y, ax, ay, s.x, s.y) <= R2) {
             p.hp -= s.dmg;
             consumed = true;
@@ -3366,7 +3542,7 @@ export class WorldDO {
         if (this.tick >= hz.detonateTick) {
           const hr2 = hz.r * hz.r;
           for (const p of this.players.values()) {
-            if (p.dead || this.tick < p.pvpSafeUntil) continue;
+            if (p.dead || this.tick < p.pvpSafeUntil || this.tick < p.iframeUntilTick) continue;
             if (dist2(p.x, p.y, hz.x, hz.y) <= hr2) {
               p.hp -= hz.dmg;
               if (p.hp <= 0) {
@@ -3531,6 +3707,7 @@ export class WorldDO {
         inTutorial: this.inTutorial(),
         look: applyCosmetic(p.look, p.cosmeticEquipped), // relay the equipped transmog so others see it
         pvpInArena: p.pvpInArena,
+        ...(this.tick < p.dashUntilTick ? { dash: 1 as const } : {}),
         ...(p.id === viewer.id ? { pvpEscrow: p.pvpEscrow } : {}),
       });
     }
@@ -3685,6 +3862,7 @@ export class WorldDO {
     for (const v of this.players.values()) {
       if (v.id === s.owner || v.dead) continue;
       if (this.tick < v.pvpSafeUntil) continue; // spawn protection
+      if (this.tick < v.iframeUntilTick) continue; // dash grace — a dodge is a dodge in PvP too
       if (shooter.party >= 0 && v.party === shooter.party) continue; // no team-killing
       if (!v.pvpInArena || !inPvpZone(v.x, v.y, pvp)) continue;
       if (segPointDist2(v.x, v.y, ax, ay, s.x, s.y) <= R2) {

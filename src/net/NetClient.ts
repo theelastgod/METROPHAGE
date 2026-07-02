@@ -1,4 +1,5 @@
 import { stepMove, NET_TICK_MS, PLAYER_HP, type MoveState } from "./sim";
+import { PLAYER } from "../config";
 import type { TileGrid } from "../world/district";
 import type { ClientMsg, ServerMsg, InputCmd, PlayerLook, Item } from "./protocol";
 
@@ -176,6 +177,14 @@ export default class NetClient {
   /** The district's live world event (null when idle). */
   worldEvent: { id: string; name: string; tagline: string; hex: string; phase: "telegraph" | "active"; untilAt: number } | null = null;
   onWorldEvent?: (phase: "telegraph" | "active" | "end", name: string) => void;
+  /** Class id sent at login — selects the server-side signature ability. */
+  classId = "metrophage";
+  // class kit — local prediction + cooldown UI (the server enforces the real timers)
+  predDashUntil = 0;
+  predDashX = 0;
+  predDashY = 0;
+  dashCdUntil = 0;
+  abilityCdUntil = 0;
   /** connecting | connected | reconnecting | offline */
   onConnectionState?: (state: "connecting" | "connected" | "reconnecting" | "offline") => void;
 
@@ -241,6 +250,7 @@ export default class NetClient {
           faction: this.loginFaction,
           look: this.look,
           arrival: this.arrival,
+          classId: this.classId,
           ...(this.travelFrom ? { from: this.travelFrom } : {}),
           ...(this.auth ?? {}),
         } satisfies ClientMsg),
@@ -320,14 +330,53 @@ export default class NetClient {
 
   private netTick() {
     this.seq++;
-    const cmd: InputCmd = { seq: this.seq, mx: this.intent.mx, my: this.intent.my };
-    stepMove(this.pred, cmd, this.grid, NET_TICK_MS); // predict immediately
+    const dashing = performance.now() < this.predDashUntil;
+    const cmd: InputCmd = {
+      seq: this.seq,
+      mx: this.intent.mx,
+      my: this.intent.my,
+      ...(dashing ? { dashX: this.predDashX, dashY: this.predDashY } : {}),
+    };
+    // predict immediately — mid-dash the burst vector overrides intent, like the server
+    if (dashing) stepMove(this.pred, { mx: this.predDashX, my: this.predDashY }, this.grid, NET_TICK_MS, PLAYER.dashSpeed);
+    else stepMove(this.pred, cmd, this.grid, NET_TICK_MS);
     this.pending.push(cmd);
     try {
-      this.ws?.send(JSON.stringify({ t: "input", ...cmd } satisfies ClientMsg));
+      this.ws?.send(JSON.stringify({ t: "input", seq: cmd.seq, mx: cmd.mx, my: cmd.my } satisfies ClientMsg));
     } catch {
       /* socket hiccup; reconciliation will correct */
     }
+  }
+
+  /** Dash — sends the server-validated burst and predicts it locally (client + server
+   *  run the same dash sim, so reconciliation stays quiet). Returns false on cooldown. */
+  dash(dx: number, dy: number): boolean {
+    const now = performance.now();
+    if (now < this.dashCdUntil || this.dead) return false;
+    const len = Math.hypot(dx, dy) || 1;
+    this.predDashX = dx / len;
+    this.predDashY = dy / len;
+    this.predDashUntil = now + PLAYER.dashDurationMs;
+    this.dashCdUntil = now + PLAYER.dashCooldownMs;
+    try {
+      this.ws?.send(JSON.stringify({ t: "dash", seq: this.seq, dx: this.predDashX, dy: this.predDashY } satisfies ClientMsg));
+    } catch {
+      /* offline — prediction still gives the feel; server corrects on reconnect */
+    }
+    return true;
+  }
+
+  /** Class signature (Q) — the server resolves the effect; we track the cooldown for UI. */
+  ability(aim: number, cooldownMs: number): boolean {
+    const now = performance.now();
+    if (now < this.abilityCdUntil || this.dead) return false;
+    this.abilityCdUntil = now + cooldownMs;
+    try {
+      this.ws?.send(JSON.stringify({ t: "ability", seq: this.seq, aim } satisfies ClientMsg));
+    } catch {
+      /* offline */
+    }
+    return true;
   }
 
   private onMessage(data: unknown) {
@@ -676,7 +725,11 @@ export default class NetClient {
     const prevY = this.pred.y;
     this.pred.x = sx;
     this.pred.y = sy;
-    for (const c of this.pending) stepMove(this.pred, c, this.grid, NET_TICK_MS);
+    for (const c of this.pending) {
+      // replay dashes at dash speed — otherwise the burst reads as prediction error
+      if (c.dashX !== undefined) stepMove(this.pred, { mx: c.dashX, my: c.dashY ?? 0 }, this.grid, NET_TICK_MS, PLAYER.dashSpeed);
+      else stepMove(this.pred, c, this.grid, NET_TICK_MS);
+    }
     this.lastError = Math.hypot(this.pred.x - prevX, this.pred.y - prevY);
     if (this.lastError > 0.01) this.reconciles++;
   }

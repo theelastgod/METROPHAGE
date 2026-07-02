@@ -97,7 +97,7 @@ export default class RsQuestLog {
     );
     add(
       scene.add
-        .text(x + w - uiDim(22), y + uiDim(16), "Q / J / ESC close", bodyFont(10, { color: STUDIO.dim }))
+        .text(x + w - uiDim(22), y + uiDim(16), "J / ESC close", bodyFont(10, { color: STUDIO.dim }))
         .setOrigin(1, 0)
         .setScrollFactor(0)
         .setDepth(D + 2),

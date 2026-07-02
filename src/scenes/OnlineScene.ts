@@ -13,7 +13,7 @@ import OnlineGuild from "../ui/OnlineGuild";
 import OnlineMarket from "../ui/OnlineMarket";
 import OnlineContracts from "../ui/OnlineContracts";
 import OnlineChatPanel from "../ui/OnlineChatPanel";
-import { COLORS, TILE, VIEW_W, VIEW_H, NPC, uiDim, uiFont, DISTRICT_GRID_W, DISTRICT_GRID_H } from "../config";
+import { COLORS, TILE, VIEW_W, VIEW_H, NPC, PLAYER, uiDim, uiFont, DISTRICT_GRID_W, DISTRICT_GRID_H } from "../config";
 import { PLAYER_KEY, COP_KEY, BULLET_KEY, GLOW_KEY, NODE_KEY, PROP_STREETLIGHT_KEY, PROP_VENDING_KEY, PROP_AC_KEY } from "../assets/manifest";
 import { driveChar } from "../assets/anim";
 import {
@@ -340,6 +340,7 @@ export default class OnlineScene extends Phaser.Scene {
   private hudPanelG!: Phaser.GameObjects.Graphics; // backing frame behind the status stack
   private hpBarRect = { x: 0, y: 0, w: 0, h: 0 }; // laid out with the status panel at refresh
   private hpBar!: Phaser.GameObjects.Graphics;
+  private kitPipsRect = { x: 0, y: 0, w: 0, h: 0 }; // dash + ability cooldown bars
   private deadText!: Phaser.GameObjects.Text;
   private deathSub!: Phaser.GameObjects.Text; // reboot countdown under SIGNAL LOST
   private deathOverlay!: Phaser.GameObjects.Rectangle;
@@ -825,6 +826,7 @@ export default class OnlineScene extends Phaser.Scene {
     const fastArrival = !!this.registry.get("fastTravel");
     this.registry.set("fastTravel", false);
     this.net = new NetClient(grid, this.callsign, url, this.faction, this.baseLook);
+    this.net.classId = (this.registry.get("classId") as string) || "metrophage";
     this.net.arrival = fastArrival ? "fast" : "organic";
     this.net.travelFrom = fastArrival ? undefined : this.fromZone;
     const tutorialMode =
@@ -1058,7 +1060,7 @@ export default class OnlineScene extends Phaser.Scene {
       { key: "skills", label: "Skills", sub: "'", color: 0xf7ff3c, onClick: () => this.rsSkillsPanel.toggle() },
       { key: "map", label: "Map", sub: "M", color: 0x39ff88, onClick: () => this.mapPanel?.toggle(this.net.discovered, this.net.unlocked, this.zone) },
       { key: "market", label: "Market", sub: "K", color: 0xff2bd6, onClick: () => this.market?.toggle(this.net.marketListings, this.net.inventory, this.net.id, this.net.credits, this.net.metro) },
-      { key: "quests", label: "Quests", sub: "Q", color: 0xb06bff, onClick: () => this.refreshQuestLog(true) },
+      { key: "quests", label: "Quests", sub: "J", color: 0xb06bff, onClick: () => this.refreshQuestLog(true) },
     ]);
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
       if (this.contextMenu.isOpen()) {
@@ -1252,10 +1254,8 @@ export default class OnlineScene extends Phaser.Scene {
         this.market.close();
         return;
       }
-      if (e.key === "q" || e.key === "Q") {
-        this.refreshQuestLog(true);
-        return;
-      }
+      // Q belongs to the class signature ability now (as the class cards promise);
+      // the quest log lives on J and the action-bar button.
       if (this.questLog.open && e.key === "Escape") {
         this.questLog.close();
         return;
@@ -1304,6 +1304,14 @@ export default class OnlineScene extends Phaser.Scene {
       }
       if (e.key === "v" || e.key === "V") {
         this.openWheel();
+        return;
+      }
+      if (e.key === " " || e.key === "Shift") {
+        this.tryDash();
+        return;
+      }
+      if (e.key === "q" || e.key === "Q") {
+        this.tryAbility();
         return;
       }
       if ((e.key === "r" || e.key === "R") && !this.net.connected) {
@@ -2606,12 +2614,22 @@ export default class OnlineScene extends Phaser.Scene {
         this.nodeSprites.delete(id);
       }
 
-    // HP bar + death overlay (bar sits inside the top-left status panel; rect laid out at refresh)
+    // HP bar + kit cooldowns + death overlay (rects laid out with the status panel)
     this.hpBar.clear();
     if (this.net.connected && this.hpBarRect.w > 0) {
       const { x, y, w, h } = this.hpBarRect;
       const hpN = Phaser.Math.Clamp(this.net.hp / PLAYER_HP, 0, 1);
       drawPremiumBar(this.hpBar, x, y, w, h, hpN, hpN > 0.3 ? COLORS.hp : COLORS.hpLow);
+      // dash (⇧) + signature (Q) readiness — fill drains on use, refills to ready
+      const k = this.kitPipsRect;
+      if (k.w > 0) {
+        const now = performance.now();
+        const halfW = (k.w - uiGap("xs")) / 2;
+        const dashN = 1 - Phaser.Math.Clamp((this.net.dashCdUntil - now) / PLAYER.dashCooldownMs, 0, 1);
+        const abN = 1 - Phaser.Math.Clamp((this.net.abilityCdUntil - now) / this.abilityCooldownMs(), 0, 1);
+        drawPremiumBar(this.hpBar, k.x, k.y, halfW, k.h, dashN, dashN >= 1 ? 0x00e5ff : 0x3a5a70);
+        drawPremiumBar(this.hpBar, k.x + halfW + uiGap("xs"), k.y, halfW, k.h, abN, abN >= 1 ? this.color : 0x4a4460);
+      }
     }
     this.updateDeathSequence();
 
@@ -2759,12 +2777,16 @@ export default class OnlineScene extends Phaser.Scene {
     const barGap = uiGap("sm");
     this.hud.setPosition(px + pad, py + pad);
     const showBar = this.net.connected;
+    const pipH = uiDim(8);
     const innerW = Math.max(this.hud.width, uiDim(200));
-    const innerH = this.hud.height + (showBar ? barGap + barH : 0);
+    const innerH = this.hud.height + (showBar ? barGap + barH + uiGap("xs") + pipH : 0);
     this.hudPanelG.clear();
     drawHudPanel(this.hudPanelG, px, py, innerW + pad * 2, innerH + pad * 2, 0x1fbf6a);
     this.hpBarRect = showBar
       ? { x: px + pad, y: py + pad + this.hud.height + barGap, w: innerW, h: barH }
+      : { x: 0, y: 0, w: 0, h: 0 };
+    this.kitPipsRect = showBar
+      ? { x: px + pad, y: py + pad + this.hud.height + barGap + barH + uiGap("xs"), w: innerW, h: pipH }
       : { x: 0, y: 0, w: 0, h: 0 };
     // the tutorial lesson card is wide + centered — keep it clear of the status panel
     if (this.isTutorial && this.tutorialPanel) {
@@ -2907,6 +2929,93 @@ export default class OnlineScene extends Phaser.Scene {
     const cy = VIEW_H / 2;
     const d = Math.min((cx - uiDim(56)) / (Math.abs(Math.cos(ang)) || 1e-6), (cy - uiDim(104)) / (Math.abs(Math.sin(ang)) || 1e-6));
     this.questArrow.setVisible(true).setPosition(cx + Math.cos(ang) * d, cy + Math.sin(ang) * d).setRotation(ang);
+  }
+
+  /** The class signature's cooldown (client mirror of the server's timers, for the pips). */
+  private abilityCooldownMs(): number {
+    switch (this.net.classId) {
+      case "k-guerilla":
+        return 6000;
+      case "wintermute":
+        return 8000;
+      case "swarm":
+        return 6500;
+      default:
+        return 7000; // metrophage — INFECTION POD
+    }
+  }
+
+  /** Aim from the pointer (world space) — shared by dash fallback + the signature. */
+  private pointerAim(): number {
+    const ptr = this.input.activePointer;
+    const wp = this.cameras.main.getWorldPoint(ptr.x, ptr.y);
+    return Math.atan2(wp.y - this.me.y, wp.x - this.me.x);
+  }
+
+  /** SPACE/SHIFT — dash along current move intent (or toward the pointer standing still). */
+  private tryDash() {
+    let dx = 0;
+    let dy = 0;
+    if (this.keys.A?.isDown || this.keys.LEFT?.isDown) dx -= 1;
+    if (this.keys.D?.isDown || this.keys.RIGHT?.isDown) dx += 1;
+    if (this.keys.W?.isDown || this.keys.UP?.isDown) dy -= 1;
+    if (this.keys.S?.isDown || this.keys.DOWN?.isDown) dy += 1;
+    if (dx === 0 && dy === 0) {
+      const aim = this.pointerAim();
+      dx = Math.cos(aim);
+      dy = Math.sin(aim);
+    }
+    if (!this.net.dash(dx, dy)) return;
+    // FX — afterimages peel off along the burst
+    this.synth?.shoot();
+    juiceZoomPunch(this, 0.02, 90);
+    const frame = this.me.frame.name;
+    for (let i = 0; i < 3; i++) {
+      const ghost = this.add
+        .sprite(this.me.x, this.me.y, this.me.texture.key, frame)
+        .setAlpha(0.35 - i * 0.09)
+        .setTint(this.color)
+        .setDepth(9);
+      this.tweens.add({ targets: ghost, alpha: 0, duration: 220 + i * 70, onComplete: () => ghost.destroy() });
+    }
+  }
+
+  /** Q — the class signature. The server resolves the effect; we sell the moment. */
+  private tryAbility() {
+    const aim = this.pointerAim();
+    if (!this.net.ability(aim, this.abilityCooldownMs())) return;
+    this.synth?.kill();
+    juiceShake(this, 90, 0.003);
+    const cls = this.net.classId;
+    if (cls === "k-guerilla") {
+      // strike trail — ghosts peel off along the blink line
+      const frame = this.me.frame.name;
+      for (let i = 0; i < 4; i++) {
+        const ghost = this.add
+          .sprite(this.me.x + Math.cos(aim) * i * 22, this.me.y + Math.sin(aim) * i * 22, this.me.texture.key, frame)
+          .setAlpha(0.4 - i * 0.08)
+          .setTint(0xff2bd6)
+          .setDepth(9);
+        this.tweens.add({ targets: ghost, alpha: 0, duration: 200 + i * 60, onComplete: () => ghost.destroy() });
+      }
+      juiceZoomPunch(this, 0.03, 110);
+    } else if (cls === "wintermute") {
+      // hack cone — a fan of frost sparks
+      for (let i = -2; i <= 2; i++) {
+        const a = aim + i * 0.24;
+        this.particles?.spark(this.me.x + Math.cos(a) * 120, this.me.y + Math.sin(a) * 120, 0x9fe8ff, 1.1);
+      }
+      juiceFlash(this, 140, 159, 232, 255);
+    } else if (cls === "swarm") {
+      juiceNeonPulse(this, 0.22, 260); // the tide itself renders via the shot snapshots
+    } else {
+      // infection pod — contagion bursts at the lobbed point
+      const px = this.me.x + Math.cos(aim) * 170;
+      const py = this.me.y + Math.sin(aim) * 170;
+      this.particles?.burst(px, py, 1.15);
+      this.particles?.spark(px, py, 0x39ff88, 1.4);
+      juiceFlash(this, 150, 57, 255, 136);
+    }
   }
 
   /** Dress the ICE VAULT so it reads as a frozen-mind archive, not bare corridors:
@@ -3307,7 +3416,7 @@ export default class OnlineScene extends Phaser.Scene {
   private controlHint() {
     if (this.isTutorial) return "WASD move · CLICK fire · I bag · J/G/B/K panels · ENTER chat · SKIP (top-right)";
     if (getSettings().rsControls) {
-      return "CLICK walk · RIGHT-CLICK menu · M map (shift+click walk) · minimap · Q/J quests · examine bar below";
+      return "CLICK walk · RIGHT-CLICK menu · M map (shift+click walk) · minimap · J quests · Q ability · SPACE dash";
     }
     return "WASD · HOLD CLICK fire · I bag · K market · J jobs · M map · H safehouse · O options";
   }

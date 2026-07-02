@@ -12,6 +12,10 @@ export interface InputCmd {
   seq: number;
   mx: number;
   my: number;
+  /** Client-side only: this tick was mid-dash — prediction + reconciliation replay
+   *  must move at dash speed along the dash vector, mirroring the server's sim. */
+  dashX?: number;
+  dashY?: number;
 }
 
 /** Compact player appearance (no callsign) — sent on login, relayed in snapshots so
@@ -65,10 +69,14 @@ export type ClientMsg =
       arrival?: "organic" | "fast";
       /** Zone the runner travelled from — sets trail-gate spawn on wilderness corridors. */
       from?: string;
+      /** Class id (metrophage/k-guerilla/wintermute/swarm) — selects the signature ability. */
+      classId?: string;
     }
   | { t: "inv_move"; from: number; to: number }
   | { t: "input"; seq: number; mx: number; my: number }
   | { t: "fire"; seq: number; aim: number } // aim in radians; server validates rate
+  | { t: "dash"; seq: number; dx: number; dy: number } // burst move; server validates cooldown + grants i-frames
+  | { t: "ability"; seq: number; aim: number } // class signature (Q); server validates cooldown + resolves the effect
   | { t: "chat"; ch: "zone" | "party" | "whisper" | "guild"; to?: string; text: string }
   // guilds ("Cells") — server validates rank/balance + owns the shared bank (cross-zone, D1)
   | {
@@ -142,6 +150,8 @@ export interface PlayerSnap {
   look?: PlayerLook; // appearance, so remotes render this player's customization
   /** In THE CRUCIBLE with an active $METRO buy-in. */
   pvpInArena?: boolean;
+  /** Mid-dash this snapshot — clients render the burst (trail/afterimage). */
+  dash?: 1;
   /** Buy-in + elimination loot (local player only). */
   pvpEscrow?: number;
 }
