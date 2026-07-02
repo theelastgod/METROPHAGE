@@ -87,7 +87,7 @@ export default class NetClient {
   level = 1;
   xp = 0;
   pickups = new Map<number, { id: number; x: number; y: number; kind: number }>();
-  hazards: Array<{ id: number; x: number; y: number; r: number; frac: number }> = []; // boss AoE telegraphs
+  hazards: Array<{ id: number; x: number; y: number; r: number; frac: number; friendly?: 1 }> = []; // AoE telegraphs (boss + called strikes)
   faction = 0;
   nodes = new Map<number, { id: number; x: number; y: number; owner: number; progress: number; by: number }>();
   factions: number[] = [0, 0, 0, 0];
@@ -185,6 +185,7 @@ export default class NetClient {
   predDashY = 0;
   dashCdUntil = 0;
   abilityCdUntil = 0;
+  ability2CdUntil = 0;
   /** connecting | connected | reconnecting | offline */
   onConnectionState?: (state: "connecting" | "connected" | "reconnecting" | "offline") => void;
 
@@ -373,6 +374,19 @@ export default class NetClient {
     this.abilityCdUntil = now + cooldownMs;
     try {
       this.ws?.send(JSON.stringify({ t: "ability", seq: this.seq, aim } satisfies ClientMsg));
+    } catch {
+      /* offline */
+    }
+    return true;
+  }
+
+  /** Class secondary (E) — same contract as the signature. */
+  ability2(aim: number, cooldownMs: number): boolean {
+    const now = performance.now();
+    if (now < this.ability2CdUntil || this.dead) return false;
+    this.ability2CdUntil = now + cooldownMs;
+    try {
+      this.ws?.send(JSON.stringify({ t: "ability2", seq: this.seq, aim } satisfies ClientMsg));
     } catch {
       /* offline */
     }

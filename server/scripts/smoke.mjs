@@ -2414,6 +2414,35 @@ async function kit() {
   const hpAfterTwo = store.enemies.find((e) => e.id === eid)?.hp ?? 0;
   const podDamaged = hpBefore > 0 && hpBefore - hpAfterOne >= 30;
   const cooldownHeld = hpAfterOne - hpAfterTwo < 10; // no second pod landed
+
+  // 2b) E — CONTAGION BLOOM: nova around the runner damages anything adjacent
+  const bloomTarget = () => {
+    let b = null;
+    let bd = Infinity;
+    for (const e of store.enemies) {
+      const d = Math.hypot(e.x - store.x, e.y - store.y);
+      if (e.hp > 0 && d < bd) {
+        bd = d;
+        b = { e, d };
+      }
+    }
+    return b;
+  };
+  // close to point-blank on whatever is nearest, then bloom
+  let bt = bloomTarget();
+  const bt0 = Date.now();
+  while (Date.now() - bt0 < 10000 && bt && bt.d > 110) {
+    ws.send(JSON.stringify({ t: "input", seq: ++seq, mx: (bt.e.x - store.x) / bt.d, my: (bt.e.y - store.y) / bt.d }));
+    await sleep(50);
+    bt = bloomTarget();
+  }
+  const bloomBeforeHp = bt ? bt.e.hp : -1;
+  const bloomId = bt ? bt.e.id : -1;
+  ws.send(JSON.stringify({ t: "ability2", seq: ++seq, aim: 0 }));
+  await sleep(500);
+  const bloomAfterHp = store.enemies.find((e) => e.id === bloomId)?.hp ?? 0;
+  // a kill zeroes the readback — dying to the nova is the strongest proof of all
+  const bloomDamaged = bloomBeforeHp > 0 && (bloomAfterHp <= 0 || bloomBeforeHp - bloomAfterHp >= 20);
   ws.close();
   await sleep(400);
 
@@ -2467,13 +2496,25 @@ async function kit() {
     if (best) ws2.send(JSON.stringify({ t: "input", seq: 800 + Math.floor((Date.now() - t1) / 50), mx: (best.x - s2.x) / bd, my: (best.y - s2.y) / bd }));
     await sleep(50);
   }
+
+  // 3b) E — DEPLOY DRONES: the escort auto-engages; enemy hp bleeds with the gun silent
+  let dronesWorked = false;
+  {
+    const totalHp = () => s2.enemies.reduce((a, e) => a + Math.max(0, e.hp), 0);
+    const before = totalHp();
+    if (before > 0) {
+      ws2.send(JSON.stringify({ t: "ability2", seq: 950, aim: 0 }));
+      await sleep(4500);
+      dronesWorked = totalHp() < before; // shots fired by the escort, not by us
+    }
+  }
   ws2.close();
   await sleep(300);
 
-  const checks = { dashBeatsCap, podDamaged, cooldownHeld, stunHeld };
+  const checks = { dashBeatsCap, podDamaged, cooldownHeld, bloomDamaged, stunHeld, dronesWorked };
   report(
-    "KIT — dash breaks the walk cap (sanctioned) + pod damage + cooldown + hack stun",
-    { name, dashDist: Math.round(dashDist), hpBefore, hpAfterOne, hpAfterTwo, stunHeld },
+    "KIT — dash sanction + pod + cooldown + contagion bloom + hack stun",
+    { name, dashDist: Math.round(dashDist), hpBefore, hpAfterOne, hpAfterTwo, bloomDamaged, stunHeld },
     Object.values(checks).every(Boolean),
     checks,
   );

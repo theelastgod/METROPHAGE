@@ -1205,7 +1205,10 @@ export default class OnlineScene extends Phaser.Scene {
           else if (this.nearNpc.kind === "transit" && this.nearNpc.dest) this.enterZone(this.nearNpc.dest);
           else if (this.nearNpc.kind === "instructor") this.talkInstructor(this.nearNpc);
           else this.talkNpc(this.nearNpc);
+          return;
         }
+        // nothing to interact with — E is the class secondary (as the class cards say)
+        this.tryAbility2();
         return;
       }
       if (e.key === "g" || e.key === "G") {
@@ -2518,7 +2521,8 @@ export default class OnlineScene extends Phaser.Scene {
     this.hazardG.clear();
     for (const hz of this.net.hazards) {
       const danger = hz.frac;
-      const col = danger > 0.72 ? 0xff2b2b : 0xff7a3c;
+      // friendly = a called airstrike (hits the HSS): magenta, not threat-red
+      const col = hz.friendly ? 0xff2bd6 : danger > 0.72 ? 0xff2b2b : 0xff7a3c;
       this.hazardG.fillStyle(col, 0.1 + 0.32 * danger);
       this.hazardG.fillCircle(hz.x, hz.y, hz.r * (0.22 + 0.78 * danger)); // inner fill rushes outward
       this.hazardG.lineStyle(3, col, 0.85);
@@ -2620,15 +2624,18 @@ export default class OnlineScene extends Phaser.Scene {
       const { x, y, w, h } = this.hpBarRect;
       const hpN = Phaser.Math.Clamp(this.net.hp / PLAYER_HP, 0, 1);
       drawPremiumBar(this.hpBar, x, y, w, h, hpN, hpN > 0.3 ? COLORS.hp : COLORS.hpLow);
-      // dash (⇧) + signature (Q) readiness — fill drains on use, refills to ready
+      // dash (SPACE) + signature (Q) + secondary (E) readiness — drain on use, refill to ready
       const k = this.kitPipsRect;
       if (k.w > 0) {
         const now = performance.now();
-        const halfW = (k.w - uiGap("xs")) / 2;
+        const gap = uiGap("xs");
+        const thirdW = (k.w - gap * 2) / 3;
         const dashN = 1 - Phaser.Math.Clamp((this.net.dashCdUntil - now) / PLAYER.dashCooldownMs, 0, 1);
         const abN = 1 - Phaser.Math.Clamp((this.net.abilityCdUntil - now) / this.abilityCooldownMs(), 0, 1);
-        drawPremiumBar(this.hpBar, k.x, k.y, halfW, k.h, dashN, dashN >= 1 ? 0x00e5ff : 0x3a5a70);
-        drawPremiumBar(this.hpBar, k.x + halfW + uiGap("xs"), k.y, halfW, k.h, abN, abN >= 1 ? this.color : 0x4a4460);
+        const ab2N = 1 - Phaser.Math.Clamp((this.net.ability2CdUntil - now) / this.ability2CooldownMs(), 0, 1);
+        drawPremiumBar(this.hpBar, k.x, k.y, thirdW, k.h, dashN, dashN >= 1 ? 0x00e5ff : 0x3a5a70);
+        drawPremiumBar(this.hpBar, k.x + thirdW + gap, k.y, thirdW, k.h, abN, abN >= 1 ? this.color : 0x4a4460);
+        drawPremiumBar(this.hpBar, k.x + (thirdW + gap) * 2, k.y, thirdW, k.h, ab2N, ab2N >= 1 ? 0xf7ff3c : 0x5a5440);
       }
     }
     this.updateDeathSequence();
@@ -2942,6 +2949,54 @@ export default class OnlineScene extends Phaser.Scene {
         return 6500;
       default:
         return 7000; // metrophage — INFECTION POD
+    }
+  }
+
+  /** The secondary's cooldown (client mirror of the server timers, for the pips). */
+  private ability2CooldownMs(): number {
+    switch (this.net.classId) {
+      case "k-guerilla":
+        return 10000; // AIRSTRIKE
+      case "wintermute":
+        return 12000; // DEPLOY DRONES
+      case "swarm":
+        return 12000; // MINION PACK
+      default:
+        return 9000; // metrophage — CONTAGION BLOOM
+    }
+  }
+
+  /** E (away from interactables) — the class secondary. */
+  private tryAbility2() {
+    const aim = this.pointerAim();
+    if (!this.net.ability2(aim, this.ability2CooldownMs())) return;
+    this.synth?.kill();
+    const cls = this.net.classId;
+    if (cls === "k-guerilla") {
+      // airstrike called — the telegraph ring renders from the server hazard
+      juiceShake(this, 70, 0.002);
+      this.particles?.spark(this.me.x + Math.cos(aim) * 230, this.me.y + Math.sin(aim) * 230, 0xff2bd6, 1.2);
+    } else if (cls === "wintermute" || cls === "swarm") {
+      // escort deployed — a ring of glows spins up around the runner
+      const tint = cls === "swarm" ? 0xb06bff : 0x9fe8ff;
+      for (let i = 0; i < 3; i++) {
+        const a = (i / 3) * Math.PI * 2;
+        const orb = this.add
+          .image(this.me.x + Math.cos(a) * 30, this.me.y + Math.sin(a) * 30, GLOW_KEY)
+          .setBlendMode(Phaser.BlendModes.ADD)
+          .setTint(tint)
+          .setScale(0.3)
+          .setAlpha(0.8)
+          .setDepth(11);
+        this.tweens.add({ targets: orb, scale: 0.55, alpha: 0, duration: 900, delay: i * 120, onComplete: () => orb.destroy() });
+      }
+      juiceNeonPulse(this, 0.18, 240);
+    } else {
+      // contagion bloom — the nova blossoms from the runner
+      this.particles?.burst(this.me.x, this.me.y, 1.5);
+      this.particles?.spark(this.me.x, this.me.y, 0x39ff88, 1.6);
+      juiceFlash(this, 160, 57, 255, 136);
+      juiceShake(this, 110, 0.004);
     }
   }
 
@@ -3416,7 +3471,7 @@ export default class OnlineScene extends Phaser.Scene {
   private controlHint() {
     if (this.isTutorial) return "WASD move · CLICK fire · I bag · J/G/B/K panels · ENTER chat · SKIP (top-right)";
     if (getSettings().rsControls) {
-      return "CLICK walk · RIGHT-CLICK menu · M map (shift+click walk) · minimap · J quests · Q ability · SPACE dash";
+      return "CLICK walk · RIGHT-CLICK menu · M map (shift+click walk) · minimap · J quests · Q/E abilities · SPACE dash";
     }
     return "WASD · HOLD CLICK fire · I bag · K market · J jobs · M map · H safehouse · O options";
   }

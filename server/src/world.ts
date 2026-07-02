@@ -268,6 +268,11 @@ interface PlayerState {
   dashDy: number;
   iframeUntilTick: number; // invulnerable to enemy shots/hazards (dash grace)
   abilityCdUntilTick: number;
+  ability2CdUntilTick: number;
+  // timed auto-attack companion (WINTERMUTE drones / SWARM minion pack)
+  droneUntilTick: number;
+  droneNextTick: number;
+  droneKind: 0 | 1; // 0 = sentry drones (ranged, paced), 1 = minion pack (fast, short)
   // tutorial drill yard — onboarding before the one-way deploy portal
   tutorialDone: boolean;
   tutorialStep: number;
@@ -346,6 +351,7 @@ interface Enemy {
   tint?: number; // boss accent colour (corp identity), for the client
   add?: boolean; // a boss-summoned add (cleaned up when the boss falls/reforms)
   stunUntilTick?: number; // WINTERMUTE hack cone — frozen mid-thought (no move/fire)
+  slowUntilTick?: number; // METROPHAGE contagion bloom — infected servos at half speed
   // raid runtime (bosses only)
   baseMaxHp?: number; // roster HP before player-count scaling
   phaseIdx?: number; // current raid phase
@@ -364,6 +370,9 @@ interface Hazard {
   castTick: number;
   detonateTick: number;
   dmg: number;
+  /** Player-owned strike: detonates against ENEMIES, credited to `owner`. */
+  vsEnemies?: boolean;
+  owner?: string;
 }
 
 /**
@@ -1101,6 +1110,7 @@ export class WorldDO {
     if (msg.t === "fire") return this.onFire(ws, msg);
     if (msg.t === "dash") return this.onDash(ws, msg);
     if (msg.t === "ability") return this.onAbility(ws, msg);
+    if (msg.t === "ability2") return this.onAbility2(ws, msg);
     if (msg.t === "equip") return this.onEquip(ws, msg);
     if (msg.t === "unequip") return this.onUnequip(ws, msg);
     if (msg.t === "inv_move") return this.onInvMove(ws, msg);
@@ -2214,6 +2224,10 @@ export class WorldDO {
       dashDy: 0,
       iframeUntilTick: 0,
       abilityCdUntilTick: 0,
+      ability2CdUntilTick: 0,
+      droneUntilTick: 0,
+      droneNextTick: 0,
+      droneKind: 0,
       tutorialDone,
       tutorialStep,
       tutorialMode,
@@ -3110,6 +3124,66 @@ export class WorldDO {
     }
   }
 
+  /** The class secondary (E) — completes the kit each class card advertises. */
+  private onAbility2(ws: WebSocket, msg: Extract<ClientMsg, { t: "ability2" }>) {
+    const p = this.playerFor(ws);
+    if (!p || p.dead) return;
+    if (this.tick < p.ability2CdUntilTick) return;
+    const aim = Number.isFinite(msg.aim) ? msg.aim : p.aim;
+    p.aim = aim;
+    const lvl = 1 + (p.mods.dmgPct || 0);
+    switch (p.classId) {
+      case "k-guerilla": {
+        // AIRSTRIKE — call a telegraphed strike on the aim point; enemies caught in
+        // the ring when it lands eat heavy damage (the ONLY player-owned hazard)
+        const px = p.x + Math.cos(aim) * 230;
+        const py = p.y + Math.sin(aim) * 230;
+        this.hazards.push({
+          id: this.nextHazardId++,
+          x: px,
+          y: py,
+          r: 95,
+          castTick: this.tick,
+          detonateTick: this.tick + ticks(900),
+          dmg: Math.round(55 * lvl),
+          vsEnemies: true,
+          owner: p.id,
+        });
+        p.ability2CdUntilTick = this.tick + ticks(10000);
+        break;
+      }
+      case "wintermute": {
+        // DEPLOY DRONES — a sentry escort auto-engages the nearest unit for 6s
+        p.droneUntilTick = this.tick + ticks(6000);
+        p.droneNextTick = this.tick;
+        p.droneKind = 0;
+        p.ability2CdUntilTick = this.tick + ticks(12000);
+        break;
+      }
+      case "swarm": {
+        // MINION PACK — a faster, shorter-fanged swarm escort for 8s
+        p.droneUntilTick = this.tick + ticks(8000);
+        p.droneNextTick = this.tick;
+        p.droneKind = 1;
+        p.ability2CdUntilTick = this.tick + ticks(12000);
+        break;
+      }
+      default: {
+        // METROPHAGE — CONTAGION BLOOM: a nova around the runner; every unit caught
+        // is damaged and INFECTED (half speed while the contagion chews its servos)
+        const dmg = this.rollPlayerCritDamage(p, Math.round(30 * lvl));
+        for (const e of this.enemies.values()) {
+          if (e.hp <= 0) continue;
+          if (dist2(e.x, e.y, p.x, p.y) > 145 * 145) continue;
+          e.slowUntilTick = this.tick + ticks(e.boss ? 1200 : 3000);
+          this.applyPlayerHitToEnemy(e, p, dmg);
+        }
+        p.ability2CdUntilTick = this.tick + ticks(9000);
+        break;
+      }
+    }
+  }
+
   private onFire(ws: WebSocket, msg: Extract<ClientMsg, { t: "fire" }>) {
     const p = this.playerFor(ws);
     if (!p || p.dead) return;
@@ -3327,6 +3401,19 @@ export class WorldDO {
           void this.graduateTutorial(p, this.socketForPlayer(p.id), false);
         }
       }
+      // timed companion (WINTERMUTE drones / SWARM pack): auto-engage the nearest
+      // unit — shots ride the normal pipeline, so payouts and crits stay honest
+      if (!p.dead && this.tick < p.droneUntilTick && this.tick >= p.droneNextTick) {
+        const range = p.droneKind === 0 ? 320 : 220;
+        const near = this.nearestEnemyTo(p.x, p.y, range);
+        if (near) {
+          const jitter = (Math.random() - 0.5) * 0.16;
+          const aim = Math.atan2(near.y - p.y, near.x - p.x) + jitter;
+          const dmg = p.droneKind === 0 ? 12 : 8;
+          this.pushPlayerShot(p, aim, PROJ_SPEED * 0.9, PROJ_TTL_MS, Math.round(dmg * (1 + (p.mods.dmgPct || 0))));
+        }
+        p.droneNextTick = this.tick + ticks(p.droneKind === 0 ? 700 : 420);
+      }
       this.tickPvpArena(p);
     }
 
@@ -3387,6 +3474,8 @@ export class WorldDO {
         mvx = (-dy / d) * s;
         mvy = (dx / d) * s;
       }
+      // CONTAGION BLOOM infection — chewed servos run at half speed
+      if (e.slowUntilTick && this.tick < e.slowUntilTick) eSpeed *= 0.5;
       stepMove(e, { mx: mvx, my: mvy }, this.grid, NET_TICK_MS, eSpeed);
       if (d <= arch.fireRange && (this.tick - e.lastFireTick) * NET_TICK_MS >= eFireMs) {
         e.lastFireTick = this.tick;
@@ -3541,15 +3630,24 @@ export class WorldDO {
       for (const hz of this.hazards) {
         if (this.tick >= hz.detonateTick) {
           const hr2 = hz.r * hz.r;
-          for (const p of this.players.values()) {
-            if (p.dead || this.tick < p.pvpSafeUntil || this.tick < p.iframeUntilTick) continue;
-            if (dist2(p.x, p.y, hz.x, hz.y) <= hr2) {
-              p.hp -= hz.dmg;
-              if (p.hp <= 0) {
-                p.hp = 0;
-                p.dead = true;
-                p.respawnTick = this.tick + ticks(RESPAWN_MS);
-                p.dirty = true;
+          if (hz.vsEnemies) {
+            // player-owned strike — hits the security floor, pays out to the caller
+            const owner = hz.owner ? this.players.get(hz.owner) : undefined;
+            for (const e of this.enemies.values()) {
+              if (e.hp <= 0) continue;
+              if (dist2(e.x, e.y, hz.x, hz.y) <= hr2 && owner) this.applyPlayerHitToEnemy(e, owner, hz.dmg);
+            }
+          } else {
+            for (const p of this.players.values()) {
+              if (p.dead || this.tick < p.pvpSafeUntil || this.tick < p.iframeUntilTick) continue;
+              if (dist2(p.x, p.y, hz.x, hz.y) <= hr2) {
+                p.hp -= hz.dmg;
+                if (p.hp <= 0) {
+                  p.hp = 0;
+                  p.dead = true;
+                  p.respawnTick = this.tick + ticks(RESPAWN_MS);
+                  p.dirty = true;
+                }
               }
             }
           }
@@ -3741,6 +3839,7 @@ export class WorldDO {
           r: hz.r,
           // 0 → just cast, 1 → about to detonate (drives the client telegraph fill)
           frac: round2(Math.max(0, Math.min(1, (this.tick - hz.castTick) / Math.max(1, hz.detonateTick - hz.castTick)))),
+          ...(hz.vsEnemies ? { friendly: 1 as const } : {}),
         });
     }
     const nodes = [];
@@ -3904,6 +4003,20 @@ export class WorldDO {
         /* dropped */
       }
     }
+  }
+
+  private nearestEnemyTo(x: number, y: number, range: number): Enemy | null {
+    let best: Enemy | null = null;
+    let bestD = range * range;
+    for (const e of this.enemies.values()) {
+      if (e.hp <= 0) continue;
+      const d = dist2(x, y, e.x, e.y);
+      if (d <= bestD) {
+        bestD = d;
+        best = e;
+      }
+    }
+    return best;
   }
 
   private nearestLivePlayer(x: number, y: number, range: number): PlayerState | null {

@@ -77,6 +77,7 @@ export type ClientMsg =
   | { t: "fire"; seq: number; aim: number } // aim in radians; server validates rate
   | { t: "dash"; seq: number; dx: number; dy: number } // burst move; server validates cooldown + grants i-frames
   | { t: "ability"; seq: number; aim: number } // class signature (Q); server validates cooldown + resolves the effect
+  | { t: "ability2"; seq: number; aim: number } // class secondary (E); server validates cooldown + resolves the effect
   | { t: "chat"; ch: "zone" | "party" | "whisper" | "guild"; to?: string; text: string }
   // guilds ("Cells") — server validates rank/balance + owns the shared bank (cross-zone, D1)
   | {
@@ -185,6 +186,8 @@ export interface HazardSnap {
   y: number;
   r: number; // radius (world px)
   frac: number; // 0 = just telegraphed, 1 = detonating (telegraph fill)
+  /** Player-owned strike (K-GUERILLA airstrike) — renders friendly, hits enemies. */
+  friendly?: 1;
 }
 export interface NodeSnap {
   id: number;
