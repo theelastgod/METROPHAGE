@@ -79,7 +79,7 @@ import {
   type TutorialMode,
 } from "../../src/net/tutorial";
 import { DISTRICTS } from "../../src/game/districts";
-import { DISTRICT_SCALE, PLAYER } from "../../src/config";
+import { DISTRICT_SCALE, PLAYER, HEAT } from "../../src/config";
 import { ONLINE_CITY, CITY_HUB_SPAWN } from "../../src/world/city";
 import { rollItem, rollModsFor, effectiveMods, nextRarity, makeWeaponItem, SLOTS, type Item, type Slot, type Rarity } from "../../src/game/items";
 import { getWeapon, weaponHitDamage } from "../../src/game/weapons";
@@ -273,6 +273,9 @@ interface PlayerState {
   droneUntilTick: number;
   droneNextTick: number;
   droneKind: 0 | 1; // 0 = sentry drones (ranged, paced), 1 = minion pack (fast, short)
+  // HEAT — the risk meter: fed by damage/kills, decays when cold, fuels the ultimate
+  heat: number;
+  heatGainTick: number;
   // tutorial drill yard — onboarding before the one-way deploy portal
   tutorialDone: boolean;
   tutorialStep: number;
@@ -1113,6 +1116,7 @@ export class WorldDO {
     if (msg.t === "dash") return this.onDash(ws, msg);
     if (msg.t === "ability") return this.onAbility(ws, msg);
     if (msg.t === "ability2") return this.onAbility2(ws, msg);
+    if (msg.t === "ult") return this.onUlt(ws, msg);
     if (msg.t === "equip") return this.onEquip(ws, msg);
     if (msg.t === "unequip") return this.onUnequip(ws, msg);
     if (msg.t === "inv_move") return this.onInvMove(ws, msg);
@@ -2230,6 +2234,8 @@ export class WorldDO {
       droneUntilTick: 0,
       droneNextTick: 0,
       droneKind: 0,
+      heat: 0,
+      heatGainTick: 0,
       tutorialDone,
       tutorialStep,
       tutorialMode,
@@ -3189,6 +3195,72 @@ export class WorldDO {
     }
   }
 
+  /** The class ultimate (R) — gated on HEAT, not a cooldown: you EARN it in the fight
+   *  (HEAT.ultThreshold to cast, spends HEAT.ultHeatCost). Server-resolved end to end. */
+  private onUlt(ws: WebSocket, msg: Extract<ClientMsg, { t: "ult" }>) {
+    const p = this.playerFor(ws);
+    if (!p || p.dead) return;
+    if (p.heat < HEAT.ultThreshold) return; // not hot enough — silently dropped
+    p.heat = Math.max(0, p.heat - HEAT.ultHeatCost);
+    const aim = Number.isFinite(msg.aim) ? msg.aim : p.aim;
+    p.aim = aim;
+    const lvl = 1 + (p.mods.dmgPct || 0);
+    switch (p.classId) {
+      case "k-guerilla": {
+        // BARRAGE — three strikes walk up the aim line, each on its own fuse
+        for (let i = 0; i < 3; i++) {
+          const r = 140 + i * 120;
+          this.hazards.push({
+            id: this.nextHazardId++,
+            x: p.x + Math.cos(aim) * r,
+            y: p.y + Math.sin(aim) * r,
+            r: 90,
+            castTick: this.tick,
+            detonateTick: this.tick + ticks(700 + i * 180),
+            dmg: Math.round(50 * lvl),
+            vsEnemies: true,
+            owner: p.id,
+          });
+        }
+        break;
+      }
+      case "wintermute": {
+        // SYSTEM CRASH — everything thinking within 420px stops thinking
+        for (const e of this.enemies.values()) {
+          if (e.hp <= 0) continue;
+          if (dist2(e.x, e.y, p.x, p.y) > 420 * 420) continue;
+          e.stunUntilTick = this.tick + ticks(e.boss ? 1200 : 2600);
+          this.applyPlayerHitToEnemy(e, p, Math.round(15 * lvl));
+        }
+        break;
+      }
+      case "swarm": {
+        // LOCUST STORM — a double ring of bolts + the pack rides out with you
+        const dmg = this.rollPlayerCritDamage(p, Math.round(12 * lvl));
+        for (let i = 0; i < 16; i++) {
+          const a = aim + (i / 16) * Math.PI * 2 + (i % 2 ? 0.19 : 0);
+          this.pushPlayerShot(p, a, PROJ_SPEED * (i % 2 ? 0.75 : 0.95), PROJ_TTL_MS, dmg);
+        }
+        p.droneUntilTick = this.tick + ticks(4000);
+        p.droneNextTick = this.tick;
+        p.droneKind = 1;
+        break;
+      }
+      default: {
+        // METROPHAGE — PANDEMIC: the contagion detonates outward; everything caught
+        // is damaged and infected (slowed). The Wake, weaponized.
+        const dmg = this.rollPlayerCritDamage(p, Math.round(60 * lvl));
+        for (const e of this.enemies.values()) {
+          if (e.hp <= 0) continue;
+          if (dist2(e.x, e.y, p.x, p.y) > 260 * 260) continue;
+          e.slowUntilTick = this.tick + ticks(e.boss ? 1500 : 3500);
+          this.applyPlayerHitToEnemy(e, p, dmg);
+        }
+        break;
+      }
+    }
+  }
+
   private onFire(ws: WebSocket, msg: Extract<ClientMsg, { t: "fire" }>) {
     const p = this.playerFor(ws);
     if (!p || p.dead) return;
@@ -3255,7 +3327,14 @@ export class WorldDO {
   }
 
   /** Shared kill rewards for melee and projectile hits. */
+  /** HEAT gain — clamped and time-stamped so the delayed decay knows when you cooled. */
+  private addHeat(p: PlayerState, amount: number) {
+    p.heat = Math.min(HEAT.max, p.heat + amount);
+    p.heatGainTick = this.tick;
+  }
+
   private applyPlayerHitToEnemy(e: { id: number; x: number; y: number; hp: number; maxHp: number; kind: number; boss?: boolean; name?: string; engagedTick?: number; baseMaxHp?: number; respawnTick: number; add?: boolean }, killer: PlayerState, dmg: number) {
+    this.addHeat(killer, dmg * HEAT.perDamage);
     const lifesteal = Math.min(killer.level * 0.004, 0.08) + (killer.mods.lifestealPct || 0);
     if (lifesteal > 0 && !killer.dead && killer.hp > 0) {
       killer.hp = Math.min(killer.maxHp, killer.hp + dmg * lifesteal);
@@ -3287,6 +3366,7 @@ export class WorldDO {
     killer.dirty = true;
     this.bumpMeta("f" + killer.faction, isBoss ? 10 : 1);
     this.campaignEvent(killer, "kill");
+    this.addHeat(killer, HEAT.perKill);
     this.bumpStat(killer, "kills", 1);
     if (isBoss) this.bumpStat(killer, "bosses", 1);
     this.bumpStat(killer, "credits", gained);
@@ -3405,6 +3485,10 @@ export class WorldDO {
         ) {
           void this.graduateTutorial(p, this.socketForPlayer(p.id), false);
         }
+      }
+      // HEAT decay — the meter bleeds once you've been cold past the grace window
+      if (p.heat > 0 && (this.tick - p.heatGainTick) * NET_TICK_MS > HEAT.decayDelayMs) {
+        p.heat = Math.max(0, p.heat - HEAT.decayPerSec * (NET_TICK_MS / 1000));
       }
       // timed companion (WINTERMUTE drones / SWARM pack): auto-engage the nearest
       // unit — shots ride the normal pipeline, so payouts and crits stay honest
@@ -3536,6 +3620,7 @@ export class WorldDO {
               e.hp = e.maxHp; // refill to the scaled pool (the fight has only just begun)
             }
             e.hp -= dmg;
+            if (owner) this.addHeat(owner, dmg * HEAT.perDamage);
             consumed = true;
             if (e.hp <= 0) {
               const isBoss = !!e.boss;
@@ -3564,6 +3649,7 @@ export class WorldDO {
                   killer.dirty = true;
                   this.bumpMeta("f" + killer.faction, isBoss ? 10 : 1);
                   this.campaignEvent(killer, "kill");
+                  this.addHeat(killer, HEAT.perKill);
                   this.bumpStat(killer, "kills", 1);
                   if (isBoss) this.bumpStat(killer, "bosses", 1);
                   this.bumpStat(killer, "credits", gained);
@@ -3817,7 +3903,8 @@ export class WorldDO {
         look: applyCosmetic(p.look, p.cosmeticEquipped), // relay the equipped transmog so others see it
         pvpInArena: p.pvpInArena,
         ...(this.tick < p.dashUntilTick ? { dash: 1 as const } : {}),
-        ...(p.id === viewer.id ? { pvpEscrow: p.pvpEscrow } : {}),
+        ...(this.tick < p.droneUntilTick ? { escort: 1 as const } : {}),
+        ...(p.id === viewer.id ? { pvpEscrow: p.pvpEscrow, heat: Math.round(p.heat) } : {}),
       });
     }
     const enemies = [];
@@ -3972,7 +4059,9 @@ export class WorldDO {
     for (const v of this.players.values()) {
       if (v.id === s.owner || v.dead) continue;
       if (this.tick < v.pvpSafeUntil) continue; // spawn protection
-      if (this.tick < v.iframeUntilTick) continue; // dash grace — a dodge is a dodge in PvP too
+      // PvP honors i-frames only during the blink itself (150ms), not the full 260ms
+      // grace — 43% dodge uptime vs other players would smother the arena
+      if (this.tick < v.dashUntilTick) continue;
       if (shooter.party >= 0 && v.party === shooter.party) continue; // no team-killing
       if (!v.pvpInArena || !inPvpZone(v.x, v.y, pvp)) continue;
       if (segPointDist2(v.x, v.y, ax, ay, s.x, s.y) <= R2) {

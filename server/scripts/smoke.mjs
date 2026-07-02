@@ -87,6 +87,7 @@ function trackState(ws, id, store) {
         store.campaignQuest = me.campaignQuest ?? null;
         store.campaignStage = me.campaignStage ?? 0;
         store.campaignProgress = me.campaignProgress ?? 0;
+        store.heat = me.heat ?? 0;
         store.tick = m.tick;
       }
       store.players = m.players || [];
@@ -1666,10 +1667,13 @@ async function discover() {
 
 async function mp() {
   const AOI = 720;
+  // fresh identities every run: persisted alice/bob walk 5s further apart each pass
+  // (positions persist!) until they spawn outside each other's AOI and phase 1 fails
+  const suffix = String(Date.now() % 1_000_000);
   const a = await connect();
-  const wa = await login(a, "alice");
+  const wa = await login(a, "ma" + suffix);
   const b = await connect();
-  const wb = await login(b, "bob");
+  const wb = await login(b, "mb" + suffix);
   const sa = { x: wa.x, y: wa.y, players: [] };
   const sb = { x: wb.x, y: wb.y, players: [] };
   trackState(a, wa.id, sa);
@@ -2531,13 +2535,57 @@ async function kit() {
       dronesWorked = totalHp() < before; // shots fired by the escort, not by us
     }
   }
+  // 3c) HEAT + R — damage builds the meter past the arm threshold (50); the ultimate
+  // spends it (~30) and lands SYSTEM CRASH on everything nearby
+  let heatBuilt = false;
+  let ultSpentHeat = false;
+  let ultHit = false;
+  {
+    const totalHp = () => s2.enemies.reduce((a, e) => a + Math.max(0, e.hp), 0);
+    void totalHp;
+    let fseq = 1000;
+    const h0 = Date.now();
+    // melee-brawl until the meter arms, then release the ult mid-fight while the
+    // victim is still standing — heat decays 12/s the moment you disengage, so
+    // "build, then walk somewhere, then ult" would arrive cold and be rejected
+    while (Date.now() - h0 < 40000) {
+      let best = null;
+      let bd = Infinity;
+      for (const e of s2.enemies) {
+        const d = Math.hypot(e.x - s2.x, e.y - s2.y);
+        if (e.hp > 0 && d < bd) {
+          bd = d;
+          best = e;
+        }
+      }
+      if (best && (s2.heat ?? 0) >= 50 && bd < 300) {
+        heatBuilt = true;
+        const heatBefore = s2.heat;
+        const victimId = best.id;
+        const victimHpBefore = best.hp;
+        ws2.send(JSON.stringify({ t: "ult", seq: ++fseq, aim: 0 }));
+        await sleep(800);
+        // decay is 12/s after a 1.5s grace — an immediate ≥20 drop can only be the spend
+        ultSpentHeat = heatBefore - (s2.heat ?? 0) >= 20;
+        const victimAfter = s2.enemies.find((e) => e.id === victimId)?.hp ?? 0;
+        ultHit = victimHpBefore > 0 && victimAfter < victimHpBefore; // crash landed (death reads 0)
+        break;
+      }
+      if (best) {
+        // fresh bots carry the melee starter — swings only land point-blank, so chase
+        if (bd > 45) ws2.send(JSON.stringify({ t: "input", seq: ++fseq, mx: (best.x - s2.x) / bd, my: (best.y - s2.y) / bd }));
+        ws2.send(JSON.stringify({ t: "fire", seq: ++fseq, aim: Math.atan2(best.y - s2.y, best.x - s2.x) }));
+      }
+      await sleep(150);
+    }
+  }
   ws2.close();
   await sleep(300);
 
-  const checks = { dashBeatsCap, podDamaged, cooldownHeld, bloomDamaged, stunHeld, dronesWorked };
+  const checks = { dashBeatsCap, podDamaged, cooldownHeld, bloomDamaged, stunHeld, dronesWorked, heatBuilt, ultSpentHeat, ultHit };
   report(
-    "KIT — dash sanction + pod + cooldown + contagion bloom + hack stun",
-    { name, dashDist: Math.round(dashDist), hpBefore, hpAfterOne, hpAfterTwo, bloomDamaged, stunHeld },
+    "KIT — dash sanction + pod + cooldown + contagion bloom + hack stun + HEAT ult",
+    { name, dashDist: Math.round(dashDist), hpBefore, hpAfterOne, hpAfterTwo, bloomDamaged, stunHeld, heat: s2.heat },
     Object.values(checks).every(Boolean),
     checks,
   );

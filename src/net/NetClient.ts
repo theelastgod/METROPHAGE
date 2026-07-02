@@ -12,6 +12,7 @@ export interface RemotePlayer {
   hp: number;
   dead: boolean;
   dash?: boolean; // mid-dash this snapshot — render the burst trail
+  escort?: boolean; // drones/minions active — render the orbiting companions
   look?: PlayerLook; // appearance, for rendering the remote's customization
 }
 
@@ -187,6 +188,10 @@ export default class NetClient {
   dashCdUntil = 0;
   abilityCdUntil = 0;
   ability2CdUntil = 0;
+  /** HEAT 0–100 (server-authoritative; snapshotted for the local player). */
+  heat = 0;
+  /** Own escort (drones/minions) active this snapshot — drives the companion visuals. */
+  escortActive = false;
   /** connecting | connected | reconnecting | offline */
   onConnectionState?: (state: "connecting" | "connected" | "reconnecting" | "offline") => void;
 
@@ -381,6 +386,17 @@ export default class NetClient {
     return true;
   }
 
+  /** Class ultimate (R) — no cooldown: HEAT is the cost, and the server holds the meter. */
+  ult(aim: number): boolean {
+    if (this.dead || this.heat < 50) return false; // client mirror of HEAT.ultThreshold
+    try {
+      this.ws?.send(JSON.stringify({ t: "ult", seq: this.seq, aim } satisfies ClientMsg));
+    } catch {
+      /* offline */
+    }
+    return true;
+  }
+
   /** Class secondary (E) — same contract as the signature. */
   ability2(aim: number, cooldownMs: number): boolean {
     const now = performance.now();
@@ -429,6 +445,8 @@ export default class NetClient {
           this.metro = sp.metro ?? 0;
           this.pvpInArena = !!sp.pvpInArena;
           this.pvpEscrow = sp.pvpEscrow ?? 0;
+          this.heat = sp.heat ?? this.heat;
+          this.escortActive = !!sp.escort;
           this.xp = sp.xp;
           this.level = sp.level;
           this.campaignQuest = sp.campaignQuest;
@@ -454,6 +472,7 @@ export default class NetClient {
           r.hp = sp.hp;
           r.dead = sp.dead;
           r.dash = !!sp.dash;
+          r.escort = !!sp.escort;
           if (sp.look) r.look = sp.look;
           this.remotes.set(sp.id, r);
         }

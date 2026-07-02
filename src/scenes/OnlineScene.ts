@@ -13,7 +13,7 @@ import OnlineGuild from "../ui/OnlineGuild";
 import OnlineMarket from "../ui/OnlineMarket";
 import OnlineContracts from "../ui/OnlineContracts";
 import OnlineChatPanel from "../ui/OnlineChatPanel";
-import { COLORS, TILE, VIEW_W, VIEW_H, NPC, PLAYER, uiDim, uiFont, DISTRICT_GRID_W, DISTRICT_GRID_H } from "../config";
+import { COLORS, TILE, VIEW_W, VIEW_H, NPC, PLAYER, HEAT, uiDim, uiFont, DISTRICT_GRID_W, DISTRICT_GRID_H } from "../config";
 import { PLAYER_KEY, COP_KEY, BULLET_KEY, GLOW_KEY, NODE_KEY, PROP_STREETLIGHT_KEY, PROP_VENDING_KEY, PROP_AC_KEY } from "../assets/manifest";
 import { driveChar } from "../assets/anim";
 import {
@@ -319,6 +319,7 @@ export default class OnlineScene extends Phaser.Scene {
   private me!: Phaser.GameObjects.Sprite;
   private meLight!: PlayerLight;
   private remoteSprites = new Map<string, Phaser.GameObjects.Sprite>();
+  private escortOrbs = new Map<string, Phaser.GameObjects.Image[]>(); // orbiting companions per player
   private remoteLabels = new Map<string, Phaser.GameObjects.Text>();
   private enemySprites = new Map<number, Phaser.GameObjects.Sprite>();
   private bossOverlays = new Map<number, { name: Phaser.GameObjects.Text; bar: Phaser.GameObjects.Graphics }>();
@@ -819,6 +820,7 @@ export default class OnlineScene extends Phaser.Scene {
       mkKitBtn(0, "⇢", "#00e5ff", () => this.tryDash());
       mkKitBtn(bSize + uiGap("sm"), "Q", "#ff2bd6", () => this.tryAbility());
       mkKitBtn((bSize + uiGap("sm")) * 2, "E", "#f7ff3c", () => this.tryAbility2());
+      mkKitBtn((bSize + uiGap("sm")) * 3, "R", "#ff8a1f", () => this.tryUlt());
     }
 
     // Local player — your full customization (build/head/visor/shoulders/decal/cloak/
@@ -1342,7 +1344,11 @@ export default class OnlineScene extends Phaser.Scene {
         this.tryAbility();
         return;
       }
-      if ((e.key === "r" || e.key === "R") && !this.net.connected) {
+      if (e.key === "r" || e.key === "R") {
+        if (this.net.connected) {
+          this.tryUlt(); // class ultimate — HEAT-gated, no cooldown
+          return;
+        }
         this.connectStartedAt = Date.now();
         this.net.retryConnect();
         return;
@@ -2259,7 +2265,8 @@ export default class OnlineScene extends Phaser.Scene {
     }
     if (this.neon && this.net.connected) {
       const combat = Math.min(1, this.net.enemies.size / 14);
-      this.neon.heat = 0.05 + combat * 0.42;
+      // the city glow answers both the district (enemy density) and the runner's HEAT
+      this.neon.heat = 0.05 + combat * 0.42 + (this.net.heat / HEAT.max) * 0.3;
     }
     this.atmosphere?.update(this.time.now, dt, Math.min(1, this.net.enemies.size / 16));
     this.updateBossLocator();
@@ -2285,6 +2292,7 @@ export default class OnlineScene extends Phaser.Scene {
       if (moving) this.meDir.set(mx, my);
       driveChar(this.me, this.meDir.x, this.meDir.y, moving);
     }
+    this.updateEscort("me", this.me.x, this.me.y, this.net.connected && this.net.escortActive && !this.net.dead);
 
     // remote players (interpolated by NetClient) — each rendered with ITS OWN
     // customization (baked from the look the server relays; colour as a tint).
@@ -2321,6 +2329,7 @@ export default class OnlineScene extends Phaser.Scene {
       driveChar(s, rdx, rdy, rdx * rdx + rdy * rdy > 0.4); // walk from their heading
       s.setPosition(r.x, r.y).setVisible(!r.dead).setAlpha(r.dead ? 0.25 : 1);
       this.remoteLabels.get(id)?.setPosition(r.x, r.y - 22).setVisible(!r.dead);
+      this.updateEscort(id, r.x, r.y, !!r.escort && !r.dead);
     }
     for (const [id, s] of this.remoteSprites) {
       if (!this.net.remotes.has(id)) {
@@ -2328,6 +2337,7 @@ export default class OnlineScene extends Phaser.Scene {
         this.remoteSprites.delete(id);
         this.remoteLabels.get(id)?.destroy();
         this.remoteLabels.delete(id);
+        this.updateEscort(id, 0, 0, false);
       }
     }
 
@@ -2654,18 +2664,22 @@ export default class OnlineScene extends Phaser.Scene {
       const { x, y, w, h } = this.hpBarRect;
       const hpN = Phaser.Math.Clamp(this.net.hp / PLAYER_HP, 0, 1);
       drawPremiumBar(this.hpBar, x, y, w, h, hpN, hpN > 0.3 ? COLORS.hp : COLORS.hpLow);
-      // dash (SPACE) + signature (Q) + secondary (E) readiness — drain on use, refill to ready
+      // dash (SPACE) + signature (Q) + secondary (E) readiness + HEAT (R) — the fourth
+      // quarter fills with damage dealt and burns bright once the ultimate is armed
       const k = this.kitPipsRect;
       if (k.w > 0) {
         const now = performance.now();
         const gap = uiGap("xs");
-        const thirdW = (k.w - gap * 2) / 3;
+        const quarterW = (k.w - gap * 3) / 4;
         const dashN = 1 - Phaser.Math.Clamp((this.net.dashCdUntil - now) / PLAYER.dashCooldownMs, 0, 1);
         const abN = 1 - Phaser.Math.Clamp((this.net.abilityCdUntil - now) / this.abilityCooldownMs(), 0, 1);
         const ab2N = 1 - Phaser.Math.Clamp((this.net.ability2CdUntil - now) / this.ability2CooldownMs(), 0, 1);
-        drawPremiumBar(this.hpBar, k.x, k.y, thirdW, k.h, dashN, dashN >= 1 ? 0x00e5ff : 0x3a5a70);
-        drawPremiumBar(this.hpBar, k.x + thirdW + gap, k.y, thirdW, k.h, abN, abN >= 1 ? this.color : 0x4a4460);
-        drawPremiumBar(this.hpBar, k.x + (thirdW + gap) * 2, k.y, thirdW, k.h, ab2N, ab2N >= 1 ? 0xf7ff3c : 0x5a5440);
+        const heatN = Phaser.Math.Clamp(this.net.heat / HEAT.max, 0, 1);
+        const ultReady = this.net.heat >= HEAT.ultThreshold;
+        drawPremiumBar(this.hpBar, k.x, k.y, quarterW, k.h, dashN, dashN >= 1 ? 0x00e5ff : 0x3a5a70);
+        drawPremiumBar(this.hpBar, k.x + quarterW + gap, k.y, quarterW, k.h, abN, abN >= 1 ? this.color : 0x4a4460);
+        drawPremiumBar(this.hpBar, k.x + (quarterW + gap) * 2, k.y, quarterW, k.h, ab2N, ab2N >= 1 ? 0xf7ff3c : 0x5a5440);
+        drawPremiumBar(this.hpBar, k.x + (quarterW + gap) * 3, k.y, quarterW, k.h, heatN, ultReady ? 0xff8a1f : 0x6a4020);
       }
     }
     this.updateDeathSequence();
@@ -3027,6 +3041,87 @@ export default class OnlineScene extends Phaser.Scene {
       this.particles?.spark(this.me.x, this.me.y, 0x39ff88, 1.6);
       juiceFlash(this, 160, 57, 255, 136);
       juiceShake(this, 110, 0.004);
+    }
+  }
+
+  /** R — the class ultimate. HEAT is the gate and the cost; the server holds the meter,
+   *  so a cold press is silently ignored (we mirror the threshold to skip dead FX). */
+  private tryUlt() {
+    const aim = this.pointerAim();
+    if (!this.net.ult(aim)) {
+      if (this.net.heat < HEAT.ultThreshold) this.showBubble(this.me.x, this.me.y, "HEAT LOW — keep fighting");
+      return;
+    }
+    this.synth?.cast();
+    this.synth?.meltdown();
+    juiceShake(this, 200, 0.006);
+    juiceZoomPunch(this, 0.045, 180);
+    const cls = this.net.classId;
+    if (cls === "k-guerilla") {
+      // BARRAGE — three strike markers walk out along the aim line
+      for (let i = 0; i < 3; i++) {
+        const d = 140 + i * 120;
+        this.particles?.spark(this.me.x + Math.cos(aim) * d, this.me.y + Math.sin(aim) * d, 0xff2bd6, 1.5);
+      }
+      juiceFlash(this, 200, 255, 43, 214);
+    } else if (cls === "wintermute") {
+      // SYSTEM CRASH — a frost shockwave rolls out of the runner
+      const ring = this.add
+        .image(this.me.x, this.me.y, GLOW_KEY)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setTint(0x9fe8ff)
+        .setScale(0.4)
+        .setAlpha(0.9)
+        .setDepth(11);
+      this.tweens.add({ targets: ring, scale: 7, alpha: 0, duration: 650, ease: "Cubic.easeOut", onComplete: () => ring.destroy() });
+      juiceFlash(this, 220, 159, 232, 255);
+    } else if (cls === "swarm") {
+      // LOCUST STORM — the double ring renders via shot snapshots; sell the release
+      juiceNeonPulse(this, 0.35, 420);
+      this.particles?.burst(this.me.x, this.me.y, 1.8);
+      juiceFlash(this, 180, 176, 107, 255);
+    } else {
+      // METROPHAGE PANDEMIC — the whole block sickens
+      this.particles?.burst(this.me.x, this.me.y, 2.2);
+      this.particles?.spark(this.me.x, this.me.y, 0x39ff88, 2.0);
+      juiceFlash(this, 260, 57, 255, 136);
+    }
+  }
+
+  /** Orbiting escort companions — two glows circle any player whose snapshot says
+   *  drones/minions are live (self included). Created/destroyed on the flag edge;
+   *  positions follow the owner every frame so they never lag a fast runner. */
+  private updateEscort(id: string, x: number, y: number, active: boolean) {
+    let orbs = this.escortOrbs.get(id);
+    if (!active) {
+      if (orbs) {
+        for (const o of orbs) {
+          this.tweens.add({ targets: o, alpha: 0, scale: 0.1, duration: 260, onComplete: () => o.destroy() });
+        }
+        this.escortOrbs.delete(id);
+      }
+      return;
+    }
+    if (!orbs) {
+      orbs = [];
+      for (let i = 0; i < 2; i++) {
+        orbs.push(
+          this.add
+            .image(x, y, GLOW_KEY)
+            .setBlendMode(Phaser.BlendModes.ADD)
+            .setTint(i === 0 ? 0x9fe8ff : 0xb06bff)
+            .setScale(0.22)
+            .setAlpha(0.85)
+            .setDepth(10),
+        );
+      }
+      this.escortOrbs.set(id, orbs);
+    }
+    const t = this.time.now / 1000;
+    for (let i = 0; i < orbs.length; i++) {
+      const a = t * 2.6 + (i / orbs.length) * Math.PI * 2;
+      orbs[i].setPosition(x + Math.cos(a) * 26, y + Math.sin(a) * 26 - 6);
+      orbs[i].setScale(0.2 + Math.sin(t * 5 + i) * 0.035);
     }
   }
 
@@ -3501,7 +3596,7 @@ export default class OnlineScene extends Phaser.Scene {
   private controlHint() {
     if (this.isTutorial) return "WASD move · CLICK fire · I bag · J/G/B/K panels · ENTER chat · SKIP (top-right)";
     if (getSettings().rsControls) {
-      return "CLICK walk · RIGHT-CLICK menu · M map (shift+click walk) · minimap · J quests · Q/E abilities · SPACE dash";
+      return "CLICK walk · RIGHT-CLICK menu · M map (shift+click walk) · minimap · J quests · Q/E abilities · R ult (HEAT) · SPACE dash";
     }
     return "WASD · HOLD CLICK fire · I bag · K market · J jobs · M map · H safehouse · O options";
   }

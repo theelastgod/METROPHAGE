@@ -78,6 +78,7 @@ export type ClientMsg =
   | { t: "dash"; seq: number; dx: number; dy: number } // burst move; server validates cooldown + grants i-frames
   | { t: "ability"; seq: number; aim: number } // class signature (Q); server validates cooldown + resolves the effect
   | { t: "ability2"; seq: number; aim: number } // class secondary (E); server validates cooldown + resolves the effect
+  | { t: "ult"; seq: number; aim: number } // class ultimate (R); server gates on HEAT and spends it
   | { t: "chat"; ch: "zone" | "party" | "whisper" | "guild"; to?: string; text: string }
   // guilds ("Cells") — server validates rank/balance + owns the shared bank (cross-zone, D1)
   | {
@@ -153,6 +154,10 @@ export interface PlayerSnap {
   pvpInArena?: boolean;
   /** Mid-dash this snapshot — clients render the burst (trail/afterimage). */
   dash?: 1;
+  /** Escort active (drones/minions) — clients render the orbiting companions. */
+  escort?: 1;
+  /** HEAT 0–100 (own player only) — the risk meter that fuels the ultimate. */
+  heat?: number;
   /** Buy-in + elimination loot (local player only). */
   pvpEscrow?: number;
 }
