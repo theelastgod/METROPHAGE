@@ -44,3 +44,21 @@ seeding is possible — fixed-supply pump.fun token) and fills from player depos
 withdrawals are pool-capped, atomic, and refunded when uncovered. Mainnet-value
 settlement additionally requires the `METRO_MAINNET_ARMED` switch — leave it off
 until counsel signs off.
+
+## 4. The $0 crypto launch
+
+The developer's on-chain cost to run this economy is **zero**, by construction:
+
+| Cost                           | Who pays                                                            |
+| ------------------------------ | ------------------------------------------------------------------- |
+| Token creation                 | pump.fun launch — no LP seeding; the bonding curve IS the liquidity |
+| Treasury wallet                | a keypair — generating one is free                                  |
+| Treasury token balance         | player deposits only (fixed supply, mint revoked — dev *can't* seed it) |
+| Deposit network fees           | the depositing player's wallet (a plain transfer; the first send also creates the treasury's token account) |
+| Withdrawal network fees + rent | the withdrawing player — withdrawals are **claims**: the server partially signs a payout tx whose fee payer is the player; the player's wallet submits it (≈0.000005 SOL + their own token-account rent) |
+| Hosting                        | Cloudflare Workers/D1 free tier; public Solana RPC                  |
+
+The treasury **never holds or spends SOL** — it only signs. Claims a player never
+submits auto-refund after 10 minutes (far beyond blockhash validity, so an expired
+claim can never land later and double-pay). The whole flow verifies with no chain
+at all: `node scripts/smoke.mjs metro` (devnet-sim settlement).

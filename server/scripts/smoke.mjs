@@ -2259,11 +2259,19 @@ async function metro() {
   const d = await post(`/metro/deposit`, { player: "whale", wallet: WALLET, txSig, metro: 20 });
   const p1 = await get(`/metro/pool`);
 
-  // withdrawing costs more than depositing pays (the spread): 1000 credits -> 8 $METRO
+  // withdrawing costs more than depositing pays (the spread): 1000 credits -> 8 $METRO.
+  // $0-LAUNCH: withdraw returns a CLAIM (player pays the network fee, treasury only
+  // signs); the pool is reserved while the claim is pending, and confirm finalizes it.
   const q = await get(`/metro/quote?credits=1000`);
   const w = await post(`/metro/withdraw`, { player: "whale", wallet: WALLET, credits: 1000 });
   const a1 = await get(`/metro/account?player=whale`);
-  const p2 = await get(`/metro/pool`); // pool keeps the spread: 20 - 8 = 12
+  const pPending = await get(`/metro/pool`); // reserved while pending: 20 - 8 = 12
+  const claimSig = "CLAIM_" + Date.now();
+  const cf = await post(`/metro/withdraw/confirm`, { player: "whale", withdrawId: w.withdrawId, txSig: claimSig });
+  const p2 = await get(`/metro/pool`); // pool keeps the spread after confirm: 12
+
+  // confirm is once-only, and a used tx signature can't finalize anything else
+  const cf2 = await post(`/metro/withdraw/confirm`, { player: "whale", withdrawId: w.withdrawId, txSig: claimSig });
 
   // anti-abuse: immediate 2nd withdraw hits the cooldown; a bad wallet is rejected
   const wc = await post(`/metro/withdraw`, { player: "whale", wallet: WALLET, credits: 1000 });
@@ -2285,8 +2293,12 @@ async function metro() {
     depositCredited: d.ok && d.credits === 2200,
     poolFilledByDeposit: p1.ok && p1.poolMetro === 20 && p1.phase === "open",
     quoteUsesSpread: q.ok && q.metro === 8,
+    withdrawIsClaim: w.ok && w.status === "claim" && !!w.claimTx && w.withdrawId > 0,
     withdrawDebited: w.ok && w.metro === 8 && a1.credits === start + 2200 - 1000,
+    pendingReservesPool: pPending.ok && pPending.poolMetro === 12,
+    claimConfirmed: cf.ok && cf.metro === 8,
     poolRetainsSpread: p2.ok && p2.poolMetro === 12,
+    confirmOnce: cf2.ok === false,
     cooldownEnforced: wc.ok === false,
     badWalletRejected: wb.ok === false,
     insufficientRejected: wi.ok === false && /insufficient/.test(wi.reason || ""),
@@ -2295,16 +2307,18 @@ async function metro() {
     accountReportsPool: a2.ok && a2.poolMetro === 12 && a2.phase === "open",
   };
   report(
-    "METRO — player-funded bridge: empty-pool launch + rate spread + atomic pool reservation",
+    "METRO — player-funded bridge: empty-pool launch + spread + $0 claim withdrawals",
     {
       start,
       poolStart: p0.poolMetro,
       poolAfterDeposit: p1.poolMetro,
-      poolAfterWithdraw: p2.poolMetro,
+      poolPending: pPending.poolMetro,
+      poolAfterConfirm: p2.poolMetro,
+      withdrawStatus: w.status,
       withdrawMetro: w.metro,
       depositCredits: d.credits,
       emptyPoolReason: wEmpty.reason,
-      cooldownReason: wc.reason,
+      confirmTwiceReason: cf2.reason,
     },
     Object.values(checks).every(Boolean),
     checks,

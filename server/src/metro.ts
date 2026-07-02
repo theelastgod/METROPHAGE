@@ -2,7 +2,8 @@
 //
 // The off-chain `credits` balance (server-authoritative, Phase 4) is the live in-game
 // currency. This bridge converts it to/from on-chain $METRO via a CUSTODIAL treasury:
-//   withdraw  credits -> $METRO  (debit credits, send $METRO from the treasury)
+//   withdraw  credits -> $METRO  (debit credits, hand the player a CLAIM tx they pay
+//                                 the fee on; confirm finalizes once it lands on-chain)
 //   deposit   $METRO  -> credits (verify an on-chain transfer into the treasury, grant credits)
 //
 // AUTHORITY: the server owns every balance and authorizes every settlement. The client
@@ -27,12 +28,21 @@ export const BRIDGE = {
   // (1 $METRO -> 110 credits) while cashing out costs more (125 credits -> 1 $METRO), so
   // every round trip leaves ~12% of the tokens in the pool. That float is the yield that
   // pays players who only ever earn credits in-game and never deposit.
+  //
+  // $0-LAUNCH INVARIANT: the treasury never spends SOL. Withdrawals are CLAIMS — the
+  // server partially signs a payout tx whose FEE PAYER is the player; the player submits
+  // it and pays the network fee + their own token-account rent. Deposits are player-sent
+  // transfers (sender pays). The developer's on-chain cost to run this bridge is zero.
   depositCreditsPerMetro: 110, // credits granted per 1 $METRO deposited
   withdrawCreditsPerMetro: 125, // credits burned per 1 $METRO withdrawn
   minWithdrawCredits: 500, // withdraw floor
   withdrawCooldownMs: 60_000, // min gap between a player's withdrawals
   dailyCapCredits: 100_000, // max credits withdrawn per player per rolling 24h
   metroDecimals: 6, // SPL token precision for rounding amounts
+  // A claim the player never submits refunds after this TTL. It must dwarf Solana's
+  // blockhash validity (~90s): once expired+refunded, the old partially-signed tx is
+  // guaranteed dead on-chain, so refund-then-land double-pays cannot happen.
+  claimTtlMs: 10 * 60_000,
 } as const;
 
 const DAY_MS = 86_400_000;
@@ -101,23 +111,34 @@ export interface SettleResult {
   ref?: string; // on-chain reference (tx signature) when a real settlement happens
   reason?: string;
   metro?: number; // verified on-chain amount (deposit)
+  /** Partially-signed payout tx (base64) — the PLAYER signs as fee payer and submits. */
+  claimTx?: string;
 }
 
 export interface Settlement {
-  /** Send `metro` $METRO from the treasury to `wallet`. */
-  sendMetro(wallet: string, metro: number): Promise<SettleResult>;
+  /** Build the payout claim: a tx paying `metro` $METRO treasury -> `wallet`, with the
+   *  player as FEE PAYER, partially signed by the treasury. The treasury spends no SOL —
+   *  it only signs. The player submits it (and pays the fee + their own ATA rent). */
+  buildClaim(wallet: string, metro: number): Promise<SettleResult>;
+  /** Verify a submitted claim landed on-chain: treasury paid exactly `metro` to `wallet`. */
+  verifyClaim(txSig: string, wallet: string, metro: number): Promise<SettleResult>;
   /** Verify an on-chain deposit tx that paid `metro` into the treasury from `wallet`. */
   verifyDeposit(txSig: string, wallet: string, claimedMetro: number): Promise<SettleResult>;
 }
 
-/** Step 2a settlement: simulates the chain so the off-chain accounting is fully
- *  testable. Step 2b replaces this with real devnet transfers + tx verification. */
+/** Devnet-sim settlement: simulates the chain so the off-chain accounting is fully
+ *  testable headlessly. The real Solana settlement (solana.ts) swaps in when the
+ *  treasury env is configured. */
 export const simSettlement: Settlement = {
-  async sendMetro() {
-    return { ok: true, ref: "devnet-sim:" + crypto.randomUUID() };
+  async buildClaim() {
+    return { ok: true, claimTx: "devnet-sim-claim:" + crypto.randomUUID() };
+  },
+  async verifyClaim(txSig) {
+    if (!txSig) return { ok: false, reason: "missing tx signature" };
+    return { ok: true, ref: txSig };
   },
   async verifyDeposit(_txSig, _wallet, claimedMetro) {
-    return { ok: true, metro: claimedMetro }; // trust the amount in sim; 2b reads it from chain
+    return { ok: true, metro: claimedMetro }; // trust the amount in sim; solana.ts reads it from chain
   },
 };
 
@@ -130,6 +151,7 @@ export interface BridgeResponse {
 const normId = (player: string): string => (player || "").toLowerCase().replace(/[^a-z0-9_-]/g, "") || "blank";
 
 export async function getAccount(db: D1Database, player: string): Promise<BridgeResponse> {
+  await reclaimExpired(db); // lazily return credits from abandoned claims
   const id = normId(player);
   const row = await db.prepare("SELECT credits, metro FROM players WHERE id = ?").bind(id).first<{ credits: number; metro: number }>();
   if (!row) return { ok: false, reason: "unknown player" };
@@ -182,6 +204,7 @@ export async function withdraw(
   if (!isValidWallet(wallet)) return { ok: false, reason: "invalid wallet address" };
   if (!Number.isFinite(credits) || credits < BRIDGE.minWithdrawCredits)
     return { ok: false, reason: `minimum withdraw is ${BRIDGE.minWithdrawCredits} credits` };
+  await reclaimExpired(db); // abandoned claims release their pool reservation first
 
   // server-authoritative anti-abuse: cooldown + rolling daily cap
   const agg = await db
@@ -229,18 +252,94 @@ export async function withdraw(
   }
   const wid = ins.meta.last_row_id;
 
-  // settle on-chain (2a: sim). On failure, REFUND the credits and mark the row failed.
-  const settle = await settlement.sendMetro(wallet, metro);
-  if (!settle.ok) {
+  // Build the CLAIM: a payout tx the PLAYER pays the fee on and submits. The treasury
+  // only signs — it never spends SOL ($0-launch invariant). On build failure, refund.
+  const settle = await settlement.buildClaim(wallet, metro);
+  if (!settle.ok || !settle.claimTx) {
     await db.prepare("UPDATE players SET credits = credits + ? WHERE id = ?").bind(credits, id).run();
     await db.prepare("UPDATE metro_withdrawals SET status = 'failed' WHERE id = ?").bind(wid).run();
-    return { ok: false, reason: settle.reason ?? "settlement failed (credits refunded)" };
+    return { ok: false, reason: settle.reason ?? "claim build failed (credits refunded)" };
   }
-  await db
-    .prepare("UPDATE metro_withdrawals SET status = 'done', tx_sig = ? WHERE id = ?")
-    .bind(settle.ref ?? null, wid)
+  // The row stays 'pending' (reserving the pool) until /metro/withdraw/confirm proves
+  // the claim landed — or the TTL reclaims it. The tx itself is not stored: it is only
+  // valid signed-as-is, and the confirm step re-verifies everything on-chain anyway.
+  return {
+    ok: true,
+    status: "claim",
+    player: id,
+    wallet,
+    credits,
+    metro,
+    withdrawId: wid,
+    claimTx: settle.claimTx,
+    expiresAt: Date.now() + BRIDGE.claimTtlMs,
+    note: "sign + submit this tx with your wallet (you pay the network fee), then confirm",
+  };
+}
+
+/** Confirm a submitted claim: verify on-chain, then finalize the pending row exactly
+ *  once. The tx signature is also required to be globally unused, so one on-chain
+ *  transfer can never confirm two same-amount withdrawals. */
+export async function confirmWithdraw(
+  db: D1Database,
+  settlement: Settlement,
+  args: { player: string; withdrawId: number; txSig: string },
+): Promise<BridgeResponse> {
+  const id = normId(args.player);
+  const wid = Math.floor(args.withdrawId);
+  const txSig = (args.txSig || "").trim();
+  if (!Number.isFinite(wid) || wid <= 0) return { ok: false, reason: "bad withdrawal id" };
+  if (!txSig) return { ok: false, reason: "missing tx signature" };
+
+  const row = await db
+    .prepare("SELECT wallet, credits, metro, status, created_at FROM metro_withdrawals WHERE id = ? AND player = ?")
+    .bind(wid, id)
+    .first<{ wallet: string; credits: number; metro: number; status: string; created_at: number }>();
+  if (!row) return { ok: false, reason: "unknown withdrawal" };
+  if (row.status === "done") return { ok: false, reason: "already confirmed" };
+  if (row.status !== "pending") return { ok: false, reason: "claim expired or failed" };
+  if (Date.now() - row.created_at > BRIDGE.claimTtlMs) {
+    await reclaimExpired(db);
+    return { ok: false, reason: "claim expired — credits refunded" };
+  }
+
+  const v = await settlement.verifyClaim(txSig, row.wallet, row.metro);
+  if (!v.ok) return { ok: false, reason: v.reason ?? "claim not found on-chain yet — try again shortly" };
+
+  // finalize exactly once; the NOT EXISTS guard makes the tx signature single-use
+  const fin = await db
+    .prepare(
+      `UPDATE metro_withdrawals SET status = 'done', tx_sig = ?
+       WHERE id = ? AND status = 'pending'
+         AND NOT EXISTS (SELECT 1 FROM metro_withdrawals WHERE tx_sig = ?)`,
+    )
+    .bind(txSig, wid, txSig)
     .run();
-  return { ok: true, player: id, wallet, credits, metro, txSig: settle.ref };
+  if (fin.meta.changes === 0) return { ok: false, reason: "already confirmed (or tx signature already used)" };
+  return { ok: true, player: id, withdrawId: wid, metro: row.metro, credits: row.credits, txSig };
+}
+
+/** Refund pending claims older than the TTL. Safe because the TTL dwarfs blockhash
+ *  validity — an expired claim's tx can no longer land on-chain. Run lazily from the
+ *  bridge endpoints; no cron needed. */
+export async function reclaimExpired(db: D1Database): Promise<number> {
+  const cutoff = Date.now() - BRIDGE.claimTtlMs;
+  const { results } = await db
+    .prepare("SELECT id, player, credits FROM metro_withdrawals WHERE status = 'pending' AND created_at < ?")
+    .bind(cutoff)
+    .all<{ id: number; player: string; credits: number }>();
+  let reclaimed = 0;
+  for (const r of results ?? []) {
+    // conditional flip first so a concurrent confirm cannot race the refund
+    const flip = await db
+      .prepare("UPDATE metro_withdrawals SET status = 'failed' WHERE id = ? AND status = 'pending'")
+      .bind(r.id)
+      .run();
+    if (flip.meta.changes === 0) continue;
+    await db.prepare("UPDATE players SET credits = credits + ? WHERE id = ?").bind(r.credits, r.player).run();
+    reclaimed++;
+  }
+  return reclaimed;
 }
 
 export async function deposit(

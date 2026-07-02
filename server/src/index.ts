@@ -1,5 +1,5 @@
 import { WorldDO, parseZone, NAMED_ZONES, type Env } from "./world";
-import { getAccount, quote, withdraw, deposit, poolInfo, simSettlement, type Settlement } from "./metro";
+import { getAccount, quote, withdraw, confirmWithdraw, deposit, poolInfo, simSettlement, type Settlement } from "./metro";
 import { verifyWalletLogin } from "./auth";
 
 export { WorldDO };
@@ -101,6 +101,13 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
     if (url.pathname === "/metro/withdraw" && req.method === "POST") {
       const b = (await req.json()) as { player?: string; wallet?: string; credits?: number };
       return json(await withdraw(env.DB, settlement, { player: b.player ?? "", wallet: b.wallet ?? "", credits: Number(b.credits) }));
+    }
+    // finalize a claim after the player submitted it (they paid the network fee)
+    if (url.pathname === "/metro/withdraw/confirm" && req.method === "POST") {
+      const b = (await req.json()) as { player?: string; withdrawId?: number; txSig?: string };
+      return json(
+        await confirmWithdraw(env.DB, settlement, { player: b.player ?? "", withdrawId: Number(b.withdrawId), txSig: b.txSig ?? "" }),
+      );
     }
     if (url.pathname === "/metro/deposit" && req.method === "POST") {
       const b = (await req.json()) as { player?: string; wallet?: string; txSig?: string; metro?: number };

@@ -31,6 +31,13 @@ export function walletAvailable(): boolean {
   return !!getProvider();
 }
 
+/** The raw injected provider, loosely typed — for the lazy claim-submission helper
+ *  (claim.ts), which needs signAndSendTransaction. Kept opaque here so this file
+ *  stays dependency-free. */
+export function getInjectedProvider(): unknown {
+  return getProvider();
+}
+
 /** Currently connected address (base58), or null. */
 export function connectedWallet(): string | null {
   const p = getProvider();

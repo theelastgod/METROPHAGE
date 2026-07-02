@@ -45,6 +45,13 @@ export function metroApiBase(): string {
   return ws.replace(/^ws/, "http").replace(/\/ws$/, "");
 }
 
+/** RPC endpoint the CLIENT submits claim transactions to (the player pays the fee).
+ *  Defaults to the public endpoint for the configured cluster. */
+export function metroRpc(): string {
+  if (env.VITE_METRO_RPC) return env.VITE_METRO_RPC;
+  return METRO_CLUSTER === "mainnet-beta" ? "https://api.mainnet-beta.solana.com" : "https://api.devnet.solana.com";
+}
+
 const BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
 /** Decode a base58 string to bytes (no deps). Returns null on any invalid character. */

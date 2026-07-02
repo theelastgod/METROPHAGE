@@ -1,11 +1,15 @@
 // METROPHAGE — $METRO bridge panel (Phase 5 · 2c). A DOM overlay (the game is a
 // canvas; a wallet/finance UI is far better as HTML). DORMANT BY DEFAULT: mounts only
-// when `metroEnabled`, so with no CA the game shows nothing crypto. Withdraw is wired
-// to the server bridge (works today against the devnet-sim settlement); the on-chain
-// $METRO balance + real deposit signing arrive in 2c-2 (need the devnet mint).
+// when `metroEnabled`, so with no CA the game shows nothing crypto.
+//
+// $0-LAUNCH withdraw: the server returns a CLAIM (payout tx, player = fee payer,
+// treasury-signed). The wallet signs + submits it here, then /metro/withdraw/confirm
+// finalizes. Against the devnet-sim settlement the claim auto-confirms, so the whole
+// flow works with no chain at all.
 
-import { metroEnabled, getMetroStatus, metroApiBase, fmtMetro } from "../economy/metro";
+import { metroEnabled, getMetroStatus, metroApiBase, metroRpc, fmtMetro } from "../economy/metro";
 import { walletAvailable, connectWallet, disconnectWallet, connectedWallet } from "../economy/wallet";
+import { submitClaim } from "../economy/claim";
 
 const short = (a: string) => (a.length > 10 ? `${a.slice(0, 4)}…${a.slice(-4)}` : a);
 
@@ -90,7 +94,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
       <div class="row"><input id="m-txsig" placeholder="paste your transfer's tx signature"/></div>
       <div class="row"><input id="m-dep-amt" type="number" min="0" step="any" placeholder="$METRO sent" style="width:46%"/><button id="m-deposit">Claim Deposit</button></div>
       <div class="sep"></div>
-      <div class="row"><span class="muted">withdraw — burn credits, receive ◈ from the pool</span></div>
+      <div class="row"><span class="muted">withdraw — burn credits, receive ◈ from the pool (your wallet pays the tiny network fee)</span></div>
       <div class="row"><input id="m-amt" type="number" min="0" placeholder="credits to cash out" style="width:58%"/><button id="m-max" title="max you can cash out right now">MAX</button></div>
       <div class="row"><button id="m-withdraw" class="accent">Withdraw</button><button id="m-refresh">Refresh</button></div>
       <div class="status" id="m-status"></div>
@@ -112,8 +116,14 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
 
   // latest server truth, cached for the MAX button
   let acct: { credits: number; dailyCapCredits: number; dailyUsedCredits: number; minWithdrawCredits: number } | null = null;
-  let pool: { poolMetro: number; phase: string; withdrawCreditsPerMetro: number; depositCreditsPerMetro: number; treasury?: string } | null =
-    null;
+  let pool: {
+    poolMetro: number;
+    phase: string;
+    withdrawCreditsPerMetro: number;
+    depositCreditsPerMetro: number;
+    treasury?: string;
+    settlement?: string; // "sim" (rehearsal) | "solana" (real chain)
+  } | null = null;
 
   const refreshPool = async () => {
     try {
@@ -234,6 +244,24 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
     }
   };
 
+  // finalize a claim server-side; polls briefly because a just-submitted tx can take a
+  // few seconds to reach "confirmed" on the RPC the server reads from
+  const confirmClaim = async (player: string, withdrawId: number, txSig: string): Promise<{ ok: boolean; reason?: string; metro?: number; credits?: number }> => {
+    let last: { ok: boolean; reason?: string; metro?: number; credits?: number } = { ok: false, reason: "no attempt" };
+    for (let i = 0; i < 10; i++) {
+      last = await fetch(`${metroApiBase()}/metro/withdraw/confirm`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ player, withdrawId, txSig }),
+      }).then((x) => x.json());
+      if (last.ok || !/not found on-chain/.test(last.reason ?? "")) return last;
+      await new Promise((res) => setTimeout(res, 1500));
+    }
+    return last;
+  };
+
+  // $0-LAUNCH WITHDRAW: the server returns a CLAIM — a payout tx the player signs and
+  // pays the (tiny) network fee on. The treasury only ever signs; it never spends SOL.
   $("m-withdraw").onclick = async () => {
     const player = getPlayerId();
     const wallet = currentWallet();
@@ -241,14 +269,36 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
     if (!player) return status("log in online first");
     if (!wallet) return status("connect or paste a wallet address");
     if (!(credits > 0)) return status("enter a credit amount");
-    status("withdrawing…");
+    status("requesting cash-out claim…");
     try {
       const r = await fetch(`${metroApiBase()}/metro/withdraw`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ player, wallet, credits }),
       }).then((x) => x.json());
-      status(r.ok ? `✓ cashed out ${r.credits}₵ → ◈ ${fmtMetro(r.metro)} sent to your wallet` : `✗ ${r.reason}`);
+      if (!r.ok) {
+        status(`✗ ${r.reason}`);
+        void refresh();
+        return;
+      }
+      // rehearsal settlement — no chain, confirm straight through
+      if (pool?.settlement !== "solana" || String(r.claimTx).startsWith("devnet-sim-claim:")) {
+        const c = await confirmClaim(player, r.withdrawId, `sim:${r.withdrawId}:${Date.now()}`);
+        status(c.ok ? `✓ cashed out ${r.credits}₵ → ◈ ${fmtMetro(r.metro)} (rehearsal settlement)` : `✗ ${c.reason}`);
+        void refresh();
+        return;
+      }
+      // real chain: the wallet signs + submits; the player pays the network fee
+      status("sign the payout in your wallet — you pay the network fee (≈0.000005 SOL)…");
+      const sub = await submitClaim(r.claimTx, metroRpc());
+      if (!sub.ok || !sub.sig) {
+        status(`✗ ${sub.reason ?? "claim not submitted"} — unclaimed credits auto-refund in ~10 min`);
+        void refresh();
+        return;
+      }
+      status("payout submitted — confirming on-chain…");
+      const c = await confirmClaim(player, r.withdrawId, sub.sig);
+      status(c.ok ? `✓ cashed out ${r.credits}₵ → ◈ ${fmtMetro(r.metro)} landed in your wallet` : `✗ ${c.reason}`);
       void refresh();
     } catch {
       status("withdraw failed (server unreachable)");
