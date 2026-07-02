@@ -33,6 +33,7 @@ import {
   buildSubway,
   buildDive,
   parseDiveZone,
+  DIVE_CORE_TILE,
   buildTutorial,
   SAFEHOUSE_SPAWN,
   TUTORIAL_PORTAL,
@@ -72,7 +73,7 @@ import OptionsPanel from "../ui/OptionsPanel";
 import { DISTRICTS } from "../game/districts";
 import { getWeapon, type PrimaryDef } from "../game/weapons";
 import { ENEMY_BARKS } from "../game/enemies";
-import { gridDims, pvpZonesFor, stepMove, NET_TICK_MS, type MoveState } from "../net/sim";
+import { gridDims, pvpZonesFor, stepMove, NET_TICK_MS, RESPAWN_MS, type MoveState } from "../net/sim";
 import PvpCrucibleHud from "../ui/PvpCrucibleHud";
 import { drawHubNpcPlate } from "../ui/studioChrome";
 import { displayFont, bodyFont, hudFont } from "../ui/typography";
@@ -340,6 +341,11 @@ export default class OnlineScene extends Phaser.Scene {
   private hpBarRect = { x: 0, y: 0, w: 0, h: 0 }; // laid out with the status panel at refresh
   private hpBar!: Phaser.GameObjects.Graphics;
   private deadText!: Phaser.GameObjects.Text;
+  private deathSub!: Phaser.GameObjects.Text; // reboot countdown under SIGNAL LOST
+  private deathOverlay!: Phaser.GameObjects.Rectangle;
+  private deathStartedAt = 0; // wall-clock start of the current death, for the countdown
+  private wasDead = false;
+  private bossIntroShown = ""; // boss name whose title card already played this visit
   private atmosphere?: Atmosphere; // rich ambient layer, shared with the SP city
   private connectStartedAt = 0; // when this connection attempt began (for the offline timeout)
   private connectionState: "connecting" | "connected" | "reconnecting" | "offline" = "connecting";
@@ -697,6 +703,7 @@ export default class OnlineScene extends Phaser.Scene {
         })
         .setOrigin(0.5)
         .setDepth(6);
+      this.dressDive(grid);
     } else if (this.isSubway) {
       // THE UNDERLINE — a combat dungeon: just a title; enemies + boss come from the server.
       this.add
@@ -1007,8 +1014,22 @@ export default class OnlineScene extends Phaser.Scene {
     });
 
     this.hpBar = this.add.graphics().setScrollFactor(0).setDepth(1000);
+    // death sequence — SIGNAL LOST card over a blood-dark wash + reboot countdown
+    this.deathOverlay = this.add
+      .rectangle(0, 0, this.scale.width, this.scale.height, 0x0a0208, 1)
+      .setOrigin(0)
+      .setScrollFactor(0)
+      .setDepth(1000)
+      .setAlpha(0);
     this.deadText = this.add
-      .text(this.scale.width / 2, this.scale.height / 2, "", hudFont(22, { color: "#ff3b6b", fontStyle: "bold" }))
+      .text(this.scale.width / 2, this.scale.height / 2 - uiDim(24), "", displayFont(30, { color: "#ff3b6b", fontStyle: "bold" }))
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(1001)
+      .setVisible(false);
+    this.deadText.setShadow(0, 0, "#2a0510", 8, true, true);
+    this.deathSub = this.add
+      .text(this.scale.width / 2, this.scale.height / 2 + uiDim(16), "", hudFont(12, { color: "#9aa3b2", align: "center" }))
       .setOrigin(0.5)
       .setScrollFactor(0)
       .setDepth(1001)
@@ -2592,7 +2613,7 @@ export default class OnlineScene extends Phaser.Scene {
       const hpN = Phaser.Math.Clamp(this.net.hp / PLAYER_HP, 0, 1);
       drawPremiumBar(this.hpBar, x, y, w, h, hpN, hpN > 0.3 ? COLORS.hp : COLORS.hpLow);
     }
-    this.deadText.setVisible(this.net.dead).setText(t("combat.eliminated"));
+    this.updateDeathSequence();
 
     this.hudRefreshAcc += dt;
     const connChanged = this.lastHudConnectionState !== this.connectionState;
@@ -2813,6 +2834,11 @@ export default class OnlineScene extends Phaser.Scene {
       return;
     }
     this.bossBanner.setVisible(true).setY(this.trackerBottomY + uiGap("xs"));
+    // first time you close with a living boss this visit: the title card plays
+    if (b.alive && this.bossIntroShown !== b.name && this.me && Math.hypot(b.x - this.me.x, b.y - this.me.y) < 640) {
+      this.bossIntroShown = b.name;
+      this.playBossIntro(b.name);
+    }
     if (!b.alive) {
       this.bossBanner.setText(`◆ ${b.name} — reforms in ${b.respawnSec}s`).setColor("#9aa3b2");
       this.bossArrow.setVisible(false);
@@ -2881,6 +2907,140 @@ export default class OnlineScene extends Phaser.Scene {
     const cy = VIEW_H / 2;
     const d = Math.min((cx - uiDim(56)) / (Math.abs(Math.cos(ang)) || 1e-6), (cy - uiDim(104)) / (Math.abs(Math.sin(ang)) || 1e-6));
     this.questArrow.setVisible(true).setPosition(cx + Math.cos(ang) * d, cy + Math.sin(ang) * d).setRotation(ang);
+  }
+
+  /** Dress the ICE VAULT so it reads as a frozen-mind archive, not bare corridors:
+   *  shimmering frozen-mind obelisks in the chambers, drifting ice dust, and a slow
+   *  pulsing glow over the fragment core. Pure decoration — nothing collides. */
+  private dressDive(grid: TileGrid) {
+    const spots: [number, number][] = [
+      [13, 7], [17, 10], [15, 8], // north chamber
+      [13, 23], [17, 20], [15, 22], // south chamber
+      [22, 14], [23, 16], // antechamber
+      [27, 11], [31, 12], [27, 19], [31, 18], [35, 13], [35, 17], // core chamber walls of the frozen
+    ];
+    for (const [tx, ty] of spots) {
+      if (isWall(grid[ty]?.[tx])) continue;
+      const x = tx * TILE + TILE / 2;
+      const y = ty * TILE + TILE / 2;
+      const mind = this.add.image(x, y, NODE_KEY).setTint(0x9fe8ff).setAlpha(0.42).setDepth(5);
+      this.add.image(x, y + 6, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(0x9fe8ff).setScale(0.5).setAlpha(0.1).setDepth(4);
+      this.tweens.add({
+        targets: mind,
+        alpha: { from: 0.3, to: 0.55 },
+        duration: 1600 + ((tx * 7 + ty * 13) % 900),
+        yoyo: true,
+        repeat: -1,
+        ease: "Sine.InOut",
+      });
+    }
+    // the core — a deep pulsing glow marks the vault's heart from across the chamber
+    const cx = DIVE_CORE_TILE[0] * TILE + TILE / 2;
+    const cy = DIVE_CORE_TILE[1] * TILE + TILE / 2;
+    const core = this.add.image(cx, cy, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(0x9fe8ff).setScale(2.6).setAlpha(0.3).setDepth(4);
+    this.tweens.add({ targets: core, scale: 3.2, alpha: 0.45, duration: 1400, yoyo: true, repeat: -1, ease: "Sine.InOut" });
+    // ice dust — slow drifting motes; skipped under low-FX
+    if (!getSettings().lowFx) {
+      for (let i = 0; i < 14; i++) {
+        const px = 80 + ((i * 173) % (this.worldW - 160));
+        const py = 60 + ((i * 251) % (this.worldH - 120));
+        const mote = this.add
+          .image(px, py, GLOW_KEY)
+          .setBlendMode(Phaser.BlendModes.ADD)
+          .setTint(0xcdf2ff)
+          .setScale(0.06 + (i % 3) * 0.03)
+          .setAlpha(0.22)
+          .setDepth(12);
+        this.tweens.add({
+          targets: mote,
+          y: py + 46 + (i % 5) * 10,
+          x: px + ((i % 2 ? 1 : -1) * (14 + (i % 4) * 6)),
+          alpha: { from: 0.22, to: 0.05 },
+          duration: 5200 + (i % 7) * 800,
+          repeat: -1,
+          yoyo: true,
+          ease: "Sine.InOut",
+        });
+      }
+    }
+  }
+
+  /** Boss title card — letterbox bars sweep in, the name lands with a sting, holds a
+   *  beat, and sweeps out. Once per boss per zone visit, triggered on first approach. */
+  private playBossIntro(name: string) {
+    const w = this.scale.width;
+    const h = this.scale.height;
+    const barH = uiDim(52);
+    const D = 1600;
+    const top = this.add.rectangle(0, -barH, w, barH, 0x02030a, 0.92).setOrigin(0).setScrollFactor(0).setDepth(D);
+    const bot = this.add.rectangle(0, h, w, barH, 0x02030a, 0.92).setOrigin(0).setScrollFactor(0).setDepth(D);
+    const title = this.add
+      .text(w / 2, h / 2, name, displayFont(34, { color: "#ff3b6b", fontStyle: "bold" }))
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(D + 1)
+      .setAlpha(0)
+      .setScale(1.35);
+    title.setShadow(0, 0, "#2a0510", 10, true, true);
+    const tag = this.add
+      .text(w / 2, h / 2 + uiDim(30), "— HSS COMMANDER UNIT —", hudFont(11, { color: "#9aa3b2" }))
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(D + 1)
+      .setAlpha(0);
+    this.synth?.kill();
+    juiceShake(this, 240, 0.006);
+    juiceNeonPulse(this, 0.3, 500);
+    this.tweens.add({ targets: top, y: 0, duration: 260, ease: "Quad.Out" });
+    this.tweens.add({ targets: bot, y: h - barH, duration: 260, ease: "Quad.Out" });
+    this.tweens.add({ targets: title, alpha: 1, scale: 1, duration: 320, delay: 140, ease: "Back.Out" });
+    this.tweens.add({ targets: tag, alpha: 1, duration: 260, delay: 320 });
+    this.time.delayedCall(2300, () => {
+      this.tweens.add({ targets: [title, tag], alpha: 0, duration: 260 });
+      this.tweens.add({ targets: top, y: -barH, duration: 300, ease: "Quad.In" });
+      this.tweens.add({
+        targets: bot,
+        y: h,
+        duration: 300,
+        ease: "Quad.In",
+        onComplete: () => {
+          top.destroy();
+          bot.destroy();
+          title.destroy();
+          tag.destroy();
+        },
+      });
+    });
+  }
+
+  /** Death is a MOMENT: hit-stop + blood-dark wash + SIGNAL LOST + reboot countdown,
+   *  then a white rebirth flash when the server respawns you. */
+  private updateDeathSequence() {
+    const dead = this.net.dead;
+    if (dead && !this.wasDead) {
+      this.deathStartedAt = performance.now();
+      this.synth?.kill();
+      juiceHitStop(this, 120);
+      juiceShake(this, 260, 0.008);
+      this.tweens.add({ targets: this.deathOverlay, alpha: 0.62, duration: 420, ease: "Quad.Out" });
+      this.deadText.setVisible(true).setText("✖ SIGNAL LOST").setScale(1.6).setAlpha(0);
+      this.tweens.add({ targets: this.deadText, scale: 1, alpha: 1, duration: 340, ease: "Back.Out" });
+      this.deathSub.setVisible(true);
+    } else if (!dead && this.wasDead) {
+      this.tweens.add({ targets: this.deathOverlay, alpha: 0, duration: 300 });
+      this.deadText.setVisible(false);
+      this.deathSub.setVisible(false);
+      juiceFlash(this, 260, 220, 240, 255);
+      juiceZoomPunch(this, 0.04, 180);
+      this.pops?.popHeal(this.me.x, this.me.y - 28, "SIGNAL RESTORED");
+    }
+    if (dead) {
+      const left = Math.max(0, RESPAWN_MS - (performance.now() - this.deathStartedAt));
+      this.deathSub.setText(
+        left > 0 ? `rebooting in ${(left / 1000).toFixed(1)}s — the grid never forgets a Blank` : "rebooting…",
+      );
+    }
+    this.wasDead = dead;
   }
 
   /** World-event banner — warning countdown while telegraphing, name + time left while
