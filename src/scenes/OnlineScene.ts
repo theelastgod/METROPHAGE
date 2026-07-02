@@ -2301,6 +2301,11 @@ export default class OnlineScene extends Phaser.Scene {
             .setDepth(9),
         );
       }
+      // remote dash — peel one ghost per rendered frame while the snapshot says burst
+      if (r.dash && !r.dead) {
+        const ghost = this.add.sprite(s.x, s.y, s.texture.key, s.frame.name).setAlpha(0.3).setDepth(8);
+        this.tweens.add({ targets: ghost, alpha: 0, duration: 240, onComplete: () => ghost.destroy() });
+      }
       // swap to the remote's baked look-texture when it first arrives / changes (cached by shape)
       const key = r.look ? lookKey(r.look) : PLAYER_KEY;
       if (s.getData("lk") !== key) {

@@ -11,6 +11,7 @@ export interface RemotePlayer {
   ty: number;
   hp: number;
   dead: boolean;
+  dash?: boolean; // mid-dash this snapshot — render the burst trail
   look?: PlayerLook; // appearance, for rendering the remote's customization
 }
 
@@ -452,6 +453,7 @@ export default class NetClient {
           r.ty = sp.y;
           r.hp = sp.hp;
           r.dead = sp.dead;
+          r.dash = !!sp.dash;
           if (sp.look) r.look = sp.look;
           this.remotes.set(sp.id, r);
         }

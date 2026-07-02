@@ -3054,6 +3054,7 @@ export class WorldDO {
     p.dashUntilTick = this.tick + ticks(PLAYER.dashDurationMs);
     p.dashCdUntilTick = this.tick + ticks(PLAYER.dashCooldownMs);
     p.iframeUntilTick = this.tick + ticks(PLAYER.dashIframeMs);
+    if (this.inTutorial()) this.tutorialEvent(p, "kit");
   }
 
   /** The class signature (Q) — resolved entirely server-side so damage, stuns, and
@@ -3064,6 +3065,7 @@ export class WorldDO {
     if (this.tick < p.abilityCdUntilTick) return;
     const aim = Number.isFinite(msg.aim) ? msg.aim : p.aim;
     p.aim = aim;
+    if (this.inTutorial()) this.tutorialEvent(p, "kit");
     const lvl = 1 + (p.mods.dmgPct || 0);
     switch (p.classId) {
       case "k-guerilla": {
@@ -3131,6 +3133,7 @@ export class WorldDO {
     if (this.tick < p.ability2CdUntilTick) return;
     const aim = Number.isFinite(msg.aim) ? msg.aim : p.aim;
     p.aim = aim;
+    if (this.inTutorial()) this.tutorialEvent(p, "kit");
     const lvl = 1 + (p.mods.dmgPct || 0);
     switch (p.classId) {
       case "k-guerilla": {

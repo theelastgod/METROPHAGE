@@ -28,6 +28,7 @@ export type TutorialKind =
   | "trade"
   | "travel"
   | "panel"
+  | "kit"
   | "portal";
 
 export interface TutorialStepDef {
@@ -64,6 +65,15 @@ export const TUTORIAL_STEPS_QUICK: TutorialStepDef[] = [
     hint: "Shoot the red hostile",
     kind: "kill",
     count: 1,
+  },
+  {
+    id: "kit",
+    title: "CLASS KIT",
+    teach:
+      "SPACE dashes — you are untouchable mid-blink. Q and E are your class abilities; the server owns every cooldown, so spam buys nothing.",
+    hint: "Dash (SPACE), then cast Q or E",
+    kind: "kit",
+    count: 2,
   },
   {
     id: "pickup",
@@ -117,7 +127,7 @@ export const TUTORIAL_STEPS_QUICK: TutorialStepDef[] = [
 
 /** Every major online system — one lesson each before deploy. */
 export const TUTORIAL_STEPS_FULL: TutorialStepDef[] = [
-  ...TUTORIAL_STEPS_QUICK.slice(0, 5),
+  ...TUTORIAL_STEPS_QUICK.slice(0, 6), // move..kit..capture — the core combat curriculum
   {
     id: "faction",
     title: "FACTION WAR",
@@ -234,7 +244,7 @@ export const TUTORIAL_STEPS_FULL: TutorialStepDef[] = [
     kind: "travel",
     count: 1,
   },
-  TUTORIAL_STEPS_QUICK[8],
+  TUTORIAL_STEPS_QUICK[TUTORIAL_STEPS_QUICK.length - 1], // the deploy portal is always last
 ];
 
 export function tutorialSteps(mode: TutorialMode = "quick"): TutorialStepDef[] {
