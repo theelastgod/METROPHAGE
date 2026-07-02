@@ -170,6 +170,9 @@ export default class NetClient {
   onWelcome?: (x: number, y: number) => void;
   onInventory?: () => void; // fired when the server pushes an inventory update
   onRedirect?: (zone: string) => void;
+  /** Memory fragments this player has recovered (dive rewards; welcome + live updates). */
+  fragments: string[] = [];
+  onFragment?: (id: string, isNew: boolean) => void;
   /** connecting | connected | reconnecting | offline */
   onConnectionState?: (state: "connecting" | "connected" | "reconnecting" | "offline") => void;
 
@@ -339,6 +342,7 @@ export default class NetClient {
       this.onConnectionState?.("connected");
       this.pred = { x: msg.x, y: msg.y };
       this.serverPos = { x: msg.x, y: msg.y };
+      this.fragments = msg.fragments ?? [];
       this.onWelcome?.(msg.x, msg.y);
       if (this.pendingGraduate) {
         this.pendingGraduate = false;
@@ -476,6 +480,20 @@ export default class NetClient {
         at: performance.now(),
       };
       this.pushChat({ from: "", ch: "sys", text: `${msg.quest} — ${msg.title}`, faction: -1, sys: true });
+    } else if (msg.t === "fragment") {
+      // a memory recovered at a dive core — surface it through the story panel
+      if (msg.isNew && !this.fragments.includes(msg.id)) this.fragments.push(msg.id);
+      this.story = {
+        quest: "MEMORY RECOVERED",
+        stage: msg.id,
+        title: msg.title,
+        text: msg.lines.join("\n"),
+        journal: "",
+        objective: "",
+        done: false,
+        at: performance.now(),
+      };
+      this.onFragment?.(msg.id, msg.isNew);
     } else if (msg.t === "inv") {
       this.inventory = msg.items;
       this.onInventory?.();

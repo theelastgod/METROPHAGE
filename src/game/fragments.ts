@@ -171,3 +171,18 @@ export const FRAGMENTS: FragmentDef[] = [
 export function getFragment(id: string): FragmentDef | undefined {
   return FRAGMENTS.find((f) => f.id === id);
 }
+
+/**
+ * District-themed fragment a dive surfaces when the player has no active dive beat
+ * (repeat visits, free exploration). Campaign dive stages override this with their
+ * own fragmentId — the server picks stage fragment first, then this fallback.
+ */
+export const DIVE_DEFAULT_FRAGMENTS: string[] = [
+  "frag_first_boot", // v0 — Palantir core
+  "frag_ice", // v1
+  "frag_the_docks", // v2 — Tidal
+  "frag_undercity", // v3
+  "frag_relay", // v4 — Orbital
+  "frag_wastes", // v5
+  "frag_the_protocol", // v6 — the Kernel
+];

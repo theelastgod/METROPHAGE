@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import { getQuest } from "../game/quests";
+import { FRAGMENTS } from "../game/fragments";
 import { drawPanelFrame } from "./panelChrome";
 import { dimBackdrop, modalRect, uiDim } from "./uiLayout";
 import { bodyFont, displayFont } from "./typography";
@@ -27,6 +28,8 @@ export interface QuestLogState {
   campaignObjective: string;
   contracts: ContractRow[];
   bounty: BountyRow | null;
+  /** Recovered memory-fragment ids (ICE-dive rewards). */
+  fragments: string[];
 }
 
 /** RuneScape-style quest journal — campaign steps, dailies, bounty with checkmarks. */
@@ -41,6 +44,7 @@ export default class RsQuestLog {
     campaignObjective: "",
     contracts: [],
     bounty: null,
+    fragments: [],
   };
 
   constructor(scene: Phaser.Scene) {
@@ -207,7 +211,35 @@ export default class RsQuestLog {
           .setScrollFactor(0)
           .setDepth(D + 2),
       );
+      ry += uiDim(18);
     }
+
+    // MEMORY — recovered fragments (ICE-dive rewards); the rest stay encrypted
+    ry += uiDim(8);
+    g.lineStyle(1, 0x2a2440, 0.8).lineBetween(x + uiDim(18), ry, x + w - uiDim(18), ry);
+    ry += uiDim(12);
+    const frags = this.state.fragments;
+    add(
+      scene.add
+        .text(x + uiDim(22), ry, `MEMORY  ${frags.length} / ${FRAGMENTS.length}`, bodyFont(11, { color: "#9fe8ff", fontStyle: "bold" }))
+        .setScrollFactor(0)
+        .setDepth(D + 2),
+    );
+    ry += uiDim(18);
+    const known = FRAGMENTS.filter((f) => frags.includes(f.id))
+      .map((f) => f.title)
+      .slice(0, 4);
+    add(
+      scene.add
+        .text(
+          x + uiDim(28),
+          ry,
+          known.length ? known.join("  ·  ") : "○ dive an ICE SHAFT in any district to recover what they froze",
+          bodyFont(10, { color: known.length ? "#eafdff" : STUDIO.dim, wordWrap: { width: w - uiDim(56) } }),
+        )
+        .setScrollFactor(0)
+        .setDepth(D + 2),
+    );
 
     animatePanelIn(scene, this.objs);
   }

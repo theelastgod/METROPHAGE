@@ -1975,11 +1975,47 @@ async function quest() {
     await sleep(50);
   }
   const infectAdvanced = store.campaignStage >= 1;
-  const finalStage = store.campaignStage;
-  const finalQuest = store.campaignQuest;
+
+  // Stage 1 — "Break an ICE node": hop into the district's ICE VAULT (v0) and crack
+  // the fragment core. Verifies dive beats advance ONLY from real dives (a plain
+  // node capture used to count — that alias is gone).
+  ws.close();
+  await sleep(600);
+  const DIVE = WS_URL + (WS_URL.includes("?") ? "&" : "?") + "zone=v0";
+  const dws = await connect(DIVE);
+  const dw = await login(dws, name, 0);
+  const dstore = { x: dw.x, y: dw.y, enemies: [], nodes: [], campaignStage: -1, campaignQuest: null };
+  trackState(dws, dw.id, dstore);
+  await sleep(500);
+  let dseq = 0;
+  const dt0 = Date.now();
+  while (Date.now() - dt0 < 45000 && infectAdvanced && dstore.campaignStage < 2) {
+    const core = dstore.nodes[0];
+    if (core) {
+      const dx = core.x - dstore.x;
+      const dy = core.y - dstore.y;
+      const d = Math.hypot(dx, dy);
+      dseq++;
+      dws.send(JSON.stringify({ t: "input", seq: dseq, mx: d > 50 ? dx / d : 0, my: d > 50 ? dy / d : 0 }));
+      let near = null;
+      let nd = Infinity;
+      for (const e of dstore.enemies) {
+        const ed = Math.hypot(e.x - dstore.x, e.y - dstore.y);
+        if (ed < nd) {
+          nd = ed;
+          near = e;
+        }
+      }
+      if (near && nd < 320) dws.send(JSON.stringify({ t: "fire", seq: dseq, aim: Math.atan2(near.y - dstore.y, near.x - dstore.x) }));
+    }
+    await sleep(50);
+  }
+  const diveAdvanced = dstore.campaignStage >= 2;
+  const finalStage = dstore.campaignStage;
+  const finalQuest = dstore.campaignQuest;
 
   // Persistence — reconnect; the campaign must reload from D1.
-  ws.close();
+  dws.close();
   await sleep(600);
   const ws2 = await connect();
   const w2 = await login(ws2, name, 0);
@@ -1992,14 +2028,15 @@ async function quest() {
     accepted,
     gotStoryBeat: stories.length >= 1,
     infectAdvanced,
+    diveAdvanced,
     persistedQuest: store2.campaignQuest === finalQuest && finalQuest === "the_wake",
     persistedStage: store2.campaignStage === finalStage,
   };
   ws2.close();
   await sleep(300);
   report(
-    "QUEST — campaign arc: accept THE WAKE + infect-stage advance + D1 persistence",
-    { name, startedFresh, accepted, finalStage, reloadedStage: store2.campaignStage, storyBeats: stories.length, progress: store.campaignProgress },
+    "QUEST — campaign arc: accept THE WAKE + infect stage + ICE-dive stage + persistence",
+    { name, startedFresh, accepted, finalStage, reloadedStage: store2.campaignStage, storyBeats: stories.length },
     Object.values(checks).every(Boolean),
     checks,
   );
@@ -2217,6 +2254,79 @@ async function metro() {
   );
 }
 
+async function dive() {
+  // ICE VAULT (v0): a fresh runner enters the instanced dive, finds guardians + the
+  // single fragment core, channels it free (the entry corridor runs straight east to
+  // the core chamber), receives the memory fragment, and keeps it across a reconnect.
+  const name = "dv" + String(Date.now() % 1_000_000);
+  const DIVE = WS_URL + (WS_URL.includes("?") ? "&" : "?") + "zone=v0";
+  const ws = await connect(DIVE);
+  const w = await login(ws, name, 0);
+  const store = { x: w.x, y: w.y, enemies: [], nodes: [] };
+  trackState(ws, w.id, store);
+  const fragments = [];
+  ws.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "fragment") fragments.push(m);
+  });
+  await sleep(700);
+  const hasGuardians = store.enemies.length >= 3;
+  const oneCore = store.nodes.length === 1;
+  const startedEmpty = (w.fragments ?? []).length === 0;
+
+  // run the corridor east, shooting back at whatever ICE is closest, and channel the
+  // core (dive cores never re-freeze once cracked)
+  let seq = 0;
+  const t0 = Date.now();
+  while (Date.now() - t0 < 45000 && fragments.length === 0) {
+    const core = store.nodes[0];
+    if (core) {
+      const dx = core.x - store.x;
+      const dy = core.y - store.y;
+      const d = Math.hypot(dx, dy);
+      seq++;
+      ws.send(JSON.stringify({ t: "input", seq, mx: d > 50 ? dx / d : 0, my: d > 50 ? dy / d : 0 }));
+      let near = null;
+      let nd = Infinity;
+      for (const e of store.enemies) {
+        const ed = Math.hypot(e.x - store.x, e.y - store.y);
+        if (ed < nd) {
+          nd = ed;
+          near = e;
+        }
+      }
+      if (near && nd < 320) ws.send(JSON.stringify({ t: "fire", seq, aim: Math.atan2(near.y - store.y, near.x - store.x) }));
+    }
+    await sleep(50);
+  }
+  const recovered = fragments.length >= 1 && fragments[0].isNew === true && Array.isArray(fragments[0].lines);
+
+  // persistence — reconnect: the welcome payload must carry the recovered fragment
+  ws.close();
+  await sleep(600);
+  const ws2 = await connect(DIVE);
+  const w2 = await login(ws2, name, 0);
+  await sleep(400);
+  const persisted = recovered && (w2.fragments ?? []).includes(fragments[0].id);
+  ws2.close();
+  await sleep(300);
+
+  const checks = { hasGuardians, oneCore, startedEmpty, recovered, persisted };
+  report(
+    "DIVE — ICE VAULT instance: guardians + fragment core -> memory recovered + persists",
+    {
+      name,
+      enemies: store.enemies.length,
+      nodes: store.nodes.length,
+      fragment: fragments[0]?.id,
+      title: fragments[0]?.title,
+      reloadedFragments: w2.fragments ?? [],
+    },
+    Object.values(checks).every(Boolean),
+    checks,
+  );
+}
+
 async function look() {
   // A logs in with a distinctive look; B (nearby, same spawn → within AOI) must
   // receive A's appearance in its state snapshot so it can render A's customization.
@@ -2304,6 +2414,7 @@ try {
   else if (mode === "abuse") await abuse();
   else if (mode === "load") await load();
   else if (mode === "metro") await metro();
+  else if (mode === "dive") await dive();
   else if (mode === "look") await look();
   else if (mode === "bot") await bot();
   else await move();

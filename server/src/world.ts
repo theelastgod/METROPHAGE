@@ -51,6 +51,11 @@ import {
   SAFEHOUSE_SPAWN,
   buildSubway,
   SUBWAY_SPAWN,
+  buildDive,
+  DIVE_SPAWN,
+  DIVE_CORE_TILE,
+  DIVE_ZONE_IDS,
+  parseDiveZone,
   buildTutorial,
   TUTORIAL_SPAWN,
   TUTORIAL_PORTAL,
@@ -191,9 +196,11 @@ export const parseZone = (z: string | null): number => {
 /** No-combat interior zones (the safehouse hub + enterable building interiors). Each is its
  *  own DO, reuses the safehouse room grid, and runs no enemies/boss/territory/PvP. Shared with
  *  the Worker router so these zone names pass through instead of collapsing to a district. */
+import { getFragment, DIVE_DEFAULT_FRAGMENTS } from "../../src/game/fragments";
+
 export const INTERIOR_ZONES = new Set(["safe", "clinic", "bar", "den", "shop"]);
 /** All named (non-district) zones the Worker routes by name — interiors + subway + wilderness bridges. */
-export const NAMED_ZONES = new Set([...INTERIOR_ZONES, "subway", TUTORIAL_ZONE, ...BRIDGE_ZONE_IDS]);
+export const NAMED_ZONES = new Set([...INTERIOR_ZONES, "subway", TUTORIAL_ZONE, ...BRIDGE_ZONE_IDS, ...DIVE_ZONE_IDS]);
 
 export interface Env {
   WORLD: DurableObjectNamespace;
@@ -249,6 +256,8 @@ interface PlayerState {
   lastEmoteTick: number;
   // personal campaign arc (Path A — per-player in the shared world)
   campaign: Campaign;
+  // memory fragments recovered at ICE-dive cores (claim-once per player, D1-persisted)
+  fragments: string[];
   // tutorial drill yard — onboarding before the one-way deploy portal
   tutorialDone: boolean;
   tutorialStep: number;
@@ -471,6 +480,7 @@ export class WorldDO {
   private zoneName = "d0";
   private districtIndex = 0;
   private bridgeIndex = -1;
+  private diveIndex = -1; // ≥0 when this DO runs an ICE VAULT dive instance (v0–v6)
   private zoneReady = false;
   private interior = false; // the safehouse zone — no enemies, no PvP
   private msgRate = new Map<WebSocket, { tick: number; n: number }>(); // per-socket flood guard
@@ -547,6 +557,21 @@ export class WorldDO {
       this.nodes = [];
       this.spawnSubway();
       void this.state.storage.put("zone", "subway");
+      return;
+    }
+    // ICE VAULT — the instanced dive (v0–v6, one per district): an indoor combat
+    // dungeon whose single "node" is the memory-fragment core. Channelling it free
+    // completes campaign dive beats and writes the fragment to the player's memory.
+    const di = parseDiveZone(zone);
+    if (di >= 0) {
+      this.interior = true; // no PvP / weather; it IS a combat zone (guardians below)
+      this.diveIndex = di;
+      this.zoneName = DIVE_ZONE_IDS[di];
+      this.districtIndex = di;
+      this.grid = buildDive();
+      this.spawn = DIVE_SPAWN;
+      this.spawnDive(di);
+      void this.state.storage.put("zone", this.zoneName);
       return;
     }
     // THE LIVE CITY — shared conflict-free hub (RuneScape-scale, all players in one space).
@@ -740,6 +765,53 @@ export class WorldDO {
       lastAoeTick: 0,
       enraged: false,
     });
+  }
+
+  /** Seed an ICE VAULT dive: guardians scale with district depth; the fragment core
+   *  (a territory node) waits in the core chamber. */
+  private spawnDive(depth: number) {
+    // guard posts along the route — north/south chambers, antechamber, core approach.
+    // Shallow vaults (the campaign's first dives) drop the corridor chokepoints so a
+    // fresh solo runner can fight through; deep vaults post the full garrison.
+    const allPosts: [number, number][] = [
+      [13, 8],
+      [17, 9],
+      [13, 22],
+      [17, 21],
+      [28, 12],
+      [28, 18],
+      [22, 15],
+      [34, 11],
+      [34, 19],
+    ];
+    const posts = depth >= 2 ? allPosts : allPosts.slice(0, 6);
+    // deeper districts field deeper-tier ICE: shallow dives lean patrol/lancer,
+    // deep dives lean enforcer/sniper/wraith
+    const shallow = [0, 2, 3, 0, 2, 3, 0, 2, 3];
+    const deep = [4, 5, 6, 2, 4, 6, 5, 4, 6];
+    const pattern = depth >= 4 ? deep : depth >= 2 ? shallow.map((k, i) => (i % 2 ? deep[i] : k)) : shallow;
+    let i = 0;
+    const hpScale = 1 + depth * 0.18;
+    for (const [tx, ty] of posts) {
+      if (isWall(this.grid[ty]?.[tx])) continue;
+      const x = tx * TILE + TILE / 2;
+      const y = ty * TILE + TILE / 2;
+      const kind = pattern[i++ % pattern.length];
+      const hp = Math.round(ENEMY_ARCHES[kind].hp * hpScale);
+      const id = this.nextEnemyId++;
+      this.enemies.set(id, { id, x, y, ox: x, oy: y, hp, maxHp: hp, respawnTick: 0, lastFireTick: 0, kind });
+    }
+    // the fragment core — reuses the node channel mechanic (capture = recovery)
+    this.nodes = [
+      {
+        id: 0,
+        x: DIVE_CORE_TILE[0] * TILE + TILE / 2,
+        y: DIVE_CORE_TILE[1] * TILE + TILE / 2,
+        owner: NEUTRAL,
+        progress: 0,
+        by: NEUTRAL,
+      },
+    ];
   }
 
   /** Tutorial drill yard — one weak patrol cop in the combat pit + a node in the vault. */
@@ -1817,6 +1889,7 @@ export class WorldDO {
       world: { w: gridDims(this.grid).worldW, h: gridDims(this.grid).worldH },
       look: p.look,
       lookLocked: lookLocked || !!p.look,
+      fragments: p.fragments,
     });
     if (this.inTutorial()) {
       if (p.tutorialDone) {
@@ -1896,8 +1969,9 @@ export class WorldDO {
     let inventory: Item[] = [];
     let look: PlayerLook | undefined;
     let equipped: Partial<Record<Slot, Item>> = {};
+    let fragments: string[] = [];
     const row = await this.env.DB.prepare(
-      "SELECT x, y, credits, metro, xp, zone, cores, quest_step, campaign, tutorial_done, tutorial_step, tutorial_mode, inventory, look, equipped FROM players WHERE id = ?",
+      "SELECT x, y, credits, metro, xp, zone, cores, quest_step, campaign, tutorial_done, tutorial_step, tutorial_mode, inventory, look, equipped, fragments FROM players WHERE id = ?",
     )
       .bind(id)
       .first<{
@@ -1916,6 +1990,7 @@ export class WorldDO {
         inventory: string;
         look: string | null;
         equipped: string;
+        fragments: string | null;
       }>();
     if (row) {
       credits = row.credits ?? 0;
@@ -1929,6 +2004,12 @@ export class WorldDO {
       inventory = parseInventory(row.inventory);
       look = parseLook(row.look);
       equipped = parseEquipped(row.equipped);
+      try {
+        const f = row.fragments ? (JSON.parse(row.fragments) as unknown) : [];
+        fragments = Array.isArray(f) ? f.filter((v): v is string => typeof v === "string") : [];
+      } catch {
+        fragments = [];
+      }
       tutorialDone = !!row.tutorial_done;
       tutorialStep = row.tutorial_step ?? 0;
       tutorialMode = row.tutorial_mode === "full" ? "full" : "quick";
@@ -2048,6 +2129,7 @@ export class WorldDO {
       lastChatTick: -999,
       lastEmoteTick: -999,
       campaign,
+      fragments,
       tutorialDone,
       tutorialStep,
       tutorialMode,
@@ -2151,17 +2233,55 @@ export class WorldDO {
     this.campaignBeat(p);
   }
 
-  /** Node captured — infect vs dive stages both key off territory captures. */
+  /** Node captured. In a district, captures are infection; in an ICE VAULT the single
+   *  node is the fragment core, so a capture is the DIVE itself — the beats no longer
+   *  alias each other (dive stages used to advance from ordinary captures). */
   private campaignCapture(p: PlayerState) {
     const s = p.campaign.currentStage;
     if (!s) return;
-    if (s.on.type === "infect") this.campaignEvent(p, "infect");
-    else if (s.on.type === "dive") this.campaignEvent(p, "dive");
+    const inDive = this.diveIndex >= 0;
+    if (s.on.type === "infect" && !inDive) this.campaignEvent(p, "infect");
+    else if (s.on.type === "dive" && inDive) this.campaignEvent(p, "dive");
   }
 
   private campaignSecureCheck(p: PlayerState) {
     if (this.districtControl() !== p.faction) return;
     this.campaignEvent(p, "secure");
+  }
+
+  /** The dive core cracked — hand the player the memory it was freezing. Campaign dive
+   *  stages surface their authored fragment; free dives surface the district's memory.
+   *  Claim-once per player (rewards only the first recovery), persisted to D1. */
+  private async recoverFragment(p: PlayerState) {
+    const stage = p.campaign.currentStage;
+    const fid =
+      (stage?.on.type === "dive" && stage.fragmentId) ||
+      DIVE_DEFAULT_FRAGMENTS[this.diveIndex] ||
+      DIVE_DEFAULT_FRAGMENTS[0];
+    const def = getFragment(fid);
+    if (!def) return;
+    const isNew = !p.fragments.includes(fid);
+    if (isNew) {
+      p.fragments.push(fid);
+      p.credits += 150;
+      p.xp += 60;
+      p.level = levelForXp(p.xp);
+      p.dirty = true;
+    }
+    this.sendTo(p.id, { t: "fragment", id: fid, title: def.title, lines: def.lines, isNew });
+    this.sendTo(p.id, {
+      t: "sys",
+      text: isNew ? `◈ MEMORY RECOVERED — ${def.title}  (+60 XP  ₵150)` : `◈ memory re-read — ${def.title} (already held)`,
+    });
+    if (isNew) {
+      try {
+        await this.env.DB.prepare("UPDATE players SET fragments = ? WHERE id = ?")
+          .bind(JSON.stringify(p.fragments), p.id)
+          .run();
+      } catch {
+        /* column may not exist before migration — recovery still lives this session */
+      }
+    }
   }
 
   private onQuest(ws: WebSocket, msg: Extract<ClientMsg, { t: "quest" }>) {
@@ -3143,19 +3263,24 @@ export class WorldDO {
         }
       }
       node.by = contested ? NEUTRAL : by;
+      const inDive = this.diveIndex >= 0; // dive cores don't feed the faction war
       if (node.by !== NEUTRAL && node.by === node.owner) {
         node.progress = 1; // held
-        if (!this.inTutorial()) this.bumpMeta("f" + node.by, NODE_HOLD_SCORE_PER_SEC * dts);
+        if (!this.inTutorial() && !inDive) this.bumpMeta("f" + node.by, NODE_HOLD_SCORE_PER_SEC * dts);
       } else if (node.owner === NEUTRAL && node.by !== NEUTRAL) {
         node.progress = Math.min(1, node.progress + NODE_CAPTURE_PER_SEC * dts);
         if (node.progress >= 1) {
           node.owner = node.by;
-          if (!this.inTutorial()) this.bumpMeta("f" + node.by, FACTION_CAPTURE_SCORE);
+          if (!this.inTutorial() && !inDive) this.bumpMeta("f" + node.by, FACTION_CAPTURE_SCORE);
           // credit the players who channelled it (quest "capture" objective)
           for (const pl of this.players.values()) {
             if (!pl.dead && pl.faction === node.by && dist2(pl.x, pl.y, node.x, node.y) <= CR2) {
               if (this.inTutorial()) this.tutorialEvent(pl, "capture");
-              else {
+              else if (inDive) {
+                this.campaignCapture(pl); // the dive beat itself
+                void this.recoverFragment(pl); // the memory the vault was holding
+                this.bumpStat(pl, "dives", 1);
+              } else {
                 this.campaignCapture(pl);
                 this.campaignSecureCheck(pl);
                 this.bumpStat(pl, "captures", 1);
@@ -3164,6 +3289,8 @@ export class WorldDO {
             }
           }
         }
+      } else if (inDive && node.owner !== NEUTRAL) {
+        node.progress = 1; // a freed mind stays freed — dive cores never re-freeze
       } else {
         // owned but contested by an enemy, or nobody channelling → erode the hold
         const rate = node.by === NEUTRAL ? NODE_DECAY_PER_SEC : NODE_CAPTURE_PER_SEC;

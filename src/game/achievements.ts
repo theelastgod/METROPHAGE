@@ -3,7 +3,7 @@
 // client (renders the grid, marking which are unlocked). Stats are the cross-zone counters
 // in D1 player_stats; the leaderboards ORDER BY the same stats. Add a milestone = add a row.
 
-export type StatKey = "kills" | "bosses" | "captures" | "credits" | "pvp" | "deepest" | "rep";
+export type StatKey = "kills" | "bosses" | "captures" | "credits" | "pvp" | "deepest" | "rep" | "dives";
 
 export interface Achievement {
   id: string;
@@ -23,10 +23,11 @@ export const STAT_LABELS: Record<StatKey, string> = {
   pvp: "ARENA KILLS",
   deepest: "DEEPEST DISTRICT",
   rep: "REPUTATION",
+  dives: "CORES CRACKED",
 };
 
 /** Stats a leaderboard can rank by (in display order). */
-export const BOARD_STATS: StatKey[] = ["kills", "bosses", "captures", "pvp", "credits", "rep", "deepest"];
+export const BOARD_STATS: StatKey[] = ["kills", "bosses", "captures", "dives", "pvp", "credits", "rep", "deepest"];
 
 export const ACHIEVEMENTS: Achievement[] = [
   { id: "first_blood", name: "FIRST BLOOD", desc: "Purge your first HSS unit", stat: "kills", threshold: 1, reward: 25 },
@@ -41,6 +42,8 @@ export const ACHIEVEMENTS: Achievement[] = [
   { id: "arena_25", name: "GLADIATOR", desc: "Win 25 arena kills", stat: "pvp", threshold: 25, reward: 700 },
   { id: "rich_10k", name: "FIXER", desc: "Earn 10,000 credits", stat: "credits", threshold: 10000, reward: 500 },
   { id: "rich_100k", name: "KINGPIN", desc: "Earn 100,000 credits", stat: "credits", threshold: 100000, reward: 3000 },
+  { id: "dive_1", name: "ICEBREAKER", desc: "Crack a fragment core in an ICE dive", stat: "dives", threshold: 1, reward: 100 },
+  { id: "dive_7", name: "TOTAL RECALL", desc: "Crack 7 fragment cores", stat: "dives", threshold: 7, reward: 800 },
   { id: "deep_3", name: "DOWN THE STACK", desc: "Reach the 3rd district", stat: "deepest", threshold: 3, reward: 120 },
   { id: "deep_5", name: "BELOW THE PLAZA", desc: "Reach the 5th district", stat: "deepest", threshold: 5, reward: 280 },
   { id: "deep_all", name: "THE WHOLE MACHINE", desc: "Reach the deepest district", stat: "deepest", threshold: 8, reward: 1200 },

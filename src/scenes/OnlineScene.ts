@@ -31,6 +31,8 @@ import {
   buildBridgeGrid,
   buildSafehouse,
   buildSubway,
+  buildDive,
+  parseDiveZone,
   buildTutorial,
   SAFEHOUSE_SPAWN,
   TUTORIAL_PORTAL,
@@ -376,6 +378,7 @@ export default class OnlineScene extends Phaser.Scene {
   private interior = false; // true in a no-combat interior (hub / building)
   private isCityHub = false; // shared METRO CITY — the live online hub
   private isSubway = false; // THE UNDERLINE — an indoor COMBAT dungeon zone
+  private isDive = false; // ICE VAULT — the instanced fragment dive (v0–v6)
   private isBridge = false; // wilderness corridor between two districts
   private bridgeIndex = -1;
   private fromZone = "d0"; // district to return to when leaving the safehouse
@@ -457,14 +460,23 @@ export default class OnlineScene extends Phaser.Scene {
     const bridgeIdx = parseBridgeZone(rawZone);
     this.isBridge = bridgeIdx >= 0;
     this.bridgeIndex = bridgeIdx;
-    const named = !!INTERIOR_TITLES[rawZone] || rawZone === "subway" || rawZone === TUTORIAL_ZONE || this.isBridge;
+    const diveIdx = parseDiveZone(rawZone);
+    this.isDive = diveIdx >= 0;
+    const named =
+      !!INTERIOR_TITLES[rawZone] || rawZone === "subway" || rawZone === TUTORIAL_ZONE || this.isBridge || this.isDive;
     this.zone = this.isBridge ? rawZone : named ? rawZone : "d" + this.parseZone(data?.zone);
     this.isTutorial = this.zone === TUTORIAL_ZONE;
     this.interior = !!INTERIOR_TITLES[this.zone] || this.zone === "safe"; // hub + building interiors
     this.isCityHub = this.zone === "safe";
     this.isSubway = this.zone === "subway";
     this.fromZone = data?.from ?? "d0"; // where 'H' returns to from inside an interior
-    this.districtIndex = this.interior ? 0 : this.isBridge ? getBridge(bridgeIdx).fromDistrict : this.parseZone(data?.zone);
+    this.districtIndex = this.isDive
+      ? diveIdx
+      : this.interior
+        ? 0
+        : this.isBridge
+          ? getBridge(bridgeIdx).fromDistrict
+          : this.parseZone(data?.zone);
     // scene.start reuses the instance (field initializers don't re-run) — reset per-zone
     // interactables so NPCs/doors don't accumulate across travel between zones.
     this.npcs = [];
@@ -478,7 +490,7 @@ export default class OnlineScene extends Phaser.Scene {
     MusicDirector.for(this)?.play(
       this.isTutorial
         ? "online"
-        : this.isSubway
+        : this.isSubway || this.isDive
           ? "subway"
           : this.isCityHub
             ? "city"
@@ -497,19 +509,29 @@ export default class OnlineScene extends Phaser.Scene {
       ? buildTutorial()
       : this.isSubway
         ? buildSubway()
-        : this.isCityHub
-          ? ONLINE_CITY.grid
-          : this.interior
-            ? buildSafehouse()
-            : this.isBridge
-              ? buildBridgeGrid(bridgeDef!)
-              : buildGrid(def);
+        : this.isDive
+          ? buildDive()
+          : this.isCityHub
+            ? ONLINE_CITY.grid
+            : this.interior
+              ? buildSafehouse()
+              : this.isBridge
+                ? buildBridgeGrid(bridgeDef!)
+                : buildGrid(def);
     this.zoneGrid = grid;
     const dims = gridDims(grid);
     this.worldW = dims.worldW;
     this.worldH = dims.worldH;
     this.pvpZones = pvpZonesFor(this.worldW, this.worldH, this.zone);
-    const zoneAccent = this.isTutorial ? 0x29e7ff : this.isCityHub ? 0x39ff88 : this.isBridge ? bridgeDef!.accent : def.accent;
+    const zoneAccent = this.isTutorial
+      ? 0x29e7ff
+      : this.isDive
+        ? 0x9fe8ff // ICE — frozen-mind cyan
+        : this.isCityHub
+          ? 0x39ff88
+          : this.isBridge
+            ? bridgeDef!.accent
+            : def.accent;
     this.zoneAccent = zoneAccent;
     const terrainProfile: TerrainProfile = this.isTutorial
       ? "tutorial"
@@ -517,7 +539,7 @@ export default class OnlineScene extends Phaser.Scene {
         ? "city"
         : this.interior
           ? "interior"
-          : this.isSubway
+          : this.isSubway || this.isDive
             ? "subway"
             : this.isBridge
               ? "wilderness"
@@ -536,7 +558,7 @@ export default class OnlineScene extends Phaser.Scene {
             }
           : undefined,
       buildings:
-        !this.isCityHub && !this.interior && !this.isSubway && !this.isTutorial && !this.isBridge ? def.layout.buildings : undefined,
+        !this.isCityHub && !this.interior && !this.isSubway && !this.isDive && !this.isTutorial && !this.isBridge ? def.layout.buildings : undefined,
       lightweight: this.isCityHub,
     });
     if (this.isCityHub) {
@@ -546,7 +568,7 @@ export default class OnlineScene extends Phaser.Scene {
     }
     if (this.isBridge) {
       scatterWildernessProps(this, grid, zoneAccent, 4, bridgeDef!.layout.biome);
-    } else if (this.isCityHub || (!this.interior && !this.isSubway && !this.isTutorial)) {
+    } else if (this.isCityHub || (!this.interior && !this.isSubway && !this.isDive && !this.isTutorial)) {
       scatterWorldProps(this, grid, 4, this.isCityHub ? 0.012 : 0.018);
     }
     if (this.isCityHub) {
@@ -558,7 +580,7 @@ export default class OnlineScene extends Phaser.Scene {
         worldW: this.worldW,
         worldH: this.worldH,
       });
-    } else if (!this.interior && !this.isSubway && !this.isTutorial) {
+    } else if (!this.interior && !this.isSubway && !this.isDive && !this.isTutorial) {
       this.atmosphere = new Atmosphere(this, {
         weather: def.weather,
         accent: zoneAccent,
@@ -595,7 +617,7 @@ export default class OnlineScene extends Phaser.Scene {
     installUiCamera(this, 1);
     this.applyNeon();
     fadeInScene(this, zoneAccent);
-    if (!this.interior && !this.isSubway && !this.isTutorial && !this.isCityHub) this.drawPvpZones();
+    if (!this.interior && !this.isSubway && !this.isDive && !this.isTutorial && !this.isCityHub) this.drawPvpZones();
     if (this.isTutorial) this.buildTutorialZone();
     if (this.interior) {
       if (this.isCityHub) {
@@ -652,6 +674,26 @@ export default class OnlineScene extends Phaser.Scene {
       }
     } else if (this.isBridge && bridgeDef) {
       this.buildBridgeZone(bridgeDef);
+    } else if (this.isDive) {
+      // ICE VAULT — the instanced dive: guardians + the fragment core come from the
+      // server; the client dresses the vault and points at the core chamber.
+      this.add
+        .text(this.worldW / 2, 4 * TILE, `▼ ICE VAULT — ${DISTRICTS[this.districtIndex].name}`, {
+          fontFamily: "Courier New, monospace",
+          fontSize: "20px",
+          color: "#9fe8ff",
+          fontStyle: "bold",
+        })
+        .setOrigin(0.5)
+        .setDepth(6);
+      this.add
+        .text(this.worldW / 2, 4 * TILE + 26, "break the guardians · channel the core · free the memory · H to surface", {
+          fontFamily: "Courier New, monospace",
+          fontSize: "11px",
+          color: "#9aa3b2",
+        })
+        .setOrigin(0.5)
+        .setDepth(6);
     } else if (this.isSubway) {
       // THE UNDERLINE — a combat dungeon: just a title; enemies + boss come from the server.
       this.add
@@ -694,6 +736,19 @@ export default class OnlineScene extends Phaser.Scene {
       const back = DISTRICT_TRANSIT_BACK.find((t) => t.district === this.districtIndex);
       if (back && !isWall(grid[edges.west[1]]?.[edges.west[0]])) {
         this.makeTransitNpc(back.dest, back.label, edges.west, back.color, back.look);
+      }
+      // ICE SHAFT — the way down into this district's instanced dive (fragment core).
+      // First walkable candidate near the spawn plaza wins.
+      const shaftSpots: [number, number][] = [
+        [sx * S + 4, sy * S - 5],
+        [sx * S - 4, sy * S - 5],
+        [sx * S + 8, sy * S + 3],
+        [sx * S, sy * S + 8],
+      ];
+      for (const tile of shaftSpots) {
+        if (isWall(grid[tile[1]]?.[tile[0]])) continue;
+        this.makeDoor({ dest: `v${this.districtIndex}`, label: "▼ ICE SHAFT", tile, color: 0x9fe8ff });
+        break;
       }
     }
     // floating dialogue bubble + proximity prompt (used in any zone that has NPCs)
@@ -820,6 +875,15 @@ export default class OnlineScene extends Phaser.Scene {
     };
     this.cosmetics = new OnlineCosmetics(this);
     this.cosmetics.onAction = (action, id) => this.net.cosmeticAction(action, id);
+    this.net.onFragment = (_id, isNew) => {
+      // the vault cracks — a beat of white-out + the story panel carries the memory
+      juiceFlash(this, 300, 159, 232, 255);
+      juiceZoomPunch(this, 0.05, 220);
+      juiceShake(this, 180, 0.004);
+      this.synth?.levelUp();
+      if (isNew) this.pops?.popHeal(this.me.x, this.me.y - 28, "MEMORY RECOVERED");
+      if (this.questLog.open) this.refreshQuestLog();
+    };
     this.net.onCosmetics = () => {
       if (this.cosmetics.open) this.cosmetics.setState(this.net.cosmeticsOwned, this.net.cosmeticEquipped, this.net.credits);
       this.applyLocalCosmetic(); // retint your own avatar to match the equipped transmog
@@ -1168,7 +1232,7 @@ export default class OnlineScene extends Phaser.Scene {
           this.showBubble(this.me.x, this.me.y, "Finish the drill — or SKIP — then use the portal.");
           return;
         }
-        const indoors = this.interior || this.isSubway;
+        const indoors = this.interior || this.isSubway || this.isDive;
         const dest = indoors ? this.fromZone : "safe";
         const from = indoors ? undefined : this.zone;
         this.travelOrganic(dest, from ? { from } : undefined);
@@ -1238,6 +1302,7 @@ export default class OnlineScene extends Phaser.Scene {
     if (this.isTutorial) return "DRILL YARD";
     if (this.isCityHub) return "METRO CITY";
     if (this.isSubway) return "THE UNDERLINE";
+    if (this.isDive) return `ICE VAULT ${this.zone.toUpperCase()}`;
     if (this.interior && INTERIOR_TITLES[this.zone]) return INTERIOR_TITLES[this.zone]!;
     if (this.isBridge) return getBridge(this.bridgeIndex).name;
     if (/^d\d+$/.test(this.zone)) return DISTRICTS[this.districtIndex]?.name?.toUpperCase() ?? this.zone.toUpperCase();
@@ -1779,7 +1844,7 @@ export default class OnlineScene extends Phaser.Scene {
     if (dest === "safe") return null;
 
     const destMatch = dest.match(/^d(\d+)$/);
-    if (destMatch && !this.interior && !this.isCityHub && !this.isSubway) {
+    if (destMatch && !this.interior && !this.isCityHub && !this.isSubway && !this.isDive) {
       const destDi = parseInt(destMatch[1], 10);
       if (this.isBridge) {
         const b = getBridge(this.bridgeIndex);
@@ -2237,7 +2302,7 @@ export default class OnlineScene extends Phaser.Scene {
     this.syncRsChrome();
 
     // PvP arena state — warn on enter/exit; the SERVER enforces the actual damage.
-    const inPvp = this.net.connected && !this.interior && !this.isSubway && inPvpZone(this.net.pred.x, this.net.pred.y, this.pvpZones);
+    const inPvp = this.net.connected && !this.interior && !this.isSubway && !this.isDive && inPvpZone(this.net.pred.x, this.net.pred.y, this.pvpZones);
     this.pvpHud.update({
       inZone: inPvp,
       inArena: this.net.pvpInArena,
@@ -3015,6 +3080,7 @@ export default class OnlineScene extends Phaser.Scene {
       campaignObjective: this.net.campaignObjective,
       contracts: this.net.contracts,
       bounty: this.net.bounty,
+      fragments: this.net.fragments,
     };
     if (toggle) this.questLog.toggle(state);
     else this.questLog.setState(state);

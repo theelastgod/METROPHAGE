@@ -371,6 +371,43 @@ export function buildSubway(): TileGrid {
 export const SUBWAY_SPAWN = { x: 4 * TILE + TILE / 2, y: 7 * TILE + TILE / 2 };
 
 /**
+ * ICE VAULT — the instanced dive dungeon (one per district, zones v0–v6). A frozen-mind
+ * storage vault: entry hall → split guard chambers → antechamber → the core chamber
+ * where a memory fragment is channelled free (the fragment core reuses the territory-
+ * node channel mechanic). Shared by client render and server sim.
+ */
+export const DIVE_ZONE_IDS = ["v0", "v1", "v2", "v3", "v4", "v5", "v6"] as const;
+/** v0–v6 → district index, or -1 when the zone isn't a dive. */
+export function parseDiveZone(zone: string | null | undefined): number {
+  if (!zone || zone[0] !== "v") return -1;
+  const n = Number(zone.slice(1));
+  return Number.isInteger(n) && n >= 0 && n < DIVE_ZONE_IDS.length ? n : -1;
+}
+
+export function buildDive(): TileGrid {
+  const g: TileGrid = [];
+  for (let y = 0; y < GRID_H; y++) {
+    const row: number[] = [];
+    for (let x = 0; x < GRID_W; x++) row.push(TILE_INNER_WALL);
+    g.push(row);
+  }
+  const room = (x0: number, y0: number, x1: number, y1: number) => {
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) g[y][x] = TILE_INNER_FLOOR;
+  };
+  room(2, 12, 8, 18); // entry hall (spawn + surface exit)
+  room(8, 14, 20, 16); // west corridor
+  room(11, 6, 19, 11); // north guard chamber
+  room(11, 19, 19, 24); // south guard chamber
+  room(14, 11, 16, 19); // connector between chambers, crossing the corridor
+  room(20, 13, 25, 17); // antechamber
+  room(25, 9, 37, 21); // core chamber
+  return g;
+}
+export const DIVE_SPAWN = { x: 4 * TILE + TILE / 2, y: 15 * TILE + TILE / 2 };
+/** The fragment core sits deep in the core chamber. */
+export const DIVE_CORE_TILE: [number, number] = [33, 15];
+
+/**
  * THE DRILL YARD — linear training facility with distinct west→east chambers.
  * Shared by client render and server sim (zone "tutorial").
  */

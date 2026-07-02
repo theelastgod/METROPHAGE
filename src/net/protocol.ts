@@ -197,6 +197,7 @@ export type ServerMsg =
       faction: number;
       look?: PlayerLook;
       lookLocked?: boolean;
+      fragments?: string[]; // memory fragments this player has recovered (dive rewards)
     }
   | {
       t: "state";
@@ -227,6 +228,8 @@ export type ServerMsg =
       objective: string;
       done: boolean;
     }
+  // a memory fragment recovered at an ICE-dive core (new=false when already held)
+  | { t: "fragment"; id: string; title: string; lines: string[]; isNew: boolean }
   | { t: "inv"; items: Item[] } // the owning client's full inventory (login + on change)
   | { t: "equipped"; items: Item[]; maxHp: number } // owning client's equipped gear + derived max HP
   | { t: "achv"; ids: string[] } // full unlocked achievement set (sent on login)
