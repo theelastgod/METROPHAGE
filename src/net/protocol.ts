@@ -230,6 +230,8 @@ export type ServerMsg =
     }
   // a memory fragment recovered at an ICE-dive core (new=false when already held)
   | { t: "fragment"; id: string; title: string; lines: string[]; isNew: boolean }
+  // dynamic world event phase change in this district (telegraph -> active -> end)
+  | { t: "event"; id: string; name: string; tagline: string; hex: string; phase: "telegraph" | "active" | "end"; seconds: number }
   | { t: "inv"; items: Item[] } // the owning client's full inventory (login + on change)
   | { t: "equipped"; items: Item[]; maxHp: number } // owning client's equipped gear + derived max HP
   | { t: "achv"; ids: string[] } // full unlocked achievement set (sent on login)

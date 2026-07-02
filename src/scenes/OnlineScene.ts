@@ -326,6 +326,7 @@ export default class OnlineScene extends Phaser.Scene {
   private questArrow!: Phaser.GameObjects.Text; // screen-edge pointer toward the campaign objective
   private questMarker!: Phaser.GameObjects.Text; // world-space marker above the objective when on-screen
   private questTarget: { x: number; y: number; label: string } | null = null;
+  private eventBanner!: Phaser.GameObjects.Text; // live world-event banner (telegraph/active + countdown)
   private shotSprites = new Map<number, Phaser.GameObjects.Image>();
   private pickupSprites = new Map<number, Phaser.GameObjects.Image>();
   private nodeSprites = new Map<number, Phaser.GameObjects.Sprite>();
@@ -928,6 +929,23 @@ export default class OnlineScene extends Phaser.Scene {
       .setDepth(20)
       .setVisible(false);
     this.questMarker.setShadow(0, 0, "#02030a", 5, true, true);
+    // world-event banner — slots under the boss banner, colored by the event
+    this.eventBanner = this.add
+      .text(VIEW_W / 2, uiDim(72), "", hudFont(11, { fontStyle: "bold", align: "center" }))
+      .setOrigin(0.5, 0)
+      .setScrollFactor(0)
+      .setDepth(1002)
+      .setVisible(false);
+    this.eventBanner.setShadow(0, 0, "#02030a", 4, true, true);
+    this.net.onWorldEvent = (phase, name) => {
+      if (phase === "active") {
+        juiceFlash(this, 200, 255, 255, 255);
+        juiceShake(this, 160, 0.004);
+        this.rsGameMessage?.show(`⚠ ${name} — NOW`, { ttlMs: 2600, color: this.net.worldEvent?.hex ?? "#f7ff3c" });
+      } else if (phase === "end") {
+        this.rsGameMessage?.show("event weathered — payout issued", { ttlMs: 2600, color: "#39ff88" });
+      }
+    };
     this.connectStartedAt = Date.now(); // wall clock — robust to frame-rate throttling
     void this.signInThenConnect();
 
@@ -2164,6 +2182,7 @@ export default class OnlineScene extends Phaser.Scene {
     this.atmosphere?.update(this.time.now, dt, Math.min(1, this.net.enemies.size / 16));
     this.updateBossLocator();
     this.updateQuestWaypoint();
+    this.updateEventBanner();
     if (this.shop.open) this.shop.setCredits(this.net.credits);
     if (this.forge.open) this.forge.setWallet(this.net.credits, this.net.cores);
     if (this.market.open) this.market.refreshBalances(this.net.credits, this.net.metro);
@@ -2837,6 +2856,25 @@ export default class OnlineScene extends Phaser.Scene {
     const cy = VIEW_H / 2;
     const d = Math.min((cx - uiDim(56)) / (Math.abs(Math.cos(ang)) || 1e-6), (cy - uiDim(104)) / (Math.abs(Math.sin(ang)) || 1e-6));
     this.questArrow.setVisible(true).setPosition(cx + Math.cos(ang) * d, cy + Math.sin(ang) * d).setRotation(ang);
+  }
+
+  /** World-event banner — warning countdown while telegraphing, name + time left while
+   *  active; rides just below the boss banner and pulses in the event's colour. */
+  private updateEventBanner() {
+    const ev = this.net.worldEvent;
+    if (!ev) {
+      this.eventBanner.setVisible(false);
+      return;
+    }
+    const secs = Math.max(0, Math.ceil((ev.untilAt - performance.now()) / 1000));
+    const pulse = ev.phase === "telegraph" && Math.floor(this.time.now / 300) % 2 === 0;
+    this.eventBanner
+      .setVisible(true)
+      .setY(this.trackerBottomY + uiGap("xl"))
+      .setColor(pulse ? "#ffffff" : ev.hex)
+      .setText(
+        ev.phase === "telegraph" ? `⚠ ${ev.name} in ${secs}s — ${ev.tagline}` : `◆ ${ev.name} — ${ev.tagline} · ${secs}s`,
+      );
   }
 
   private maybeEnemyBark(x: number, y: number, kind: number) {

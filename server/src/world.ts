@@ -197,6 +197,8 @@ export const parseZone = (z: string | null): number => {
  *  own DO, reuses the safehouse room grid, and runs no enemies/boss/territory/PvP. Shared with
  *  the Worker router so these zone names pass through instead of collapsing to a district. */
 import { getFragment, DIVE_DEFAULT_FRAGMENTS } from "../../src/game/fragments";
+import { WORLD_EVENTS, type WorldEventDef } from "../../src/game/worldEvents";
+import { WORLD_EVENT } from "../../src/config";
 
 export const INTERIOR_ZONES = new Set(["safe", "clinic", "bar", "den", "shop"]);
 /** All named (non-district) zones the Worker routes by name — interiors + subway + wilderness bridges. */
@@ -482,6 +484,10 @@ export class WorldDO {
   private bridgeIndex = -1;
   private diveIndex = -1; // ≥0 when this DO runs an ICE VAULT dive instance (v0–v6)
   private zoneReady = false;
+  // dynamic world events (combat districts only): telegraph -> active -> reward
+  private worldEvent: { def: WorldEventDef; phase: "telegraph" | "active"; untilTick: number } | null = null;
+  private nextEventTick = -1;
+  private lastStormTick = 0;
   private interior = false; // the safehouse zone — no enemies, no PvP
   private msgRate = new Map<WebSocket, { tick: number; n: number }>(); // per-socket flood guard
 
@@ -2249,6 +2255,113 @@ export class WorldDO {
     this.campaignEvent(p, "secure");
   }
 
+  /** True while a given world event is in its active window. */
+  private eventActive(id: string): boolean {
+    return this.worldEvent?.phase === "active" && this.worldEvent.def.id === id;
+  }
+
+  private broadcastEvent(def: WorldEventDef, phase: "telegraph" | "active" | "end", seconds: number) {
+    this.broadcast({ t: "event", id: def.id, name: def.name, tagline: def.tagline, hex: def.hex, phase, seconds });
+  }
+
+  /** Dynamic world events — SERVER-authoritative version of the old SP scheduler:
+   *  combat districts only; idle -> telegraph -> active (real sim effects) -> payout.
+   *  Effects: neon_storm rains dodgeable AoE strikes; purge_wave deploys an HSS wave;
+   *  contagion_outbreak doubles node channelling; blackout blinds the HSS (aggro cut —
+   *  the window to move ground). Everyone alive in the district at the end is paid. */
+  private stepWorldEvent() {
+    const district = this.diveIndex < 0 && !this.interior && this.bridgeIndex < 0 && !this.inTutorial();
+    if (!district) return;
+    if (this.nextEventTick < 0) this.nextEventTick = this.tick + ticks(WORLD_EVENT.firstDelayMs);
+
+    if (!this.worldEvent) {
+      if (this.tick < this.nextEventTick || this.players.size === 0) return;
+      const heat = Math.min(1, this.enemies.size / 14);
+      const pool = WORLD_EVENTS.filter((e) => heat >= e.minHeatNorm);
+      if (pool.length === 0) return;
+      let acc = Math.random() * pool.reduce((a, e) => a + e.weight, 0);
+      let def = pool[0];
+      for (const e of pool) {
+        acc -= e.weight;
+        if (acc <= 0) {
+          def = e;
+          break;
+        }
+      }
+      this.worldEvent = { def, phase: "telegraph", untilTick: this.tick + ticks(def.telegraphMs) };
+      this.broadcastEvent(def, "telegraph", Math.ceil(def.telegraphMs / 1000));
+      return;
+    }
+
+    const ev = this.worldEvent;
+    if (this.tick >= ev.untilTick) {
+      if (ev.phase === "telegraph") {
+        ev.phase = "active";
+        ev.untilTick = this.tick + ticks(ev.def.durationMs);
+        this.broadcastEvent(ev.def, "active", Math.ceil(ev.def.durationMs / 1000));
+        if (ev.def.id === "purge_wave") this.spawnEventWave();
+      } else {
+        // payout — everyone alive in the district rides the event out together
+        for (const p of this.players.values()) {
+          if (p.dead) continue;
+          p.xp += ev.def.reward.xp;
+          p.level = levelForXp(p.xp);
+          p.credits += ev.def.reward.currency;
+          p.dirty = true;
+          this.sendTo(p.id, { t: "sys", text: `◈ ${ev.def.name} weathered — +${ev.def.reward.xp} XP  ₵${ev.def.reward.currency}` });
+        }
+        this.broadcastEvent(ev.def, "end", 0);
+        this.worldEvent = null;
+        this.nextEventTick =
+          this.tick + ticks(WORLD_EVENT.intervalMinMs + Math.random() * (WORLD_EVENT.intervalMaxMs - WORLD_EVENT.intervalMinMs));
+      }
+      return;
+    }
+
+    // active-phase sim effects
+    if (ev.phase === "active" && ev.def.id === "neon_storm") {
+      if ((this.tick - this.lastStormTick) * NET_TICK_MS >= 900) {
+        this.lastStormTick = this.tick;
+        const victims = [...this.players.values()].filter((p) => !p.dead);
+        if (victims.length) {
+          const v = victims[Math.floor(Math.random() * victims.length)];
+          const ang = Math.random() * Math.PI * 2;
+          const r = 40 + Math.random() * 140;
+          this.hazards.push({
+            id: this.nextHazardId++,
+            x: v.x + Math.cos(ang) * r,
+            y: v.y + Math.sin(ang) * r,
+            r: 70,
+            castTick: this.tick,
+            detonateTick: this.tick + ticks(900),
+            dmg: 12,
+          });
+        }
+      }
+    }
+  }
+
+  /** REPO PURGE WAVE — an immediate HSS deployment around each live player. */
+  private spawnEventWave() {
+    const kinds = [0, 2, 3, 4];
+    let spawned = 0;
+    for (const p of this.players.values()) {
+      if (p.dead || spawned >= 10) continue;
+      for (let i = 0; i < 3 && spawned < 10; i++) {
+        const ang = Math.random() * Math.PI * 2;
+        const rad = 260 + Math.random() * 160;
+        const x = p.x + Math.cos(ang) * rad;
+        const y = p.y + Math.sin(ang) * rad;
+        if (tileIsWall(x, y, this.grid)) continue;
+        const kind = kinds[Math.floor(Math.random() * kinds.length)];
+        const id = this.nextEnemyId++;
+        const hp = ENEMY_ARCHES[kind].hp;
+        this.enemies.set(id, { id, x, y, ox: x, oy: y, hp, maxHp: hp, respawnTick: 0, lastFireTick: 0, kind });
+        spawned++;
+      }
+    }
+  }
+
   /** The dive core cracked — hand the player the memory it was freezing. Campaign dive
    *  stages surface their authored fragment; free dives surface the district's memory.
    *  Claim-once per player (rewards only the first recovery), persisted to D1. */
@@ -3045,7 +3158,9 @@ export class WorldDO {
         }
         continue;
       }
-      const target = this.nearestLivePlayer(e.x, e.y, ENEMY_AGGRO);
+      // BLACKOUT blinds the Human Security System — aggro radius collapses
+      const aggro = this.eventActive("blackout") ? ENEMY_AGGRO * 0.5 : ENEMY_AGGRO;
+      const target = this.nearestLivePlayer(e.x, e.y, aggro);
       if (!target) continue;
       const dx = target.x - e.x;
       const dy = target.y - e.y;
@@ -3197,6 +3312,9 @@ export class WorldDO {
     }
     this.shots = alive;
 
+    // 3a½) dynamic world events — district phenomena on a telegraphed cycle
+    this.stepWorldEvent();
+
     // 3b) boss hazards — telegraphed AoE detonates on its tick, hitting players still inside
     if (this.hazards.length) {
       const liveHz: Hazard[] = [];
@@ -3268,7 +3386,9 @@ export class WorldDO {
         node.progress = 1; // held
         if (!this.inTutorial() && !inDive) this.bumpMeta("f" + node.by, NODE_HOLD_SCORE_PER_SEC * dts);
       } else if (node.owner === NEUTRAL && node.by !== NEUTRAL) {
-        node.progress = Math.min(1, node.progress + NODE_CAPTURE_PER_SEC * dts);
+        // CONTAGION OUTBREAK doubles channelling — the window to flip a district
+        const chanMult = this.eventActive("contagion_outbreak") ? 2 : 1;
+        node.progress = Math.min(1, node.progress + NODE_CAPTURE_PER_SEC * chanMult * dts);
         if (node.progress >= 1) {
           node.owner = node.by;
           if (!this.inTutorial() && !inDive) this.bumpMeta("f" + node.by, FACTION_CAPTURE_SCORE);

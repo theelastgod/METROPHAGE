@@ -173,6 +173,9 @@ export default class NetClient {
   /** Memory fragments this player has recovered (dive rewards; welcome + live updates). */
   fragments: string[] = [];
   onFragment?: (id: string, isNew: boolean) => void;
+  /** The district's live world event (null when idle). */
+  worldEvent: { id: string; name: string; tagline: string; hex: string; phase: "telegraph" | "active"; untilAt: number } | null = null;
+  onWorldEvent?: (phase: "telegraph" | "active" | "end", name: string) => void;
   /** connecting | connected | reconnecting | offline */
   onConnectionState?: (state: "connecting" | "connected" | "reconnecting" | "offline") => void;
 
@@ -494,6 +497,12 @@ export default class NetClient {
         at: performance.now(),
       };
       this.onFragment?.(msg.id, msg.isNew);
+    } else if (msg.t === "event") {
+      this.worldEvent =
+        msg.phase === "end"
+          ? null
+          : { id: msg.id, name: msg.name, tagline: msg.tagline, hex: msg.hex, phase: msg.phase, untilAt: performance.now() + msg.seconds * 1000 };
+      this.onWorldEvent?.(msg.phase, msg.name);
     } else if (msg.t === "inv") {
       this.inventory = msg.items;
       this.onInventory?.();

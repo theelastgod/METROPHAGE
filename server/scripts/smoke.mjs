@@ -216,7 +216,9 @@ async function combat() {
   let seq = 0;
   const t0 = Date.now();
   // Chase the nearest cop and shoot it; the SERVER resolves every hit + payout.
-  while (Date.now() - t0 < 7000) {
+  // Loot is a 55% roll per kill — keep fighting until a drop lands (or 20s), so the
+  // assertion tests the system rather than one coin flip.
+  while (Date.now() - t0 < 20000 && !(sawPickup && maxXp > 0)) {
     const e = nearest();
     if (e) {
       const dx = e.x - store.x;
@@ -2327,6 +2329,53 @@ async function dive() {
   );
 }
 
+async function worldevent() {
+  // Dynamic world events: a runner idles in a district; within firstDelay+interval a
+  // weighted event must telegraph, run its active window (real sim effects), and pay
+  // out everyone still alive. The bot orbits to dodge neon-storm strikes.
+  const name = "we" + String(Date.now() % 1_000_000);
+  const D1 = WS_URL + (WS_URL.includes("?") ? "&" : "?") + "zone=d1";
+  const ws = await connect(D1);
+  const w = await login(ws, name, 0);
+  const store = { x: w.x, y: w.y, credits: 0, hp: 100, dead: false, enemies: [], nodes: [] };
+  trackState(ws, w.id, store);
+  const phases = [];
+  const sys = [];
+  ws.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "event") phases.push({ phase: m.phase, id: m.id, seconds: m.seconds });
+    if (m.t === "sys") sys.push(m.text);
+  });
+  await sleep(600);
+  const startCredits = store.credits;
+
+  // orbit gently for up to 75s or until the event resolves
+  let seq = 0;
+  const t0 = Date.now();
+  while (Date.now() - t0 < 75000 && !phases.some((p) => p.phase === "end")) {
+    const a = (Date.now() - t0) / 900;
+    seq++;
+    ws.send(JSON.stringify({ t: "input", seq, mx: Math.cos(a), my: Math.sin(a) }));
+    await sleep(60);
+  }
+  await sleep(500);
+
+  const sawTelegraph = phases.some((p) => p.phase === "telegraph");
+  const sawActive = phases.some((p) => p.phase === "active");
+  const sawEnd = phases.some((p) => p.phase === "end");
+  const paidOut = store.dead || sys.some((s) => /weathered/.test(s));
+  ws.close();
+  await sleep(300);
+
+  const checks = { sawTelegraph, sawActive, sawEnd, paidOut };
+  report(
+    "EVENT — world events: telegraph -> active -> end + payout in a live district",
+    { name, phases, credits: { start: startCredits, end: store.credits }, died: store.dead },
+    Object.values(checks).every(Boolean),
+    checks,
+  );
+}
+
 async function look() {
   // A logs in with a distinctive look; B (nearby, same spawn → within AOI) must
   // receive A's appearance in its state snapshot so it can render A's customization.
@@ -2415,6 +2464,7 @@ try {
   else if (mode === "load") await load();
   else if (mode === "metro") await metro();
   else if (mode === "dive") await dive();
+  else if (mode === "event") await worldevent();
   else if (mode === "look") await look();
   else if (mode === "bot") await bot();
   else await move();
