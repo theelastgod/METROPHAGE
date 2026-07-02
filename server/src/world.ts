@@ -807,6 +807,36 @@ export class WorldDO {
       const id = this.nextEnemyId++;
       this.enemies.set(id, { id, x, y, ox: x, oy: y, hp, maxHp: hp, respawnTick: 0, lastFireTick: 0, kind });
     }
+    // mid+ vaults post an ICE WARDEN at the core chamber's mouth — the climax fight
+    // before the channel. The deepest vault (the Kernel's) posts THE CUSTODIAN,
+    // keeper of Helios' oldest cage.
+    if (depth >= 2) {
+      const finale = depth === DIVE_ZONE_IDS.length - 1;
+      const bx = 27 * TILE + TILE / 2;
+      const by = 15 * TILE + TILE / 2;
+      const hp = Math.round((finale ? 1100 : BOSS_ROSTER[depth % BOSS_ROSTER.length].hp) * (0.8 + depth * 0.1));
+      const bid = this.nextEnemyId++;
+      this.enemies.set(bid, {
+        id: bid,
+        x: bx,
+        y: by,
+        ox: bx,
+        oy: by,
+        hp,
+        maxHp: hp,
+        respawnTick: 0,
+        lastFireTick: 0,
+        kind: BOSS_KIND,
+        boss: true,
+        name: finale ? "THE CUSTODIAN" : `ICE WARDEN ${DIVE_ZONE_IDS[depth].toUpperCase()}`,
+        tint: finale ? 0xffe08a : 0x9fe8ff,
+        baseMaxHp: hp,
+        phaseIdx: 0,
+        engagedTick: 0,
+        lastAoeTick: 0,
+        enraged: false,
+      });
+    }
     // the fragment core — reuses the node channel mechanic (capture = recovery)
     this.nodes = [
       {
@@ -2362,15 +2392,21 @@ export class WorldDO {
     }
   }
 
-  /** The dive core cracked — hand the player the memory it was freezing. Campaign dive
-   *  stages surface their authored fragment; free dives surface the district's memory.
-   *  Claim-once per player (rewards only the first recovery), persisted to D1. */
-  private async recoverFragment(p: PlayerState) {
+  /** Which memory THIS player would pull from this vault: the authored fragment of an
+   *  active dive stage, else the district's default memory. */
+  private diveFragmentIdFor(p: PlayerState): string {
     const stage = p.campaign.currentStage;
-    const fid =
-      (stage?.on.type === "dive" && stage.fragmentId) ||
-      DIVE_DEFAULT_FRAGMENTS[this.diveIndex] ||
-      DIVE_DEFAULT_FRAGMENTS[0];
+    return (
+      (stage?.on.type === "dive" && stage.fragmentId) || DIVE_DEFAULT_FRAGMENTS[this.diveIndex] || DIVE_DEFAULT_FRAGMENTS[0]
+    );
+  }
+
+  /** The dive core cracked — hand the player the memory it was freezing. Claim-once per
+   *  player (the vault cache, XP/credits, and dive stat ride the FIRST recovery),
+   *  persisted to D1. Called both on the capture transition and for late divers who
+   *  reach an already-cracked core (a freed mind stays freed, but it's new to THEM). */
+  private async recoverFragment(p: PlayerState) {
+    const fid = this.diveFragmentIdFor(p);
     const def = getFragment(fid);
     if (!def) return;
     const isNew = !p.fragments.includes(fid);
@@ -2380,6 +2416,14 @@ export class WorldDO {
       p.xp += 60;
       p.level = levelForXp(p.xp);
       p.dirty = true;
+      this.bumpStat(p, "dives", 1);
+      // the vault's cache — a guaranteed roll whose rarity floor rises with depth
+      if (p.inventory.length < INVENTORY_CAP) {
+        const cache = rollItem(Math.max(1, p.level), Math.min(0.85, 0.35 + this.diveIndex * 0.07));
+        p.inventory.push(cache);
+        this.sendTo(p.id, { t: "inv", items: p.inventory });
+        this.sendTo(p.id, { t: "sys", text: `◈ vault cache cracked — ${cache.name}` });
+      }
     }
     this.sendTo(p.id, { t: "fragment", id: fid, title: def.title, lines: def.lines, isNew });
     this.sendTo(p.id, {
@@ -3385,6 +3429,17 @@ export class WorldDO {
       if (node.by !== NEUTRAL && node.by === node.owner) {
         node.progress = 1; // held
         if (!this.inTutorial() && !inDive) this.bumpMeta("f" + node.by, NODE_HOLD_SCORE_PER_SEC * dts);
+        // late divers at an already-cracked core still get THEIR recovery + dive beat
+        // (claim-once per player, so this fires exactly once for each of them)
+        if (inDive) {
+          for (const pl of this.players.values()) {
+            if (pl.dead || dist2(pl.x, pl.y, node.x, node.y) > CR2) continue;
+            if (!pl.fragments.includes(this.diveFragmentIdFor(pl))) {
+              this.campaignCapture(pl);
+              void this.recoverFragment(pl);
+            }
+          }
+        }
       } else if (node.owner === NEUTRAL && node.by !== NEUTRAL) {
         // CONTAGION OUTBREAK doubles channelling — the window to flip a district
         const chanMult = this.eventActive("contagion_outbreak") ? 2 : 1;
@@ -3398,8 +3453,7 @@ export class WorldDO {
               if (this.inTutorial()) this.tutorialEvent(pl, "capture");
               else if (inDive) {
                 this.campaignCapture(pl); // the dive beat itself
-                void this.recoverFragment(pl); // the memory the vault was holding
-                this.bumpStat(pl, "dives", 1);
+                void this.recoverFragment(pl); // memory + cache + stat (claim-once inside)
               } else {
                 this.campaignCapture(pl);
                 this.campaignSecureCheck(pl);

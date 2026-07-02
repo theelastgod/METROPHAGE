@@ -1,5 +1,17 @@
-// METROPHAGE Step-1 smoke test — proves the authoritative loop + persistence with
-// Node's built-in WebSocket client (no deps). Two phases, orchestrated by the shell:
+// METROPHAGE smoke suite — proves the authoritative loop + persistence with Node's
+// built-in WebSocket client (no deps). One mode per run: node smoke.mjs <mode>.
+//
+// BATTERY-ORDERING CONSTRAINTS (when running many modes back-to-back):
+//   * `metro` asserts the cash-out pool starts EMPTY — run it BEFORE `market`
+//     (market seeds $METRO via deposits) or re-clear metro_deposits/withdrawals.
+//   * district bots (combat/daily/quest) now share districts with LIVE world events;
+//     a purge wave or neon storm can kill an idle bot — those modes are robust
+//     standalone but can flake mid-battery. Re-run standalone before treating a
+//     battery failure as a regression.
+//   * `dive` and `quest` may hit an already-cracked v0 core from a prior run — the
+//     late-diver path (claim-once per player) makes both pass regardless.
+//
+// Original two-phase persistence check:
 //   node smoke.mjs move   -> log in, move under server validation, record final pos
 //   node smoke.mjs check  -> (after a server restart) log in, assert pos persisted
 //

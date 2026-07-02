@@ -327,6 +327,8 @@ export default class OnlineScene extends Phaser.Scene {
   private questMarker!: Phaser.GameObjects.Text; // world-space marker above the objective when on-screen
   private questTarget: { x: number; y: number; label: string } | null = null;
   private eventBanner!: Phaser.GameObjects.Text; // live world-event banner (telegraph/active + countdown)
+  private eventOverlay!: Phaser.GameObjects.Rectangle; // full-screen ambience wash per event
+  private eventOverlayAlpha = 0; // eased toward the active event's target each frame
   private shotSprites = new Map<number, Phaser.GameObjects.Image>();
   private pickupSprites = new Map<number, Phaser.GameObjects.Image>();
   private nodeSprites = new Map<number, Phaser.GameObjects.Sprite>();
@@ -952,6 +954,14 @@ export default class OnlineScene extends Phaser.Scene {
       .setDepth(1002)
       .setVisible(false);
     this.eventBanner.setShadow(0, 0, "#02030a", 4, true, true);
+    // full-screen ambience wash — each event owns the district's light while it runs
+    // (below the HUD chrome at depth 999+, above the world; UI camera, so no post-FX)
+    this.eventOverlay = this.add
+      .rectangle(0, 0, this.scale.width, this.scale.height, 0x000000, 1)
+      .setOrigin(0)
+      .setScrollFactor(0)
+      .setDepth(990)
+      .setAlpha(0);
     this.net.onWorldEvent = (phase, name) => {
       if (phase === "active") {
         juiceFlash(this, 200, 255, 255, 255);
@@ -2879,6 +2889,7 @@ export default class OnlineScene extends Phaser.Scene {
     const ev = this.net.worldEvent;
     if (!ev) {
       this.eventBanner.setVisible(false);
+      this.updateEventAmbience(null);
       return;
     }
     const secs = Math.max(0, Math.ceil((ev.untilAt - performance.now()) / 1000));
@@ -2890,6 +2901,39 @@ export default class OnlineScene extends Phaser.Scene {
       .setText(
         ev.phase === "telegraph" ? `⚠ ${ev.name} in ${secs}s — ${ev.tagline}` : `◆ ${ev.name} — ${ev.tagline} · ${secs}s`,
       );
+    this.updateEventAmbience(ev.phase === "active" ? ev.id : null);
+  }
+
+  /** Each active event owns the district's light: BLACKOUT drops it to near-dark,
+   *  the storm strobes violet (suppressed by reduce-flashing), contagion breathes
+   *  green, the purge burns a red alert. Eases in/out so transitions feel physical. */
+  private updateEventAmbience(active: string | null) {
+    let target = 0;
+    let color = 0x000000;
+    const t = this.time.now;
+    switch (active) {
+      case "blackout":
+        color = 0x01030a;
+        target = 0.52;
+        break;
+      case "neon_storm": {
+        color = 0x8a5cff;
+        const flicker = getSettings().reduceFlashing ? 0 : Math.random() < 0.04 ? 0.22 : 0;
+        target = 0.1 + Math.sin(t / 350) * 0.02 + flicker;
+        break;
+      }
+      case "contagion_outbreak":
+        color = 0x39ff88;
+        target = 0.09 + Math.sin(t / 600) * 0.03;
+        break;
+      case "purge_wave":
+        color = 0xff3b6b;
+        target = 0.1 + Math.sin(t / 260) * 0.025;
+        break;
+    }
+    this.eventOverlayAlpha += (target - this.eventOverlayAlpha) * 0.08;
+    if (this.eventOverlayAlpha < 0.005 && target === 0) this.eventOverlayAlpha = 0;
+    this.eventOverlay.setFillStyle(color, 1).setAlpha(this.eventOverlayAlpha);
   }
 
   private maybeEnemyBark(x: number, y: number, kind: number) {
