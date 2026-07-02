@@ -321,6 +321,9 @@ export default class OnlineScene extends Phaser.Scene {
   private bossOverlays = new Map<number, { name: Phaser.GameObjects.Text; bar: Phaser.GameObjects.Graphics }>();
   private bossBanner!: Phaser.GameObjects.Text; // zone boss status (alive / reform countdown)
   private bossArrow!: Phaser.GameObjects.Text; // screen-edge pointer toward an off-screen boss
+  private questArrow!: Phaser.GameObjects.Text; // screen-edge pointer toward the campaign objective
+  private questMarker!: Phaser.GameObjects.Text; // world-space marker above the objective when on-screen
+  private questTarget: { x: number; y: number; label: string } | null = null;
   private shotSprites = new Map<number, Phaser.GameObjects.Image>();
   private pickupSprites = new Map<number, Phaser.GameObjects.Image>();
   private nodeSprites = new Map<number, Phaser.GameObjects.Sprite>();
@@ -845,6 +848,22 @@ export default class OnlineScene extends Phaser.Scene {
       .setDepth(1002)
       .setVisible(false);
     this.bossArrow.setShadow(0, 0, "#02030a", 6, true, true);
+    // Quest waypoint — same locator pattern as the boss arrow, tinted campaign-violet:
+    // an edge arrow while the objective is off-screen, a bobbing marker above it when
+    // visible. Target resolved at HUD refresh (resolveQuestTarget), tracked per frame.
+    this.questArrow = this.add
+      .text(0, 0, "➤", { fontFamily: "Arial, sans-serif", fontSize: uiFont(20), color: "#b06bff", fontStyle: "bold" })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(1002)
+      .setVisible(false);
+    this.questArrow.setShadow(0, 0, "#02030a", 6, true, true);
+    this.questMarker = this.add
+      .text(0, 0, "", hudFont(10, { color: "#b06bff", fontStyle: "bold", align: "center" }))
+      .setOrigin(0.5, 1)
+      .setDepth(20)
+      .setVisible(false);
+    this.questMarker.setShadow(0, 0, "#02030a", 5, true, true);
     this.connectStartedAt = Date.now(); // wall clock — robust to frame-rate throttling
     void this.signInThenConnect();
 
@@ -1361,7 +1380,7 @@ export default class OnlineScene extends Phaser.Scene {
     this.add
       .text(this.worldW / 2, 2 * TILE + 22, "walk east · talk to each instructor · complete the lesson · portal at the end", {
         fontFamily: mono,
-        fontSize: "9px",
+        fontSize: "10px",
         color: "#6b7184",
       })
       .setOrigin(0.5)
@@ -1378,7 +1397,7 @@ export default class OnlineScene extends Phaser.Scene {
         .setOrigin(0.5)
         .setDepth(6);
       this.add
-        .text(lx, ly + 14, ch.subtitle, { fontFamily: mono, fontSize: "8px", color: "#6b7184" })
+        .text(lx, ly + 14, ch.subtitle, { fontFamily: mono, fontSize: "10px", color: "#6b7184" })
         .setOrigin(0.5)
         .setDepth(6);
     }
@@ -1463,7 +1482,7 @@ export default class OnlineScene extends Phaser.Scene {
       .setDepth(6)
       .setShadow(0, 0, "#" + (b.accent & 0xffffff).toString(16).padStart(6, "0"), 6, true, true);
     this.add
-      .text(this.worldW / 2, 3 * TILE + 22, `${b.subtitle} · fight through · H to surface`, { fontFamily: mono, fontSize: "9px", color: "#9aa3b2" })
+      .text(this.worldW / 2, 3 * TILE + 22, `${b.subtitle} · fight through · H to surface`, { fontFamily: mono, fontSize: "10px", color: "#9aa3b2" })
       .setOrigin(0.5)
       .setDepth(6);
 
@@ -1514,11 +1533,11 @@ export default class OnlineScene extends Phaser.Scene {
     };
     spr.on("pointerdown", () => this.talkInstructor(npc));
     this.add
-      .text(pos.x, pos.y - 30, inst.name, { fontFamily: "Courier New, monospace", fontSize: "9px", color: "#eafdff", fontStyle: "bold" })
+      .text(pos.x, pos.y - 30, inst.name, { fontFamily: "Courier New, monospace", fontSize: "10px", color: "#eafdff", fontStyle: "bold" })
       .setOrigin(0.5)
       .setDepth(9);
     this.add
-      .text(pos.x, pos.y + 22, `▸ ${inst.tag}`, { fontFamily: "Courier New, monospace", fontSize: "8px", color: hex })
+      .text(pos.x, pos.y + 22, `▸ ${inst.tag}`, { fontFamily: "Courier New, monospace", fontSize: "10px", color: hex })
       .setOrigin(0.5)
       .setDepth(9);
     this.npcs.push(npc);
@@ -1571,7 +1590,7 @@ export default class OnlineScene extends Phaser.Scene {
     spr.on("pointerdown", () => this.talkNpc(npc));
     const givesBounty = npcId && bountyForNpc(npcId);
     this.add
-      .text(px, py - 26, givesBounty ? `${name} ◈` : name, { fontFamily: "Courier New, monospace", fontSize: "9px", color: givesBounty ? "#f7ff3c" : "#9aa3b2" })
+      .text(px, py - 26, givesBounty ? `${name} ◈` : name, { fontFamily: "Courier New, monospace", fontSize: "10px", color: givesBounty ? "#f7ff3c" : "#9aa3b2" })
       .setOrigin(0.5)
       .setDepth(9);
     this.npcs.push(npc);
@@ -1612,11 +1631,11 @@ export default class OnlineScene extends Phaser.Scene {
     const spr = this.add.sprite(px, py, key, 0).setTint(0xffffff).setDepth(9).setInteractive({ useHandCursor: true });
     spr.on("pointerdown", () => this.enterZone(dest));
     this.add
-      .text(px, py - 40, "TRANSIT", { fontFamily: "Courier New, monospace", fontSize: "9px", color: "#cfe8ff", fontStyle: "bold" })
+      .text(px, py - 40, "TRANSIT", { fontFamily: "Courier New, monospace", fontSize: "10px", color: "#cfe8ff", fontStyle: "bold" })
       .setOrigin(0.5)
       .setDepth(9);
     this.add
-      .text(px, py + 22, label, { fontFamily: "Courier New, monospace", fontSize: "9px", color: "#" + (color & 0xffffff).toString(16).padStart(6, "0"), fontStyle: "bold" })
+      .text(px, py + 22, label, { fontFamily: "Courier New, monospace", fontSize: "10px", color: "#" + (color & 0xffffff).toString(16).padStart(6, "0"), fontStyle: "bold" })
       .setOrigin(0.5)
       .setDepth(9);
     this.npcs.push({ kind: "transit", dest, name: label, label, color, x: px, y: py });
@@ -2079,6 +2098,7 @@ export default class OnlineScene extends Phaser.Scene {
     }
     this.atmosphere?.update(this.time.now, dt, Math.min(1, this.net.enemies.size / 16));
     this.updateBossLocator();
+    this.updateQuestWaypoint();
     if (this.shop.open) this.shop.setCredits(this.net.credits);
     if (this.forge.open) this.forge.setWallet(this.net.credits, this.net.cores);
     if (this.market.open) this.market.refreshBalances(this.net.credits, this.net.metro);
@@ -2110,7 +2130,7 @@ export default class OnlineScene extends Phaser.Scene {
         this.remoteLabels.set(
           id,
           this.add
-            .text(r.x, r.y - 22, id, { fontFamily: "Courier New, monospace", fontSize: "9px", color: "#ff79c6" })
+            .text(r.x, r.y - 22, id, { fontFamily: "Courier New, monospace", fontSize: "10px", color: "#ff79c6" })
             .setOrigin(0.5)
             .setDepth(9),
         );
@@ -2206,6 +2226,10 @@ export default class OnlineScene extends Phaser.Scene {
         blips.push({ x: e.x, y: e.y, color: e.boss ? 0xf7ff3c : 0xff5a6b, r: e.boss ? uiDim(3.2) : uiDim(2) });
       }
       for (const n of this.npcs) blips.push({ x: n.x, y: n.y, color: 0x00e5ff, r: uiDim(1.8) });
+      // other runners — party members pop gold so groups can regroup at a glance
+      for (const [id, r] of this.net.remotes) {
+        blips.push({ x: r.x, y: r.y, color: this.net.party.includes(id) ? 0xf7ff3c : 0xeafdff, r: uiDim(2.2) });
+      }
       const pos = this.playerPos();
       this.zoneMinimap.render({ x: pos.x, y: pos.y, color: this.color }, blips, this.clickMove.destination);
     }
@@ -2570,6 +2594,7 @@ export default class OnlineScene extends Phaser.Scene {
         flags: [],
       });
       this.questText.setText(campaignHud(camp));
+      this.questTarget = this.resolveQuestTarget(camp);
     }
     if (!this.isTutorial) {
       const active = this.net.contracts.find((c) => !c.done);
@@ -2611,6 +2636,10 @@ export default class OnlineScene extends Phaser.Scene {
     this.hpBarRect = showBar
       ? { x: px + pad, y: py + pad + this.hud.height + barGap, w: innerW, h: barH }
       : { x: 0, y: 0, w: 0, h: 0 };
+    // the tutorial lesson card is wide + centered — keep it clear of the status panel
+    if (this.isTutorial && this.tutorialPanel) {
+      this.tutorialPanel.setY(Math.max(uiDim(76), py + innerH + pad * 2 + uiGap("sm")));
+    }
 
     // top-center objective tracker: stack visible rows, one shared frame behind them
     const cx = this.scale.width / 2;
@@ -2693,6 +2722,56 @@ export default class OnlineScene extends Phaser.Scene {
     const cy = VIEW_H / 2;
     const t = Math.min((cx - uiDim(56)) / (Math.abs(Math.cos(ang)) || 1e-6), (cy - uiDim(72)) / (Math.abs(Math.sin(ang)) || 1e-6));
     this.bossArrow.setVisible(true).setPosition(cx + Math.cos(ang) * t, cy + Math.sin(ang) * t).setRotation(ang);
+  }
+
+  /** Where the current campaign beat physically happens, for the waypoint. Talk beats
+   *  live at THE FIXER's stall; combat/territory/dive beats start at the deploy gate.
+   *  Hub-only: districts are the objective themselves once you're inside one. */
+  private resolveQuestTarget(camp: Campaign): { x: number; y: number; label: string } | null {
+    if (!this.isCityHub) return null;
+    const toWorld = (tile: [number, number]) => ({ x: tile[0] * TILE + TILE / 2, y: tile[1] * TILE + TILE / 2 });
+    const fixerTarget = () => {
+      const fixer = CITY_HUB_NPCS.find((n) => n.svc === "contracts");
+      return fixer ? { ...toWorld(fixer.tile), label: "THE FIXER" } : null;
+    };
+    const stage = camp.currentStage;
+    // No active quest: the next beat is accepting one from THE FIXER — the moment a
+    // brand-new player is most lost, so point straight at him (unless the arc is done).
+    if (!stage) return camp.done ? null : fixerTarget();
+    if (stage.on.type === "talk") return fixerTarget();
+    const gate = CITY_HUB_DOORS.find((d) => d.dest === "d0");
+    if (!gate) return null;
+    return { ...toWorld(gate.tile), label: "DEPLOY GATE" };
+  }
+
+  /** Campaign objective locator — bobbing marker when the target is on-screen, a
+   *  violet screen-edge arrow when it isn't (same math as the boss locator). */
+  private updateQuestWaypoint() {
+    const t = this.questTarget;
+    if (!t || !this.me) {
+      this.questArrow.setVisible(false);
+      this.questMarker.setVisible(false);
+      return;
+    }
+    const dx = t.x - this.me.x;
+    const dy = t.y - this.me.y;
+    const zoom = this.cameras.main.zoom || 1;
+    const near = Math.hypot(dx, dy) < 90; // at the target — the interact prompt takes over
+    const onScreen = Math.abs(dx) < VIEW_W / 2 / zoom - uiDim(36) && Math.abs(dy) < VIEW_H / 2 / zoom - uiDim(36);
+    if (onScreen) {
+      this.questArrow.setVisible(false);
+      this.questMarker
+        .setVisible(!near)
+        .setText(`◆ ${t.label}\n▼`)
+        .setPosition(t.x, t.y - 34 + Math.sin(this.time.now / 260) * 3);
+      return;
+    }
+    this.questMarker.setVisible(false);
+    const ang = Math.atan2(dy, dx);
+    const cx = VIEW_W / 2;
+    const cy = VIEW_H / 2;
+    const d = Math.min((cx - uiDim(56)) / (Math.abs(Math.cos(ang)) || 1e-6), (cy - uiDim(104)) / (Math.abs(Math.sin(ang)) || 1e-6));
+    this.questArrow.setVisible(true).setPosition(cx + Math.cos(ang) * d, cy + Math.sin(ang) * d).setRotation(ang);
   }
 
   private maybeEnemyBark(x: number, y: number, kind: number) {

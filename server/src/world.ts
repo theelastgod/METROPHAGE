@@ -503,29 +503,23 @@ export class WorldDO {
 
   /** Spread logins across plazas/parks so 500+ runners don't stack on one tile. */
   private spreadSpawn(base: { x: number; y: number }, id: string): { x: number; y: number } {
+    // Fan players out in a TIGHT ring around the hub spawn — enough that a crowd
+    // doesn't stack on one tile, close enough that everyone stays inside one AOI
+    // (1040px) and new runners land looking at each other + THE FIXER's plaza.
+    // (Scattering across the city's far-flung plazas made arrivals feel single-player:
+    // fresh players spawned out of AOI range of one another.)
     let h = 0;
     for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-    const plazas = ONLINE_CITY.plazas;
-    const anchor =
-      plazas.length > 0
-        ? (() => {
-            const p = plazas[h % plazas.length];
-            return {
-              x: ((p.x1 + p.x2) / 2) * TILE + TILE / 2,
-              y: ((p.y1 + p.y2) / 2) * TILE + TILE / 2,
-            };
-          })()
-        : base;
     const slot = (h ^ (this.sessions.size * 131)) % 512;
     const baseAngle = (slot / 512) * Math.PI * 2;
-    for (let ring = 0; ring < 72; ring++) {
+    for (let ring = 0; ring < 48; ring++) {
       const angle = baseAngle + ring * 0.42;
-      const rad = 72 + ring * 52;
-      const x = anchor.x + Math.cos(angle) * rad;
-      const y = anchor.y + Math.sin(angle) * rad;
+      const rad = 56 + ring * 18; // 56..~900px — always within one AOI of the hub
+      const x = base.x + Math.cos(angle) * rad;
+      const y = base.y + Math.sin(angle) * rad;
       if (!tileIsWall(x, y, this.grid)) return { x: round2(x), y: round2(y) };
     }
-    return anchor;
+    return base;
   }
 
   /** A DO instance handles exactly one zone — bind it to its district on first hit. */

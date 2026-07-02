@@ -11,12 +11,12 @@ const short = (a: string) => (a.length > 10 ? `${a.slice(0, 4)}…${a.slice(-4)}
 
 const STYLE = `
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&family=Orbitron:wght@500;700;900&display=swap');
-#metro-fab{position:fixed;right:18px;bottom:18px;z-index:9999;font-family:'Orbitron',monospace;font-weight:700;
+#metro-fab{position:fixed;right:18px;bottom:150px;z-index:9999;font-family:'Orbitron',monospace;font-weight:700;
   background:linear-gradient(180deg,#120a24 0%,#07061a 100%);color:#ff2bd6;border:1px solid #ff2bd6;
   border-radius:6px;padding:10px 14px;cursor:pointer;letter-spacing:.14em;font-size:11px;text-transform:uppercase;
   box-shadow:0 0 16px rgba(255,43,214,.35),inset 0 0 12px rgba(255,43,214,.08);transition:box-shadow .2s,transform .15s}
 #metro-fab:hover{box-shadow:0 0 24px rgba(255,43,214,.55);transform:translateY(-1px)}
-#metro-panel{position:fixed;right:18px;bottom:64px;z-index:9999;width:320px;display:none;
+#metro-panel{position:fixed;right:18px;bottom:196px;z-index:9999;width:320px;display:none;
   font-family:'IBM Plex Mono',monospace;background:rgba(7,6,26,.97);color:#eafdff;
   border:2px solid #00e5ff;border-radius:4px;padding:0;overflow:hidden;
   box-shadow:0 0 32px rgba(0,229,255,.22),0 0 48px rgba(255,43,214,.12),inset 0 0 40px rgba(0,229,255,.04)}

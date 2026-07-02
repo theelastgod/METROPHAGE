@@ -123,6 +123,20 @@ export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
 
+    // CORS preflight — the browser client POSTs JSON (identity, metro bridge) from the
+    // game origin, which always preflights. Without this, every POST fails in-browser.
+    if (req.method === "OPTIONS") {
+      return new Response(null, {
+        status: 204,
+        headers: {
+          "access-control-allow-origin": "*",
+          "access-control-allow-methods": "GET, POST, OPTIONS",
+          "access-control-allow-headers": "content-type",
+          "access-control-max-age": "86400",
+        },
+      });
+    }
+
     if (url.pathname === "/health") {
       return new Response(JSON.stringify({ ok: true, ts: Date.now() }), {
         status: 200,

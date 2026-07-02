@@ -125,7 +125,8 @@ export function fmtMetro(n: number): string {
   const strip = (s: string) => s.replace(/\.?0+$/, "");
   if (n >= 1_000_000) return strip((n / 1_000_000).toFixed(2)) + "M";
   if (n >= 1_000) return strip((n / 1_000).toFixed(1)) + "k";
-  return String(Math.round(n));
+  // token amounts are money — never round them up/down silently (9.6 must not read "10")
+  return strip(n.toFixed(2));
 }
 
 // ── P2E bridge seam (dormant) ──────────────────────────────────────────────

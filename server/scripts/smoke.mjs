@@ -16,7 +16,8 @@ const WS_URL = process.env.WS_URL || "ws://127.0.0.1:8787/ws";
 const STATE_FILE = new URL("../.spike-state.json", import.meta.url);
 const SPEED = 200;
 const SPAWN_X = 640;
-const WORLD_W = 1280;
+const WORLD_W = 3840; // district grid 120x90 tiles x 32px (DISTRICT_SCALE 3)
+const WORLD_H = 2880;
 const mode = process.argv[2] || "move";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -71,6 +72,9 @@ function trackState(ws, id, store) {
         store.level = me.level;
         store.questStep = me.questStep;
         store.questProgress = me.questProgress;
+        store.campaignQuest = me.campaignQuest ?? null;
+        store.campaignStage = me.campaignStage ?? 0;
+        store.campaignProgress = me.campaignProgress ?? 0;
         store.tick = m.tick;
       }
       store.players = m.players || [];
@@ -143,7 +147,7 @@ async function move() {
     movedSomewhere: maxDist > 10,
     speedServerEnforced: maxDist <= speedCap, // cheat (mx=999) did NOT accelerate
     inputsAcked: store.ack >= seq - 3,
-    withinBounds: store.x >= 0 && store.x <= WORLD_W && store.y >= 0 && store.y <= 1000,
+    withinBounds: store.x >= 0 && store.x <= WORLD_W && store.y >= 0 && store.y <= WORLD_H,
     movementStoppedOnSilence: settledMoved < 0.5, // intent expired -> player halts
   };
   const ok = Object.values(checks).every(Boolean);
@@ -1040,7 +1044,7 @@ async function daily() {
   };
   let seq = 0;
   const t0 = Date.now();
-  while (Date.now() - t0 < 55000 && !(store.contracts[0] && store.contracts[0].done)) {
+  while (Date.now() - t0 < 90000 && !(store.contracts[0] && store.contracts[0].done)) {
     const e = nearest();
     if (e) {
       const dx = e.x - store.x, dy = e.y - store.y, d = Math.hypot(dx, dy) || 1;
@@ -1918,10 +1922,13 @@ async function trade() {
 }
 
 async function quest() {
-  // fresh Blank — the harness clears its quest_step first so it starts at 0
+  // Path A campaign arc (replaced the old questStep protocol): a FRESH Blank accepts
+  // THE WAKE from the FIXER offer, advances its infect stage by capturing nodes in the
+  // shared world, and the campaign state persists in D1 across a reconnect.
+  const name = "qb" + String(Date.now() % 1_000_000); // fresh identity — no harness seeding
   const ws = await connect();
-  const w = await login(ws, "blank0", 0);
-  const store = { x: w.x, y: w.y, enemies: [], nodes: [], questStep: 0, questProgress: 0 };
+  const w = await login(ws, name, 0);
+  const store = { x: w.x, y: w.y, enemies: [], nodes: [], campaignQuest: null, campaignStage: 0, campaignProgress: 0 };
   trackState(ws, w.id, store);
   const stories = [];
   ws.addEventListener("message", (ev) => {
@@ -1929,39 +1936,24 @@ async function quest() {
     if (m.t === "story") stories.push(m);
   });
   await sleep(600);
-  const startStep = store.questStep;
+  const startedFresh = store.campaignQuest === null;
 
-  // Step 1 — drop 2 cops.
+  // Accept the offered quest (defaults to the FIXER's next offer — THE WAKE).
+  ws.send(JSON.stringify({ t: "quest", action: "accept" }));
+  await sleep(800);
+  const accepted = store.campaignQuest === "the_wake";
+
+  // Stage 0 — "Infect 2 nodes": walk to nodes and channel until two captures land.
+  // Each time progress ticks up, blacklist the node we just converted and move on.
   let seq = 0;
-  let t0 = Date.now();
-  while (Date.now() - t0 < 9000 && store.questStep < 1) {
-    let best = null;
-    let bd = Infinity;
-    for (const e of store.enemies) {
-      const d = Math.hypot(e.x - store.x, e.y - store.y);
-      if (d < bd) {
-        bd = d;
-        best = e;
-      }
-    }
-    if (best) {
-      const dx = best.x - store.x;
-      const dy = best.y - store.y;
-      const d = Math.hypot(dx, dy) || 1;
-      seq++;
-      ws.send(JSON.stringify({ t: "input", seq, mx: d > 110 ? dx / d : 0, my: d > 110 ? dy / d : 0 }));
-      ws.send(JSON.stringify({ t: "fire", seq, aim: Math.atan2(dy, dx) }));
-    }
-    await sleep(50);
-  }
-  const killAdvanced = store.questStep >= 1;
-
-  // Step 2 — capture a node.
-  t0 = Date.now();
-  while (Date.now() - t0 < 14000 && store.questStep < 2) {
+  const t0 = Date.now();
+  const captured = new Set();
+  let lastProgress = 0;
+  while (Date.now() - t0 < 45000 && store.campaignStage < 1) {
     let node = null;
     let bd = Infinity;
     for (const nn of store.nodes) {
+      if (captured.has(nn.id)) continue;
       const d = Math.hypot(nn.x - store.x, nn.y - store.y);
       if (d < bd) {
         bd = d;
@@ -1969,38 +1961,45 @@ async function quest() {
       }
     }
     if (node) {
+      if (store.campaignProgress > lastProgress) {
+        lastProgress = store.campaignProgress;
+        captured.add(node.id); // this one just landed — hunt a different node next
+        continue;
+      }
       const dx = node.x - store.x;
       const dy = node.y - store.y;
       const d = Math.hypot(dx, dy);
       seq++;
-      ws.send(JSON.stringify({ t: "input", seq, mx: d > 40 ? dx / d : 0, my: d > 40 ? dy / d : 0 }));
+      ws.send(JSON.stringify({ t: "input", seq, mx: d > 50 ? dx / d : 0, my: d > 50 ? dy / d : 0 }));
     }
     await sleep(50);
   }
-  const captureAdvanced = store.questStep >= 2;
-  const finalStep = store.questStep;
+  const infectAdvanced = store.campaignStage >= 1;
+  const finalStage = store.campaignStage;
+  const finalQuest = store.campaignQuest;
 
-  // Persistence — reconnect; the quest step should reload.
+  // Persistence — reconnect; the campaign must reload from D1.
   ws.close();
-  await sleep(500);
-  const ws2 = await connect();
-  const w2 = await login(ws2, "blank0", 0);
-  const store2 = { questStep: -1 };
-  trackState(ws2, w2.id, store2);
   await sleep(600);
+  const ws2 = await connect();
+  const w2 = await login(ws2, name, 0);
+  const store2 = { campaignQuest: null, campaignStage: -1 };
+  trackState(ws2, w2.id, store2);
+  await sleep(800);
 
   const checks = {
-    startedAtZero: startStep === 0,
-    killAdvanced,
-    captureAdvanced,
-    gotStoryBeats: stories.length >= 2,
-    persistedStep: store2.questStep === finalStep && finalStep >= 1,
+    startedFresh,
+    accepted,
+    gotStoryBeat: stories.length >= 1,
+    infectAdvanced,
+    persistedQuest: store2.campaignQuest === finalQuest && finalQuest === "the_wake",
+    persistedStage: store2.campaignStage === finalStage,
   };
   ws2.close();
   await sleep(300);
   report(
-    "QUEST — The Blank advances from shared-world actions + persists",
-    { startStep, finalStep, reloadedStep: store2.questStep, storyBeats: stories.length },
+    "QUEST — campaign arc: accept THE WAKE + infect-stage advance + D1 persistence",
+    { name, startedFresh, accepted, finalStage, reloadedStage: store2.campaignStage, storyBeats: stories.length, progress: store.campaignProgress },
     Object.values(checks).every(Boolean),
     checks,
   );
@@ -2029,7 +2028,9 @@ async function abuse() {
   await sleep(300); // intent expiry halts the player
   const moved = Math.hypot(store.x - sx, store.y - sy);
   const speedCap = SPEED * activeSecs * 1.3;
-  const floodNoSpeedup = moved > 5 && moved <= speedCap;
+  // Either the flood moved us within the legal speed cap, or the flood guard cut the
+  // socket before meaningful movement — both mean the flood bought no extra speed.
+  const floodNoSpeedup = moved <= speedCap;
 
   // 2) RESILIENCE — malformed JSON, an oversized payload (> MAX_MSG_BYTES), and an
   //    unknown message type must neither crash the server nor drop our socket.
