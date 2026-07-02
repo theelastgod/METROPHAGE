@@ -42,7 +42,7 @@ import { applyMenuNeon } from "../render/ensureNeon";
 import { fadeInScene, transitionTo } from "../systems/transitions";
 import { asMenuUi, installMenuCameras, pinMenuUiLayer } from "../render/menuCameras";
 import { drawMenuBackdrop, drawPreviewPedestal, MenuAtmosphere, MENU_PAD, MENU_SECTION_GAP } from "../ui/menuChrome";
-import { panelPad, uiGap } from "../ui/spacing";
+import { uiGap } from "../ui/spacing";
 import { bodyFont, displayFont, uiFont } from "../ui/typography";
 import { drawPanelFrame } from "../ui/panelChrome";
 import { connectedWallet } from "../economy/wallet";
@@ -125,14 +125,15 @@ export default class CustomizeScene extends Phaser.Scene {
     const ph = VIEW_H - py - uiDim(104);
     const pg = asMenuUi(this.add.graphics().setDepth(8));
     drawPanelFrame(pg, this.previewX, py, this.previewW, ph);
+    // label chrome rides above the preview model (depth 12) so the sprite can't cover it
     const previewLabelY = py + uiDim(13);
-    const previewLabelG = asMenuUi(this.add.graphics().setDepth(10));
+    const previewLabelG = asMenuUi(this.add.graphics().setDepth(13));
     previewLabelG.fillStyle(0x04030c, 0.92).fillRect(this.previewX + uiDim(12), previewLabelY - uiDim(4), this.previewW - uiDim(24), uiDim(22));
     asMenuUi(
       this.add
         .text(this.previewX + this.previewW / 2, previewLabelY + uiDim(7), "RUNNER PREVIEW", displayFont(12, { color: "#9aa3b2", fontStyle: "bold" }))
         .setOrigin(0.5)
-        .setDepth(11),
+        .setDepth(14),
     );
     drawPreviewPedestal(this, this.previewX + this.previewW / 2, py + ph - uiDim(36), this.classDef.color, 10);
     this.preview = asMenuUi(this.add.container(0, 0).setDepth(12));
@@ -401,12 +402,6 @@ export default class CustomizeScene extends Phaser.Scene {
     const panelBg = asMenuUi(this.add.graphics().setDepth(8));
     panelBg.fillStyle(0x0b0716, 0.96).fillRect(this.panelX, this.listTop - uiGap("sm"), this.panelW, listH + uiGap("lg"));
     panelBg.lineStyle(uiDim(2), this.classDef.color, 0.5).strokeRect(this.panelX, this.listTop - uiGap("sm"), this.panelW, listH + uiGap("lg"));
-    asMenuUi(
-      this.add
-        .text(this.panelX + panelPad(), this.listTop - uiGap("xs"), "CUSTOMIZE", displayFont(12, { color: "#6b7184", fontStyle: "bold" }))
-        .setOrigin(0, 0)
-        .setDepth(9),
-    );
     this.add
       .zone(this.panelX, this.listTop, this.panelW, listH)
       .setOrigin(0)

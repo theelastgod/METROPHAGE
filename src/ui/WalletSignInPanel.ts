@@ -292,18 +292,17 @@ export default class WalletSignInPanel {
       this.drawScanlines(g, x + panelPad() + uiGap("xs"), contentY + uiGap("xs"), w - panelPad() * 2 - uiGap("sm"), contentH - uiGap("sm"));
     }
 
-    const headlineY = compact ? contentY + uiGap("md") : contentY + uiGap("md");
-    const bodyY = headlineY + (compact ? uiDim(40) : uiDim(48));
+    const headlineY = contentY + uiGap("md");
+    const bodyY = headlineY + uiDim(40);
     this.add(
       this.scene.add
         .text(x + panelPad() + uiGap("sm"), headlineY, state.headline, displayFont(compact ? 22 : 24, { color: "#eafdff", fontStyle: "bold", wordWrap: { width: w - panelPad() * 2 - uiGap("lg") } }))
         .setOrigin(0, 0),
     );
-    this.add(
-      this.scene.add
-        .text(x + panelPad() + uiGap("sm"), bodyY, state.body, bodyFont(14, { color: "#9aa3b2", wordWrap: { width: w - panelPad() * 2 - uiGap("lg") } }))
-        .setOrigin(0, 0),
-    );
+    const bodyText = this.scene.add
+      .text(x + panelPad() + uiGap("sm"), bodyY, state.body, bodyFont(14, { color: "#9aa3b2", wordWrap: { width: w - panelPad() * 2 - uiGap("lg") } }))
+      .setOrigin(0, 0);
+    this.add(bodyText);
 
     if (compact) {
       const tipY = bodyY + uiDim(72);
@@ -314,16 +313,19 @@ export default class WalletSignInPanel {
       );
     }
 
-    // security strip — sits just above the action block
+    // security strip — sits just above the action block; decorative, so it yields
+    // (hides) when the wrapped body copy runs long instead of overlapping it
     if (state.actions.length > 0) {
       const stripY = actionTop - uiDim(30);
-      g.fillStyle(0x0e1830, 0.5).fillRect(x + panelPad(), stripY, w - panelPad() * 2, uiDim(22));
-      g.lineStyle(1, COLORS.neonCyan, 0.25).lineBetween(x + panelPad(), stripY, x + w - panelPad(), stripY);
-      this.add(
-        this.scene.add
-          .text(x + w / 2, stripY + uiGap("sm"), "NO TX FEE  ·  READ-ONLY CONNECT  ·  ONE RUNNER PER WALLET", bodyFont(9, { color: "#4a5266" }))
-          .setOrigin(0.5, 0),
-      );
+      if (bodyText.y + bodyText.height + uiGap("sm") <= stripY) {
+        g.fillStyle(0x0e1830, 0.5).fillRect(x + panelPad(), stripY, w - panelPad() * 2, uiDim(22));
+        g.lineStyle(1, COLORS.neonCyan, 0.25).lineBetween(x + panelPad(), stripY, x + w - panelPad(), stripY);
+        this.add(
+          this.scene.add
+            .text(x + w / 2, stripY + uiGap("sm"), "NO TX FEE  ·  READ-ONLY CONNECT  ·  ONE RUNNER PER WALLET", bodyFont(9, { color: "#4a5266" }))
+            .setOrigin(0.5, 0),
+        );
+      }
     }
 
     // actions — anchored above footer

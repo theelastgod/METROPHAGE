@@ -47,7 +47,11 @@ export default class OptionsPanel {
     this.trackX = this.x + uiDim(180);
     this.trackW = this.w - uiDim(200);
     this.backdrop = dimBackdrop(scene, 1799);
-    this.backdrop.setInteractive();
+    // full-screen hit area — a Container needs an explicit shape to swallow clicks
+    this.backdrop.setInteractive(
+      new Phaser.Geom.Rectangle(0, 0, scene.scale.width, scene.scale.height),
+      Phaser.Geom.Rectangle.Contains,
+    );
     this.backdrop.on("pointerdown", () => {});
     this.g = scene.add.graphics().setScrollFactor(0).setDepth(1800);
     const D = 1801;
