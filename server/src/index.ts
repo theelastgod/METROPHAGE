@@ -1,5 +1,5 @@
 import { WorldDO, parseZone, NAMED_ZONES, type Env } from "./world";
-import { getAccount, quote, withdraw, deposit, simSettlement, type Settlement } from "./metro";
+import { getAccount, quote, withdraw, deposit, poolInfo, simSettlement, type Settlement } from "./metro";
 import { verifyWalletLogin } from "./auth";
 
 export { WorldDO };
@@ -83,6 +83,19 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
   try {
     if (url.pathname === "/metro/account" && req.method === "GET")
       return json(await getAccount(env.DB, url.searchParams.get("player") ?? ""));
+    if (url.pathname === "/metro/pool" && req.method === "GET") {
+      const info = await poolInfo(env.DB);
+      // players deposit by sending $METRO to the treasury, so publish its address
+      // (public key only — the secret never leaves the server) + which settlement runs
+      if (env.METRO_TREASURY_SECRET && env.METRO_DEVNET_MINT) {
+        const { treasuryPubkey } = await import("./solana");
+        info.treasury = treasuryPubkey(env.METRO_TREASURY_SECRET);
+        info.settlement = "solana";
+      } else {
+        info.settlement = "sim";
+      }
+      return json(info);
+    }
     if (url.pathname === "/metro/quote" && req.method === "GET")
       return json(quote(Number(url.searchParams.get("credits") ?? "0")));
     if (url.pathname === "/metro/withdraw" && req.method === "POST") {

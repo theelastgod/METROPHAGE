@@ -71,25 +71,28 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
   panel.innerHTML = `
     <div class="head">
       <h3>◈ $METRO BRIDGE <span class="x" id="m-x">✕</span></h3>
-      <div class="sub">premium economy · world market · crucible contests</div>
+      <div class="sub">₵ credits are earned in-game · ◈ $METRO is the tradeable token · this bridge converts between them</div>
     </div>
     <div class="body">
       <div class="row"><span class="muted">network</span><span class="pill">${st.cluster}${st.mainnetLive ? " · LIVE" : " · rehearsal"}</span></div>
+      <div class="row"><span class="muted">cash-out pool</span><span id="m-pool" class="metro-big">—</span></div>
+      <div class="row"><span class="muted">rates</span><span class="pill" id="m-rates">—</span></div>
+      <div class="strip" id="m-phase">loading pool status…</div>
+      <div class="sep"></div>
       <div class="row"><span class="muted">wallet</span><span id="m-wallet">—</span></div>
       <div class="row"><button id="m-connect">Connect Wallet</button><input id="m-addr" placeholder="or paste address" style="display:none"/></div>
-      <div class="sep"></div>
-      <div class="row"><span class="muted">token</span><span class="pill">1B fixed supply</span></div>
       <div class="row"><span class="muted">player</span><span id="m-player">—</span></div>
       <div class="row"><span class="muted">credits</span><span id="m-credits" class="big">—</span></div>
-      <div class="row"><span class="muted">in-game $METRO</span><span id="m-metro" class="metro-big">—</span></div>
-      <div class="row"><span class="muted">≈ credit value</span><span id="m-value">—</span></div>
+      <div class="row"><span class="muted">≈ cash-out value</span><span id="m-value">—</span></div>
       <div class="sep"></div>
-      <div class="row"><span class="muted">withdraw → $METRO</span></div>
-      <div class="row"><input id="m-amt" type="number" min="0" placeholder="credits to bridge out"/></div>
+      <div class="row"><span class="muted">deposit — send ◈ to the treasury, then claim it here</span></div>
+      <div class="row"><span class="muted">treasury</span><span id="m-treasury" class="pill" style="cursor:pointer" title="click to copy">—</span></div>
+      <div class="row"><input id="m-txsig" placeholder="paste your transfer's tx signature"/></div>
+      <div class="row"><input id="m-dep-amt" type="number" min="0" step="any" placeholder="$METRO sent" style="width:46%"/><button id="m-deposit">Claim Deposit</button></div>
+      <div class="sep"></div>
+      <div class="row"><span class="muted">withdraw — burn credits, receive ◈ from the pool</span></div>
+      <div class="row"><input id="m-amt" type="number" min="0" placeholder="credits to cash out" style="width:58%"/><button id="m-max" title="max you can cash out right now">MAX</button></div>
       <div class="row"><button id="m-withdraw" class="accent">Withdraw</button><button id="m-refresh">Refresh</button></div>
-      <div class="row"><span class="muted">deposit $METRO → credits</span><span class="pill">2c-2</span></div>
-      <div class="row"><button id="m-deposit" disabled title="needs the devnet mint (2c-2)">Deposit (soon)</button></div>
-      <div class="strip">world market · pvp buy-in · cross-zone trade</div>
       <div class="status" id="m-status"></div>
     </div>
   `;
@@ -107,7 +110,31 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
 
   const currentWallet = (): string => connectedWallet() ?? addrInput.value.trim();
 
+  // latest server truth, cached for the MAX button
+  let acct: { credits: number; dailyCapCredits: number; dailyUsedCredits: number; minWithdrawCredits: number } | null = null;
+  let pool: { poolMetro: number; phase: string; withdrawCreditsPerMetro: number; depositCreditsPerMetro: number; treasury?: string } | null =
+    null;
+
+  const refreshPool = async () => {
+    try {
+      const p = await fetch(`${metroApiBase()}/metro/pool`).then((x) => x.json());
+      if (!p.ok) return;
+      pool = p;
+      $("m-pool").textContent = `◈ ${fmtMetro(p.poolMetro)}`;
+      $("m-rates").textContent = `in: 1◈ → ${p.depositCreditsPerMetro}₵ · out: ${p.withdrawCreditsPerMetro}₵ → 1◈`;
+      $("m-phase").textContent =
+        p.phase === "bootstrap"
+          ? "LAUNCH PHASE — the cash-out pool is 100% player-funded and starts empty. Every ◈ deposited opens cash-outs for everyone. Earn ₵ now; withdraw as the pool fills."
+          : "POOL OPEN — withdrawals are paid from the player-funded pool, first come first served.";
+      $("m-treasury").textContent = p.treasury ? short(p.treasury) : "rehearsal — any tx signature is accepted";
+      if (p.treasury) $("m-treasury").dataset.full = p.treasury;
+    } catch {
+      /* pool row keeps its last value; account fetch reports reachability */
+    }
+  };
+
   const refresh = async () => {
+    void refreshPool();
     const player = getPlayerId();
     $("m-player").textContent = player ?? "— (log in online)";
     if (!player) {
@@ -118,12 +145,11 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
     try {
       const r = await fetch(`${metroApiBase()}/metro/account?player=${encodeURIComponent(player)}`).then((x) => x.json());
       if (r.ok) {
-        $("m-credits").textContent = String(r.credits);
-        $("m-metro").textContent = `◈ ${fmtMetro(r.metro ?? 0)}`;
-        $("m-value").textContent = `${fmtMetro(r.metroValue)} $METRO`;
+        acct = r;
+        $("m-credits").textContent = `₵ ${r.credits}`;
+        $("m-value").textContent = `◈ ${fmtMetro(r.metroValue)}`;
       } else {
         $("m-credits").textContent = "—";
-        $("m-metro").textContent = "—";
         status(r.reason ?? "account unavailable");
       }
     } catch {
@@ -158,6 +184,56 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
     } else status("connect cancelled / no wallet");
   };
 
+  // copy the treasury address on click — the deposit flow is "send ◈ there, claim here"
+  $("m-treasury").onclick = () => {
+    const full = $("m-treasury").dataset.full;
+    if (!full) return;
+    void navigator.clipboard?.writeText(full);
+    status("treasury address copied — send $METRO there, then paste the tx signature");
+  };
+
+  // MAX = what the server would actually allow right now: balance, daily headroom,
+  // and the live pool all cap it; below the floor there is no valid amount.
+  $("m-max").onclick = () => {
+    if (!acct || !pool) return status("refresh first");
+    const capLeft = Math.max(0, acct.dailyCapCredits - acct.dailyUsedCredits);
+    const poolCredits = Math.floor(pool.poolMetro * pool.withdrawCreditsPerMetro);
+    const max = Math.min(acct.credits, capLeft, poolCredits);
+    if (max < acct.minWithdrawCredits) {
+      status(
+        pool.poolMetro <= 0
+          ? "pool is empty — cash-outs open as players deposit"
+          : `max cash-out right now is under the ${acct.minWithdrawCredits}₵ floor`,
+      );
+      ($("m-amt") as HTMLInputElement).value = "";
+      return;
+    }
+    ($("m-amt") as HTMLInputElement).value = String(max);
+  };
+
+  $("m-deposit").onclick = async () => {
+    const player = getPlayerId();
+    const wallet = currentWallet();
+    const txSig = ($("m-txsig") as HTMLInputElement).value.trim();
+    const metro = Number(($("m-dep-amt") as HTMLInputElement).value);
+    if (!player) return status("log in online first");
+    if (!wallet) return status("connect or paste a wallet address");
+    if (!txSig) return status("paste the tx signature of your $METRO transfer");
+    if (!(metro > 0)) return status("enter how much $METRO you sent");
+    status("verifying deposit on-chain…");
+    try {
+      const r = await fetch(`${metroApiBase()}/metro/deposit`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ player, wallet, txSig, metro }),
+      }).then((x) => x.json());
+      status(r.ok ? `✓ deposited ◈ ${fmtMetro(r.metro)} → +${r.credits}₵ (pool grew for everyone)` : `✗ ${r.reason}`);
+      void refresh();
+    } catch {
+      status("deposit failed (server unreachable)");
+    }
+  };
+
   $("m-withdraw").onclick = async () => {
     const player = getPlayerId();
     const wallet = currentWallet();
@@ -172,7 +248,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ player, wallet, credits }),
       }).then((x) => x.json());
-      status(r.ok ? `✓ withdrew ${r.credits} credits → ${fmtMetro(r.metro)} $METRO` : `✗ ${r.reason}`);
+      status(r.ok ? `✓ cashed out ${r.credits}₵ → ◈ ${fmtMetro(r.metro)} sent to your wallet` : `✗ ${r.reason}`);
       void refresh();
     } catch {
       status("withdraw failed (server unreachable)");

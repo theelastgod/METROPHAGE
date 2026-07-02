@@ -2152,11 +2152,23 @@ async function metro() {
 
   const a0 = await get(`/metro/account?player=whale`);
   const start = a0.credits ?? 0;
-  const q = await get(`/metro/quote?credits=1000`);
 
-  // happy path: 1000 credits -> 10 $METRO (scarce token), credits debited atomically
+  // LAUNCH DAY (pump.fun, no dev seeding): the cash-out pool starts EMPTY, so a
+  // withdraw must be rejected even with plenty of credits — and fully refunded.
+  const p0 = await get(`/metro/pool`);
+  const wEmpty = await post(`/metro/withdraw`, { player: "whale", wallet: WALLET, credits: 1000 });
+  const aAfterEmpty = await get(`/metro/account?player=whale`);
+
+  // the first player deposit BOOTSTRAPS the pool: 20 $METRO -> 20*110 = 2200 credits
+  const txSig = "DEPOSIT_" + Date.now();
+  const d = await post(`/metro/deposit`, { player: "whale", wallet: WALLET, txSig, metro: 20 });
+  const p1 = await get(`/metro/pool`);
+
+  // withdrawing costs more than depositing pays (the spread): 1000 credits -> 8 $METRO
+  const q = await get(`/metro/quote?credits=1000`);
   const w = await post(`/metro/withdraw`, { player: "whale", wallet: WALLET, credits: 1000 });
   const a1 = await get(`/metro/account?player=whale`);
+  const p2 = await get(`/metro/pool`); // pool keeps the spread: 20 - 8 = 12
 
   // anti-abuse: immediate 2nd withdraw hits the cooldown; a bad wallet is rejected
   const wc = await post(`/metro/withdraw`, { player: "whale", wallet: WALLET, credits: 1000 });
@@ -2167,32 +2179,37 @@ async function metro() {
   const wi = await post(`/metro/withdraw`, { player: "pauper", wallet: WALLET, credits: 50000 });
   const wm = await post(`/metro/withdraw`, { player: "pauper", wallet: WALLET, credits: 100 });
 
-  // deposit: claim 5 $METRO -> +500 credits; the SAME tx can't be claimed twice
-  const txSig = "DEPOSIT_" + Date.now();
-  const d = await post(`/metro/deposit`, { player: "whale", wallet: WALLET, txSig, metro: 5 });
-  const dd = await post(`/metro/deposit`, { player: "whale", wallet: WALLET, txSig, metro: 5 });
+  // the SAME tx can't be claimed twice
+  const dd = await post(`/metro/deposit`, { player: "whale", wallet: WALLET, txSig, metro: 20 });
   const a2 = await get(`/metro/account?player=whale`);
 
   const checks = {
-    quoteCorrect: q.ok && q.metro === 10,
-    withdrawDebited: w.ok && w.metro === 10 && a1.credits === start - 1000,
+    poolStartsEmpty: p0.ok && p0.poolMetro === 0 && p0.phase === "bootstrap",
+    emptyPoolRejected: wEmpty.ok === false && /pool/.test(wEmpty.reason || ""),
+    emptyPoolRefunded: aAfterEmpty.credits === start,
+    depositCredited: d.ok && d.credits === 2200,
+    poolFilledByDeposit: p1.ok && p1.poolMetro === 20 && p1.phase === "open",
+    quoteUsesSpread: q.ok && q.metro === 8,
+    withdrawDebited: w.ok && w.metro === 8 && a1.credits === start + 2200 - 1000,
+    poolRetainsSpread: p2.ok && p2.poolMetro === 12,
     cooldownEnforced: wc.ok === false,
     badWalletRejected: wb.ok === false,
     insufficientRejected: wi.ok === false && /insufficient/.test(wi.reason || ""),
     belowMinRejected: wm.ok === false && /minimum/.test(wm.reason || ""),
-    depositCredited: d.ok && d.credits === 500 && a2.credits === start - 1000 + 500,
     depositClaimOnce: dd.ok === false,
+    accountReportsPool: a2.ok && a2.poolMetro === 12 && a2.phase === "open",
   };
   report(
-    "METRO — custodial bridge: atomic withdraw + caps/cooldown + claim-once deposit",
+    "METRO — player-funded bridge: empty-pool launch + rate spread + atomic pool reservation",
     {
       start,
-      afterWithdraw: a1.credits,
-      afterDeposit: a2.credits,
+      poolStart: p0.poolMetro,
+      poolAfterDeposit: p1.poolMetro,
+      poolAfterWithdraw: p2.poolMetro,
       withdrawMetro: w.metro,
       depositCredits: d.credits,
+      emptyPoolReason: wEmpty.reason,
       cooldownReason: wc.reason,
-      insufficientReason: wi.reason,
     },
     Object.values(checks).every(Boolean),
     checks,
