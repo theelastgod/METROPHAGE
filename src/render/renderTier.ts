@@ -16,3 +16,10 @@ export function applyRenderTier(): void {
   const { w, h } = TIER_RESOLUTION[effectiveGraphicsQuality()];
   setRenderResolution(w, h);
 }
+
+// Run at import time: several UI modules capture uiDim()-derived constants at module
+// scope (e.g. hotbar cell sizes, menu pads), and module bodies evaluate before any code
+// in main.ts. Importing this module first in main.ts guarantees the backing resolution
+// is final before those constants are computed — otherwise every non-high tier renders
+// its chrome at 2560×1440 sizes inside a smaller buffer.
+applyRenderTier();

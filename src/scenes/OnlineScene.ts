@@ -74,7 +74,8 @@ import { gridDims, pvpZonesFor, stepMove, NET_TICK_MS, type MoveState } from "..
 import PvpCrucibleHud from "../ui/PvpCrucibleHud";
 import { drawHubNpcPlate } from "../ui/studioChrome";
 import { displayFont, bodyFont, hudFont } from "../ui/typography";
-import { onlineHudStack, uiGap } from "../ui/spacing";
+import { onlineHudStack, uiGap, panelPadInner } from "../ui/spacing";
+import { drawHudPanel, drawPremiumBar } from "../ui/panelChrome";
 import ClickToMove from "../systems/ClickToMove";
 import ContextMenu from "../ui/ContextMenu";
 import TileCursor, { type TileCursorHint } from "../ui/TileCursor";
@@ -327,6 +328,8 @@ export default class OnlineScene extends Phaser.Scene {
   private hazardG!: Phaser.GameObjects.Graphics; // telegraphed boss AoE rings (raid mechanics)
   private faction = 0;
   private hud!: Phaser.GameObjects.Text;
+  private hudPanelG!: Phaser.GameObjects.Graphics; // backing frame behind the status stack
+  private hpBarRect = { x: 0, y: 0, w: 0, h: 0 }; // laid out with the status panel at refresh
   private hpBar!: Phaser.GameObjects.Graphics;
   private deadText!: Phaser.GameObjects.Text;
   private atmosphere?: Atmosphere; // rich ambient layer, shared with the SP city
@@ -353,6 +356,8 @@ export default class OnlineScene extends Phaser.Scene {
   private lastChatShown = 0;
   private rosterText!: Phaser.GameObjects.Text;
   private tradeText!: Phaser.GameObjects.Text;
+  private trackerG!: Phaser.GameObjects.Graphics; // backing frame behind the objective tracker
+  private trackerBottomY = 0; // where the boss banner may start
   private questText!: Phaser.GameObjects.Text;
   private dailyText!: Phaser.GameObjects.Text; // active daily contract — the immediate objective
   private bountyText!: Phaser.GameObjects.Text; // active authored NPC bounty
@@ -825,21 +830,16 @@ export default class OnlineScene extends Phaser.Scene {
     };
     this.inv.onMove = (from, to) => this.net.moveInv(from, to);
     // World-boss locator: a status banner + a screen-edge arrow toward an off-screen boss.
+    // The banner rides just below the objective tracker (y updated in updateBossLocator).
     this.bossBanner = this.add
-      .text(VIEW_W / 2, 46, "", {
-        fontFamily: "Courier New, monospace",
-        fontSize: "13px",
-        color: "#39ff88",
-        fontStyle: "bold",
-        align: "center",
-      })
+      .text(VIEW_W / 2, uiDim(48), "", hudFont(11, { color: "#39ff88", fontStyle: "bold", align: "center" }))
       .setOrigin(0.5, 0)
       .setScrollFactor(0)
       .setDepth(1002)
       .setVisible(false);
     this.bossBanner.setShadow(0, 0, "#02030a", 4, true, true);
     this.bossArrow = this.add
-      .text(0, 0, "➤", { fontFamily: "Arial, sans-serif", fontSize: "30px", color: "#39ff88", fontStyle: "bold" })
+      .text(0, 0, "➤", { fontFamily: "Arial, sans-serif", fontSize: uiFont(24), color: "#39ff88", fontStyle: "bold" })
       .setOrigin(0.5)
       .setScrollFactor(0)
       .setDepth(1002)
@@ -861,8 +861,9 @@ export default class OnlineScene extends Phaser.Scene {
     this.input.keyboard?.once("keydown", () => this.synth?.ensureStarted());
 
     const hudStack = onlineHudStack(this.scale.height);
+    this.hudPanelG = this.add.graphics().setScrollFactor(0).setDepth(999);
     this.hud = this.add
-      .text(uiDim(16), uiDim(16), "connecting…", hudFont(11, { color: "#39ff88", lineSpacing: uiGap("xs") }))
+      .text(uiDim(12) + panelPadInner(), uiDim(12) + panelPadInner(), "connecting…", hudFont(11, { color: "#39ff88", lineSpacing: uiGap("xs") }))
       .setScrollFactor(0)
       .setDepth(1000);
     if (getSettings().highContrast) this.hud.setStroke("#02030a", uiDim(3));
@@ -881,12 +882,7 @@ export default class OnlineScene extends Phaser.Scene {
 
     this.hpBar = this.add.graphics().setScrollFactor(0).setDepth(1000);
     this.deadText = this.add
-      .text(this.scale.width / 2, this.scale.height / 2, "", {
-        fontFamily: "Courier New, monospace",
-        fontSize: "20px",
-        color: "#ff3b6b",
-        fontStyle: "bold",
-      })
+      .text(this.scale.width / 2, this.scale.height / 2, "", hudFont(22, { color: "#ff3b6b", fontStyle: "bold" }))
       .setOrigin(0.5)
       .setScrollFactor(0)
       .setDepth(1001)
@@ -935,79 +931,62 @@ export default class OnlineScene extends Phaser.Scene {
       this.time.delayedCall(650, () => this.walkToZoneFromMap(mapChain));
     }
 
-    // area chat panel (bottom-left) — everyone in this zone sees the same feed
+    // area chat panel (bottom-left) — everyone in this zone sees the same feed.
+    // Sized in scaled units so the frame matches its uiFont interior, and stacked
+    // directly above the hotbar row so nothing collides.
+    const chatH = uiDim(176);
     this.chatPanel = new OnlineChatPanel(
       this,
-      12,
-      onlineHudStack(this.scale.height).hotbarY - uiDim(172),
-      400,
-      156,
+      uiDim(12),
+      onlineHudStack(this.scale.height).hotbarY - uiGap("sm") - chatH,
+      uiDim(380),
+      chatH,
       1000,
     );
     this.chatPanel.setArea(this.chatAreaLabel());
+    // online roster — right edge, tucked under the area map
     this.rosterText = this.add
-      .text(this.scale.width - 12, 98, "", {
-        fontFamily: "Courier New, monospace",
-        fontSize: "10px",
-        color: "#9aa3b2",
-        align: "right",
-      })
+      .text(this.scale.width - uiDim(14), uiDim(244), "", hudFont(9, { color: "#9aa3b2", align: "right" }))
       .setOrigin(1, 0)
       .setScrollFactor(0)
       .setDepth(1000);
     this.tradeText = this.add
-      .text(this.scale.width / 2, this.scale.height / 2 - 70, "", {
-        fontFamily: "Courier New, monospace",
-        fontSize: "13px",
+      .text(this.scale.width / 2, this.scale.height / 2 - uiDim(70), "", hudFont(12, {
         color: "#f7ff3c",
         align: "center",
         backgroundColor: "#0b0716cc",
-        padding: { x: 14, y: 10 },
-      })
+        padding: { x: uiDim(14), y: uiDim(10) },
+      }))
       .setOrigin(0.5, 0)
       .setScrollFactor(0)
       .setDepth(1005)
       .setVisible(false);
+    // objective tracker — quest / contract / bounty stacked top-center on one frame,
+    // laid out in refreshHudPanels() as rows appear and disappear
+    this.trackerG = this.add.graphics().setScrollFactor(0).setDepth(999);
     this.questText = this.add
-      .text(this.scale.width / 2, 8, "", {
-        fontFamily: "Courier New, monospace",
-        fontSize: "12px",
-        color: "#b06bff",
-        align: "center",
-      })
+      .text(this.scale.width / 2, uiDim(12), "", hudFont(11, { color: "#b06bff", align: "center", fontStyle: "bold" }))
       .setOrigin(0.5, 0)
       .setScrollFactor(0)
       .setDepth(1000);
     this.dailyText = this.add
-      .text(this.scale.width / 2, 26, "", {
-        fontFamily: "Courier New, monospace",
-        fontSize: "11px",
-        color: "#39ff88",
-        align: "center",
-      })
+      .text(this.scale.width / 2, 0, "", hudFont(10, { color: "#39ff88", align: "center" }))
       .setOrigin(0.5, 0)
       .setScrollFactor(0)
       .setDepth(1000);
     this.bountyText = this.add
-      .text(this.scale.width / 2, 42, "", {
-        fontFamily: "Courier New, monospace",
-        fontSize: "11px",
-        color: "#f7ff3c",
-        align: "center",
-      })
+      .text(this.scale.width / 2, 0, "", hudFont(10, { color: "#f7ff3c", align: "center" }))
       .setOrigin(0.5, 0)
       .setScrollFactor(0)
       .setDepth(1000);
     this.storyPanel = this.add
-      .text(this.scale.width / 2, this.scale.height / 2 - 40, "", {
-        fontFamily: "Courier New, monospace",
-        fontSize: "13px",
+      .text(this.scale.width / 2, this.scale.height / 2 - uiDim(40), "", hudFont(12, {
         color: "#eafdff",
         align: "center",
         backgroundColor: "#0b0716ee",
-        padding: { x: 18, y: 14 },
-        wordWrap: { width: 540 },
-      })
+        padding: { x: uiDim(18), y: uiDim(14) },
+        wordWrap: { width: uiDim(540) },
+      }))
       .setOrigin(0.5)
       .setScrollFactor(0)
       .setDepth(1006)
@@ -2473,15 +2452,12 @@ export default class OnlineScene extends Phaser.Scene {
         this.nodeSprites.delete(id);
       }
 
-    // HP bar + death overlay
+    // HP bar + death overlay (bar sits inside the top-left status panel; rect laid out at refresh)
     this.hpBar.clear();
-    if (this.net.connected) {
-      const bw = 180;
-      const bx = 12;
-      const by = this.scale.height - 60;
-      this.hpBar.fillStyle(0x140a1e, 0.9).fillRect(bx, by, bw, 12);
+    if (this.net.connected && this.hpBarRect.w > 0) {
+      const { x, y, w, h } = this.hpBarRect;
       const hpN = Phaser.Math.Clamp(this.net.hp / PLAYER_HP, 0, 1);
-      this.hpBar.fillStyle(hpN > 0.3 ? COLORS.hp : COLORS.hpLow, 1).fillRect(bx + 1, by + 1, (bw - 2) * hpN, 10);
+      drawPremiumBar(this.hpBar, x, y, w, h, hpN, hpN > 0.3 ? COLORS.hp : COLORS.hpLow);
     }
     this.deadText.setVisible(this.net.dead).setText(t("combat.eliminated"));
 
@@ -2614,6 +2590,49 @@ export default class OnlineScene extends Phaser.Scene {
     } else {
       this.storyPanel.setVisible(false);
     }
+    this.layoutHudChrome();
+  }
+
+  /** Frame the status stack + objective tracker around their live text so nothing
+   *  overlaps as rows change — the single place HUD chrome geometry is decided. */
+  private layoutHudChrome() {
+    const pad = panelPadInner();
+    // top-left status panel: text block + the HP bar row beneath it
+    const px = uiDim(12);
+    const py = uiDim(12);
+    const barH = uiDim(10);
+    const barGap = uiGap("sm");
+    this.hud.setPosition(px + pad, py + pad);
+    const showBar = this.net.connected;
+    const innerW = Math.max(this.hud.width, uiDim(200));
+    const innerH = this.hud.height + (showBar ? barGap + barH : 0);
+    this.hudPanelG.clear();
+    drawHudPanel(this.hudPanelG, px, py, innerW + pad * 2, innerH + pad * 2, 0x1fbf6a);
+    this.hpBarRect = showBar
+      ? { x: px + pad, y: py + pad + this.hud.height + barGap, w: innerW, h: barH }
+      : { x: 0, y: 0, w: 0, h: 0 };
+
+    // top-center objective tracker: stack visible rows, one shared frame behind them
+    const cx = this.scale.width / 2;
+    const rows = [this.questText, this.dailyText, this.bountyText].filter(
+      (t) => t.visible && t.text.length > 0,
+    );
+    this.trackerG.clear();
+    if (rows.length === 0) {
+      this.trackerBottomY = uiDim(12);
+      return;
+    }
+    let y = uiDim(12) + pad;
+    let maxW = 0;
+    for (const row of rows) {
+      row.setPosition(cx, y);
+      y += row.height + uiGap("xs");
+      maxW = Math.max(maxW, row.width);
+    }
+    const frameW = maxW + pad * 2;
+    const frameH = y - uiGap("xs") + pad - uiDim(12);
+    drawHudPanel(this.trackerG, cx - frameW / 2, uiDim(12), frameW, frameH, 0xb06bff);
+    this.trackerBottomY = uiDim(12) + frameH;
   }
 
   /** Floating HSS deploy bark above a newly-seen online enemy (throttled), tinted to
@@ -2655,7 +2674,7 @@ export default class OnlineScene extends Phaser.Scene {
       this.bossArrow.setVisible(false);
       return;
     }
-    this.bossBanner.setVisible(true);
+    this.bossBanner.setVisible(true).setY(this.trackerBottomY + uiGap("xs"));
     if (!b.alive) {
       this.bossBanner.setText(`◆ ${b.name} — reforms in ${b.respawnSec}s`).setColor("#9aa3b2");
       this.bossArrow.setVisible(false);
@@ -2665,14 +2684,14 @@ export default class OnlineScene extends Phaser.Scene {
     const dy = b.y - this.me.y;
     this.bossBanner.setText(`◆ ${b.name} — ALIVE · ${Math.round(Math.hypot(dx, dy) / 8)}m`).setColor("#39ff88");
     const zoom = this.cameras.main.zoom || 1;
-    if (Math.abs(dx) < VIEW_W / 2 / zoom - 48 && Math.abs(dy) < VIEW_H / 2 / zoom - 48) {
+    if (Math.abs(dx) < VIEW_W / 2 / zoom - uiDim(36) && Math.abs(dy) < VIEW_H / 2 / zoom - uiDim(36)) {
       this.bossArrow.setVisible(false); // on-screen — the boss + its overlay are already visible
       return;
     }
     const ang = Math.atan2(dy, dx);
     const cx = VIEW_W / 2;
     const cy = VIEW_H / 2;
-    const t = Math.min((cx - 70) / (Math.abs(Math.cos(ang)) || 1e-6), (cy - 96) / (Math.abs(Math.sin(ang)) || 1e-6));
+    const t = Math.min((cx - uiDim(56)) / (Math.abs(Math.cos(ang)) || 1e-6), (cy - uiDim(72)) / (Math.abs(Math.sin(ang)) || 1e-6));
     this.bossArrow.setVisible(true).setPosition(cx + Math.cos(ang) * t, cy + Math.sin(ang) * t).setRotation(ang);
   }
 
@@ -2703,14 +2722,14 @@ export default class OnlineScene extends Phaser.Scene {
     const cx = this.scale.width / 2;
     const cy = this.scale.height / 2;
     const bg = this.add
-      .circle(cx, cy, 94, 0x0b0716, 0.62)
-      .setStrokeStyle(2, 0x29e7ff, 0.5)
+      .circle(cx, cy, uiDim(94), 0x0b0716, 0.62)
+      .setStrokeStyle(uiDim(2), 0x29e7ff, 0.5)
       .setScrollFactor(0)
       .setDepth(1500);
     this.wheelObjs.push(bg);
     this.wheelObjs.push(
       this.add
-        .text(cx, cy, "EMOTE\nV / ESC", { fontFamily: "Courier New, monospace", fontSize: "9px", color: "#6b7184", align: "center" })
+        .text(cx, cy, "EMOTE\nV / ESC", hudFont(9, { color: "#6b7184", align: "center" }))
         .setOrigin(0.5)
         .setScrollFactor(0)
         .setDepth(1501),
@@ -2718,13 +2737,11 @@ export default class OnlineScene extends Phaser.Scene {
     EMOTES.forEach((em, i) => {
       const a = (i / EMOTES.length) * Math.PI * 2 - Math.PI / 2;
       const t = this.add
-        .text(cx + Math.cos(a) * 72, cy + Math.sin(a) * 72, em.text, {
-          fontFamily: "Courier New, monospace",
-          fontSize: "12px",
+        .text(cx + Math.cos(a) * uiDim(72), cy + Math.sin(a) * uiDim(72), em.text, hudFont(12, {
           color: em.ping ? "#f7ff3c" : "#9af0ff",
           fontStyle: "bold",
           align: "center",
-        })
+        }))
         .setOrigin(0.5)
         .setScrollFactor(0)
         .setDepth(1501)

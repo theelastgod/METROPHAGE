@@ -1,6 +1,8 @@
 import Phaser from "phaser";
+// MUST be the first project import: fixes the backing resolution (render tier) at
+// module-evaluation time, before any scene/UI module captures uiDim()-derived sizes.
+import "./render/renderTier";
 import { VIEW_W, VIEW_H, COLORS } from "./config";
-import { applyRenderTier } from "./render/renderTier";
 import BootScene from "./scenes/BootScene";
 import SelectScene from "./scenes/SelectScene";
 import CustomizeScene from "./scenes/CustomizeScene";
@@ -14,7 +16,6 @@ import { getOnlinePlayer } from "./economy/session";
 import { randomCustomization } from "./game/customization";
 
 // METROPHAGE — Path A: one server-authoritative world; personal campaign per player.
-applyRenderTier();
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.WEBGL,
   parent: "game-root",

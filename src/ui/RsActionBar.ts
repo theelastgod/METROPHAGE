@@ -31,7 +31,8 @@ export default class RsActionBar {
     const gap = uiGap("sm");
     this.w = slots.length * slotW + (slots.length - 1) * gap + uiGap("lg");
     const stack = onlineHudStack(scene.scale.height);
-    this.x = (scene.scale.width - this.w) / 2;
+    // right-anchored so the left-anchored equip hotbar never collides with it
+    this.x = scene.scale.width - this.w - uiDim(12);
     this.y = stack.actionY;
     this.g = scene.add.graphics().setScrollFactor(0).setDepth(1050);
     this.redraw();

@@ -3,7 +3,7 @@ import { COLORS } from "../config";
 import { Item, Slot, SLOTS, RARITIES, SLOT_NAMES, itemStatLines } from "../game/items";
 import { getWeapon } from "../game/weapons";
 import { iconKey, ensureItemIcons } from "../assets/itemIcons";
-import { dimBackdrop, onlineHudStack, overlayRect, uiDim, uiFont, uiGap } from "./uiLayout";
+import { dimBackdrop, onlineHudStack, overlayRect, uiDim, uiFont } from "./uiLayout";
 import ContextMenu from "./ContextMenu";
 import { getSettings } from "../systems/Settings";
 
@@ -64,12 +64,14 @@ export default class OnlineInventory {
           .setVisible(false),
       );
     }
+    // hint rides at the right end of the hotbar row so it never hides under the chat frame
     this.barHint = scene.add
-      .text(this.barX, this.barY - uiGap("md"), "I ▸ LOADOUT", {
+      .text(this.barX + HOTBAR_SLOTS * (HB_CELL + HB_GAP) + HB_GAP, this.barY + HB_CELL / 2, "I ▸ LOADOUT", {
         fontFamily: "Courier New, monospace",
-        fontSize: uiFont(12),
+        fontSize: uiFont(11),
         color: "#6b7184",
       })
+      .setOrigin(0, 0.5)
       .setScrollFactor(0)
       .setDepth(1501);
     this.drawHotbar();

@@ -27,6 +27,7 @@ export default class RsGameMessage {
       .setScrollFactor(0)
       .setDepth(1046)
       .setAlpha(0);
+    this.g.setAlpha(0); // frame only shows while a message is live
     this.drawFrame();
   }
 
@@ -44,10 +45,11 @@ export default class RsGameMessage {
       this.fadeTimer = undefined;
     }
     this.label.setText(text).setColor(opts?.color ?? "#f7ff3c").setAlpha(1);
-    this.scene.tweens.killTweensOf(this.label);
+    this.scene.tweens.killTweensOf([this.label, this.g]);
+    this.g.setAlpha(1);
     if (opts?.ttlMs) {
       this.fadeTimer = this.scene.time.delayedCall(opts.ttlMs, () => {
-        this.scene.tweens.add({ targets: this.label, alpha: 0, duration: 500 });
+        this.scene.tweens.add({ targets: [this.label, this.g], alpha: 0, duration: 500 });
       });
     }
   }
@@ -57,8 +59,9 @@ export default class RsGameMessage {
       this.fadeTimer.remove();
       this.fadeTimer = undefined;
     }
-    this.scene.tweens.killTweensOf(this.label);
+    this.scene.tweens.killTweensOf([this.label, this.g]);
     this.label.setAlpha(0);
+    this.g.setAlpha(0);
   }
 
   setVisible(visible: boolean) {

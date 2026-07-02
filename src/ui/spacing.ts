@@ -32,16 +32,19 @@ export const panelPadInner = () => uiDim(UI_SPACE.md);
 /** Word-wrap width with symmetric side margins (design px). */
 export const wrapWidth = (marginDesign: number = UI_SPACE.gutter) => VIEW_W - uiDim(marginDesign) * 2;
 
-/** Bottom chrome stack for OnlineScene — hotbar, action bar, hints (no overlap). */
+/** Bottom chrome stack for OnlineScene — hotbar, action bar, hints (no overlap).
+ *  The footer hint gets its own reserved strip below the bars; the hotbar
+ *  (left-anchored) and action bar (right-anchored) share one band. */
 export function onlineHudStack(viewH: number = VIEW_H) {
+  const hintStrip = uiDim(18);
   const footerPad = uiDim(UI_SPACE.sm);
   const actionH = uiDim(56);
-  const actionY = viewH - footerPad - actionH;
+  const actionY = viewH - footerPad - hintStrip - actionH;
   const hotbarCell = uiDim(48);
-  const hotbarY = actionY - uiGap("sm") - hotbarCell;
+  const hotbarY = actionY + (actionH - hotbarCell) / 2; // vertically centered in the band
   return {
     footerHintY: viewH - uiDim(UI_SPACE.xs),
-    interactY: hotbarY - uiGap("lg"),
+    interactY: actionY - uiGap("lg"),
     hotbarY,
     hotbarCell,
     actionY,
