@@ -19,6 +19,9 @@ export interface SettingsData {
   lowFx: boolean;
   /** Auto-detect or force render tier (bloom/particle budget). */
   graphicsQuality: GraphicsQuality;
+  /** Measured ceiling for the "auto" tier — the quality governor lowers this when the
+   *  device can't hold frame rate (and raises it back). Ignored for manual tiers. */
+  autoTierCap: Exclude<GraphicsQuality, "auto">;
   /** HUD / panel text scale multiplier. */
   uiScale: number;
   /** High-contrast HUD text + stronger panel chrome. */
@@ -37,6 +40,7 @@ const DEFAULTS: SettingsData = {
   reduceFlashing: false,
   lowFx: false,
   graphicsQuality: "auto",
+  autoTierCap: "high",
   uiScale: 1,
   highContrast: false,
   gamepadEnabled: true,
@@ -92,10 +96,15 @@ export function detectDeviceTier(): Exclude<GraphicsQuality, "auto"> {
   return "high";
 }
 
+const TIER_ORDER: Exclude<GraphicsQuality, "auto">[] = ["low", "medium", "high"];
+
 export function effectiveGraphicsQuality(): Exclude<GraphicsQuality, "auto"> {
   const q = current.graphicsQuality;
-  if (q !== "auto") return q;
-  return detectDeviceTier();
+  if (q !== "auto") return q; // a manual tier is sacred — the governor never touches it
+  const detected = detectDeviceTier();
+  const cap = current.autoTierCap ?? "high";
+  // auto = boot heuristic, CAPPED by what the frame-rate governor actually measured
+  return TIER_ORDER[Math.min(TIER_ORDER.indexOf(detected), TIER_ORDER.indexOf(cap))];
 }
 
 /** True when bloom should be skipped entirely. */

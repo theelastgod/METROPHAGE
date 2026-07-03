@@ -11,6 +11,7 @@ import OnlineScene from "./scenes/OnlineScene";
 
 
 import { getMetroStatus } from "./economy/metro";
+import { installQualityGovernor } from "./systems/QualityGovernor";
 import { mountMetroPanel } from "./ui/MetroPanel";
 import { getOnlinePlayer } from "./economy/session";
 import { randomCustomization } from "./game/customization";
@@ -47,6 +48,9 @@ const config: Phaser.Types.Core.GameConfig = {
 };
 
 const game = new Phaser.Game(config);
+
+// Adaptive quality: measure real FPS and tune the auto tier — boot heuristics lie.
+installQualityGovernor(game);
 
 // $METRO bridge panel — dormant unless the on-chain layer is enabled (a valid CA).
 mountMetroPanel(getOnlinePlayer);

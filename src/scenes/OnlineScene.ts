@@ -320,6 +320,7 @@ export default class OnlineScene extends Phaser.Scene {
   private meLight!: PlayerLight;
   private remoteSprites = new Map<string, Phaser.GameObjects.Sprite>();
   private escortOrbs = new Map<string, Phaser.GameObjects.Image[]>(); // orbiting companions per player
+  private meShadow!: Phaser.GameObjects.Image; // soft ground contact under the local player
   private remoteLabels = new Map<string, Phaser.GameObjects.Text>();
   private enemySprites = new Map<number, Phaser.GameObjects.Sprite>();
   private bossOverlays = new Map<number, { name: Phaser.GameObjects.Text; bar: Phaser.GameObjects.Graphics }>();
@@ -831,6 +832,7 @@ export default class OnlineScene extends Phaser.Scene {
       .setTint(0xffffff) // baked in final colours — render untinted
       .setDepth(10)
       .setVisible(false);
+    this.meShadow = this.groundShadow(this.me.x, this.me.y);
     this.meLight = new PlayerLight(this, this.me.x, this.me.y, 4, zoneAccent);
     const soloSpawn = this.soloSpawnPoint();
     if (soloSpawn) {
@@ -2293,6 +2295,7 @@ export default class OnlineScene extends Phaser.Scene {
       driveChar(this.me, this.meDir.x, this.meDir.y, moving);
     }
     this.updateEscort("me", this.me.x, this.me.y, this.net.connected && this.net.escortActive && !this.net.dead);
+    this.meShadow.setPosition(this.me.x, this.me.y + 12).setVisible(this.me.visible);
 
     // remote players (interpolated by NetClient) — each rendered with ITS OWN
     // customization (baked from the look the server relays; colour as a tint).
@@ -2300,6 +2303,8 @@ export default class OnlineScene extends Phaser.Scene {
       let s = this.remoteSprites.get(id);
       if (!s) {
         s = this.add.sprite(r.x, r.y, PLAYER_KEY, 0).setDepth(9);
+        s.setData("born", this.time.now); // AOI pop-in reads amateur — fade arrivals in
+        s.setData("shadow", this.groundShadow(r.x, r.y));
         this.remoteSprites.set(id, s);
         this.remoteLabels.set(
           id,
@@ -2327,12 +2332,17 @@ export default class OnlineScene extends Phaser.Scene {
       const rdx = r.tx - r.x;
       const rdy = r.ty - r.y;
       driveChar(s, rdx, rdy, rdx * rdx + rdy * rdy > 0.4); // walk from their heading
-      s.setPosition(r.x, r.y).setVisible(!r.dead).setAlpha(r.dead ? 0.25 : 1);
+      // spawn fade (260ms) — computed per frame because dead-alpha also writes here
+      const bornFade = Math.min(1, (this.time.now - (s.getData("born") ?? 0)) / 260);
+      s.setPosition(r.x, r.y).setVisible(!r.dead).setAlpha((r.dead ? 0.25 : 1) * bornFade);
+      const rShadow = s.getData("shadow") as Phaser.GameObjects.Image | undefined;
+      rShadow?.setPosition(r.x, r.y + 12).setVisible(!r.dead).setAlpha(0.4 * bornFade);
       this.remoteLabels.get(id)?.setPosition(r.x, r.y - 22).setVisible(!r.dead);
       this.updateEscort(id, r.x, r.y, !!r.escort && !r.dead);
     }
     for (const [id, s] of this.remoteSprites) {
       if (!this.net.remotes.has(id)) {
+        (s.getData("shadow") as Phaser.GameObjects.Image | undefined)?.destroy();
         s.destroy();
         this.remoteSprites.delete(id);
         this.remoteLabels.get(id)?.destroy();
@@ -2526,7 +2536,9 @@ export default class OnlineScene extends Phaser.Scene {
     for (const [id, e] of this.net.enemies) {
       let s = this.enemySprites.get(id);
       if (!s) {
-        s = this.add.sprite(e.x, e.y, COP_KEY, 0).setDepth(8);
+        s = this.add.sprite(e.x, e.y, COP_KEY, 0).setDepth(8).setAlpha(0);
+        this.tweens.add({ targets: s, alpha: 1, duration: 260 }); // AOI arrivals fade in
+        s.setData("shadow", this.groundShadow(e.x, e.y, 0.48));
         this.enemySprites.set(id, s);
         this.maybeEnemyBark(e.x, e.y, e.kind); // deploy bark on first appearance
       }
@@ -2534,6 +2546,7 @@ export default class OnlineScene extends Phaser.Scene {
         if (!s.getData("boss")) {
           s.setData("boss", true);
           s.setScale(2.6).setDepth(9).setTint(e.tint ?? COLORS.enemy); // a looming, named commander
+          (s.getData("shadow") as Phaser.GameObjects.Image | undefined)?.setScale(1.3, 0.55).setAlpha(0.5);
         }
         this.updateBossOverlay(id, e);
       } else if (s.getData("kind") !== e.kind) {
@@ -2544,9 +2557,11 @@ export default class OnlineScene extends Phaser.Scene {
       const edy = e.ty - e.y;
       driveChar(s, edx, edy, edx * edx + edy * edy > 0.4); // walk from their heading
       s.setPosition(e.x, e.y);
+      (s.getData("shadow") as Phaser.GameObjects.Image | undefined)?.setPosition(e.x, e.y + (e.boss ? 26 : 12));
     }
     for (const [id, s] of this.enemySprites)
       if (!this.net.enemies.has(id)) {
+        (s.getData("shadow") as Phaser.GameObjects.Image | undefined)?.destroy();
         s.destroy();
         this.enemySprites.delete(id);
         const o = this.bossOverlays.get(id); // a slain boss leaves the snapshot → drop its overlay
@@ -3084,6 +3099,18 @@ export default class OnlineScene extends Phaser.Scene {
       this.particles?.spark(this.me.x, this.me.y, 0x39ff88, 2.0);
       juiceFlash(this, 260, 57, 255, 136);
     }
+  }
+
+  /** Soft contact shadow — grounds an entity on the pavement. One tinted radial glow,
+   *  squashed to an ellipse; costs nothing and sells "standing IN the world" on every
+   *  tier (this is the cheapest studio-look win in the whole stack). */
+  private groundShadow(x: number, y: number, w = 0.52): Phaser.GameObjects.Image {
+    return this.add
+      .image(x, y + 12, GLOW_KEY)
+      .setTint(0x000006)
+      .setAlpha(0.4)
+      .setScale(w, w * 0.42)
+      .setDepth(7.5);
   }
 
   /** Orbiting escort companions — two glows circle any player whose snapshot says
