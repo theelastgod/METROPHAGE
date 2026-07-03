@@ -1,10 +1,14 @@
 // METROPHAGE — quests as data. A quest is an ordered list of stages; each stage
-// advances on a trigger (infect / dive / kill / secure via gameplay, or talk via
-// dialogue). Talk stages run a dialogue tree; the giver's offer tree activates the
-// quest. Rewards + a completion flag gate later quests. The Quests system tracks
-// state; GameScene fires triggers + resolves dialogue actions. "The Wake" is Quest 1.
+// advances on a trigger (infect / dive / kill / secure / boss / event via gameplay,
+// or talk via dialogue). Talk stages run a dialogue tree; the giver's offer tree
+// activates the quest. Rewards + a completion flag gate later quests. The Quests
+// system tracks state; the scenes fire triggers + resolve dialogue actions.
+//
+// "boss" and "event" beats are the questline's SHARED-WORLD anchors: a world boss
+// only falls to massed fire and a district event sweeps every runner standing in
+// it — the arc deliberately funnels players into the same fights.
 
-export type QuestTriggerType = "infect" | "dive" | "kill" | "secure" | "talk";
+export type QuestTriggerType = "infect" | "dive" | "kill" | "secure" | "boss" | "event" | "talk";
 
 export interface QuestStage {
   id: string;
@@ -215,9 +219,18 @@ export const QUESTS: QuestDef[] = [
         fragmentId: "frag_continue",
       },
       {
+        id: "warden",
+        journal:
+          "The first mind is awake and the Kernel knows it. The Warden is walking its avatar out of the vault — the thing they built to prove the cage still works, wearing a corp commander's chassis. It has killed every prior me at this exact step. It has never fought more than one of us at once. Bring it down.",
+        objective: "Bring down a corp commander (world boss)",
+        on: { type: "boss", count: 1 },
+        onEnterLine:
+          "That commander unit painting the district? That's the Warden's hands. Every runner's bullet counts against it — call your crew, light it up, and this time the cage loses.",
+      },
+      {
         id: "decision",
         journal:
-          "They keep printing me because someone has to prove the cage still works. Stop letting them erase me — wake everyone. That's the Awakening. That's what they're afraid of.",
+          "The Warden's chassis is scrap and the whole district saw it fall. They keep printing me because someone has to prove the cage still works. Nobody proved it today. Wake everyone. That's the Awakening. That's what they're afraid of.",
         objective: "Trigger the Awakening",
         on: { type: "talk" },
         talkTree: "continue_final",
@@ -317,6 +330,15 @@ export const QUESTS: QuestDef[] = [
           "The Orbital Relay kills every Awakening broadcast from orbit. The moment someone realizes they own themselves — denied. Helios bought the sky. Secure a district and breach the vault.",
         objective: "Secure a district",
         on: { type: "secure", count: 1 },
+      },
+      {
+        id: "storm",
+        journal:
+          "The Relay noticed me. It's shoving weather down the stack — blackouts, neon storms, purge waves — anything to scatter the district before I reach the vault. It can't scatter all of us. Stand in whatever it sends and outlast it.",
+        objective: "Ride out a district event",
+        on: { type: "event", count: 1 },
+        onEnterLine:
+          "The sky is aiming at your block now. Whatever lands — stand in it. Together, if you can. The Relay has to learn it can't clear a street that won't empty.",
       },
       {
         id: "vault",

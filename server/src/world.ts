@@ -156,6 +156,7 @@ import {
   type CampaignData,
 } from "../../src/net/campaign";
 import type { QuestTriggerType, QuestReward } from "../../src/game/quests";
+import { rollElite, type EliteModifier } from "../../src/game/elites";
 
 // Server-only tuning.
 const PERSIST_EVERY_TICKS = 40; // ~2s snapshot cadence
@@ -353,6 +354,7 @@ interface Enemy {
   boss?: boolean; // a named world boss: tougher, hits harder, long respawn, broadcast kill
   name?: string;
   tint?: number; // boss accent colour (corp identity), for the client
+  elite?: EliteModifier; // rolled-on-spawn affix: hp/speed/status-resist/volatile + payout mult
   add?: boolean; // a boss-summoned add (cleaned up when the boss falls/reforms)
   stunUntilTick?: number; // WINTERMUTE hack cone — frozen mid-thought (no move/fire)
   slowUntilTick?: number; // METROPHAGE contagion bloom — infected servos at half speed
@@ -655,6 +657,40 @@ export class WorldDO {
     }));
   }
 
+  /** Roll a spawn-time elite affix onto a fresh garrison unit — ARMORED / SWIFT /
+   *  VOLATILE / WARDED. Elites read on the client via aura tint + prefix name and
+   *  pay a real bonus; the roll happens once, so a post keeps its identity across
+   *  respawns (the SWIFT lancer by the transit gate stays *that* lancer). */
+  private maybeElite(e: Enemy, chance: number) {
+    const mod = rollElite(chance);
+    if (!mod) return;
+    e.elite = mod;
+    e.hp = Math.round(e.hp * mod.hpMult);
+    e.maxHp = Math.round(e.maxHp * mod.hpMult);
+    e.name = `${mod.name} ${["PATROL", "WASP", "LANCER", "HOUND", "ENFORCER", "SNIPER", "WRAITH"][e.kind] ?? "UNIT"}`;
+    e.tint = mod.aura;
+  }
+
+  /** Status durations shrink against WARDED elites (and any future statusResist). */
+  private statusTicks(e: Enemy, ms: number): number {
+    return ticks(Math.max(120, Math.round(ms * (1 - (e.elite?.statusResist ?? 0)))));
+  }
+
+  /** VOLATILE elites detonate on death — a short-fuse hazard punishes point-blank
+   *  greed. Rides the normal telegraph pipeline so clients render the dodge ring. */
+  private eliteDeath(e: { x: number; y: number; elite?: EliteModifier }) {
+    if (!e.elite?.volatile) return;
+    this.hazards.push({
+      id: this.nextHazardId++,
+      x: e.x,
+      y: e.y,
+      r: 78,
+      castTick: this.tick,
+      detonateTick: this.tick + ticks(650),
+      dmg: 26,
+    });
+  }
+
   /** Wilderness corridor — patrols + ambient salvage, no boss or territory nodes. */
   private spawnBridge(def: BridgeDef) {
     const pattern = [0, 0, 1, 0, 2, 4, 0, 1];
@@ -667,7 +703,9 @@ export class WorldDO {
       const y = sty * TILE + TILE / 2;
       const id = this.nextEnemyId++;
       const kind = tier === "enforcer" ? 4 : pattern[i++ % pattern.length];
-      this.enemies.set(id, { id, x, y, ox: x, oy: y, hp: ENEMY_ARCHES[kind].hp, maxHp: ENEMY_ARCHES[kind].hp, respawnTick: 0, lastFireTick: 0, kind });
+      const e: Enemy = { id, x, y, ox: x, oy: y, hp: ENEMY_ARCHES[kind].hp, maxHp: ENEMY_ARCHES[kind].hp, respawnTick: 0, lastFireTick: 0, kind };
+      this.maybeElite(e, 0.06);
+      this.enemies.set(id, e);
     }
     for (const [tx, ty] of def.lootPosts) {
       const stx = tx * DISTRICT_SCALE;
@@ -706,7 +744,9 @@ export class WorldDO {
       const y = sty * TILE + TILE / 2;
       const id = this.nextEnemyId++;
       const kind = pattern[i++ % pattern.length];
-      this.enemies.set(id, { id, x, y, ox: x, oy: y, hp: ENEMY_ARCHES[kind].hp, maxHp: ENEMY_ARCHES[kind].hp, respawnTick: 0, lastFireTick: 0, kind });
+      const e: Enemy = { id, x, y, ox: x, oy: y, hp: ENEMY_ARCHES[kind].hp, maxHp: ENEMY_ARCHES[kind].hp, respawnTick: 0, lastFireTick: 0, kind };
+      this.maybeElite(e, 0.05 + this.districtIndex * 0.02); // deeper districts field more elites
+      this.enemies.set(id, e);
     }
     // World boss — a named HSS commander at the post farthest from the player spawn, so it
     // reads as a destination. It reforms on its own timer after a kill (see the kill handler).
@@ -768,7 +808,9 @@ export class WorldDO {
       const y = ty * TILE + TILE / 2;
       const kind = pattern[i++ % pattern.length];
       const id = this.nextEnemyId++;
-      this.enemies.set(id, { id, x, y, ox: x, oy: y, hp: ENEMY_ARCHES[kind].hp, maxHp: ENEMY_ARCHES[kind].hp, respawnTick: 0, lastFireTick: 0, kind });
+      const e: Enemy = { id, x, y, ox: x, oy: y, hp: ENEMY_ARCHES[kind].hp, maxHp: ENEMY_ARCHES[kind].hp, respawnTick: 0, lastFireTick: 0, kind };
+      this.maybeElite(e, 0.12); // THE UNDERLINE runs hot
+      this.enemies.set(id, e);
     }
     const boss = BOSS_ROSTER[1];
     const bx = 34 * TILE + TILE / 2;
@@ -794,6 +836,32 @@ export class WorldDO {
       lastAoeTick: 0,
       enraged: false,
     });
+  }
+
+  /** How many runners this dive instance is currently tuned for. */
+  private diveScaledFor = 1;
+
+  /** Co-op dive scaling: every runner past the first hardens the LIVING garrison
+   *  (+35% hp each, capped ×2.4) — a full crew earns a real vault crawl instead of a
+   *  speed-run, and the fragment still pays everyone (claim-once per player). Scaling
+   *  only ever ratchets UP within an instance so leavers can't soft-reset a fight. */
+  private coopScaleDive() {
+    let live = 0;
+    for (const p of this.players.values()) if (!p.dead) live++;
+    live = Math.max(1, live);
+    if (live <= this.diveScaledFor) return;
+    const cap = 2.4;
+    const factorFor = (n: number) => Math.min(cap, 1 + 0.35 * (n - 1));
+    const mult = factorFor(live) / factorFor(this.diveScaledFor);
+    this.diveScaledFor = live;
+    if (mult <= 1) return;
+    for (const e of this.enemies.values()) {
+      if (e.hp <= 0) continue;
+      e.maxHp = Math.round(e.maxHp * mult);
+      e.hp = Math.round(e.hp * mult);
+      if (e.baseMaxHp) e.baseMaxHp = Math.round(e.baseMaxHp * mult);
+    }
+    this.broadcast({ t: "sys", text: `❄ the vault hardens — ${live} runners inside` });
   }
 
   /** Seed an ICE VAULT dive: guardians scale with district depth; the fragment core
@@ -1957,6 +2025,7 @@ export class WorldDO {
     }
     this.players.set(id, p);
     this.sessions.set(ws, id);
+    if (this.diveIndex >= 0) this.coopScaleDive(); // the vault hardens as runners stack up
     // Persist identity + look on the socket so a hibernation wake can re-attach it (above).
     ws.serializeAttachment({ id, name: p.name, faction: fac, look: p.look } satisfies SessionAttach);
     this.send(ws, {
@@ -2339,6 +2408,19 @@ export class WorldDO {
     this.campaignBeat(p);
   }
 
+  /** Shared campaign credit for a kill: party members fighting beside the killer get
+   *  the kill beat too, and a world boss pays its "boss" beat to EVERY runner still
+   *  standing — massed fire is the point of the finale, not kill-steal roulette. */
+  private sharedKillCredit(killer: PlayerState, e: { x: number; y: number }, isBoss: boolean) {
+    if (killer.party >= 0) {
+      for (const ally of this.players.values()) {
+        if (ally.id === killer.id || ally.dead || ally.party !== killer.party) continue;
+        if (Math.hypot(ally.x - e.x, ally.y - e.y) <= 640) this.campaignEvent(ally, "kill");
+      }
+    }
+    if (isBoss) for (const p of this.players.values()) if (!p.dead) this.campaignEvent(p, "boss");
+  }
+
   /** Node captured. In a district, captures are infection; in an ICE VAULT the single
    *  node is the fragment core, so a capture is the DIVE itself — the beats no longer
    *  alias each other (dive stages used to advance from ordinary captures). */
@@ -2408,6 +2490,7 @@ export class WorldDO {
           p.level = levelForXp(p.xp);
           p.credits += ev.def.reward.currency;
           p.dirty = true;
+          this.campaignEvent(p, "event"); // SKYLINK BREAK's storm beat — survived together
           this.sendTo(p.id, { t: "sys", text: `◈ ${ev.def.name} weathered — +${ev.def.reward.xp} XP  ₵${ev.def.reward.currency}` });
         }
         this.broadcastEvent(ev.def, "end", 0);
@@ -3104,7 +3187,7 @@ export class WorldDO {
           while (diff > Math.PI) diff -= 2 * Math.PI;
           while (diff < -Math.PI) diff += 2 * Math.PI;
           if (Math.abs(diff) > halfArc) continue;
-          e.stunUntilTick = this.tick + ticks(e.boss ? 900 : 2000); // bosses shrug it off fast
+          e.stunUntilTick = this.tick + this.statusTicks(e, e.boss ? 900 : 2000); // bosses shrug it off fast
           this.applyPlayerHitToEnemy(e, p, dmg);
         }
         p.abilityCdUntilTick = this.tick + ticks(8000);
@@ -3186,7 +3269,7 @@ export class WorldDO {
         for (const e of this.enemies.values()) {
           if (e.hp <= 0) continue;
           if (dist2(e.x, e.y, p.x, p.y) > 145 * 145) continue;
-          e.slowUntilTick = this.tick + ticks(e.boss ? 1200 : 3000);
+          e.slowUntilTick = this.tick + this.statusTicks(e, e.boss ? 1200 : 3000);
           this.applyPlayerHitToEnemy(e, p, dmg);
         }
         p.ability2CdUntilTick = this.tick + ticks(9000);
@@ -3229,7 +3312,7 @@ export class WorldDO {
         for (const e of this.enemies.values()) {
           if (e.hp <= 0) continue;
           if (dist2(e.x, e.y, p.x, p.y) > 420 * 420) continue;
-          e.stunUntilTick = this.tick + ticks(e.boss ? 1200 : 2600);
+          e.stunUntilTick = this.tick + this.statusTicks(e, e.boss ? 1200 : 2600);
           this.applyPlayerHitToEnemy(e, p, Math.round(15 * lvl));
         }
         break;
@@ -3253,7 +3336,7 @@ export class WorldDO {
         for (const e of this.enemies.values()) {
           if (e.hp <= 0) continue;
           if (dist2(e.x, e.y, p.x, p.y) > 260 * 260) continue;
-          e.slowUntilTick = this.tick + ticks(e.boss ? 1500 : 3500);
+          e.slowUntilTick = this.tick + this.statusTicks(e, e.boss ? 1500 : 3500);
           this.applyPlayerHitToEnemy(e, p, dmg);
         }
         break;
@@ -3333,7 +3416,7 @@ export class WorldDO {
     p.heatGainTick = this.tick;
   }
 
-  private applyPlayerHitToEnemy(e: { id: number; x: number; y: number; hp: number; maxHp: number; kind: number; boss?: boolean; name?: string; engagedTick?: number; baseMaxHp?: number; respawnTick: number; add?: boolean }, killer: PlayerState, dmg: number) {
+  private applyPlayerHitToEnemy(e: Enemy, killer: PlayerState, dmg: number) {
     this.addHeat(killer, dmg * HEAT.perDamage);
     const lifesteal = Math.min(killer.level * 0.004, 0.08) + (killer.mods.lifestealPct || 0);
     if (lifesteal > 0 && !killer.dead && killer.hp > 0) {
@@ -3358,14 +3441,15 @@ export class WorldDO {
       this.pickups.set(pid, { id: pid, x: e.x, y: e.y, kind: PICKUP_CORE, dieTick: this.tick + ticks(PICKUP_TTL_MS), bornTick: this.tick });
       return;
     }
-    const mult = isBoss ? 12 : 1;
+    const mult = isBoss ? 12 : (e.elite?.xpMult ?? 1);
     const gained = Math.round(CREDITS_PER_KILL * mult * (1 + (killer.guildBonus || 0)));
     killer.credits += gained;
-    killer.xp += XP_PER_KILL * mult;
+    killer.xp += Math.round(XP_PER_KILL * mult);
     killer.level = levelForXp(killer.xp);
     killer.dirty = true;
     this.bumpMeta("f" + killer.faction, isBoss ? 10 : 1);
     this.campaignEvent(killer, "kill");
+    this.sharedKillCredit(killer, e, isBoss);
     this.addHeat(killer, HEAT.perKill);
     this.bumpStat(killer, "kills", 1);
     if (isBoss) this.bumpStat(killer, "bosses", 1);
@@ -3376,8 +3460,9 @@ export class WorldDO {
       this.contractEvent(killer, "boss", 1);
       this.bountyEvent(killer, "boss", 1);
     }
-    if (isBoss || Math.random() < arch.loot.chance) {
-      killer.inventory.push(rollItem(killer.level, isBoss ? 2.5 : arch.loot.boost));
+    this.eliteDeath(e);
+    if (isBoss || e.elite || Math.random() < arch.loot.chance) {
+      killer.inventory.push(rollItem(killer.level, isBoss ? 2.5 : arch.loot.boost + (e.elite?.lootBonus ?? 0)));
       if (killer.inventory.length > INVENTORY_CAP) killer.inventory.shift();
       this.sendTo(killer.id, { t: "inv", items: killer.inventory });
     }
@@ -3387,7 +3472,7 @@ export class WorldDO {
       this.hazards = [];
     }
     if (!this.inTutorial()) {
-      if (Math.random() < LOOT_DROP_CHANCE) {
+      if (e.elite || Math.random() < LOOT_DROP_CHANCE) {
         const kind = Math.random() < 0.42 ? PICKUP_CORE : PICKUP_CREDIT;
         const pid = this.nextPickupId++;
         this.pickups.set(pid, { id: pid, x: e.x, y: e.y, kind, dieTick: this.tick + ticks(PICKUP_TTL_MS), bornTick: this.tick });
@@ -3564,6 +3649,7 @@ export class WorldDO {
         mvy = (dx / d) * s;
       }
       // CONTAGION BLOOM infection — chewed servos run at half speed
+      if (e.elite) eSpeed *= e.elite.speedMult; // SWIFT runs hot, ARMORED lumbers
       if (e.slowUntilTick && this.tick < e.slowUntilTick) eSpeed *= 0.5;
       stepMove(e, { mx: mvx, my: mvy }, this.grid, NET_TICK_MS, eSpeed);
       if (d <= arch.fireRange && (this.tick - e.lastFireTick) * NET_TICK_MS >= eFireMs) {
@@ -3641,14 +3727,15 @@ export class WorldDO {
                     bornTick: this.tick,
                   });
                 } else {
-                  const mult = isBoss ? 12 : 1;
+                  const mult = isBoss ? 12 : (e.elite?.xpMult ?? 1);
                   const gained = Math.round(CREDITS_PER_KILL * mult * (1 + (killer.guildBonus || 0)));
                   killer.credits += gained;
-                  killer.xp += XP_PER_KILL * mult;
+                  killer.xp += Math.round(XP_PER_KILL * mult);
                   killer.level = levelForXp(killer.xp);
                   killer.dirty = true;
                   this.bumpMeta("f" + killer.faction, isBoss ? 10 : 1);
                   this.campaignEvent(killer, "kill");
+                  this.sharedKillCredit(killer, e, isBoss);
                   this.addHeat(killer, HEAT.perKill);
                   this.bumpStat(killer, "kills", 1);
                   if (isBoss) this.bumpStat(killer, "bosses", 1);
@@ -3659,8 +3746,8 @@ export class WorldDO {
                     this.contractEvent(killer, "boss", 1);
                     this.bountyEvent(killer, "boss", 1);
                   }
-                  if (isBoss || Math.random() < arch.loot.chance) {
-                    killer.inventory.push(rollItem(killer.level, isBoss ? 2.5 : arch.loot.boost));
+                  if (isBoss || e.elite || Math.random() < arch.loot.chance) {
+                    killer.inventory.push(rollItem(killer.level, isBoss ? 2.5 : arch.loot.boost + (e.elite?.lootBonus ?? 0)));
                     if (killer.inventory.length > INVENTORY_CAP) killer.inventory.shift();
                     this.sendTo(killer.id, { t: "inv", items: killer.inventory });
                   }
@@ -3669,12 +3756,13 @@ export class WorldDO {
                   }
                 }
               }
+              this.eliteDeath(e);
               if (isBoss) {
                 for (const [aid, ae] of this.enemies) if (ae.add) this.enemies.delete(aid);
                 this.hazards = [];
               }
               if (!this.inTutorial()) {
-                if (Math.random() < LOOT_DROP_CHANCE) {
+                if (e.elite || Math.random() < LOOT_DROP_CHANCE) {
                   const kind = Math.random() < 0.25 ? PICKUP_CORE : PICKUP_CREDIT;
                   const pid = this.nextPickupId++;
                   this.pickups.set(pid, {
@@ -3916,7 +4004,11 @@ export class WorldDO {
           y: round2(e.y),
           hp: Math.round(e.hp),
           kind: e.kind,
-          ...(e.boss ? { boss: true, name: e.name, tint: e.tint, hpMax: Math.round(e.maxHp) } : {}),
+          ...(e.boss
+            ? { boss: true, name: e.name, tint: e.tint, hpMax: Math.round(e.maxHp) }
+            : e.elite
+              ? { name: e.name, tint: e.tint } // elite: aura tint + prefix name, no boss chrome
+              : {}),
         });
     }
     const shots = [];

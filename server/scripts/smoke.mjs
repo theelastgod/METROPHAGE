@@ -505,10 +505,14 @@ async function auth() {
 }
 
 async function boss() {
-  const WW = 1280;
-  const WH = 960;
   const ws = await connect();
-  const w = await login(ws, "bosshunter");
+  // fresh identity every run: a persisted hunter parks at the boss corner, which flips
+  // the trek target to the OPPOSITE corner next run — it walks away from the boss
+  const w = await login(ws, "bh" + String(Date.now() % 1_000_000));
+  // REAL world dims from the welcome — districts scaled 3× (3840×2880) long after this
+  // smoke's original hardcoded 1280×960, which sent the trek to the middle of the map
+  const WW = w.world?.w ?? 3840;
+  const WH = w.world?.h ?? 2880;
   const store = { x: w.x, y: w.y, enemies: [], hp: 100 };
   trackState(ws, w.id, store);
   await sleep(300);
@@ -530,12 +534,15 @@ async function boss() {
   // 2) hammer it until it drops out of the live snapshot (hp<=0 → server stops sending it)
   let killed = false;
   const tKill = Date.now();
+  const lair = { x: b0?.x ?? store.x, y: b0?.y ?? store.y };
   while (spawned && Date.now() - tKill < 45000) {
     const b = findBoss();
     if (!b) {
       killed = true;
       break;
     }
+    lair.x = b.x; // last seen position ≈ where it will reform (leash pulls it home)
+    lair.y = b.y;
     const dx = b.x - store.x, dy = b.y - store.y, d = Math.hypot(dx, dy) || 1;
     seq++;
     ws.send(JSON.stringify({ t: "input", seq, mx: d > 80 ? dx / d : 0, my: d > 80 ? dy / d : 0 }));
@@ -543,7 +550,9 @@ async function boss() {
     await sleep(45);
   }
 
-  // 3) wait out the respawn timer; confirm it reforms at (near) full HP, at its lair
+  // 3) wait out the respawn timer; confirm it reforms at (near) full HP, at its lair.
+  // WEAVE around the lair while waiting — idling face-tanks the garrison, and a dead
+  // bot respawns across the map with the reformed boss outside its AOI.
   let reformed = false, reformedHp = 0;
   if (killed) {
     const tWait = Date.now();
@@ -554,7 +563,13 @@ async function boss() {
         reformedHp = b.hp;
         break;
       }
-      await sleep(250);
+      const t = (Date.now() - tWait) / 1000;
+      const wx = lair.x + Math.cos(t * 1.6) * 140;
+      const wy = lair.y + Math.sin(t * 1.6) * 140;
+      const dx = wx - store.x, dy = wy - store.y, d = Math.hypot(dx, dy) || 1;
+      seq++;
+      ws.send(JSON.stringify({ t: "input", seq, mx: dx / d, my: dy / d }));
+      await sleep(120);
     }
   }
   ws.close();

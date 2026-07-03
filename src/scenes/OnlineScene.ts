@@ -2549,6 +2549,20 @@ export default class OnlineScene extends Phaser.Scene {
           (s.getData("shadow") as Phaser.GameObjects.Image | undefined)?.setScale(1.3, 0.55).setAlpha(0.5);
         }
         this.updateBossOverlay(id, e);
+      } else if (e.name && e.tint) {
+        // ELITE — affix aura under the unit so the threat reads before the first hit
+        if (!s.getData("elite")) {
+          s.setData("elite", true);
+          s.setTint(e.tint);
+          const aura = this.add
+            .image(e.x, e.y, GLOW_KEY)
+            .setBlendMode(Phaser.BlendModes.ADD)
+            .setTint(e.tint)
+            .setScale(0.55, 0.3)
+            .setAlpha(0.3)
+            .setDepth(7.6);
+          s.setData("aura", aura);
+        }
       } else if (s.getData("kind") !== e.kind) {
         s.setTint(ENEMY_KIND_TINT[e.kind] ?? COLORS.enemy);
         s.setData("kind", e.kind);
@@ -2558,10 +2572,13 @@ export default class OnlineScene extends Phaser.Scene {
       driveChar(s, edx, edy, edx * edx + edy * edy > 0.4); // walk from their heading
       s.setPosition(e.x, e.y);
       (s.getData("shadow") as Phaser.GameObjects.Image | undefined)?.setPosition(e.x, e.y + (e.boss ? 26 : 12));
+      const aura = s.getData("aura") as Phaser.GameObjects.Image | undefined;
+      aura?.setPosition(e.x, e.y + 10).setAlpha(0.24 + Math.sin(this.time.now / 260) * 0.08);
     }
     for (const [id, s] of this.enemySprites)
       if (!this.net.enemies.has(id)) {
         (s.getData("shadow") as Phaser.GameObjects.Image | undefined)?.destroy();
+        (s.getData("aura") as Phaser.GameObjects.Image | undefined)?.destroy();
         s.destroy();
         this.enemySprites.delete(id);
         const o = this.bossOverlays.get(id); // a slain boss leaves the snapshot → drop its overlay
