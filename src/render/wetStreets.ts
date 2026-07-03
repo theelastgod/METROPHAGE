@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { GLOW_KEY } from "../assets/manifest";
-import { TILE, TILESET_PX } from "../config";
+import { TILE, TILESET_REAL_ART } from "../config";
 import { effectiveLowFx } from "../systems/Settings";
 import {
   isWall,
@@ -66,7 +66,7 @@ export function paintWetStreets(
   const hash = (x: number, y: number) => ((x * 374761393) ^ (y * 668265263)) >>> 0;
   const lowFx = effectiveLowFx();
   const lightweight = opts.lightweight ?? false;
-  const realArt = TILESET_PX > TILE;
+  const realArt = TILESET_REAL_ART;
 
   const lampG = scene.add.graphics().setDepth(depth).setBlendMode(Phaser.BlendModes.ADD);
   const reflectG = scene.add.graphics().setDepth(depth).setBlendMode(Phaser.BlendModes.ADD);

@@ -1,7 +1,7 @@
 import Phaser from "phaser";
-import { TILE, TILESET_PX } from "../config";
+import { TILE, TILESET_PX, TILESET_REAL_ART } from "../config";
 
-const REAL_ART_TILES = TILESET_PX > TILE;
+const REAL_ART_TILES = TILESET_REAL_ART;
 import { TILESET_KEY } from "../assets/manifest";
 import { applyTileVariants } from "./tileVariants";
 import { paintFloorDetail } from "./floorDetail";

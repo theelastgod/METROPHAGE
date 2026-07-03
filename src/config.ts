@@ -8,12 +8,17 @@ export const TILE = 32;
 
 /**
  * Source cell size of the real-art tileset PNG (public/assets/tilesets/metrophage_tiles.png).
- * The world grid stays `TILE` (32) — this is only how `addTilesetImage` slices the source, so
- * tiles are authored/stored at higher resolution and Phaser downscales them to `TILE` at render
- * for a crisper image. Must match the cell size passed to `tools/tileset-gen.mjs`. Set to `TILE`
- * to revert to 1:1 (e.g. if falling back to the procedural tileset).
+ * MUST equal `TILE`: the renderer is pixelArt (NEAREST filtering), so any downscale at draw
+ * time samples a shifting texel lattice as the camera scrolls — the floor visibly shimmers
+ * and "flashes" while moving. The high-res 96px sheet is kept at metrophage_tiles@96.png and
+ * baked to 32px offline (per-cell Lanczos, no cross-tile bleed) — better quality than any
+ * runtime minification, 8.5× smaller download, and rock-stable under scroll.
  */
-export const TILESET_PX = 96;
+export const TILESET_PX = 32;
+
+/** The tileset is real authored art (not the procedural fallback) — polish passes use the
+ *  subtler alpha/detail branches. Was inferred from TILESET_PX > TILE before the 1:1 bake. */
+export const TILESET_REAL_ART = true;
 
 /** Base grid for tutorial / subway / small interiors (tiles). */
 export const GRID_W = 40;

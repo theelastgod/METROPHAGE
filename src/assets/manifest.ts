@@ -86,9 +86,10 @@ const ICON_NAMES = [
 ];
 
 export const ASSETS: Record<string, AssetEntry[]> = {
-  // 768×480 image = 8×5 grid of 96px cells (default), sliced at config.TILESET_PX and drawn
-  // at 32px world tiles. Assembled by tools/tileset-gen.mjs — index→tile contract in district.ts
-  // (canonical 0–17, variants 18–39). Procedural fallback: file=null + TILESET_PX=32.
+  // 256×160 image = 8×5 grid of 32px cells, 1:1 with world tiles (config.TILESET_PX MUST
+  // stay = TILE — pixelArt/NEAREST minification shimmers under scroll; see config.ts). The
+  // 96px master lives at metrophage_tiles@96.png and is baked down per-cell offline.
+  // Index→tile contract in district.ts (canonical 0–17, variants 18–39).
   tilesets: [{ key: TILESET_KEY, file: "assets/tilesets/metrophage_tiles.png" }],
   sprites: [
     { key: PLAYER_KEY, file: null, ...CHAR }, // code-authored pixel art (charart.ts)

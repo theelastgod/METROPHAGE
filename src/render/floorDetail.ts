@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { TILE, TILESET_PX } from "../config";
+import { TILE, TILESET_REAL_ART } from "../config";
 import { isWall, type TileGrid } from "../world/district";
 
 const hash = (x: number, y: number) => ((x * 9747113) ^ (y * 5194637)) >>> 0;
@@ -20,7 +20,7 @@ export function paintFloorDetail(
   depth = 1.8,
   opts: FloorDetailOpts = {},
 ): Phaser.GameObjects.Graphics {
-  const realArt = opts.realArt ?? TILESET_PX > TILE;
+  const realArt = opts.realArt ?? TILESET_REAL_ART;
   const g = scene.add.graphics().setDepth(depth);
   const H = grid.length;
   const W = grid[0]?.length ?? 0;
