@@ -84,3 +84,42 @@ The treasury **never holds or spends SOL** — it only signs. Claims a player ne
 submits auto-refund after 10 minutes (far beyond blockhash validity, so an expired
 claim can never land later and double-pay). The whole flow verifies with no chain
 at all: `node scripts/smoke.mjs metro` (devnet-sim settlement).
+
+## 5. Entering the $METRO contract address (when the token is live)
+
+Two layers, **in this order**:
+
+**Layer 1 — server secrets (FIRST):**
+
+```sh
+cd server
+npx wrangler secret put METRO_DEVNET_MINT      # paste the CA
+npx wrangler secret put METRO_TREASURY_SECRET  # base64 64-byte treasury keypair
+npx wrangler secret put METRO_RPC              # RPC for the token's cluster
+npm run deploy                                 # redeploy so secrets take effect
+```
+
+The treasury keypair receives deposits + signs claims (it never needs SOL).
+Devnet rehearsal: `node scripts/devnet-setup.mjs` generates one and prints the
+env lines. Real launch: generate a FRESH keypair, never reuse devnet's — it
+custodies every player deposit. `/metro/pool` publishes its public address.
+
+**Layer 2 — client build env (SECOND):**
+
+```sh
+VITE_SERVER_URL=wss://<worker-url>/ws VITE_METRO_MINT=<the CA> npm run build
+npx wrangler pages deploy dist
+```
+
+`VITE_METRO_MINT` is the master switch — set, the ◈ bridge panel appears;
+unset, the game is pure off-chain. Build-time only: entering the CA = rebuild +
+redeploy the client.
+
+**⚠️ Ordering rule:** never ship Layer 2 to real players without Layer 1. With
+the panel live but no server secrets, the bridge runs devnet-sim settlement,
+which TRUSTS claimed deposit amounts — a player could fabricate deposits.
+Secrets first, CA second, always.
+
+**Mainnet arming (counsel-gated):** real-value mainnet additionally requires
+`VITE_METRO_CLUSTER=mainnet-beta` AND `VITE_METRO_MAINNET_ARMED=1` at client
+build. Both stay off until counsel signs off; nothing arms by accident.
