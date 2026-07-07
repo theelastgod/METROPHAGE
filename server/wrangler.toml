@@ -8,9 +8,13 @@ compatibility_flags = ["nodejs_compat"]
 name = "WORLD"
 class_name = "WorldDO"
 
+# SQLite-backed DO (not new_classes): free-tier eligible + Cloudflare's recommended
+# default. Every storage API WorldDO uses — state.storage get/put, alarms, and the
+# Hibernation WebSocket set — is supported on SQLite-backed Durable Objects, so this
+# is a strictly-better choice made at creation (the class has never been deployed).
 [[migrations]]
 tag = "v1"
-new_classes = ["WorldDO"]
+new_sqlite_classes = ["WorldDO"]
 
 # Durable source of truth. database_id is a placeholder for local dev — `wrangler
 # dev` / `d1 migrations apply --local` use a local SQLite file under .wrangler/state
