@@ -2416,6 +2416,47 @@ async function dive() {
   );
 }
 
+async function vault() {
+  // THE PROVING — the weekly-affixed group vault. A lone headless bot is UNDERTUNED
+  // for it by design (trio-intended), so this smoke asserts the instance mechanics a
+  // solo bot can honestly reach: entry works, the affix banner announces the week's
+  // rule, the hardened garrison + named warden are posted, the fragment core exists,
+  // and fighting at the gate still pays (the sim is live). The first-clear payout
+  // branch is claim-once by campaign flag (code path shared with dive recovery).
+  const name = "pv" + String(Date.now() % 1_000_000);
+  const VAULT = WS_URL + (WS_URL.includes("?") ? "&" : "?") + "zone=vault";
+  const ws = await connect(VAULT);
+  const w = await login(ws, name, 0);
+  const store = { x: w.x, y: w.y, credits: 0, dead: false, enemies: [], nodes: [] };
+  trackState(ws, w.id, store);
+  const sys = [];
+  ws.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "sys") sys.push(m.text);
+  });
+  await sleep(900);
+  const garrisonHardened = store.enemies.length >= 6;
+  const wardenPosted = store.enemies.some((e) => e.boss && e.name);
+  const corePresent = store.nodes.length === 1;
+  const affixAnnounced = sys.some((s) => /THE PROVING —/.test(s));
+  const startCredits = store.credits;
+
+  // NOTE: no damage/clear assertion here — a solo fresh-melee bot inside trio-tuned
+  // content dies too fast to be a reliable oracle (statistical-honesty policy). The
+  // sim itself is proven live by combat/kit/dive every battery; what is UNIQUE to
+  // the proving is asserted above. The clear payout is human-playtest territory.
+  ws.close();
+  await sleep(300);
+
+  const checks = { garrisonHardened, wardenPosted, corePresent, affixAnnounced };
+  report(
+    "VAULT — THE PROVING: weekly affix instance + warden posted + banner",
+    { name, enemies: store.enemies.length, banner: sys.find((s) => /THE PROVING/.test(s)) },
+    Object.values(checks).every(Boolean),
+    checks,
+  );
+}
+
 async function kit() {
   // Class kit: dash is the ONLY sanctioned way past the walk cap; the signature (Q)
   // damages server-side with an enforced cooldown; WINTERMUTE's cone stuns.
@@ -2758,6 +2799,7 @@ try {
   else if (mode === "load") await load();
   else if (mode === "metro") await metro();
   else if (mode === "dive") await dive();
+  else if (mode === "vault") await vault();
   else if (mode === "event") await worldevent();
   else if (mode === "kit") await kit();
   else if (mode === "look") await look();

@@ -58,7 +58,8 @@ async function handleIdentity(req: Request, env: Env): Promise<Response> {
 }
 
 async function handleLeaderboard(url: URL, env: Env): Promise<Response> {
-  const stat = (url.searchParams.get("stat") || "kills").replace(/[^a-z]/g, "").slice(0, 24);
+  // digits allowed: weekly stats are keyed "wk<week>" and rotate with the epoch week
+  const stat = (url.searchParams.get("stat") || "kills").replace(/[^a-z0-9]/g, "").slice(0, 24);
   const n = Math.min(50, Math.max(1, parseInt(url.searchParams.get("n") || "10", 10)));
   try {
     const { results } = await env.DB.prepare(

@@ -203,7 +203,7 @@ import { WORLD_EVENT } from "../../src/config";
 
 export const INTERIOR_ZONES = new Set(["safe", "clinic", "bar", "den", "shop"]);
 /** All named (non-district) zones the Worker routes by name — interiors + subway + wilderness bridges. */
-export const NAMED_ZONES = new Set([...INTERIOR_ZONES, "subway", TUTORIAL_ZONE, ...BRIDGE_ZONE_IDS, ...DIVE_ZONE_IDS]);
+export const NAMED_ZONES = new Set([...INTERIOR_ZONES, "subway", "vault", TUTORIAL_ZONE, ...BRIDGE_ZONE_IDS, ...DIVE_ZONE_IDS]);
 
 export interface Env {
   WORLD: DurableObjectNamespace;
@@ -507,6 +507,7 @@ export class WorldDO {
   private districtIndex = 0;
   private bridgeIndex = -1;
   private diveIndex = -1; // ≥0 when this DO runs an ICE VAULT dive instance (v0–v6)
+  private provingVault = false; // THE PROVING — the weekly-affixed group vault
   private zoneReady = false;
   // dynamic world events (combat districts only): telegraph -> active -> reward
   private worldEvent: { def: WorldEventDef; phase: "telegraph" | "active"; untilTick: number } | null = null;
@@ -587,6 +588,22 @@ export class WorldDO {
       this.nodes = [];
       this.spawnSubway();
       void this.state.storage.put("zone", "subway");
+      return;
+    }
+    // THE PROVING — the WEEKLY vault: the deepest dive layout under a rotating affix,
+    // tuned so a full crew is the intended clear (co-op scaling ratchets on top). One
+    // big first-clear payout per player per week + a weekly leaderboard stat.
+    if (zone === "vault") {
+      this.interior = true;
+      this.provingVault = true;
+      this.diveIndex = DIVE_ZONE_IDS.length - 1; // deepest-tier rules (fragment, wardens)
+      this.zoneName = "vault";
+      this.districtIndex = DIVE_ZONE_IDS.length - 1;
+      this.grid = buildDive();
+      this.spawn = DIVE_SPAWN;
+      this.spawnDive(DIVE_ZONE_IDS.length - 1);
+      this.applyWeeklyAffix();
+      void this.state.storage.put("zone", "vault");
       return;
     }
     // ICE VAULT — the instanced dive (v0–v6, one per district): an indoor combat
@@ -857,6 +874,33 @@ export class WorldDO {
 
   /** How many runners this dive instance is currently tuned for. */
   private diveScaledFor = 1;
+
+  /** Epoch week — the weekly-vault rotation key (same for every DO, no coordination). */
+  static weekNow(): number {
+    return Math.floor(Date.now() / 604_800_000);
+  }
+
+  /** THE PROVING's weekly affix — one of four, rotating on the epoch week. */
+  static weeklyAffix(): { id: string; name: string; hpMult: number; speedMult: number; shotSpeedMult: number; eliteChance: number } {
+    const AFFIXES = [
+      { id: "hardline", name: "HARDLINE — the ICE runs thick", hpMult: 1.45, speedMult: 1, shotSpeedMult: 1, eliteChance: 0.18 },
+      { id: "overclocked", name: "OVERCLOCKED — everything runs hot", hpMult: 1.1, speedMult: 1.22, shotSpeedMult: 1, eliteChance: 0.18 },
+      { id: "staticskies", name: "STATIC SKIES — fire answers faster", hpMult: 1.1, speedMult: 1, shotSpeedMult: 1.3, eliteChance: 0.18 },
+      { id: "livewire", name: "LIVEWIRE — the garrison is decorated", hpMult: 1.1, speedMult: 1.05, shotSpeedMult: 1, eliteChance: 0.5 },
+    ];
+    return AFFIXES[WorldDO.weekNow() % AFFIXES.length];
+  }
+
+  /** Apply this week's affix to the freshly-seeded PROVING garrison. */
+  private applyWeeklyAffix() {
+    const affix = WorldDO.weeklyAffix();
+    for (const e of this.enemies.values()) {
+      e.hp = Math.round(e.hp * affix.hpMult);
+      e.maxHp = Math.round(e.maxHp * affix.hpMult);
+      if (e.baseMaxHp) e.baseMaxHp = Math.round(e.baseMaxHp * affix.hpMult);
+      if (!e.elite && !e.boss) this.maybeElite(e, affix.eliteChance);
+    }
+  }
 
   /** Co-op dive scaling: every runner past the first hardens the LIVING garrison
    *  (+35% hp each, capped ×2.4) — a full crew earns a real vault crawl instead of a
@@ -2057,6 +2101,14 @@ export class WorldDO {
       lookLocked: lookLocked || !!p.look,
       fragments: p.fragments,
     });
+    // AFTER welcome — clients (and smoke bots) attach their sys listeners post-login
+    if (this.provingVault) {
+      const wk = WorldDO.weekNow();
+      this.send(ws, {
+        t: "sys",
+        text: `◆ THE PROVING — ${WorldDO.weeklyAffix().name} · bring a crew · ${p.campaign.hasFlag(`vaultwk${wk}`) ? "already cleared this week" : "first clear pays ₵750"}`,
+      });
+    }
     if (this.inTutorial()) {
       if (p.tutorialDone) {
         this.send(ws, { t: "redirect", zone: "safe", text: "Drill already complete — deploying." });
@@ -2600,6 +2652,29 @@ export class WorldDO {
       t: "sys",
       text: isNew ? `◈ MEMORY RECOVERED — ${def.title}  (+60 XP  ₵150)` : `◈ memory re-read — ${def.title} (already held)`,
     });
+    // THE PROVING — the weekly clear pays big, once per player per week (campaign flag
+    // = persisted claim-once), and lands on the week's leaderboard
+    if (this.provingVault) {
+      const wk = WorldDO.weekNow();
+      const flag = `vaultwk${wk}`;
+      if (!p.campaign.hasFlag(flag)) {
+        p.campaign.flags.add(flag);
+        p.credits += 750;
+        p.xp += 220;
+        p.level = levelForXp(p.xp);
+        p.dirty = true;
+        this.bumpStat(p, `wk${wk % 100}`, 1);
+        if (p.inventory.length < INVENTORY_CAP) {
+          const prize = rollItem(Math.max(1, p.level), 2.2);
+          p.inventory.push(prize);
+          this.sendTo(p.id, { t: "inv", items: p.inventory });
+          this.sendTo(p.id, { t: "sys", text: `◆ PROVING PRIZE — ${prize.name}` });
+        }
+        this.broadcast({ t: "sys", text: `◆ ${p.name} cleared THE PROVING (${WorldDO.weeklyAffix().name.split(" — ")[0]} week)  +₵750` });
+      } else {
+        this.sendTo(p.id, { t: "sys", text: "◆ THE PROVING — already cleared this week (resets weekly)" });
+      }
+    }
     if (isNew) {
       try {
         await this.env.DB.prepare("UPDATE players SET fragments = ? WHERE id = ?")
@@ -2760,11 +2835,13 @@ export class WorldDO {
   }
 
   /** Increment a lifetime counter (queued for D1) and check for any newly-crossed milestone. */
-  private bumpStat(p: PlayerState, stat: StatKey, n = 1) {
+  // Accepts dynamic keys too (weekly leaderboards use "wk<week>"); achievements only
+  // ever match the static StatKey set, so unknown keys simply have none to check.
+  private bumpStat(p: PlayerState, stat: StatKey | (string & {}), n = 1) {
     if (n <= 0) return;
     p.stats[stat] = (p.stats[stat] ?? 0) + n;
     p.statDelta[stat] = (p.statDelta[stat] ?? 0) + n;
-    this.checkAchv(p, stat);
+    this.checkAchv(p, stat as StatKey);
   }
 
   /** Record the deepest district this player has reached (a MAX, not a sum). */
@@ -3708,17 +3785,19 @@ export class WorldDO {
       }
       // CONTAGION BLOOM infection — chewed servos run at half speed
       if (e.elite) eSpeed *= e.elite.speedMult; // SWIFT runs hot, ARMORED lumbers
+      if (this.provingVault) eSpeed *= WorldDO.weeklyAffix().speedMult; // OVERCLOCKED weeks
       if (e.slowUntilTick && this.tick < e.slowUntilTick) eSpeed *= 0.5;
       stepMove(e, { mx: mvx, my: mvy }, this.grid, NET_TICK_MS, eSpeed);
       if (d <= arch.fireRange && (this.tick - e.lastFireTick) * NET_TICK_MS >= eFireMs) {
         e.lastFireTick = this.tick;
         const aim = Math.atan2(target.y - e.y, target.x - e.x);
+        const projSpeed = arch.projSpeed * (this.provingVault ? WorldDO.weeklyAffix().shotSpeedMult : 1);
         this.shots.push({
           id: this.nextShotId++,
           x: e.x,
           y: e.y,
-          vx: Math.cos(aim) * arch.projSpeed,
-          vy: Math.sin(aim) * arch.projSpeed,
+          vx: Math.cos(aim) * projSpeed,
+          vy: Math.sin(aim) * projSpeed,
           dieTick: this.tick + ticks(ENEMY_PROJ_TTL_MS),
           team: 1,
           owner: String(e.id),

@@ -252,6 +252,7 @@ const INTERIOR_TITLES: Record<string, string> = {
   bar: "▦ THE FERAL CAT",
   den: "◈ THE DEN",
   shop: "▣ MARKET STALL",
+  vault: "◆ THE PROVING — WEEKLY VAULT",
 };
 
 /** Doors in the hub that open into building interiors (each its own no-combat zone). */
@@ -261,6 +262,7 @@ const CITY_HUB_DOORS: { dest: string; label: string; tile: [number, number]; col
   { dest: "bar", label: "THE FERAL CAT", tile: hubT(-4, 6), color: 0xff79c6 },
   { dest: "den", label: "THE DEN", tile: hubT(4, 6), color: 0xff2bd6 },
   { dest: "subway", label: "▼ THE UNDERLINE", tile: hubT(-12, 0), color: 0xff3b6b },
+  { dest: "vault", label: "◆ THE PROVING (weekly)", tile: hubT(12, 0), color: 0xffb13c },
   { dest: "d0", label: "▶ DEPLOY GATE", tile: [HUB_CX, HUB_CY + Math.round(ONLINE_CITY.h * 0.14)], color: 0x39ff88 },
 ];
 
