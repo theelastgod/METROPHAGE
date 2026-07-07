@@ -93,9 +93,12 @@ export const ASSETS: Record<string, AssetEntry[]> = {
   tilesets: [{ key: TILESET_KEY, file: "assets/tilesets/metrophage_tiles.png" }],
   sprites: [
     { key: PLAYER_KEY, file: null, ...CHAR }, // code-authored pixel art (charart.ts)
-    { key: COP_KEY, file: "assets/sprites/cop.png", ...CHAR }, // authored 4-dir sheet
+    // code-authored (charart.ts): the on-disk cop.png/npc.png were 460-byte day-one
+    // STUBS that loaded "successfully" and blocked the real bake — every HSS unit in
+    // the game rendered as a tinted pill until this line changed. file: null = bake.
+    { key: COP_KEY, file: null, ...CHAR },
     { key: BOSS_KEY, file: null, ...CHAR }, // code-authored hulking sentinel
-    { key: NPC_KEY, file: "assets/sprites/npc.png", ...CHAR }, // authored 4-dir sheet
+    { key: NPC_KEY, file: null, ...CHAR }, // code-authored (see COP_KEY note)
     { key: BULLET_KEY, file: null }, // procedural (no bullet art in pack)
     { key: AGENT_KEY, file: null }, // procedural light figure (tinted crowd)
   ],

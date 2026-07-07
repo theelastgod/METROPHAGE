@@ -4,6 +4,7 @@ import { generatePlaceholders } from "../assets/textures";
 import { applyTextureFilters } from "../assets/textureFilters";
 import { ensureItemIcons } from "../assets/itemIcons";
 import { ensureNeonPipeline } from "../render/ensureNeon";
+import { coldOpenSeen } from "./ColdOpenScene";
 import MusicDirector from "../audio/MusicDirector";
 import Synth from "../audio/Synth";
 import { COLORS } from "../config";
@@ -73,7 +74,9 @@ export default class BootScene extends Phaser.Scene {
         boot.style.opacity = "0";
         window.setTimeout(() => boot.remove(), 700);
       }
-      this.scene.start("Select");
+      // first boot ever → the cold open (wake mid-crisis, first kill in 30s);
+      // anyone who has seen it — or skipped it — goes straight to the menu
+      this.scene.start(coldOpenSeen() ? "Select" : "ColdOpen");
     });
   }
 }

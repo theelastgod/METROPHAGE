@@ -1,10 +1,11 @@
 import Phaser from "phaser";
 import { CHAR, WALK_STEPS, drawCharacter, drawAgent, type CharSpec } from "./charart";
 import { bakeDrawnFrames } from "./pixelart";
-import { faceFrame, COP_KEY, NPC_KEY } from "./manifest";
+import { faceFrame } from "./manifest";
 
-/** Authored sheets with one frame per facing (no walk cycle). */
-const SIMPLE_SHEETS = new Set([COP_KEY, NPC_KEY]);
+/** Authored sheets with one frame per facing (no walk cycle). Cop/NPC moved to the
+ *  code-authored 16-frame bake (their on-disk files were stubs), so they now walk. */
+const SIMPLE_SHEETS = new Set<string>([]);
 
 // METROPHAGE — character animation. The procedural sheets bake 4 facings × WALK_STEPS
 // frames (facing-major: index = facing*WALK_STEPS + step). This module owns the bake

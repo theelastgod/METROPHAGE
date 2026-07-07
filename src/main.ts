@@ -8,6 +8,7 @@ import SelectScene from "./scenes/SelectScene";
 import CustomizeScene from "./scenes/CustomizeScene";
 import Prologue from "./scenes/Prologue";
 import OnlineScene from "./scenes/OnlineScene";
+import ColdOpenScene from "./scenes/ColdOpenScene";
 
 
 import { getMetroStatus } from "./economy/metro";
@@ -44,7 +45,7 @@ const config: Phaser.Types.Core.GameConfig = {
     gamepad: true,
     activePointers: 3, // touch devices: tap-to-move + UI taps can overlap
   },
-  scene: [BootScene, SelectScene, CustomizeScene, Prologue, OnlineScene],
+  scene: [BootScene, ColdOpenScene, SelectScene, CustomizeScene, Prologue, OnlineScene],
 };
 
 const game = new Phaser.Game(config);
