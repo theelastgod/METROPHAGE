@@ -275,10 +275,25 @@ function writeWav(file, buf) {
 // root: midi root note. prog: chord roots as scale degrees. drums/fx tune the mood.
 const A = 57; // A3
 const PROFILES = {
-  menu: { seed: 11, bpm: 78, bars: 16, root: A, scale: "minor", prog: [0, 5, 3, 4],
-    bass: { type: "tri", gain: 0.22, oct: -1 }, pad: { type: "saw", gain: 0.12 },
-    arp: { type: "tri", gain: 0.12, rate: 2, oct: 1 }, drums: { kick: 0.5, hat: 0, snare: 0 },
-    fx: { cutoff: 0.45, delay: 0.5, delayFb: 0.34, delayMix: 0.3, rev: 0.34, drive: 1.2 } },
+  // THE WAKE THEME — the game's front-door anthem. A composed 16-bar motif in two
+  // halves: the question (falls to a suspended B over the v chord) and the answer
+  // (peaks a fourth higher, then walks home to a long tonic). Hummable on purpose.
+  menu: { seed: 11, bpm: 82, bars: 16, root: A, scale: "minor", prog: [0, 5, 3, 4],
+    bass: { type: "tri", gain: 0.22, oct: -1 }, pad: { type: "saw", gain: 0.11 },
+    arp: { type: "tri", gain: 0.1, rate: 2, oct: 1 }, drums: { kick: 0.5, hat: 0.1, snare: 0 },
+    theme: { type: "saw", gain: 0.17, notes: [
+      // — the question (bars 1–8) —
+      [4, 0, 3], [2, 3, 1], [0, 4, 3],
+      [5, 8, 2], [4, 10, 1], [2, 11, 1], [4, 12, 4],
+      [7, 16, 3], [8, 19, 1], [7, 20, 2], [5, 22, 2],
+      [4, 24, 1.5], [2, 25.5, 1.5], [1, 27, 5],
+      // — the answer (bars 9–16) —
+      [7, 32, 3], [5, 35, 1], [4, 36, 3],
+      [9, 40, 2], [8, 42, 1], [7, 43, 1], [8, 44, 4],
+      [7, 48, 2], [5, 50, 2], [4, 52, 2], [2, 54, 2],
+      [0, 56, 8],
+    ] },
+    fx: { cutoff: 0.5, delay: 0.5, delayFb: 0.34, delayMix: 0.28, rev: 0.32, drive: 1.2 } },
 
   city: { seed: 22, bpm: 96, bars: 16, root: A, scale: "dorian", prog: [0, 3, 4, 0],
     bass: { type: "saw", gain: 0.24, oct: -1 }, pad: { type: "saw", gain: 0.1 },
@@ -368,6 +383,34 @@ function compose(p) {
           const tone = ch[s % ch.length] + 12 * (p.arp.oct || 1) + (s % (ch.length * 2) >= ch.length ? 12 : 0);
           const jit = p.arp.glitch ? (rnd() < 0.15 ? 12 : 0) : 0;
           note(buf, t + s * step, step * 0.9, midiToFreq(tone + jit), { type: p.arp.type, gain: p.arp.gain, atk: 0.003, rel: 0.05, hold: 0.5, pan: (s % 2 ? 0.35 : -0.35) });
+        }
+      }
+
+      // THEME — an AUTHORED motif spanning the whole loop, in absolute beats.
+      // notes: [scaleDegree, startBeat, lengthBeats, octave?]. This is the layer
+      // that makes a bed a THEME — a hummable line instead of texture. Placed on
+      // bar 0 only (the note times cover all bars themselves).
+      if (p.theme && b === 0) {
+        for (const [dg, startB, lenB, oct = 1] of p.theme.notes) {
+          note(buf, t + startB * beat, lenB * beat * 0.94, midiToFreq(degNote(p.root, scale, dg) + 12 * oct), {
+            type: p.theme.type || "saw",
+            gain: p.theme.gain ?? 0.16,
+            atk: 0.02,
+            rel: 0.34,
+            hold: 0.82,
+            voices: 2,
+            detune: 7,
+            pan: 0.08,
+          });
+          // a whisper of the same line an octave down thickens it without mud
+          note(buf, t + startB * beat, lenB * beat * 0.94, midiToFreq(degNote(p.root, scale, dg)), {
+            type: "tri",
+            gain: (p.theme.gain ?? 0.16) * 0.35,
+            atk: 0.03,
+            rel: 0.3,
+            hold: 0.8,
+            pan: -0.1,
+          });
         }
       }
 
