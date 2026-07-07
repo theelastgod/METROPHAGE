@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import { installUiCamera } from "../render/cameras";
+import { installRoofParallax, type RoofParallax } from "../render/roofParallax";
 import { createTerrainLayer, type TerrainProfile } from "../render/terrainLayer";
 import { paintRooftopLights } from "../render/rooftopLights";
 import { PlayerLight } from "../render/PlayerLight";
@@ -61,7 +62,7 @@ import {
   chamberForKind,
   tpx,
 } from "../game/tutorialLayout";
-import { getSettings } from "../systems/Settings";
+import { getSettings, effectiveLowFx } from "../systems/Settings";
 import { fadeInScene, transitionTo } from "../systems/transitions";
 import { juiceShake, juiceFlash, juiceHitStop, juiceZoomPunch, juiceNeonPulse } from "../systems/juice";
 import Particles from "../render/Particles";
@@ -324,6 +325,7 @@ export default class OnlineScene extends Phaser.Scene {
   private remoteSprites = new Map<string, Phaser.GameObjects.Sprite>();
   private escortOrbs = new Map<string, Phaser.GameObjects.Image[]>(); // orbiting companions per player
   private meShadow!: Phaser.GameObjects.Image; // soft ground contact under the local player
+  private roofParallax?: RoofParallax; // fake-3D roof projection (city + districts)
   private remoteLabels = new Map<string, Phaser.GameObjects.Text>();
   private enemySprites = new Map<number, Phaser.GameObjects.Sprite>();
   private bossOverlays = new Map<number, { name: Phaser.GameObjects.Text; bar: Phaser.GameObjects.Graphics }>();
@@ -580,6 +582,7 @@ export default class OnlineScene extends Phaser.Scene {
       paintCityEnvWash(this, ONLINE_CITY.zones);
       paintCityBuildingFacades(this, ONLINE_CITY.buildings);
       paintCityStorefrontReflections(this, ONLINE_CITY.buildings);
+      this.roofParallax = installRoofParallax(this, ONLINE_CITY.buildings.map((b) => b.rect), zoneAccent);
     }
     if (this.isBridge) {
       scatterWildernessProps(this, grid, zoneAccent, 4, bridgeDef!.layout.biome);
@@ -627,6 +630,11 @@ export default class OnlineScene extends Phaser.Scene {
         }
       }
       paintRooftopLights(this, def.layout.buildings, (b) => ({ x1: b.x1 * 2, y1: b.y1 * 2, x2: b.x2 * 2, y2: b.y2 * 2 }), () => zoneAccent);
+      this.roofParallax = installRoofParallax(
+        this,
+        def.layout.buildings.map((b) => ({ x1: b.x1 * 2, y1: b.y1 * 2, x2: b.x2 * 2, y2: b.y2 * 2 })),
+        zoneAccent,
+      );
     }
     this.cameras.main.setBounds(0, 0, this.worldW, this.worldH);
     installUiCamera(this, 1);
@@ -2143,6 +2151,7 @@ export default class OnlineScene extends Phaser.Scene {
         this.synth?.kill();
         juiceShake(this, prev.boss ? 220 : 100, prev.boss ? 0.007 : 0.004);
         this.particles?.burst(prev.x, prev.y, prev.boss ? 1.35 : 0.95);
+        this.groundGlow(prev.x, prev.y, prev.boss ? 0xffe08a : 0xff8a5c, prev.boss ? 1.5 : 0.8, prev.boss ? 620 : 380);
         if (prev.boss) {
           juiceNeonPulse(this, 0.35, 420);
           juiceFlash(this, 260, 40, 120, 60);
@@ -2300,6 +2309,11 @@ export default class OnlineScene extends Phaser.Scene {
     }
     this.updateEscort("me", this.me.x, this.me.y, this.net.connected && this.net.escortActive && !this.net.dead);
     this.meShadow.setPosition(this.me.x, this.me.y + 12).setVisible(this.me.visible);
+    // fake-3D: roofs project around the camera; the camera leads your movement
+    this.roofParallax?.update(this.cameras.main);
+    const fo = this.cameras.main.followOffset;
+    fo.x += (-mx * 26 - fo.x) * 0.055;
+    fo.y += (-my * 22 - fo.y) * 0.055;
 
     // remote players (interpolated by NetClient) — each rendered with ITS OWN
     // customization (baked from the look the server relays; colour as a tint).
@@ -2400,6 +2414,7 @@ export default class OnlineScene extends Phaser.Scene {
         const m = this.muzzleAt(aim);
         const tint = weapon?.weaponId ? (getWeapon(weapon.weaponId)?.tint ?? this.color) : this.color;
         this.particles?.muzzle(m.x, m.y, aim, 0.85);
+        this.groundGlow(this.me.x, this.me.y, tint, 0.5, 170); // muzzle light on the pavement
         this.particles?.flash(m.x, m.y, tint, 0.42);
         juiceShake(this, 40, 0.0018);
         juiceZoomPunch(this, 0.014, 75);
@@ -3128,6 +3143,20 @@ export default class OnlineScene extends Phaser.Scene {
       this.particles?.spark(this.me.x, this.me.y, 0x39ff88, 2.0);
       juiceFlash(this, 260, 57, 255, 136);
     }
+  }
+
+  /** Transient light pool — a burst of light cast onto the pavement (muzzle flashes,
+   *  kills, detonations). The floor answering the action is half of fake-3D lighting. */
+  private groundGlow(x: number, y: number, tint: number, scale = 0.6, ms = 260) {
+    if (effectiveLowFx()) return;
+    const g = this.add
+      .image(x, y + 8, GLOW_KEY)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setTint(tint)
+      .setScale(scale, scale * 0.45)
+      .setAlpha(0.3)
+      .setDepth(6.5);
+    this.tweens.add({ targets: g, alpha: 0, scaleX: scale * 1.5, duration: ms, ease: "Quad.out", onComplete: () => g.destroy() });
   }
 
   /** Soft contact shadow — grounds an entity on the pavement. One tinted radial glow,

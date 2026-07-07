@@ -101,6 +101,31 @@ export default class Atmosphere {
     ensureTextures(scene);
     this.buildWeather(opts.weather ?? "rain", opts.accent);
     this.buildFog(opts.accent, opts.weather ?? "rain");
+    this.buildHighFog(opts.accent);
+  }
+
+  /** High fog — banks ABOVE the street, on a >1 scroll factor so they slide faster
+   *  than the ground when the camera moves. Free-floating, so the parallax
+   *  displacement is pure depth cue (nothing they must stay aligned with). */
+  private buildHighFog(accent: number) {
+    if (getSettings().lowFx) return;
+    for (let i = 0; i < 3; i++) {
+      const img = this.scene.add
+        .image(Math.random() * this.worldW, Math.random() * this.worldH, GLOW_KEY)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setTint(i === 0 ? accent : 0x8fa9c8)
+        .setScale(8 + Math.random() * 6, 4 + Math.random() * 3)
+        .setAlpha(0.045)
+        .setScrollFactor(1.14)
+        .setDepth(13);
+      this.fog.push({
+        img,
+        vx: (Math.random() - 0.5) * 16,
+        vy: (Math.random() - 0.5) * 6,
+        baseAlpha: 0.045,
+        seed: Math.random() * Math.PI * 2,
+      });
+    }
   }
 
   /** Place an animated holographic sign at a world point (GameScene seeds rooftops). */
@@ -116,6 +141,22 @@ export default class Atmosphere {
     };
 
     if (weather === "rain") {
+      // FAR rain — smaller, slower, dimmer: a second sheet behind the near one.
+      // Two speeds of the same weather is the cheapest depth cue there is.
+      if (!lowFx)
+        add(RAIN_KEY, {
+          x: { min: -60, max: VIEW_W + 60 },
+          y: -20,
+          lifespan: 1350,
+          speedY: { min: 420, max: 540 },
+          speedX: { min: 36, max: 80 },
+          scaleX: 0.6,
+          scaleY: { min: 0.35, max: 0.6 },
+          alpha: { start: 0.26, end: 0 },
+          tint: 0x6fa8cc,
+          quantity: 3,
+          frequency: 16,
+        }, 940);
       add(RAIN_KEY, {
         x: { min: -60, max: VIEW_W + 60 },
         y: -20,
