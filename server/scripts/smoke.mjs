@@ -679,14 +679,17 @@ async function craft() {
   trackState(ws, w.id, store);
   await sleep(350);
 
-  // buy 5 Standard caches → 5 Standard items (deterministic rarity)
+  // buy 5 Standard caches → 5 Standard items (deterministic rarity). Diff by id:
+  // an empty bag gets a STARTER KIT on login (incl. a non-standard chip), so "the
+  // first five slots are my caches" is not a safe assumption.
+  const preIds = new Set(store.inventory.map((it) => it.id));
   for (let i = 0; i < 5; i++) {
     ws.send(JSON.stringify({ t: "buy", sku: "cache_standard" }));
     await sleep(240);
   }
   await sleep(400);
-  const bought = store.inventory.slice();
-  const boughtCaches = bought.length >= 5 && bought.slice(0, 5).every((it) => it.rarity === "standard");
+  const bought = store.inventory.filter((it) => !preIds.has(it.id));
+  const boughtCaches = bought.length >= 5 && bought.every((it) => it.rarity === "standard");
 
   // UPGRADE bought[0] → +1 ilvl; credits AND cores both deducted
   const up0 = bought[0];

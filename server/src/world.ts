@@ -676,6 +676,23 @@ export class WorldDO {
     return ticks(Math.max(120, Math.round(ms * (1 - (e.elite?.statusResist ?? 0)))));
   }
 
+  /** kit-mod: KILL NOVA — the killer's gear detonates a friendly burst at the corpse.
+   *  Rides the player-owned hazard pipeline (magenta ring, pays out to the killer). */
+  private killNova(killer: PlayerState, e: { x: number; y: number }) {
+    if ((killer.mods.killNovaPct || 0) <= 0) return;
+    this.hazards.push({
+      id: this.nextHazardId++,
+      x: e.x,
+      y: e.y,
+      r: 70,
+      castTick: this.tick,
+      detonateTick: this.tick + ticks(260),
+      dmg: Math.round(PLAYER_DMG * (0.5 + 2 * killer.mods.killNovaPct)),
+      vsEnemies: true,
+      owner: killer.id,
+    });
+  }
+
   /** VOLATILE elites detonate on death — a short-fuse hazard punishes point-blank
    *  greed. Rides the normal telegraph pipeline so clients render the dodge ring. */
   private eliteDeath(e: { x: number; y: number; elite?: EliteModifier }) {
@@ -3145,6 +3162,23 @@ export class WorldDO {
     p.dashUntilTick = this.tick + ticks(PLAYER.dashDurationMs);
     p.dashCdUntilTick = this.tick + ticks(PLAYER.dashCooldownMs);
     p.iframeUntilTick = this.tick + ticks(PLAYER.dashIframeMs);
+    // kit-mod: DASH TRAIL — contagion pods pop along the blink line
+    if ((p.mods.dashTrailPct || 0) > 0) {
+      const dmg = Math.round(PLAYER_DMG * (0.6 + 2 * p.mods.dashTrailPct));
+      for (const d of [42, 84, 126]) {
+        this.hazards.push({
+          id: this.nextHazardId++,
+          x: p.x + dx * d,
+          y: p.y + dy * d,
+          r: 46,
+          castTick: this.tick,
+          detonateTick: this.tick + ticks(420),
+          dmg,
+          vsEnemies: true,
+          owner: p.id,
+        });
+      }
+    }
     if (this.inTutorial()) this.tutorialEvent(p, "kit");
   }
 
@@ -3157,11 +3191,37 @@ export class WorldDO {
     const aim = Number.isFinite(msg.aim) ? msg.aim : p.aim;
     p.aim = aim;
     if (this.inTutorial()) this.tutorialEvent(p, "kit");
-    const lvl = 1 + (p.mods.dmgPct || 0);
+    // DASH-STRIKE moves on the PRIMARY cast only (an echo re-blinking you would be chaos)
+    if (p.classId === "k-guerilla") this.onDash(ws, { t: "dash", seq: msg.seq, dx: Math.cos(aim), dy: Math.sin(aim) });
+    this.resolveSignature(p, aim, 1);
+    switch (p.classId) {
+      case "k-guerilla":
+        p.abilityCdUntilTick = this.tick + ticks(6000);
+        break;
+      case "wintermute":
+        p.abilityCdUntilTick = this.tick + ticks(8000);
+        break;
+      case "swarm":
+        p.abilityCdUntilTick = this.tick + ticks(6500);
+        break;
+      default:
+        p.abilityCdUntilTick = this.tick + ticks(7000);
+    }
+    // kit-mod: Q ECHO — the signature repeats moments later at a damage fraction
+    if ((p.mods.abilityEchoPct || 0) > 0) {
+      this.echoes.push({ tick: this.tick + ticks(340), pid: p.id, aim, scale: Math.min(0.8, 0.35 + p.mods.abilityEchoPct) });
+    }
+  }
+
+  /** Pending Q echoes (kit-mod) — resolved by the tick loop at their due tick. */
+  private echoes: Array<{ tick: number; pid: string; aim: number; scale: number }> = [];
+
+  /** The signature's EFFECT, scale-aware so echoes reuse the exact same resolution. */
+  private resolveSignature(p: PlayerState, aim: number, scale: number) {
+    const lvl = (1 + (p.mods.dmgPct || 0)) * scale;
     switch (p.classId) {
       case "k-guerilla": {
-        // DASH-STRIKE — an attack dash: everything along the blink line takes blade damage
-        this.onDash(ws, { t: "dash", seq: msg.seq, dx: Math.cos(aim), dy: Math.sin(aim) });
+        // DASH-STRIKE — everything along the blade line takes damage
         const reach = PLAYER.dashSpeed * (PLAYER.dashDurationMs / 1000);
         const ex = p.x + Math.cos(aim) * reach;
         const ey = p.y + Math.sin(aim) * reach;
@@ -3170,7 +3230,6 @@ export class WorldDO {
           if (e.hp <= 0) continue;
           if (segPointDist2(e.x, e.y, p.x, p.y, ex, ey) <= 42 * 42) this.applyPlayerHitToEnemy(e, p, dmg);
         }
-        p.abilityCdUntilTick = this.tick + ticks(6000);
         break;
       }
       case "wintermute": {
@@ -3187,10 +3246,9 @@ export class WorldDO {
           while (diff > Math.PI) diff -= 2 * Math.PI;
           while (diff < -Math.PI) diff += 2 * Math.PI;
           if (Math.abs(diff) > halfArc) continue;
-          e.stunUntilTick = this.tick + this.statusTicks(e, e.boss ? 900 : 2000); // bosses shrug it off fast
+          e.stunUntilTick = this.tick + this.statusTicks(e, Math.round((e.boss ? 900 : 2000) * scale));
           this.applyPlayerHitToEnemy(e, p, dmg);
         }
-        p.abilityCdUntilTick = this.tick + ticks(8000);
         break;
       }
       case "swarm": {
@@ -3199,7 +3257,6 @@ export class WorldDO {
         for (let i = 0; i < 8; i++) {
           this.pushPlayerShot(p, aim + (i / 8) * Math.PI * 2, PROJ_SPEED * 0.85, PROJ_TTL_MS, dmg);
         }
-        p.abilityCdUntilTick = this.tick + ticks(6500);
         break;
       }
       default: {
@@ -3211,8 +3268,6 @@ export class WorldDO {
           if (e.hp <= 0) continue;
           if (dist2(e.x, e.y, px, py) <= 105 * 105) this.applyPlayerHitToEnemy(e, p, dmg);
         }
-        p.abilityCdUntilTick = this.tick + ticks(7000);
-        break;
       }
     }
   }
@@ -3283,7 +3338,9 @@ export class WorldDO {
   private onUlt(ws: WebSocket, msg: Extract<ClientMsg, { t: "ult" }>) {
     const p = this.playerFor(ws);
     if (!p || p.dead) return;
-    if (p.heat < HEAT.ultThreshold) return; // not hot enough — silently dropped
+    // kit-mod: ULT HEAT — singular chips lower the arm threshold (floor 25)
+    const ultGate = Math.max(25, HEAT.ultThreshold - Math.round(p.mods.ultHeatDiscount || 0));
+    if (p.heat < ultGate) return; // not hot enough — silently dropped
     p.heat = Math.max(0, p.heat - HEAT.ultHeatCost);
     const aim = Number.isFinite(msg.aim) ? msg.aim : p.aim;
     p.aim = aim;
@@ -3461,6 +3518,7 @@ export class WorldDO {
       this.bountyEvent(killer, "boss", 1);
     }
     this.eliteDeath(e);
+    this.killNova(killer, e);
     if (isBoss || e.elite || Math.random() < arch.loot.chance) {
       killer.inventory.push(rollItem(killer.level, isBoss ? 2.5 : arch.loot.boost + (e.elite?.lootBonus ?? 0)));
       if (killer.inventory.length > INVENTORY_CAP) killer.inventory.shift();
@@ -3757,6 +3815,7 @@ export class WorldDO {
                 }
               }
               this.eliteDeath(e);
+              if (owner) this.killNova(owner, e);
               if (isBoss) {
                 for (const [aid, ae] of this.enemies) if (ae.add) this.enemies.delete(aid);
                 this.hazards = [];
@@ -3804,6 +3863,18 @@ export class WorldDO {
 
     // 3a½) dynamic world events — district phenomena on a telegraphed cycle
     this.stepWorldEvent();
+
+    // 3a¾) Q echoes (kit-mod) — re-run the signature at its due tick, reduced scale
+    if (this.echoes.length) {
+      const due = this.echoes.filter((q) => this.tick >= q.tick);
+      if (due.length) {
+        this.echoes = this.echoes.filter((q) => this.tick < q.tick);
+        for (const q of due) {
+          const p = this.players.get(q.pid);
+          if (p && !p.dead) this.resolveSignature(p, q.aim, q.scale);
+        }
+      }
+    }
 
     // 3b) boss hazards — telegraphed AoE detonates on its tick, hitting players still inside
     if (this.hazards.length) {

@@ -14,6 +14,7 @@ import OnlineMarket from "../ui/OnlineMarket";
 import OnlineContracts from "../ui/OnlineContracts";
 import OnlineChatPanel from "../ui/OnlineChatPanel";
 import { COLORS, TILE, VIEW_W, VIEW_H, NPC, PLAYER, HEAT, uiDim, uiFont, DISTRICT_GRID_W, DISTRICT_GRID_H } from "../config";
+import { effectiveMods } from "../game/items";
 import { PLAYER_KEY, COP_KEY, BULLET_KEY, GLOW_KEY, NODE_KEY, PROP_STREETLIGHT_KEY, PROP_VENDING_KEY, PROP_AC_KEY } from "../assets/manifest";
 import { driveChar } from "../assets/anim";
 import {
@@ -2147,7 +2148,8 @@ export default class OnlineScene extends Phaser.Scene {
           juiceZoomPunch(this, 0.05, 200);
         } else {
           juiceZoomPunch(this, 0.025 + Math.min(0.02, this.killStreak * 0.004), 105);
-          if (this.killStreak >= 2) juiceHitStop(this, 22 + Math.min(18, this.killStreak * 4));
+          // every kill lands a beat of stop — streaks stack more on top
+          juiceHitStop(this, this.killStreak >= 2 ? 22 + Math.min(18, this.killStreak * 4) : 14);
         }
         const streak = this.killStreakLabel();
         if (streak) {
@@ -2707,7 +2709,7 @@ export default class OnlineScene extends Phaser.Scene {
         const abN = 1 - Phaser.Math.Clamp((this.net.abilityCdUntil - now) / this.abilityCooldownMs(), 0, 1);
         const ab2N = 1 - Phaser.Math.Clamp((this.net.ability2CdUntil - now) / this.ability2CooldownMs(), 0, 1);
         const heatN = Phaser.Math.Clamp(this.net.heat / HEAT.max, 0, 1);
-        const ultReady = this.net.heat >= HEAT.ultThreshold;
+        const ultReady = this.net.heat >= this.ultThresholdNow();
         drawPremiumBar(this.hpBar, k.x, k.y, quarterW, k.h, dashN, dashN >= 1 ? 0x00e5ff : 0x3a5a70);
         drawPremiumBar(this.hpBar, k.x + quarterW + gap, k.y, quarterW, k.h, abN, abN >= 1 ? this.color : 0x4a4460);
         drawPremiumBar(this.hpBar, k.x + (quarterW + gap) * 2, k.y, quarterW, k.h, ab2N, ab2N >= 1 ? 0xf7ff3c : 0x5a5440);
@@ -3074,12 +3076,20 @@ export default class OnlineScene extends Phaser.Scene {
     }
   }
 
+  /** The ultimate's arm threshold, kit-mod aware (ULT HEAT chips lower it; floor 25). */
+  private ultThresholdNow(): number {
+    let disc = 0;
+    for (const it of this.net.equipped) disc += effectiveMods(it).ultHeatDiscount ?? 0;
+    return Math.max(25, HEAT.ultThreshold - Math.round(disc));
+  }
+
   /** R — the class ultimate. HEAT is the gate and the cost; the server holds the meter,
    *  so a cold press is silently ignored (we mirror the threshold to skip dead FX). */
   private tryUlt() {
     const aim = this.pointerAim();
-    if (!this.net.ult(aim)) {
-      if (this.net.heat < HEAT.ultThreshold) this.showBubble(this.me.x, this.me.y, "HEAT LOW — keep fighting");
+    const gate = this.ultThresholdNow();
+    if (!this.net.ult(aim, gate)) {
+      if (this.net.heat < gate) this.showBubble(this.me.x, this.me.y, "HEAT LOW — keep fighting");
       return;
     }
     this.synth?.cast();

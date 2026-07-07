@@ -386,9 +386,10 @@ export default class NetClient {
     return true;
   }
 
-  /** Class ultimate (R) — no cooldown: HEAT is the cost, and the server holds the meter. */
-  ult(aim: number): boolean {
-    if (this.dead || this.heat < 50) return false; // client mirror of HEAT.ultThreshold
+  /** Class ultimate (R) — no cooldown: HEAT is the cost, and the server holds the meter.
+   *  `threshold` mirrors the server gate (kit-mod chips can lower it); server enforces. */
+  ult(aim: number, threshold = 50): boolean {
+    if (this.dead || this.heat < threshold) return false;
     try {
       this.ws?.send(JSON.stringify({ t: "ult", seq: this.seq, aim } satisfies ClientMsg));
     } catch {

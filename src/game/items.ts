@@ -53,6 +53,7 @@ interface StatDef {
   slots: Slot[];
   pct: boolean; // display as % vs flat
   good: "+" | "-"; // beneficial direction for display
+  minRarity?: Rarity; // kit-mods only roll at this rarity or better
 }
 
 const STAT_DEFS: StatDef[] = [
@@ -67,6 +68,11 @@ const STAT_DEFS: StatDef[] = [
   { key: "heatDecayPct", label: "HEAT DECAY", perPoint: 0.08, slots: ["chip"], pct: true, good: "-" },
   { key: "critPct", label: "CRIT", perPoint: 0.04, slots: ["weapon", "chip"], pct: true, good: "+" },
   { key: "lifestealPct", label: "LIFESTEAL", perPoint: 0.03, slots: ["implant", "chip"], pct: true, good: "+" },
+  // ── kit-mods (Black-ICE+): these change what an ability DOES — the build-around lines ──
+  { key: "dashTrailPct", label: "DASH TRAIL", perPoint: 0.09, slots: ["armor", "chip"], pct: true, good: "+", minRarity: "blackice" },
+  { key: "abilityEchoPct", label: "Q ECHO", perPoint: 0.08, slots: ["implant", "chip"], pct: true, good: "+", minRarity: "blackice" },
+  { key: "killNovaPct", label: "KILL NOVA", perPoint: 0.08, slots: ["weapon", "implant"], pct: true, good: "+", minRarity: "blackice" },
+  { key: "ultHeatDiscount", label: "ULT HEAT", perPoint: 3.2, slots: ["chip"], pct: false, good: "-", minRarity: "singular" },
 ];
 
 let counter = 0;
@@ -77,7 +83,9 @@ const randInt = (a: number, b: number) => a + Math.floor(Math.random() * (b - a 
 export function rollModsFor(slot: Slot, rarity: Rarity, level = 1): Partial<ModBag> {
   const def = RARITIES[rarity];
   const budget = def.budget * (1 + level * 0.04);
-  const pool = STAT_DEFS.filter((s) => s.slots.includes(slot));
+  const pool = STAT_DEFS.filter(
+    (s) => s.slots.includes(slot) && (!s.minRarity || rarityRank(rarity) >= rarityRank(s.minRarity)),
+  );
   const lines = Math.min(pool.length, randInt(def.lines[0], def.lines[1]));
   for (let i = pool.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -168,7 +176,9 @@ export function makeWeaponItem(weaponId: string, level = 1): Item {
   const rarity: Rarity = w ? (TIER_RARITY[w.tier] ?? "tuned") : "tuned";
   const def = RARITIES[rarity];
   const budget = def.budget * (1 + level * 0.04) * (rarity === "singular" ? 1.3 : 1.12);
-  const pool = STAT_DEFS.filter((s) => s.slots.includes("weapon"));
+  const pool = STAT_DEFS.filter(
+    (s) => s.slots.includes("weapon") && (!s.minRarity || rarityRank(rarity) >= rarityRank(s.minRarity)),
+  );
   const dmg = pool.find((s) => s.key === "dmgPct")!;
   const crit = pool.find((s) => s.key === "critPct")!;
   const rest = pool.filter((s) => s.key !== "dmgPct" && s.key !== "critPct");
