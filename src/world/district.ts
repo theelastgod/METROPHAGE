@@ -465,6 +465,19 @@ export function spawnPointForTravel(
   fromZone: string | undefined,
   def?: DistrictDef,
 ): { x: number; y: number } {
+  // stepping OUT of a district building interior ("d{N}i{K}") — arrive at that building's
+  // doorstep, the same street tile its door portal occupies (mirrors the client's door math)
+  const bm = fromZone ? /^d(\d+)i(\d+)$/.exec(fromZone) : null;
+  if (bm && def && zone === `d${bm[1]}`) {
+    const b = def.layout.buildings[parseInt(bm[2], 10)];
+    if (b) {
+      const tx = Math.round((b.x1 + b.x2) / 2) * S;
+      const ty = b.y2 * S + 1;
+      if (grid[ty]?.[tx] !== undefined && !isWall(grid[ty][tx])) {
+        return { x: tx * TILE + TILE / 2, y: ty * TILE + TILE / 2 };
+      }
+    }
+  }
   const tile = travelSpawnTile(zone, fromZone);
   if (tile) {
     const [tx, ty] = tile;

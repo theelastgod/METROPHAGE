@@ -107,6 +107,8 @@ import { verifyWalletLogin } from "./auth";
 
 /** Inventory is capped so the persisted JSON stays bounded; oldest drops out (FIFO). */
 const INVENTORY_CAP = 24;
+/** Personal stash (TENEMENT lockbox) cap — deposits are refused beyond this, never dropped. */
+const STASH_CAP = 24;
 
 /** Defensive JSON → Item[] parse for the persisted inventory column. */
 function parseInventory(raw: string | null | undefined): Item[] {
@@ -205,6 +207,21 @@ export const INTERIOR_ZONES = new Set(["safe", "clinic", "bar", "den", "shop"]);
 /** All named (non-district) zones the Worker routes by name — interiors + subway + wilderness bridges. */
 export const NAMED_ZONES = new Set([...INTERIOR_ZONES, "subway", "vault", TUTORIAL_ZONE, ...BRIDGE_ZONE_IDS, ...DIVE_ZONE_IDS]);
 
+/** Per-building district interior — zone id "d{district}i{buildingIndex}". Each is its own
+ *  no-combat DO reusing the safehouse room; H returns to the parent district. Bounded so a
+ *  bogus id can't spin up an unbounded zone. */
+export const parseBuildingInterior = (z: string | null): { district: number; index: number } | null => {
+  const m = z ? /^d(\d+)i(\d+)$/.exec(z) : null;
+  if (!m) return null;
+  const district = parseInt(m[1], 10);
+  const index = parseInt(m[2], 10);
+  if (district < 0 || district >= DISTRICTS.length || index < 0 || index > 63) return null;
+  return { district, index };
+};
+
+/** Zones the Worker routes by exact name or pattern (named zones + building interiors). */
+export const isNamedZone = (z: string | null): boolean => !!z && (NAMED_ZONES.has(z) || parseBuildingInterior(z) !== null);
+
 export interface Env {
   WORLD: DurableObjectNamespace;
   DB: D1Database;
@@ -243,6 +260,7 @@ interface PlayerState {
   cores: number;
   metro: number; // in-game $METRO balance (world marketplace + custodial bridge)
   inventory: Item[]; // server-authoritative loot, persisted as JSON (capped FIFO)
+  stash: Item[]; // personal safe storage (TENEMENT lockbox) — survives death, persisted as JSON
   equipped: Partial<Record<Slot, Item>>; // gear by slot; its mods boost combat
   mods: ModBag; // aggregate of the equipped mods (cached; recomputed on change)
   maxHp: number; // PLAYER_HP + mods.hpAdd
@@ -637,6 +655,19 @@ export class WorldDO {
       this.interior = true;
       this.zoneName = zone;
       this.districtIndex = 0;
+      this.grid = buildSafehouse();
+      this.spawn = SAFEHOUSE_SPAWN;
+      this.nodes = [];
+      void this.state.storage.put("zone", zone);
+      return;
+    }
+    // Per-building district interiors ("d{N}i{K}") — walk into any district building. Each is its
+    // own no-combat room; districtIndex is retained so H returns to the parent district.
+    const bldg = parseBuildingInterior(zone);
+    if (bldg) {
+      this.interior = true;
+      this.zoneName = zone!;
+      this.districtIndex = bldg.district;
       this.grid = buildSafehouse();
       this.spawn = SAFEHOUSE_SPAWN;
       this.nodes = [];
@@ -1249,6 +1280,7 @@ export class WorldDO {
     if (msg.t === "equip") return this.onEquip(ws, msg);
     if (msg.t === "unequip") return this.onUnequip(ws, msg);
     if (msg.t === "inv_move") return this.onInvMove(ws, msg);
+    if (msg.t === "stash") return this.onStash(ws, msg);
     if (msg.t === "craft") return this.onCraft(ws, msg);
     if (msg.t === "buy") return this.onBuy(ws, msg);
     if (msg.t === "chat") return this.onChat(ws, msg);
@@ -2156,6 +2188,7 @@ export class WorldDO {
       }
     }
     this.send(ws, { t: "inv", items: p.inventory }); // hydrate their held gear
+    this.send(ws, { t: "stashv", items: p.stash }); // hydrate the personal stash (lockbox)
     this.sendLoadout(ws, p); // hydrate equipped gear + derived max HP
     this.noteDeepest(p); // arriving in this district may set a "deepest reached" milestone
     this.send(ws, { t: "achv", ids: [...p.achv] }); // hydrate the unlocked achievement set
@@ -2185,11 +2218,12 @@ export class WorldDO {
     let tutorialStep = 0;
     let tutorialMode: TutorialMode = "quick";
     let inventory: Item[] = [];
+    let stash: Item[] = [];
     let look: PlayerLook | undefined;
     let equipped: Partial<Record<Slot, Item>> = {};
     let fragments: string[] = [];
     const row = await this.env.DB.prepare(
-      "SELECT x, y, credits, metro, xp, zone, cores, quest_step, campaign, tutorial_done, tutorial_step, tutorial_mode, inventory, look, equipped, fragments FROM players WHERE id = ?",
+      "SELECT x, y, credits, metro, xp, zone, cores, quest_step, campaign, tutorial_done, tutorial_step, tutorial_mode, inventory, look, equipped, fragments, stash FROM players WHERE id = ?",
     )
       .bind(id)
       .first<{
@@ -2209,6 +2243,7 @@ export class WorldDO {
         look: string | null;
         equipped: string;
         fragments: string | null;
+        stash: string | null;
       }>();
     if (row) {
       credits = row.credits ?? 0;
@@ -2228,6 +2263,7 @@ export class WorldDO {
       } catch {
         fragments = [];
       }
+      stash = parseInventory(row.stash ?? "[]"); // same defensive Item[] parse as the bag
       tutorialDone = !!row.tutorial_done;
       tutorialStep = row.tutorial_step ?? 0;
       tutorialMode = row.tutorial_mode === "full" ? "full" : "quick";
@@ -2252,7 +2288,7 @@ export class WorldDO {
         }
       }
     } else {
-      await this.upsert(id, name, x, y, 0, 0, 0, 0, campaign.toData(), [], undefined, {}, false, 0);
+      await this.upsert(id, name, x, y, 0, 0, 0, 0, campaign.toData(), [], [], undefined, {}, false, 0);
     }
     // achievements + leaderboard counters (cross-zone, shared D1)
     const stats: Record<string, number> = {};
@@ -2347,6 +2383,7 @@ export class WorldDO {
       cores,
       metro,
       inventory,
+      stash,
       equipped,
       mods,
       maxHp,
@@ -2768,6 +2805,7 @@ export class WorldDO {
       p.metro,
       p.campaign.toData(),
       p.inventory,
+      p.stash,
       p.look,
       p.equipped,
       true,
@@ -3008,6 +3046,36 @@ export class WorldDO {
       p.bounty = null;
     }
     this.pushBounty(p);
+  }
+
+  /** TENEMENT lockbox — move an item between bag and personal stash. Server-authoritative:
+   *  gated to home-kind building interiors (index%5===1, mirroring the client venue cycle),
+   *  cap-checked both ways, persisted with inventory in one upsert (no split-brain on crash). */
+  private onStash(ws: WebSocket, msg: Extract<ClientMsg, { t: "stash" }>) {
+    const p = this.playerFor(ws);
+    if (!p) return;
+    const sys = (t: string) => this.sendTo(p.id, { t: "sys", text: t });
+    const bldg = parseBuildingInterior(this.zoneName);
+    if (!bldg || bldg.index % 5 !== 1) return sys("find a TENEMENT lockbox to use your stash");
+    if (msg.action === "deposit") {
+      const i = p.inventory.findIndex((it) => it.id === msg.itemId);
+      if (i < 0) return sys("that item isn't in your bag");
+      if (p.stash.length >= STASH_CAP) return sys(`stash is full (${STASH_CAP})`);
+      const [it] = p.inventory.splice(i, 1);
+      p.stash.push(it);
+      p.dirty = true;
+      sys(`◈ stashed ${it.name} — safe from death`);
+    } else if (msg.action === "withdraw") {
+      const i = p.stash.findIndex((it) => it.id === msg.itemId);
+      if (i < 0) return sys("that item isn't in your stash");
+      if (p.inventory.length >= INVENTORY_CAP) return sys("bag is full");
+      const [it] = p.stash.splice(i, 1);
+      p.inventory.push(it);
+      p.dirty = true;
+      sys(`◈ took ${it.name} from the stash`);
+    } else return;
+    this.sendTo(p.id, { t: "inv", items: p.inventory });
+    this.sendTo(p.id, { t: "stashv", items: p.stash });
   }
 
   private onInput(ws: WebSocket, msg: Extract<ClientMsg, { t: "input" }>) {
@@ -4390,6 +4458,7 @@ export class WorldDO {
           p.metro,
           p.campaign.toData(),
           p.inventory,
+          p.stash,
           p.look,
           p.equipped,
           p.tutorialDone,
@@ -4492,6 +4561,7 @@ export class WorldDO {
     metro: number,
     campaign: CampaignData,
     inventory: Item[],
+    stash: Item[],
     look: PlayerLook | undefined,
     equipped: Partial<Record<Slot, Item>>,
     tutorialDone = false,
@@ -4502,8 +4572,8 @@ export class WorldDO {
     const zone = zoneOverride ?? this.zoneName;
     try {
       await this.env.DB.prepare(
-        "INSERT INTO players (id, name, x, y, zone, credits, xp, cores, metro, campaign, tutorial_done, tutorial_step, tutorial_mode, inventory, look, equipped, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) " +
-          "ON CONFLICT(id) DO UPDATE SET x=excluded.x, y=excluded.y, zone=excluded.zone, credits=excluded.credits, xp=excluded.xp, cores=excluded.cores, metro=excluded.metro, campaign=excluded.campaign, tutorial_done=excluded.tutorial_done, tutorial_step=excluded.tutorial_step, tutorial_mode=excluded.tutorial_mode, inventory=excluded.inventory, look=excluded.look, equipped=excluded.equipped, updated_at=excluded.updated_at",
+        "INSERT INTO players (id, name, x, y, zone, credits, xp, cores, metro, campaign, tutorial_done, tutorial_step, tutorial_mode, inventory, stash, look, equipped, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) " +
+          "ON CONFLICT(id) DO UPDATE SET x=excluded.x, y=excluded.y, zone=excluded.zone, credits=excluded.credits, xp=excluded.xp, cores=excluded.cores, metro=excluded.metro, campaign=excluded.campaign, tutorial_done=excluded.tutorial_done, tutorial_step=excluded.tutorial_step, tutorial_mode=excluded.tutorial_mode, inventory=excluded.inventory, stash=excluded.stash, look=excluded.look, equipped=excluded.equipped, updated_at=excluded.updated_at",
       )
         .bind(
           id,
@@ -4520,6 +4590,7 @@ export class WorldDO {
           Math.round(tutorialStep),
           tutorialMode,
           JSON.stringify(inventory.slice(0, INVENTORY_CAP)),
+          JSON.stringify(stash.slice(0, STASH_CAP)),
           look ? JSON.stringify(look) : null,
           JSON.stringify(equipped),
           Date.now(),
@@ -4552,6 +4623,7 @@ export class WorldDO {
         p.metro,
         p.campaign.toData(),
         p.inventory,
+        p.stash,
         p.look,
         p.equipped,
         p.tutorialDone,

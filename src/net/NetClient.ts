@@ -77,6 +77,7 @@ export default class NetClient {
   pvpInArena = false;
   pvpEscrow = 0;
   inventory: Item[] = []; // server-authoritative held gear (sent on login + on change)
+  stash: Item[] = []; // personal safe storage (TENEMENT lockbox), server-authoritative
   equipped: Item[] = []; // currently equipped items (one per slot), server-authoritative
   maxHp = PLAYER_HP; // derived from equipped +HP mods
   trade: null | {
@@ -172,6 +173,7 @@ export default class NetClient {
   playersOnline = 0;
   onWelcome?: (x: number, y: number) => void;
   onInventory?: () => void; // fired when the server pushes an inventory update
+  onStash?: () => void; // fired when the server pushes a stash update
   onRedirect?: (zone: string) => void;
   /** Memory fragments this player has recovered (dive rewards; welcome + live updates). */
   fragments: string[] = [];
@@ -591,6 +593,9 @@ export default class NetClient {
     } else if (msg.t === "inv") {
       this.inventory = msg.items;
       this.onInventory?.();
+    } else if (msg.t === "stashv") {
+      this.stash = msg.items;
+      this.onStash?.();
     } else if (msg.t === "equipped") {
       this.equipped = msg.items;
       this.maxHp = msg.maxHp;
@@ -645,6 +650,10 @@ export default class NetClient {
   }
   questTalk() {
     this.sendMsg({ t: "quest", action: "talk" });
+  }
+  /** TENEMENT lockbox — server validates the venue, caps, and item ownership. */
+  stashAction(action: "deposit" | "withdraw", itemId: string) {
+    this.sendMsg({ t: "stash", action, itemId });
   }
   tutorialSkip() {
     this.sendMsg({ t: "tutorial", action: "skip" });

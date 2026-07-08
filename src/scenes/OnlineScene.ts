@@ -12,9 +12,10 @@ import OnlineForge from "../ui/OnlineForge";
 import OnlineBoard from "../ui/OnlineBoard";
 import OnlineGuild from "../ui/OnlineGuild";
 import OnlineMarket from "../ui/OnlineMarket";
+import OnlineStash from "../ui/OnlineStash";
 import OnlineContracts from "../ui/OnlineContracts";
 import OnlineChatPanel from "../ui/OnlineChatPanel";
-import { COLORS, TILE, VIEW_W, VIEW_H, NPC, PLAYER, HEAT, uiDim, uiFont, DISTRICT_GRID_W, DISTRICT_GRID_H } from "../config";
+import { COLORS, TILE, VIEW_W, VIEW_H, NPC, PLAYER, HEAT, uiDim, uiFont, DISTRICT_GRID_W, DISTRICT_GRID_H, DISTRICT_SCALE } from "../config";
 import { effectiveMods } from "../game/items";
 import { PLAYER_KEY, COP_KEY, BULLET_KEY, GLOW_KEY, NODE_KEY, PROP_STREETLIGHT_KEY, PROP_VENDING_KEY, PROP_AC_KEY } from "../assets/manifest";
 import { driveChar } from "../assets/anim";
@@ -256,6 +257,23 @@ const INTERIOR_TITLES: Record<string, string> = {
   vault: "◆ THE PROVING — WEEKLY VAULT",
 };
 
+/** The building kinds cycled across every district block (index k → theme + keeper), and the
+ *  marquee shown over each door + atop its interior. Mirrors the district façade glyph cycle. */
+const DISTRICT_BUILDING_KINDS = ["shop", "home", "guild", "den", "bar"] as const;
+const DISTRICT_VENUE_TITLE: Record<(typeof DISTRICT_BUILDING_KINDS)[number], string> = {
+  shop: "MARKET STALL",
+  home: "TENEMENT",
+  guild: "GUILD HALL",
+  den: "THE DEN",
+  bar: "DIVE BAR",
+};
+const districtBuildingKind = (index: number) => DISTRICT_BUILDING_KINDS[index % DISTRICT_BUILDING_KINDS.length];
+/** Per-building district interior — zone id "d{district}i{buildingIndex}" (mirrors the server). */
+const parseBuildingInterior = (z: string): { district: number; index: number } | null => {
+  const m = /^d(\d+)i(\d+)$/.exec(z);
+  return m ? { district: parseInt(m[1], 10), index: parseInt(m[2], 10) } : null;
+};
+
 /** Doors in the hub that open into building interiors (each its own no-combat zone). */
 const CITY_HUB_DOORS: { dest: string; label: string; tile: [number, number]; color: number }[] = [
   { dest: "clinic", label: "CLINIC", tile: hubT(-4, -6), color: 0x39ff88 },
@@ -372,6 +390,7 @@ export default class OnlineScene extends Phaser.Scene {
   private market!: OnlineMarket; // auction house — cross-zone player market (D1-backed)
   private contracts!: OnlineContracts; // daily contracts + reputation track (D1-backed)
   private cosmetics!: OnlineCosmetics; // wardrobe / transmog (cosmetic-only, wallet-owned)
+  private stashPanel!: OnlineStash; // TENEMENT lockbox — personal safe storage (D1-backed)
   private mapPanel!: OnlineMap; // fast-travel map with per-account discovery fog
   private baseLook?: PlayerLook; // your base appearance (cosmetics merge on top for rendering)
   private chatPanel!: OnlineChatPanel;
@@ -483,7 +502,7 @@ export default class OnlineScene extends Phaser.Scene {
       !!INTERIOR_TITLES[rawZone] || rawZone === "subway" || rawZone === TUTORIAL_ZONE || this.isBridge || this.isDive;
     this.zone = this.isBridge ? rawZone : named ? rawZone : "d" + this.parseZone(data?.zone);
     this.isTutorial = this.zone === TUTORIAL_ZONE;
-    this.interior = !!INTERIOR_TITLES[this.zone] || this.zone === "safe"; // hub + building interiors
+    this.interior = !!INTERIOR_TITLES[this.zone] || this.zone === "safe" || !!parseBuildingInterior(this.zone); // hub + building interiors (incl. per-district)
     this.isCityHub = this.zone === "safe";
     this.isSubway = this.zone === "subway";
     this.fromZone = data?.from ?? "d0"; // where 'H' returns to from inside an interior
@@ -587,7 +606,7 @@ export default class OnlineScene extends Phaser.Scene {
     if (this.isBridge) {
       scatterWildernessProps(this, grid, zoneAccent, 4, bridgeDef!.layout.biome);
     } else if (this.isCityHub || (!this.interior && !this.isSubway && !this.isDive && !this.isTutorial)) {
-      scatterWorldProps(this, grid, 4, this.isCityHub ? 0.012 : 0.018);
+      scatterWorldProps(this, grid, 4, this.isCityHub ? 0.008 : 0.011);
     }
     if (this.isCityHub) {
       this.atmosphere = new Atmosphere(this, { weather: "rain", accent: zoneAccent, worldW: this.worldW, worldH: this.worldH });
@@ -641,6 +660,22 @@ export default class OnlineScene extends Phaser.Scene {
     this.applyNeon();
     fadeInScene(this, zoneAccent);
     if (!this.interior && !this.isSubway && !this.isDive && !this.isTutorial && !this.isCityHub) this.drawPvpZones();
+    // Every district building gets an enterable door on its south face — walk up + E (or click)
+    // drops you into that building's interior ("d{N}i{K}"); H returns to the district.
+    if (!this.interior && !this.isSubway && !this.isDive && !this.isTutorial && !this.isCityHub && !this.isBridge) {
+      const doorColor = DISTRICTS[this.districtIndex]?.accent ?? 0x29e7ff;
+      def.layout.buildings.forEach((b, i) => {
+        const tx = Math.round((b.x1 + b.x2) / 2) * DISTRICT_SCALE;
+        const doorstep = b.y2 * DISTRICT_SCALE + 1; // walkable street tile just south of the south wall
+        if (grid[doorstep]?.[tx] === undefined || isWall(grid[doorstep][tx])) return;
+        this.makeDoor({
+          dest: `d${this.districtIndex}i${i}`,
+          label: DISTRICT_VENUE_TITLE[districtBuildingKind(i)],
+          tile: [tx, doorstep],
+          color: doorColor,
+        });
+      });
+    }
     if (this.isTutorial) this.buildTutorialZone();
     if (this.interior) {
       if (this.isCityHub) {
@@ -675,25 +710,55 @@ export default class OnlineScene extends Phaser.Scene {
           if (cdef) this.makeTalkNpc(cdef.name, cdef.look, cdef.lines, c.tile[0] * TILE + TILE / 2, c.tile[1] * TILE + TILE / 2, cdef.id);
         }
       } else {
+        const bi = parseBuildingInterior(this.zone);
+        const kind = bi ? districtBuildingKind(bi.index) : this.zone;
+        const title = INTERIOR_TITLES[this.zone] ?? (bi ? `▣ ${DISTRICT_VENUE_TITLE[districtBuildingKind(bi.index)]}` : "▣ INTERIOR");
+        const backName = bi ? (DISTRICTS[bi.district]?.name ?? "the district") : "METRO CITY";
         this.add
-          .text(this.worldW / 2, 4 * TILE, INTERIOR_TITLES[this.zone] ?? "▣ INTERIOR", { fontFamily: "Courier New, monospace", fontSize: "20px", color: "#39ff88", fontStyle: "bold" })
+          .text(this.worldW / 2, 4 * TILE, title, { fontFamily: "Courier New, monospace", fontSize: "20px", color: "#39ff88", fontStyle: "bold" })
           .setOrigin(0.5)
           .setDepth(6);
         this.add
-          .text(this.worldW / 2, 4 * TILE + 26, "no combat · talk: E · H to return to METRO CITY", {
+          .text(this.worldW / 2, 4 * TILE + 26, `no combat · talk: E · H to return to ${backName}`, {
             fontFamily: "Courier New, monospace",
             fontSize: "11px",
             color: "#9aa3b2",
           })
           .setOrigin(0.5)
           .setDepth(6);
-        // a building interior — seat its authored occupants (keeper + residents)
+        // seat the room's occupants — a themed keeper (+ any authored residents for hub interiors)
         const residents = INTERIOR_PLAN[this.zone]?.[0] ?? [];
-        const occupants = [keeperFor(this.zone), ...residents.map((id) => npcDef(id)).filter((d): d is NonNullable<typeof d> => !!d)];
+        const occupants = [keeperFor(kind), ...residents.map((id) => npcDef(id)).filter((d): d is NonNullable<typeof d> => !!d)];
         occupants.forEach((o, i) => {
           const [tx, ty] = INTERIOR_NPC_TILES[i % INTERIOR_NPC_TILES.length];
           this.makeTalkNpc(o.name, o.look, o.lines, tx * TILE + TILE / 2, ty * TILE + TILE / 2, o.id);
         });
+        // venue services — each district venue DOES something: shop=vendor caches,
+        // home=personal stash, guild=cell registrar + forge, den=black market, bar=contracts
+        if (bi) {
+          const VENUE_SERVICES: Record<string, { svc: string; name: string; tag: string; color: number; look: PlayerLook }[]> = {
+            shop: [{ svc: "vendor", name: "CLERK", tag: "WARES", color: 0x00e5ff, look: hubLook({ color: 0x00e5ff, skin: 0xe6b58c, hair: "buzz", hairColor: 0x2a1d14 }) }],
+            home: [{ svc: "stash", name: "CUSTODIAN", tag: "LOCKBOX", color: 0xffb13c, look: hubLook({ color: 0xffb13c, skin: 0xc98a5e, hair: "bun", hairColor: 0x1b1820 }) }],
+            guild: [
+              { svc: "guild", name: "REGISTRAR", tag: "CELL", color: 0x4d8cff, look: hubLook({ color: 0x4d8cff, skin: 0xf3d2b8, hair: "short", hairColor: 0x4a2f1c, beard: "stubble", cloak: "coat" }) },
+              { svc: "forge", name: "ARMORER", tag: "FORGE", color: 0xff2bd6, look: hubLook({ color: 0xff2bd6, sex: "f", skin: 0xe6b58c, hair: "undercut", hairColor: 0x1b1820, gloves: "wraps" }) },
+            ],
+            den: [{ svc: "market", name: "FENCE", tag: "BLACK MARKET", color: 0xff2bd6, look: hubLook({ color: 0xff2bd6, head: "hood", skin: 0xa9794a, hair: "short", hairColor: 0x1b1820, cloak: "coat" }) }],
+            bar: [{ svc: "contracts", name: "FIXER", tag: "CONTRACTS", color: 0x9dff3c, look: hubLook({ color: 0x9dff3c, skin: 0x7c4f30, hair: "dreads", hairColor: 0x1b1820, cloak: "coat" }) }],
+          };
+          (VENUE_SERVICES[kind] ?? []).forEach((s, j) => {
+            const [tx, ty] = INTERIOR_NPC_TILES[(occupants.length + j) % INTERIOR_NPC_TILES.length];
+            const px = tx * TILE + TILE / 2;
+            const py = ty * TILE + TILE / 2;
+            const key = lookKey(s.look);
+            bakeRemoteLook(this, key, s.look);
+            this.add.image(px, py + 8, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(s.color).setDepth(8).setScale(0.6).setAlpha(0.45);
+            const spr = this.add.sprite(px, py, key, 0).setTint(0xffffff).setDepth(9).setInteractive({ useHandCursor: true });
+            spr.on("pointerdown", () => this.openService(s.svc));
+            drawHubNpcPlate(this, px, py, s.name, s.tag, s.color);
+            this.npcs.push({ kind: "service", svc: s.svc, name: `${s.name} · ${s.tag}`, x: px, y: py });
+          });
+        }
       }
     } else if (this.isBridge && bridgeDef) {
       this.buildBridgeZone(bridgeDef);
@@ -907,6 +972,7 @@ export default class OnlineScene extends Phaser.Scene {
       this.inv.setEquipped(this.net.equipped);
       this.forge.setState(this.net.inventory, this.net.equipped, this.net.credits, this.net.cores);
       if (this.market?.open) this.market.setState(this.net.marketListings, this.net.inventory, this.net.id, this.net.credits, this.net.metro);
+      this.stashPanel?.refresh(this.net.stash, this.net.inventory); // bag column live-updates
     };
     this.shop = new OnlineShop(this);
     this.shop.onBuy = (sku) => this.net.buy(sku);
@@ -942,6 +1008,10 @@ export default class OnlineScene extends Phaser.Scene {
     };
     this.cosmetics = new OnlineCosmetics(this);
     this.cosmetics.onAction = (action, id) => this.net.cosmeticAction(action, id);
+    this.stashPanel = new OnlineStash(this);
+    this.stashPanel.onDeposit = (id) => this.net.stashAction("deposit", id);
+    this.stashPanel.onWithdraw = (id) => this.net.stashAction("withdraw", id);
+    this.net.onStash = () => this.stashPanel.refresh(this.net.stash, this.net.inventory);
     this.net.onFragment = (_id, isNew) => {
       // the vault cracks — a beat of white-out + the story panel carries the memory
       juiceFlash(this, 300, 159, 232, 255);
@@ -1316,6 +1386,10 @@ export default class OnlineScene extends Phaser.Scene {
         this.contracts.close();
         return;
       }
+      if (this.stashPanel.open && e.key === "Escape") {
+        this.stashPanel.close();
+        return;
+      }
       if (e.key === "y" || e.key === "Y") {
         this.cosmetics.toggle(this.net.cosmeticsOwned, this.net.cosmeticEquipped, this.net.credits);
         if (this.cosmetics.open) this.reportTutorialPanel("cosmetics");
@@ -1341,7 +1415,9 @@ export default class OnlineScene extends Phaser.Scene {
         }
         const indoors = this.interior || this.isSubway || this.isDive;
         const dest = indoors ? this.fromZone : "safe";
-        const from = indoors ? undefined : this.zone;
+        // leaving a district-building interior tells the district WHICH door to spawn at;
+        // all other exits keep their classic entry spawn
+        const from = indoors ? (parseBuildingInterior(this.zone) ? this.zone : undefined) : this.zone;
         this.travelOrganic(dest, from ? { from } : undefined);
         return;
       }
@@ -1423,6 +1499,8 @@ export default class OnlineScene extends Phaser.Scene {
     if (this.isSubway) return "THE UNDERLINE";
     if (this.isDive) return `ICE VAULT ${this.zone.toUpperCase()}`;
     if (this.interior && INTERIOR_TITLES[this.zone]) return INTERIOR_TITLES[this.zone]!;
+    const bldgInt = parseBuildingInterior(this.zone);
+    if (bldgInt) return `${DISTRICTS[bldgInt.district]?.name?.toUpperCase() ?? "DISTRICT"} · ${DISTRICT_VENUE_TITLE[districtBuildingKind(bldgInt.index)]}`;
     if (this.isBridge) return getBridge(this.bridgeIndex).name;
     if (/^d\d+$/.test(this.zone)) return DISTRICTS[this.districtIndex]?.name?.toUpperCase() ?? this.zone.toUpperCase();
     if (/^w\d+$/.test(this.zone)) return getBridge(parseBridgeZone(this.zone)).name;
@@ -1530,6 +1608,9 @@ export default class OnlineScene extends Phaser.Scene {
         break;
       case "cosmetics":
         this.cosmetics.toggle(n.cosmeticsOwned, n.cosmeticEquipped, n.credits);
+        break;
+      case "stash":
+        this.stashPanel.toggle(n.stash, n.inventory);
         break;
     }
     const panelKind: Record<string, string> = {
@@ -1889,8 +1970,9 @@ export default class OnlineScene extends Phaser.Scene {
   /** Premium zone handoff — fade/deploy instead of a hard scene.restart. */
   private travelTo(zone: string, extra?: { from?: string; tutorialMode?: TutorialMode }) {
     const destBridge = parseBridgeZone(zone);
-    const destNamed = !!INTERIOR_TITLES[zone] || zone === "subway" || zone === TUTORIAL_ZONE || destBridge >= 0;
-    const di = destNamed && destBridge < 0 ? 0 : destBridge >= 0 ? destBridge : this.parseZone(zone);
+    const bldgInt = parseBuildingInterior(zone);
+    const destNamed = !!INTERIOR_TITLES[zone] || zone === "subway" || zone === TUTORIAL_ZONE || destBridge >= 0 || !!bldgInt;
+    const di = bldgInt ? bldgInt.district : destNamed && destBridge < 0 ? 0 : destBridge >= 0 ? destBridge : this.parseZone(zone);
     const accent =
       zone === TUTORIAL_ZONE
         ? 0x29e7ff
@@ -1901,7 +1983,7 @@ export default class OnlineScene extends Phaser.Scene {
             : destBridge >= 0
               ? getBridge(destBridge).accent
               : (DISTRICTS[di]?.accent ?? 0x29e7ff);
-    const style = zone === "safe" || this.interior ? "fade" : "deploy";
+    const style = zone === "safe" || this.interior || bldgInt ? "fade" : "deploy";
     transitionTo(this, "Online", { zone, ...extra }, { style, accent, onMid: () => this.net?.disconnect() });
   }
 

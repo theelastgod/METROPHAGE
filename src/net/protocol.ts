@@ -73,6 +73,7 @@ export type ClientMsg =
       classId?: string;
     }
   | { t: "inv_move"; from: number; to: number }
+  | { t: "stash"; action: "deposit" | "withdraw"; itemId: string } // TENEMENT lockbox — move an item bag↔stash
   | { t: "input"; seq: number; mx: number; my: number }
   | { t: "fire"; seq: number; aim: number } // aim in radians; server validates rate
   | { t: "dash"; seq: number; dx: number; dy: number } // burst move; server validates cooldown + grants i-frames
@@ -251,6 +252,7 @@ export type ServerMsg =
   // dynamic world event phase change in this district (telegraph -> active -> end)
   | { t: "event"; id: string; name: string; tagline: string; hex: string; phase: "telegraph" | "active" | "end"; seconds: number }
   | { t: "inv"; items: Item[] } // the owning client's full inventory (login + on change)
+  | { t: "stashv"; items: Item[] } // owning client's personal stash (login + on change)
   | { t: "equipped"; items: Item[]; maxHp: number } // owning client's equipped gear + derived max HP
   | { t: "achv"; ids: string[] } // full unlocked achievement set (sent on login)
   | { t: "ach"; id: string; name: string; reward: number } // a freshly-unlocked achievement
