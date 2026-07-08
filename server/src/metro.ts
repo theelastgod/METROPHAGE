@@ -148,7 +148,10 @@ export interface BridgeResponse {
   [k: string]: unknown;
 }
 
-const normId = (player: string): string => (player || "").toLowerCase().replace(/[^a-z0-9_-]/g, "") || "blank";
+// Sanitize but PRESERVE case and the "w:" prefix — real player ids are
+// "w:<base58 wallet>" (case-sensitive); lowercasing them broke every bridge
+// lookup for wallet players ("unknown player").
+const normId = (player: string): string => (player || "").replace(/[^A-Za-z0-9:_-]/g, "").slice(0, 64) || "blank";
 
 export async function getAccount(db: D1Database, player: string): Promise<BridgeResponse> {
   await reclaimExpired(db); // lazily return credits from abandoned claims
