@@ -22,5 +22,5 @@ new_sqlite_classes = ["WorldDO"]
 [[d1_databases]]
 binding = "DB"
 database_name = "metrophage"
-database_id = "local-placeholder-0000-0000-000000000000"
+database_id = "7f030a09-a0d0-44f5-8192-cf657bd04253"
 migrations_dir = "migrations"
