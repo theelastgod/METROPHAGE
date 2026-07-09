@@ -49,6 +49,8 @@ import {
   isWall,
   buildSafehouse,
   SAFEHOUSE_SPAWN,
+  buildVenueRoom,
+  VENUE_SPAWN,
   buildSubway,
   SUBWAY_SPAWN,
   buildDive,
@@ -468,7 +470,7 @@ interface ShopItem {
 const SHOP: Record<string, ShopItem> = {
   heal: { price: 40, label: "FIELD PATCH", heal: true },
   cache_standard: { price: 60, label: "SALVAGE CACHE", rarity: "standard" },
-  cache_tuned: { price: 180, label: "TUNED CACHE", rarity: "tuned" },
+  cache_tuned: { price: 150, label: "TUNED CACHE", rarity: "tuned" },
   cache_blackice: { price: 480, label: "BLACK-ICE CACHE", rarity: "blackice", repReq: 1 },
   cache_singular: { price: 1200, label: "SINGULAR CACHE", rarity: "singular", repReq: 2 },
   core_bundle: { price: 95, label: "CORE BUNDLE", cores: 3 },
@@ -661,15 +663,16 @@ export class WorldDO {
       void this.state.storage.put("zone", zone);
       return;
     }
-    // Per-building district interiors ("d{N}i{K}") — walk into any district building. Each is its
-    // own no-combat room; districtIndex is retained so H returns to the parent district.
+    // Per-building district interiors ("d{N}i{K}") — walk into any district building. Each is
+    // an FRLG-scale one-screen room; districtIndex is retained so exiting returns to the
+    // parent district's doorstep.
     const bldg = parseBuildingInterior(zone);
     if (bldg) {
       this.interior = true;
       this.zoneName = zone!;
       this.districtIndex = bldg.district;
-      this.grid = buildSafehouse();
-      this.spawn = SAFEHOUSE_SPAWN;
+      this.grid = buildVenueRoom();
+      this.spawn = VENUE_SPAWN;
       this.nodes = [];
       void this.state.storage.put("zone", zone);
       return;

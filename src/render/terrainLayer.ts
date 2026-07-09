@@ -3,7 +3,7 @@ import { TILE, TILESET_PX, TILESET_REAL_ART } from "../config";
 
 const REAL_ART_TILES = TILESET_REAL_ART;
 import { TILESET_KEY } from "../assets/manifest";
-import { applyTileVariants } from "./tileVariants";
+import { applyTileVariants, jitterTileTint } from "./tileVariants";
 import { paintFloorDetail } from "./floorDetail";
 import { shadeWalls } from "./wallShade";
 import { paintWetStreets } from "./wetStreets";
@@ -29,9 +29,13 @@ export interface TerrainLayerOpts {
   lightweight?: boolean;
 }
 
-const DEFAULTS: Record<TerrainProfile, Pick<TerrainLayerOpts, "wetStreets" | "ambientFloors" | "wallShade">> = {
+const DEFAULTS: Record<TerrainProfile, Pick<TerrainLayerOpts, "wetStreets" | "ambientFloors" | "wallShade" | "floorDetail">> = {
   district: { wetStreets: true, ambientFloors: false, wallShade: true },
-  city: { wetStreets: true, ambientFloors: false, wallShade: true },
+  // The hub grid is 450×360 = 162k tiles: the per-tile aggregate Graphics passes
+  // (floor grime, wall shade, wet sheen) re-tessellate their whole command buffer
+  // EVERY frame in WebGL — measured 4-6 FPS on integrated GPUs. The hub keeps tile
+  // variants, env wash, facades + atmosphere; per-tile passes are district-sized.
+  city: { wetStreets: false, ambientFloors: false, wallShade: false, floorDetail: false },
   tutorial: { wetStreets: true, ambientFloors: false, wallShade: true },
   interior: { wetStreets: false, ambientFloors: true, wallShade: true },
   subway: { wetStreets: false, ambientFloors: true, wallShade: true },
@@ -58,7 +62,8 @@ export function createTerrainLayer(
   const layer = map.createLayer(0, tileset, 0, 0)!;
 
   applyTileVariants(layer);
-  if (opts.floorDetail !== false) paintFloorDetail(scene, grid, 1.8, { realArt: REAL_ART_TILES });
+  jitterTileTint(layer); // per-tile brightness variation — breaks the repeating-grid look
+  if ((opts.floorDetail ?? d.floorDetail) !== false) paintFloorDetail(scene, grid, 1.8, { realArt: REAL_ART_TILES });
   if (opts.wallShade ?? d.wallShade) shadeWalls(scene, grid, accent, 2.5, REAL_ART_TILES);
   if (opts.wetStreets ?? d.wetStreets) paintWetStreets(scene, grid, accentAt, 2, { lightweight: opts.lightweight });
   if (opts.ambientFloors ?? d.ambientFloors) paintAmbientFloors(scene, grid, accent);

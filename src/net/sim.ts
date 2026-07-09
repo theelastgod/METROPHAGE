@@ -110,7 +110,7 @@ export const RESPAWN_MS = 2600;
 export const XP_PER_KILL = 14;
 export const levelForXp = (xp: number) => 1 + Math.floor(xp / 100);
 export const xpIntoLevel = (xp: number) => xp % 100; // 0..99 toward the next level
-export const CREDITS_PER_KILL = 12;
+export const CREDITS_PER_KILL = 18; // +50% over the original 12 — early grind felt slow
 export const LOOT_DROP_CHANCE = 0.55; // chance a cop drops a pickup
 export const PICKUP_RADIUS = 18; // walk within this to collect
 export const PICKUP_TTL_MS = 15000;

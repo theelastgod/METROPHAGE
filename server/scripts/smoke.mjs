@@ -1480,7 +1480,7 @@ async function shop() {
   const creditsBefore = store.credits || 0;
   const invBefore = store.inventory.length;
 
-  // buy a TUNED cache (180) → credits deducted, a tuned item granted
+  // buy a TUNED cache (150) → credits deducted, a tuned item granted
   ws.send(JSON.stringify({ t: "buy", sku: "cache_tuned" }));
   await sleep(700);
   const creditsAfter = store.credits || 0;
@@ -1495,9 +1495,9 @@ async function shop() {
   await sleep(200);
 
   const checks = {
-    earnedCredits: creditsBefore >= 180,
+    earnedCredits: creditsBefore >= 150,
     cacheGranted: store.inventory.length >= invBefore + 1 && !!bought && bought.rarity === "tuned",
-    creditsDeducted: creditsAfter === creditsBefore - 180,
+    creditsDeducted: creditsAfter === creditsBefore - 150,
     overspendRejected: (store.credits || 0) === cMid && store.inventory.length === invMid,
   };
   report(

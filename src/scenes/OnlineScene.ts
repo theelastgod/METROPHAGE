@@ -13,6 +13,7 @@ import OnlineBoard from "../ui/OnlineBoard";
 import OnlineGuild from "../ui/OnlineGuild";
 import OnlineMarket from "../ui/OnlineMarket";
 import OnlineStash from "../ui/OnlineStash";
+import { installDecorCulling } from "../render/decorCull";
 import OnlineContracts from "../ui/OnlineContracts";
 import OnlineChatPanel from "../ui/OnlineChatPanel";
 import { COLORS, TILE, VIEW_W, VIEW_H, NPC, PLAYER, HEAT, uiDim, uiFont, DISTRICT_GRID_W, DISTRICT_GRID_H, DISTRICT_SCALE } from "../config";
@@ -33,6 +34,8 @@ import {
   buildGrid,
   buildBridgeGrid,
   buildSafehouse,
+  buildVenueRoom,
+  VENUE_MAT_TILE,
   buildSubway,
   buildDive,
   parseDiveZone,
@@ -94,7 +97,7 @@ import OnlineMinimap from "../ui/OnlineMinimap";
 import RsQuestLog from "../ui/RsQuestLog";
 import { CITY_HUB_SPAWN, ENV_IDENTITY, envAt, ONLINE_CITY } from "../world/city";
 import { paintCityEnvWash, paintCityStorefrontReflections } from "../render/cityTerrainPolish";
-import { paintCityBuildingFacades } from "../render/buildingFacades";
+import { paintCityBuildingFacades, buildingExteriorAccent } from "../render/buildingFacades";
 import NetClient, { type NetEnemy } from "../net/NetClient";
 import NeonPipeline from "../render/NeonPipeline";
 import { campaignHud, Campaign } from "../net/campaign";
@@ -309,6 +312,8 @@ const DISTRICT_TRANSIT_BACK: Array<{ district: number; dest: string; label: stri
 
 /** Central tiles to seat a building interior's occupants. */
 const INTERIOR_NPC_TILES: [number, number][] = [[20, 12], [15, 15], [25, 15], [20, 18]];
+/** Seats inside the FRLG-scale venue room — keeper behind the counter, services on the floor. */
+const VENUE_NPC_TILES: [number, number][] = [[7, 2], [4, 5], [10, 5], [11, 7]];
 
 /** HSS archetype tints (index = enemy kind), matching the singleplayer reads. */
 // 0 patrol · 1 wasp · 2 lancer · 3 hound · 4 enforcer · 5 sniper · 6 wraith
@@ -343,6 +348,7 @@ export default class OnlineScene extends Phaser.Scene {
   private remoteSprites = new Map<string, Phaser.GameObjects.Sprite>();
   private escortOrbs = new Map<string, Phaser.GameObjects.Image[]>(); // orbiting companions per player
   private meShadow!: Phaser.GameObjects.Image; // soft ground contact under the local player
+  private meRing!: Phaser.GameObjects.Graphics; // bright "you-are-here" focal ring
   private roofParallax?: RoofParallax; // fake-3D roof projection (city + districts)
   private remoteLabels = new Map<string, Phaser.GameObjects.Text>();
   private enemySprites = new Map<number, Phaser.GameObjects.Sprite>();
@@ -418,6 +424,8 @@ export default class OnlineScene extends Phaser.Scene {
   private isBridge = false; // wilderness corridor between two districts
   private bridgeIndex = -1;
   private fromZone = "d0"; // district to return to when leaving the safehouse
+  private districtDoors: { tx: number; ty: number; dest: string }[] = []; // FRLG walk-in doors
+  private doorTransit = false; // an auto walk-in/walk-out is underway — fire once
   private meDir = new Phaser.Math.Vector2(0, 1); // last facing for the local avatar
   private nextEnemyBarkAt = 0; // throttle for online HSS barks
   private emoteWheelOpen = false;
@@ -506,6 +514,8 @@ export default class OnlineScene extends Phaser.Scene {
     this.isCityHub = this.zone === "safe";
     this.isSubway = this.zone === "subway";
     this.fromZone = data?.from ?? "d0"; // where 'H' returns to from inside an interior
+    this.districtDoors = [];
+    this.doorTransit = false; // scene instances are reused across zone starts — reset triggers
     this.districtIndex = this.isDive
       ? diveIdx
       : this.interior
@@ -550,7 +560,7 @@ export default class OnlineScene extends Phaser.Scene {
           : this.isCityHub
             ? ONLINE_CITY.grid
             : this.interior
-              ? buildSafehouse()
+              ? (parseBuildingInterior(this.zone) ? buildVenueRoom() : buildSafehouse())
               : this.isBridge
                 ? buildBridgeGrid(bridgeDef!)
                 : buildGrid(def);
@@ -606,7 +616,7 @@ export default class OnlineScene extends Phaser.Scene {
     if (this.isBridge) {
       scatterWildernessProps(this, grid, zoneAccent, 4, bridgeDef!.layout.biome);
     } else if (this.isCityHub || (!this.interior && !this.isSubway && !this.isDive && !this.isTutorial)) {
-      scatterWorldProps(this, grid, 4, this.isCityHub ? 0.008 : 0.011);
+      scatterWorldProps(this, grid, 4, this.isCityHub ? 0.003 : 0.006);
     }
     if (this.isCityHub) {
       this.atmosphere = new Atmosphere(this, { weather: "rain", accent: zoneAccent, worldW: this.worldW, worldH: this.worldH });
@@ -624,7 +634,7 @@ export default class OnlineScene extends Phaser.Scene {
         worldW: this.worldW,
         worldH: this.worldH,
       });
-      for (let i = 0; i < def.layout.buildings.length; i += 2) {
+      for (let i = 0; i < def.layout.buildings.length; i += 3) {
         const b = def.layout.buildings[i];
         const cx = ((b.x1 + b.x2) / 2) * TILE * 2 + TILE / 2;
         const cy = ((b.y1 + b.y2) / 2) * TILE * 2 + TILE / 2;
@@ -634,11 +644,11 @@ export default class OnlineScene extends Phaser.Scene {
       const adjWall = (x: number, y: number) =>
         isWall(grid[y]?.[x - 1]) || isWall(grid[y]?.[x + 1]) || isWall(grid[y - 1]?.[x]) || isWall(grid[y + 1]?.[x]);
       let placed = 0;
-      for (let ty = 1; ty < grid.length - 1 && placed < 24; ty++) {
+      for (let ty = 1; ty < grid.length - 1 && placed < 12; ty++) {
         for (let tx = 1; tx < grid[ty].length - 1; tx++) {
           if (isWall(grid[ty][tx]) || !adjWall(tx, ty)) continue;
           const h = hash(tx, ty);
-          if (h % 6 !== 0) continue;
+          if (h % 10 !== 0) continue;
           const px = tx * TILE + TILE / 2;
           const py = ty * TILE + TILE / 2;
           const pick = h % 3;
@@ -663,8 +673,10 @@ export default class OnlineScene extends Phaser.Scene {
     // Every district building gets an enterable door on its south face — walk up + E (or click)
     // drops you into that building's interior ("d{N}i{K}"); H returns to the district.
     if (!this.interior && !this.isSubway && !this.isDive && !this.isTutorial && !this.isCityHub && !this.isBridge) {
-      const doorColor = DISTRICTS[this.districtIndex]?.accent ?? 0x29e7ff;
       def.layout.buildings.forEach((b, i) => {
+        // door colour matches the building's roof (buildingExteriorAccent) so you can
+        // read "amber shop / magenta bar" at a glance and orient by landmark colour
+        const doorColor = buildingExteriorAccent(districtBuildingKind(i));
         const tx = Math.round((b.x1 + b.x2) / 2) * DISTRICT_SCALE;
         const doorstep = b.y2 * DISTRICT_SCALE + 1; // walkable street tile just south of the south wall
         if (grid[doorstep]?.[tx] === undefined || isWall(grid[doorstep][tx])) return;
@@ -673,7 +685,19 @@ export default class OnlineScene extends Phaser.Scene {
           label: DISTRICT_VENUE_TITLE[districtBuildingKind(i)],
           tile: [tx, doorstep],
           color: doorColor,
+          flat: true,
         });
+        // FRLG doorway carved into the south face — dark opening, lit lintel, light seam
+        const dg = this.add.graphics().setDepth(4.5);
+        const wx = tx * TILE;
+        const wy = (doorstep - 1) * TILE;
+        dg.fillStyle(0x05060f, 0.96).fillRect(wx + 6, wy + 8, TILE - 12, TILE - 8);
+        dg.fillStyle(doorColor, 0.9).fillRect(wx + 4, wy + 5, TILE - 8, 3);
+        dg.lineStyle(2, doorColor, 0.65).strokeRect(wx + 6, wy + 8, TILE - 12, TILE - 8);
+        dg.fillStyle(0xeafdff, 0.22).fillRect(wx + TILE / 2 - 2, wy + 14, 4, TILE - 14);
+        this.add.image(wx + TILE / 2, wy + TILE / 2, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(doorColor).setDepth(4.4).setScale(0.42).setAlpha(0.3);
+        // FRLG walk-in: pressing up while on the doorstep enters (E/click still works)
+        this.districtDoors.push({ tx, ty: doorstep, dest: `d${this.districtIndex}i${i}` });
       });
     }
     if (this.isTutorial) this.buildTutorialZone();
@@ -719,7 +743,7 @@ export default class OnlineScene extends Phaser.Scene {
           .setOrigin(0.5)
           .setDepth(6);
         this.add
-          .text(this.worldW / 2, 4 * TILE + 26, `no combat · talk: E · H to return to ${backName}`, {
+          .text(this.worldW / 2, 4 * TILE + 26, bi ? "no combat · talk: E · step on the door mat to leave" : `no combat · talk: E · H to return to ${backName}`, {
             fontFamily: "Courier New, monospace",
             fontSize: "11px",
             color: "#9aa3b2",
@@ -729,8 +753,9 @@ export default class OnlineScene extends Phaser.Scene {
         // seat the room's occupants — a themed keeper (+ any authored residents for hub interiors)
         const residents = INTERIOR_PLAN[this.zone]?.[0] ?? [];
         const occupants = [keeperFor(kind), ...residents.map((id) => npcDef(id)).filter((d): d is NonNullable<typeof d> => !!d)];
+        const seats = bi ? VENUE_NPC_TILES : INTERIOR_NPC_TILES;
         occupants.forEach((o, i) => {
-          const [tx, ty] = INTERIOR_NPC_TILES[i % INTERIOR_NPC_TILES.length];
+          const [tx, ty] = seats[i % seats.length];
           this.makeTalkNpc(o.name, o.look, o.lines, tx * TILE + TILE / 2, ty * TILE + TILE / 2, o.id);
         });
         // venue services — each district venue DOES something: shop=vendor caches,
@@ -747,7 +772,7 @@ export default class OnlineScene extends Phaser.Scene {
             bar: [{ svc: "contracts", name: "FIXER", tag: "CONTRACTS", color: 0x9dff3c, look: hubLook({ color: 0x9dff3c, skin: 0x7c4f30, hair: "dreads", hairColor: 0x1b1820, cloak: "coat" }) }],
           };
           (VENUE_SERVICES[kind] ?? []).forEach((s, j) => {
-            const [tx, ty] = INTERIOR_NPC_TILES[(occupants.length + j) % INTERIOR_NPC_TILES.length];
+            const [tx, ty] = seats[(occupants.length + j) % seats.length];
             const px = tx * TILE + TILE / 2;
             const py = ty * TILE + TILE / 2;
             const key = lookKey(s.look);
@@ -758,6 +783,18 @@ export default class OnlineScene extends Phaser.Scene {
             drawHubNpcPlate(this, px, py, s.name, s.tag, s.color);
             this.npcs.push({ kind: "service", svc: s.svc, name: `${s.name} · ${s.tag}`, x: px, y: py });
           });
+          // the exit — an FRLG door mat against the south wall; stepping on it walks out
+          const matX = VENUE_MAT_TILE[0] * TILE;
+          const matY = VENUE_MAT_TILE[1] * TILE;
+          const mg = this.add.graphics().setDepth(2.5);
+          mg.fillStyle(0x0a0e18, 0.9).fillRect(matX + 3, matY + 2, TILE - 6, TILE - 4);
+          mg.lineStyle(2, DISTRICTS[bi.district]?.accent ?? 0x39ff88, 0.85).strokeRect(matX + 3, matY + 2, TILE - 6, TILE - 4);
+          mg.fillStyle(DISTRICTS[bi.district]?.accent ?? 0x39ff88, 0.35).fillRect(matX + 7, matY + TILE - 9, TILE - 14, 3);
+          this.add
+            .text(matX + TILE / 2, matY + TILE / 2 - 2, "▼", { fontFamily: "Courier New, monospace", fontSize: "13px", color: "#eafdff", fontStyle: "bold" })
+            .setOrigin(0.5)
+            .setDepth(2.6);
+          this.dressVenueRoom(kind, DISTRICTS[bi.district]?.accent ?? 0x39ff88);
         }
       }
     } else if (this.isBridge && bridgeDef) {
@@ -909,6 +946,11 @@ export default class OnlineScene extends Phaser.Scene {
       .setDepth(10)
       .setVisible(false);
     this.meShadow = this.groundShadow(this.me.x, this.me.y);
+    // focal ring — a bright cyan "you" marker under the LOCAL player only, so you can
+    // always find yourself in a busy world (remotes never get one). Pulses in update().
+    this.meRing = this.add.graphics().setDepth(6).setVisible(false);
+    this.meRing.lineStyle(4, 0x39ffea, 0.16).strokeCircle(0, 0, 16);
+    this.meRing.lineStyle(1.5, 0x8dfff0, 0.95).strokeCircle(0, 0, 16);
     this.meLight = new PlayerLight(this, this.me.x, this.me.y, 4, zoneAccent);
     const soloSpawn = this.soloSpawnPoint();
     if (soloSpawn) {
@@ -1238,13 +1280,15 @@ export default class OnlineScene extends Phaser.Scene {
       .setOrigin(0.5, 0)
       .setScrollFactor(0)
       .setDepth(1000);
+    // Story beats read as a top banner, NOT a modal over the play area — the old
+    // dead-centre box blanketed the whole screen and made the game feel dialog-heavy.
     this.storyPanel = this.add
-      .text(this.scale.width / 2, this.scale.height / 2 - uiDim(40), "", hudFont(12, {
+      .text(this.scale.width / 2, this.scale.height * 0.16, "", hudFont(12, {
         color: "#eafdff",
         align: "center",
-        backgroundColor: "#0b0716ee",
-        padding: { x: uiDim(18), y: uiDim(14) },
-        wordWrap: { width: uiDim(540) },
+        backgroundColor: "#0b0716e0",
+        padding: { x: uiDim(16), y: uiDim(10) },
+        wordWrap: { width: uiDim(560) },
       }))
       .setOrigin(0.5)
       .setScrollFactor(0)
@@ -1465,6 +1509,14 @@ export default class OnlineScene extends Phaser.Scene {
       this.net?.disconnect();
       setOnlinePlayer(null);
     });
+
+    // Big outdoor maps drown the renderer in static decor (measured: hub 3.5k objects,
+    // 4 FPS on integrated GPUs). Cell-cull the ground band once the zone is fully built.
+    // The hub counts: it's flagged `interior` (no-combat) but is the biggest map of all.
+    if (this.isCityHub || (!this.interior && !this.isSubway && !this.isDive && !this.isTutorial)) {
+      const culled = installDecorCulling(this);
+      if (import.meta.env.DEV) console.info(`[decor-cull] adopted ${culled.adopted} objects into ${culled.cells} cells`);
+    }
   }
 
   /** Resolve a signed wallet identity (if a wallet is connected), then connect. A
@@ -1906,16 +1958,79 @@ export default class OnlineScene extends Phaser.Scene {
     this.npcs.push({ kind: "transit", dest, name: label, label, color, x: px, y: py });
   }
 
-  /** A door into a building interior — a glowing portal you enter with E (or click). */
-  private makeDoor(door: { dest: string; label: string; tile: [number, number]; color: number }) {
+  /** Furnish an FRLG venue room so it reads as a lived-in place, not an empty box:
+   *  a counter surface, a rug, warm light, and a couple of kind-specific set pieces.
+   *  Tiles avoid the NPC seats (7,2)/(4,5)/(10,5)/(11,7) and the mat column. */
+  private dressVenueRoom(kind: string, accent: number) {
+    const g = this.add.graphics().setDepth(2.4);
+    const t = (n: number) => n * TILE;
+    // counter surface — the wall row at y=3 (x4..10, gap at 7) reads as furniture
+    for (let x = 4; x <= 10; x++) {
+      if (x === 7) continue;
+      g.fillStyle(0x1a2234, 0.9).fillRect(t(x) + 1, t(3) + TILE - 9, TILE - 2, 8);
+      g.fillStyle(accent, 0.5).fillRect(t(x) + 1, t(3) + TILE - 10, TILE - 2, 2);
+    }
+    // rug — centre of the floor, under the service seats
+    g.fillStyle(accent, 0.1).fillRect(t(5) + 6, t(5) + 4, t(4) - 12, t(2) + TILE - 8);
+    g.lineStyle(1, accent, 0.3).strokeRect(t(5) + 6, t(5) + 4, t(4) - 12, t(2) + TILE - 8);
+    // warm light pooling at the counter gap + room centre
+    this.add.image(t(7) + TILE / 2, t(3) + TILE, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(0xffb86a).setDepth(2.5).setScale(0.9).setAlpha(0.14);
+    this.add.image(t(7) + TILE / 2, t(6), GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(accent).setDepth(2.5).setScale(1.3).setAlpha(0.08);
+
+    const crate = (cx: number, cy: number, c = 0x3a3020) => {
+      g.fillStyle(c, 0.95).fillRect(t(cx) + 5, t(cy) + 8, 20, 16);
+      g.lineStyle(1, 0x6a5a30, 0.8).strokeRect(t(cx) + 5, t(cy) + 8, 20, 16);
+      g.lineStyle(1, 0x6a5a30, 0.5).lineBetween(t(cx) + 5, t(cy) + 16, t(cx) + 25, t(cy) + 16);
+    };
+    if (kind === "shop") {
+      if (this.textures.exists(PROP_VENDING_KEY)) this.add.image(t(12) + TILE / 2, t(2) + TILE - 4, PROP_VENDING_KEY).setOrigin(0.5, 0.85).setDepth(5).setScale(0.8);
+      crate(2, 7);
+      crate(2, 6);
+    } else if (kind === "home") {
+      // a bunk against the west wall — warm blanket + pillow
+      g.fillStyle(0x2a2440, 1).fillRect(t(1) + 6, t(2) + 4, TILE + 14, TILE + 20);
+      g.fillStyle(0x8a4a3c, 0.9).fillRect(t(1) + 6, t(2) + 18, TILE + 14, TILE + 6);
+      g.fillStyle(0xd8cfc0, 0.95).fillRect(t(1) + 10, t(2) + 7, 18, 9);
+      if (this.textures.exists(PROP_AC_KEY)) this.add.image(t(12) + TILE / 2, t(2) + TILE - 4, PROP_AC_KEY).setOrigin(0.5, 0.85).setDepth(5).setScale(0.7);
+    } else if (kind === "guild") {
+      // faction banners on the north wall
+      for (const bx of [4, 10]) {
+        g.fillStyle(accent, 0.8).fillRect(t(bx) + 10, t(1) - 6, 12, 26);
+        g.fillStyle(0x0a0e18, 0.9).fillRect(t(bx) + 13, t(1) + 2, 6, 8);
+      }
+    } else if (kind === "den") {
+      crate(2, 7, 0x2a1a2e);
+      crate(12, 2, 0x2a1a2e);
+      this.add.image(t(12) + TILE / 2, t(7), GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(0xff3b6b).setDepth(2.5).setScale(0.5).setAlpha(0.22);
+    } else if (kind === "bar") {
+      for (const bx of [3, 11]) {
+        g.fillStyle(0x1a2234, 1).fillCircle(t(bx) + TILE / 2, t(6) + TILE / 2, 12);
+        g.lineStyle(2, accent, 0.5).strokeCircle(t(bx) + TILE / 2, t(6) + TILE / 2, 12);
+        this.add.image(t(bx) + TILE / 2, t(6) + TILE / 2, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(0xffb86a).setDepth(2.5).setScale(0.4).setAlpha(0.16);
+      }
+      // bottle rack — accent dashes along the counter face
+      for (let x = 4; x <= 10; x++) {
+        if (x === 7) continue;
+        g.fillStyle(x % 2 ? 0x39ff88 : 0xff79c6, 0.75).fillRect(t(x) + 8, t(3) + 6, 3, 9);
+        g.fillStyle(0x29e7ff, 0.75).fillRect(t(x) + 17, t(3) + 4, 3, 11);
+      }
+    }
+  }
+
+  /** A door into a building interior — a glowing portal you enter with E (or click).
+   *  `flat` skips the free-standing portal box (district doorways draw their own
+   *  recessed FRLG-style opening in the wall face instead). */
+  private makeDoor(door: { dest: string; label: string; tile: [number, number]; color: number; flat?: boolean }) {
     const px = door.tile[0] * TILE + TILE / 2;
     const py = door.tile[1] * TILE + TILE / 2;
-    const g = this.add.graphics().setDepth(8);
-    g.fillStyle(door.color, 0.16).fillRect(px - 18, py - 24, 36, 48);
-    g.lineStyle(2, door.color, 0.9).strokeRect(px - 18, py - 24, 36, 48);
-    this.add.image(px, py, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(door.color).setDepth(8).setScale(0.5).setAlpha(0.4);
+    if (!door.flat) {
+      const g = this.add.graphics().setDepth(8);
+      g.fillStyle(door.color, 0.16).fillRect(px - 18, py - 24, 36, 48);
+      g.lineStyle(2, door.color, 0.9).strokeRect(px - 18, py - 24, 36, 48);
+      this.add.image(px, py, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(door.color).setDepth(8).setScale(0.5).setAlpha(0.4);
+    }
     this.add
-      .text(px, py - 36, door.label, { fontFamily: "Courier New, monospace", fontSize: "10px", color: "#" + (door.color & 0xffffff).toString(16).padStart(6, "0"), fontStyle: "bold" })
+      .text(px, py - (door.flat ? TILE + 12 : 36), door.label, { fontFamily: "Courier New, monospace", fontSize: "10px", color: "#" + (door.color & 0xffffff).toString(16).padStart(6, "0"), fontStyle: "bold" })
       .setOrigin(0.5)
       .setDepth(9);
     const z = this.add.zone(px - 18, py - 24, 36, 48).setOrigin(0).setInteractive({ useHandCursor: true }).setDepth(9);
@@ -2337,6 +2452,26 @@ export default class OnlineScene extends Phaser.Scene {
 
     this.net.setIntent(mx, my);
     this.net.update(dt);
+    // FRLG doors — walk-in: pressing up on a doorstep enters the venue; walk-out:
+    // stepping onto the room's south mat leaves. Both fire once per zone visit.
+    if (!this.doorTransit) {
+      if (this.districtDoors.length && my < 0 && mx === 0) {
+        const p = this.net.pred;
+        const ptx = Math.floor(p.x / TILE);
+        const pty = Math.floor(p.y / TILE);
+        const d = this.districtDoors.find((dd) => dd.tx === ptx && dd.ty === pty && Math.abs(p.x - (dd.tx * TILE + TILE / 2)) < 12);
+        if (d) {
+          this.doorTransit = true;
+          this.enterZone(d.dest);
+        }
+      } else if (this.interior && parseBuildingInterior(this.zone)) {
+        const p = this.net.pred;
+        if (Math.floor(p.x / TILE) === VENUE_MAT_TILE[0] && Math.floor(p.y / TILE) === VENUE_MAT_TILE[1]) {
+          this.doorTransit = true;
+          this.travelOrganic(this.fromZone, { from: this.zone });
+        }
+      }
+    }
     if (this.killStreak > 0 && this.time.now > this.killStreakExpiresAt) this.killStreak = 0;
     if (
       !this.net.dead &&
@@ -2391,6 +2526,11 @@ export default class OnlineScene extends Phaser.Scene {
     }
     this.updateEscort("me", this.me.x, this.me.y, this.net.connected && this.net.escortActive && !this.net.dead);
     this.meShadow.setPosition(this.me.x, this.me.y + 12).setVisible(this.me.visible);
+    // focal ring rides the player's feet with a gentle breathing pulse
+    this.meRing
+      .setVisible(this.me.visible && !this.net.dead)
+      .setPosition(this.me.x, this.me.y + 10)
+      .setScale(1 + 0.1 * Math.sin(this.time.now * 0.005), 0.5 + 0.05 * Math.sin(this.time.now * 0.005));
     // fake-3D: roofs project around the camera; the camera leads your movement
     this.roofParallax?.update(this.cameras.main);
     const fo = this.cameras.main.followOffset;
@@ -2630,7 +2770,8 @@ export default class OnlineScene extends Phaser.Scene {
               ? near.label
               : `talk to ${near.name}`
         : "";
-      this.interactPrompt.setText(near ? `▸ E — ${label}` : "").setVisible(!!near);
+      const walkIn = !!near && near.kind === "door" && !!near.dest && /^d\d+i\d+$/.test(near.dest);
+      this.interactPrompt.setText(near ? (walkIn ? `▸ walk up / E — ${near.name}` : `▸ E — ${label}`) : "").setVisible(!!near);
     }
 
     // enemies (server-simulated) — tinted by HSS archetype (matches singleplayer reads)
@@ -3933,7 +4074,9 @@ export default class OnlineScene extends Phaser.Scene {
       const a = this.zoneAccent;
       this.neon.heat = 0.05;
       this.neon.tint = [((a >> 16) & 0xff) / 255, ((a >> 8) & 0xff) / 255, (a & 0xff) / 255];
-      this.neon.tintAmt = this.isCityHub ? 0.18 : this.interior ? 0.12 : 0.24;
+      // lighter signature wash — 0.24 flattened whole districts to one hue and buried
+      // the per-building colour-coding + tile variation; a subtle tint still reads
+      this.neon.tintAmt = this.isCityHub ? 0.1 : this.interior ? 0.08 : 0.13;
     }
   }
 }

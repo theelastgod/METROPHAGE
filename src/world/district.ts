@@ -347,6 +347,37 @@ export const SAFEHOUSE_SPAWN = {
 };
 
 /**
+ * FRLG-style venue room — a district building's interior at Pokémon-house scale:
+ * one screen, a service counter along the top, and a door mat against the south
+ * wall. You appear one step above the mat; stepping DOWN onto it walks you out.
+ * Shared by the client (renders + exit trigger) and the server (sims the room).
+ */
+export const VENUE_ROOM_W = 15;
+export const VENUE_ROOM_H = 11;
+/** The exit mat — floor tile against the south wall's centre. */
+export const VENUE_MAT_TILE: [number, number] = [7, 9];
+/** Arrival point — one step above the mat (walking down = leaving, FRLG-style). */
+export const VENUE_SPAWN = {
+  x: VENUE_MAT_TILE[0] * TILE + TILE / 2,
+  y: (VENUE_MAT_TILE[1] - 1) * TILE + TILE / 2,
+};
+export function buildVenueRoom(): TileGrid {
+  const g: TileGrid = [];
+  for (let y = 0; y < VENUE_ROOM_H; y++) {
+    const row: number[] = [];
+    for (let x = 0; x < VENUE_ROOM_W; x++) {
+      const border = x === 0 || x === VENUE_ROOM_W - 1 || y === 0 || y === VENUE_ROOM_H - 1;
+      row.push(border ? TILE_INNER_WALL : TILE_INNER_FLOOR);
+    }
+    g.push(row);
+  }
+  // service counter — the keeper stands behind it, customers in front
+  for (let x = 4; x <= 10; x++) g[3][x] = TILE_INNER_WALL;
+  g[3][7] = TILE_INNER_FLOOR; // counter gap so the keeper's spot stays reachable-adjacent
+  return g;
+}
+
+/**
  * THE UNDERLINE — the subway dungeon as an online COMBAT interior: three parallel platforms
  * joined by vertical connectors (a subway-track feel), walls elsewhere. Shared by the client
  * (renders it) and the server (sims zone "subway" with a tough HSS garrison + a boss).
@@ -465,6 +496,8 @@ export function spawnPointForTravel(
   fromZone: string | undefined,
   def?: DistrictDef,
 ): { x: number; y: number } {
+  // stepping INTO a district building interior — always arrive just above the door mat
+  if (/^d\d+i\d+$/.test(zone)) return { x: VENUE_SPAWN.x, y: VENUE_SPAWN.y };
   // stepping OUT of a district building interior ("d{N}i{K}") — arrive at that building's
   // doorstep, the same street tile its door portal occupies (mirrors the client's door math)
   const bm = fromZone ? /^d(\d+)i(\d+)$/.exec(fromZone) : null;

@@ -79,10 +79,12 @@ void main() {
     col += bloom * (0.92 + uHeat * 1.85 + uGlitch * 1.7) * uBloomAmt;
   }
 
-  // cinematic grade — lifted blacks, teal shadows, warm highlights
+  // cinematic grade — DEEP noir blacks + punchy saturation so neon reads even with
+  // bloom off (low tier). Deeper floor + higher base saturation = more perceived
+  // contrast between the emissive accents and the near-black city.
   float l = dot(col, vec3(0.299, 0.587, 0.114));
-  col = max(col, vec3(0.014, 0.016, 0.022));
-  col = mix(vec3(l), col, 1.03 + uHeat * 0.72 + uGlitch * 0.55);
+  col = max(col, vec3(0.006, 0.007, 0.012));
+  col = mix(vec3(l), col, 1.18 + uHeat * 0.72 + uGlitch * 0.55);
   vec3 shadowTint = mix(vec3(0.05, 0.10, 0.16), vec3(0.14, 0.04, 0.12), 0.5 + 0.5 * sin(uTime * 0.06));
   col = mix(col, col * shadowTint + shadowTint * 0.07, smoothstep(0.0, 0.45, 1.0 - l) * 0.24);
   vec3 hiTint = vec3(1.04, 1.02, 0.98);
@@ -110,8 +112,9 @@ void main() {
   // vignette — soft indie-studio framing without crushing mids
   float vig = smoothstep(0.25, 1.05, dist * 1.35);
   col *= mix(1.0, 0.72, vig * (0.38 + uHeat * 0.22));
-  // gentle highlight lift on emissive peaks so neon reads hotter at high resolution
-  col = mix(col, col * 1.08 + vec3(0.02, 0.03, 0.05), smoothstep(0.55, 0.95, l) * 0.18);
+  // highlight lift on emissive peaks so neon reads hotter — carries the "glow" even
+  // when the bloom pass is disabled on low-tier machines
+  col = mix(col, col * 1.14 + vec3(0.03, 0.045, 0.07), smoothstep(0.5, 0.95, l) * 0.3);
 
   // district accent wash — a subtle hue signature per district (fades under heat
   // so the screen still "whites out" hot, and is overridden by meltdown glitch)

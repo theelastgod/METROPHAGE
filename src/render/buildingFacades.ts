@@ -1,22 +1,12 @@
 import Phaser from "phaser";
 import { GLOW_KEY } from "../assets/manifest";
-import { TILE } from "../config";
+import { TILE, DISTRICT_SCALE } from "../config";
 import type { Rect } from "../game/districts";
 import {
   LANDMARK_KINDS,
   type BuildingKind,
   type CityBuilding,
 } from "../world/city";
-
-const hash = (x: number, y: number) => ((x * 73856093) ^ (y * 19349663)) >>> 0;
-
-function blendHex(a: number, b: number, t: number): number {
-  const ch = (c: number, i: number) => (c >> i) & 0xff;
-  const r = Math.round(ch(a, 16) * (1 - t) + ch(b, 16) * t);
-  const g = Math.round(ch(a, 8) * (1 - t) + ch(b, 8) * t);
-  const bl = Math.round(ch(a, 0) * (1 - t) + ch(b, 0) * t);
-  return (r << 16) | (g << 8) | bl;
-}
 
 /** Per-kind exterior identity — roof accent, sign colour, and a simple façade glyph. */
 const KIND_STYLE: Record<
@@ -35,14 +25,6 @@ const KIND_STYLE: Record<
   home: { accent: 0xff8a5c, sign: 0xffb86a, glyph: "home" },
   den: { accent: 0xb06bff, sign: 0x9a5cff, glyph: "den" },
 };
-
-const DISTRICT_STYLES = [
-  { accent: 0xff2bd6, sign: 0xff2bd6, label: "◆" },
-  { accent: 0x29e7ff, sign: 0x00e5ff, label: "▣" },
-  { accent: 0xff8a5c, sign: 0xffb86a, label: "⌂" },
-  { accent: 0x8bff6a, sign: 0x6bdc4a, label: "⚙" },
-  { accent: 0xff5a3c, sign: 0xff3b2d, label: "▲" },
-] as const;
 
 function glow(scene: Phaser.Scene, x: number, y: number, col: number, scale: number, alpha: number, depth: number) {
   return scene.add
@@ -161,29 +143,55 @@ export function paintCityBuildingFacades(scene: Phaser.Scene, buildings: CityBui
   }
 }
 
-/** Combat districts — cycle roof silhouettes so blocks read as different structures. */
+/** Kind cycle for district buildings — mirrors the venue-door cycle in OnlineScene so a
+ *  building's roof colour matches the door you enter. Each kind is a distinct hue. */
+const DISTRICT_KIND_CYCLE: BuildingKind[] = ["shop", "home", "guild", "den", "bar"];
+
+/** Combat districts — a legible roof crown per building so blocks read as distinct,
+ *  colour-coded structures instead of an undifferentiated maze. One shared Graphics.
+ *
+ *  ⚠ `buildings` are 1/3-res DESIGN rects (buildGrid scales walls ×DISTRICT_SCALE); the
+ *  crown/plaque must be scaled to match or they float off the building (the old bug).
+ *  Doors are NOT drawn here — OnlineScene draws the enterable doorway at the scaled
+ *  south face; drawing them here too would double up + land in the wrong place. */
 export function paintDistrictBuildingFacades(
   scene: Phaser.Scene,
   buildings: Rect[],
-  zoneAccent: number,
+  _zoneAccent: number,
   depth = 3.2,
 ): void {
+  const S = DISTRICT_SCALE;
+  const g = scene.add.graphics().setDepth(depth);
   for (let i = 0; i < buildings.length; i++) {
     const b = buildings[i];
-    const style = DISTRICT_STYLES[i % DISTRICT_STYLES.length];
-    const mix = blendHex(style.accent, zoneAccent, 0.35);
-    const h = hash(b.x1, b.y1);
-    const doorX = Math.round((b.x1 + b.x2) / 2);
-    const doorY = b.y2;
-    const door: [number, number] = [doorX, doorY];
-    const glyph = (["shop", "home", "guild", "den", "bar"] as const)[i % 5];
-    paintFacade(scene, b, (h & 3) === 0 ? door : undefined, mix, style.sign, glyph, depth, i % 3 === 0);
+    const kind = DISTRICT_KIND_CYCLE[i % DISTRICT_KIND_CYCLE.length];
+    const { accent, sign } = KIND_STYLE[kind];
+    const landmark = i % 3 === 0;
+    const X1 = b.x1 * S * TILE;
+    const Y1 = b.y1 * S * TILE;
+    const X2 = (b.x2 * S + 1) * TILE;
+    const Y2 = (b.y2 * S + 1) * TILE;
+    const w = X2 - X1;
+    const h = Y2 - Y1;
 
-    // district block ID plaque on the south face
-    const g = scene.add.graphics().setDepth(depth);
-    const sx = ((b.x1 + b.x2) / 2) * TILE + TILE / 2;
-    const sy = (b.y2 + 1) * TILE - 5;
+    // kind wash over the whole roof — turns "another magenta block" into "the amber
+    // one" / "the cyan one". Strong enough to survive the district's screen-wide accent
+    // tint (each district signature-colours the frame, which flattens per-tile hues).
+    g.fillStyle(accent, 0.2).fillRect(X1, Y1, w, h);
+    // a darkening vignette on the roof mass so it reads as a raised solid, not flat tiles
+    g.fillStyle(0x05060f, 0.22).fillRect(X1 + 3, Y1 + 8, w - 6, h - 12);
+    // roof crown — a thick kind band + a bright edge along the north face
+    g.fillStyle(accent, landmark ? 0.7 : 0.5).fillRect(X1, Y1, w, 7);
+    g.fillStyle(accent, landmark ? 1 : 0.85).fillRect(X1, Y1, w, 2);
+    // side trims so the mass reads with a little depth
+    g.fillStyle(accent, 0.28).fillRect(X1, Y1 + 7, 3, h - 7);
+    g.fillStyle(0x05060f, 0.4).fillRect(X2 - 3, Y1 + 7, 3, h - 7);
+    if (landmark) glow(scene, X1 + w * 0.5, Y1 + 6, accent, 2.4, 0.24, depth - 0.1);
+
+    // block ID plaque on the south face (scaled)
+    const sx = X1 + w / 2;
+    const sy = Y2 - 5;
     g.fillStyle(0x0a0e18, 0.7).fillRect(sx - 8, sy - 5, 16, 8);
-    g.fillStyle(style.sign, 0.8).fillRect(sx - 6, sy - 3, 12, 1);
+    g.fillStyle(sign, 0.85).fillRect(sx - 6, sy - 3, 12, 1);
   }
 }
