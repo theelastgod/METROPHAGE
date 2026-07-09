@@ -1159,6 +1159,9 @@ export default class OnlineScene extends Phaser.Scene {
       .setOrigin(0.5, 1)
       .setScrollFactor(0)
       .setDepth(1000);
+    // the control hint helps a new runner but is clutter once you know the ropes — fade it
+    // down after the first stretch of play (stays faintly legible if you go looking)
+    this.time.delayedCall(40000, () => this.tweens.add({ targets: this.footerHint, alpha: 0.28, duration: 1500 }));
     this.options.setOnChange(() => {
       MusicDirector.for(this)?.applyVolumes();
       this.synth?.applyVolumes();
