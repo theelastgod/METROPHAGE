@@ -57,8 +57,9 @@ export default class OnlineStash {
       return o;
     };
     const D = 1700;
-    const { x, y, w, h } = modalRect(940, 600);
-    const rowH = uiDim(26);
+    // design space is 960×540 — the old 940×600 hung off the bottom of the screen
+    const { x, y, w, h } = modalRect(820, 480);
+    const rowH = uiDim(21);
 
     add(dimBackdrop(scene, D, 0.66));
     const g = add(scene.add.graphics().setScrollFactor(0).setDepth(D + 1));
@@ -94,22 +95,25 @@ export default class OnlineStash {
       emptyLine: string,
       onPick: (it: Item) => void,
     ) => {
-      tx(`${title}  ${items.length}/${CAP}`, cx, y + uiDim(70), 13, "#f7ff3c", true);
-      let ry = y + uiDim(94);
+      tx(`${title}  ${items.length}/${CAP}`, cx, y + uiDim(66), 13, "#f7ff3c", true);
+      let ry = y + uiDim(88);
       if (items.length === 0) tx(emptyLine, cx, ry + uiDim(4), 11, "#5a6172");
+      let shown = 0;
       for (const it of items) {
-        if (ry + rowH > y + h - uiDim(16)) break; // both lists are CAP-bounded; guard anyway
+        if (ry + rowH > y + h - uiDim(30)) break; // leave room for the "+N more" footer
         const col = hexStr(RARITIES[it.rarity].color);
-        g.fillStyle(0x12102a, 0.9).fillRect(cx, ry, cw, rowH - uiDim(4));
-        g.lineStyle(uiDim(1), RARITIES[it.rarity].color, 0.55).strokeRect(cx, ry, cw, rowH - uiDim(4));
-        tx(`${it.name}${(it.ilvl ?? 0) > 0 ? ` +${it.ilvl}` : ""}`, cx + uiDim(8), ry + uiDim(4), 11, col, true);
-        tx(it.slot.toUpperCase(), cx + cw - uiDim(8), ry + uiDim(5), 9, "#6b7184", false, 1);
+        g.fillStyle(0x12102a, 0.9).fillRect(cx, ry, cw, rowH - uiDim(3));
+        g.lineStyle(uiDim(1), RARITIES[it.rarity].color, 0.55).strokeRect(cx, ry, cw, rowH - uiDim(3));
+        tx(`${it.name}${(it.ilvl ?? 0) > 0 ? ` +${it.ilvl}` : ""}`, cx + uiDim(8), ry + uiDim(3), 10, col, true);
+        tx(it.slot.toUpperCase(), cx + cw - uiDim(8), ry + uiDim(4), 8, "#6b7184", false, 1);
         const z = add(
-          scene.add.zone(cx, ry, cw, rowH - uiDim(4)).setOrigin(0).setScrollFactor(0).setInteractive({ useHandCursor: true }).setDepth(D + 4),
+          scene.add.zone(cx, ry, cw, rowH - uiDim(3)).setOrigin(0).setScrollFactor(0).setInteractive({ useHandCursor: true }).setDepth(D + 4),
         );
         z.on("pointerdown", () => onPick(it));
         ry += rowH;
+        shown++;
       }
+      if (shown < items.length) tx(`+${items.length - shown} more…`, cx, ry + uiDim(2), 10, "#6b7184");
     };
 
     column("STASH", this.stash, x + uiDim(22), w * 0.5 - uiDim(40), "nothing stashed yet", (it) => this.onWithdraw?.(it.id));

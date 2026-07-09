@@ -12,6 +12,7 @@ import {
   TILE_INNER_WALL,
   VENUE_ROOM_W,
   VENUE_ROOM_H,
+  VENUE_MAT_TILE,
   type TileGrid,
 } from "./district";
 import type { Rect } from "../game/districts";
@@ -151,6 +152,7 @@ export function sanitizeFurniture(raw: unknown): FurniturePiece[] {
     if (!furnitureKind(k)) continue;
     if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
     if (x < 1 || x > VENUE_ROOM_W - 2 || y < 1 || y > VENUE_ROOM_H - 2) continue; // inside the walls
+    if (x === VENUE_MAT_TILE[0] && y === VENUE_MAT_TILE[1]) continue; // never bury the exit mat
     out.push({ k, x, y });
   }
   return out;

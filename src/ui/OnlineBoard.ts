@@ -48,7 +48,7 @@ export default class OnlineBoard {
     this.loading = true;
     if (this.open) this.build();
     try {
-      const r = await fetch(`${this.httpBase}/leaderboard?stat=${this.statSel}&n=12`);
+      const r = await fetch(`${this.httpBase}/leaderboard?stat=${this.statSel}&n=9`);
       const j = (await r.json()) as { rows?: Row[] };
       this.rows = j.rows ?? [];
     } catch {
@@ -66,10 +66,12 @@ export default class OnlineBoard {
       return o;
     };
     const D = 1700;
-    const { x, y, w, h } = modalRect(1060, 640);
-    const achRowH = uiDim(38);
-    const tabH = uiDim(24);
-    const rankRowH = uiDim(32);
+    // design space is 960×540 — the old 1060×640 hung off every edge of the screen,
+    // and the un-capped achievement list overflowed even its own panel.
+    const { x, y, w, h } = modalRect(880, 496);
+    const achRowH = uiDim(32);
+    const tabH = uiDim(22);
+    const rankRowH = uiDim(28);
 
     add(dimBackdrop(scene, D, 0.66));
     const g = add(scene.add.graphics().setScrollFactor(0).setDepth(D + 1));
@@ -100,16 +102,22 @@ export default class OnlineBoard {
     const ax = x + uiDim(22);
     let ay = y + uiDim(76);
     const aw = w * 0.5 - uiDim(38);
-    for (const a of ACHIEVEMENTS) {
+    // earned first so progress reads at a glance, then the nearest goals; cap to the panel
+    const ordered = [...ACHIEVEMENTS.filter((a) => this.achievements.has(a.id)), ...ACHIEVEMENTS.filter((a) => !this.achievements.has(a.id))];
+    let shown = 0;
+    for (const a of ordered) {
+      if (ay + achRowH > y + h - uiDim(34)) break; // leave room for the "+N more" footer
       const got = this.achievements.has(a.id);
-      const cardH = uiDim(36);
+      const cardH = uiDim(30);
       g.fillStyle(got ? 0x11231a : 0x12102a, 0.9).fillRect(ax, ay, aw, cardH);
       g.lineStyle(uiDim(1.2), got ? 0x39ff88 : 0x3a3350, got ? 1 : 0.5).strokeRect(ax, ay, aw, cardH);
-      tx(`${got ? "★" : "☆"} ${a.name}`, ax + uiDim(10), ay + uiDim(6), 12, got ? "#39ff88" : "#7a8190", true);
-      tx(a.desc, ax + uiDim(10), ay + uiDim(21), 10, got ? "#cfe8ff" : "#5a6172");
-      tx(`+₵${a.reward}`, ax + aw - uiDim(10), ay + uiDim(10), 11, got ? "#f7ff3c" : "#5a6172", false, 1);
+      tx(`${got ? "★" : "☆"} ${a.name}`, ax + uiDim(10), ay + uiDim(4), 11, got ? "#39ff88" : "#7a8190", true);
+      tx(a.desc, ax + uiDim(10), ay + uiDim(17), 9, got ? "#cfe8ff" : "#5a6172");
+      tx(`+₵${a.reward}`, ax + aw - uiDim(10), ay + uiDim(8), 10, got ? "#f7ff3c" : "#5a6172", false, 1);
       ay += achRowH;
+      shown++;
     }
+    if (shown < ordered.length) tx(`+${ordered.length - shown} more to uncover…`, ax, ay + uiDim(2), 10, "#6b7184");
 
     const bx = colMid + uiDim(18);
     const bw = x + w - uiDim(18) - bx;

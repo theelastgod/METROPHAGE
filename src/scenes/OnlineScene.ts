@@ -489,6 +489,8 @@ export default class OnlineScene extends Phaser.Scene {
   private homeSelKind: string | null = null;
   private homeDraft: FurniturePiece[] = [];
   private homeUi: Phaser.GameObjects.GameObject[] = [];
+  private homeGhostG?: Phaser.GameObjects.Graphics; // cursor ghost while placing furniture
+  private estatePlateObjs: Phaser.GameObjects.GameObject[] = []; // FOR SALE / owner plates on the street
 
   private isTutorial = false;
   private tutorialPanel!: Phaser.GameObjects.Text;
@@ -569,6 +571,11 @@ export default class OnlineScene extends Phaser.Scene {
     this.fromZone = data?.from ?? "d0"; // where 'H' returns to from inside an interior
     this.homeIdx = -1; // reset home-editor state unless this zone is an est{K} interior
     this.homeEditing = false;
+    this.homeUi = []; // scene restart destroyed the objects — drop the stale refs
+    this.homeFurnLayer = undefined;
+    this.homeGhostG = undefined;
+    this.homeDraft = [];
+    this.estatePlateObjs = [];
     this.districtDoors = [];
     this.doorTransit = false; // scene instances are reused across zone starts — reset triggers
     this.districtIndex = this.isDive
@@ -1674,13 +1681,36 @@ export default class OnlineScene extends Phaser.Scene {
     if (this.isCityHub) return "METRO CITY";
     if (this.isSubway) return "THE UNDERLINE";
     if (this.isDive) return `ICE VAULT ${this.zone.toUpperCase()}`;
+    if (this.isEstates) return "THE ESTATES";
     if (this.interior && INTERIOR_TITLES[this.zone]) return INTERIOR_TITLES[this.zone]!;
+    const estInt = parseEstateInterior(this.zone);
+    if (estInt !== null) return `THE ESTATES · HOME ${estInt + 1}`;
+    const hubInt = parseHubInterior(this.zone);
+    if (hubInt !== null) return `METRO CITY · ${HUB_INTERIOR_TITLE[ONLINE_CITY.buildings[hubInt].kind] ?? "BUILDING"}`;
     const bldgInt = parseBuildingInterior(this.zone);
     if (bldgInt) return `${DISTRICTS[bldgInt.district]?.name?.toUpperCase() ?? "DISTRICT"} · ${DISTRICT_VENUE_TITLE[districtBuildingKind(bldgInt.index)]}`;
     if (this.isBridge) return getBridge(this.bridgeIndex).name;
     if (/^d\d+$/.test(this.zone)) return DISTRICTS[this.districtIndex]?.name?.toUpperCase() ?? this.zone.toUpperCase();
     if (/^w\d+$/.test(this.zone)) return getBridge(parseBridgeZone(this.zone)).name;
     return this.zone.toUpperCase();
+  }
+
+  /** Human-readable label for ANY zone id — interiors, homes, districts, corridors.
+   *  (The naive `DISTRICTS[parseZone(z)]` fallback labels every named zone
+   *  "PALANTIR PLAZA" because parseZone returns 0 for non-district ids.) */
+  private zoneLabelFor(z: string): string {
+    if (INTERIOR_TITLES[z]) return INTERIOR_TITLES[z]!;
+    if (z === ESTATES_ZONE) return "THE ESTATES";
+    if (z === "subway") return "THE UNDERLINE";
+    const est = parseEstateInterior(z);
+    if (est !== null) return `HOME ${est + 1}`;
+    const hb = parseHubInterior(z);
+    if (hb !== null) return HUB_INTERIOR_TITLE[ONLINE_CITY.buildings[hb].kind] ?? "BUILDING";
+    const bi = parseBuildingInterior(z);
+    if (bi) return DISTRICT_VENUE_TITLE[districtBuildingKind(bi.index)];
+    if (/^d\d+$/.test(z)) return DISTRICTS[this.parseZone(z)]?.name ?? z.toUpperCase();
+    if (/^w\d+$/.test(z)) return getBridge(parseBridgeZone(z)).name;
+    return z.toUpperCase();
   }
 
   private openChat() {
@@ -2339,7 +2369,7 @@ export default class OnlineScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(6);
     this.add
-      .text(this.worldW / 2, 2.4 * TILE + 20, "no combat · step on the door mat (▼) to leave", bodyFont(10, { color: "#9aa3b2" }))
+      .text(this.worldW / 2, 2.4 * TILE + 20, "no combat · door mat (▼) to leave · owners: F to furnish, your LOCKBOX works here", bodyFont(10, { color: "#9aa3b2" }))
       .setOrigin(0.5)
       .setDepth(6);
     // exit mat → returns to THE ESTATES street
@@ -2351,6 +2381,7 @@ export default class OnlineScene extends Phaser.Scene {
     mg.fillStyle(0xffb13c, 0.35).fillRect(matX + 7, matY + TILE - 9, TILE - 14, 3);
     this.add.text(matX + TILE / 2, matY + TILE / 2 - 2, "▼", displayFont(13, { color: "#eafdff", fontStyle: "bold" })).setOrigin(0.5).setDepth(2.6);
     this.homeFurnLayer = this.add.container(0, 0).setDepth(3);
+    this.homeGhostG = this.add.graphics().setDepth(3.5);
     // NOTE: net-dependent wiring (onEstate callback, pointer placement, first render) is
     // deferred to wireHomeAfterNet() — this method runs before this.net is constructed.
   }
@@ -2368,11 +2399,56 @@ export default class OnlineScene extends Phaser.Scene {
 
   /** Home wiring that needs this.net (called once the NetClient exists). */
   private wireHomeAfterNet() {
+    if (this.isEstates) {
+      this.net.onEstatesDir = () => this.drawEstatePlates();
+      return;
+    }
     if (this.homeIdx < 0) return;
     this.net.onEstate = () => this.refreshHome();
     this.input.off("pointerdown", this.onHomePointer, this);
     this.input.on("pointerdown", this.onHomePointer, this);
+    this.input.off("pointermove", this.onHomeHover, this);
+    this.input.on("pointermove", this.onHomeHover, this);
     this.refreshHome();
+  }
+
+  /** FOR SALE / owner plates over every door on the ESTATES street (from the server directory). */
+  private drawEstatePlates() {
+    for (const o of this.estatePlateObjs) o.destroy();
+    this.estatePlateObjs = [];
+    if (!this.isEstates) return;
+    for (const entry of this.net.estatesDir) {
+      const plot = ESTATES.plots[entry.i];
+      if (!plot) continue;
+      const px = plot.door[0] * TILE + TILE / 2;
+      const py = plot.door[1] * TILE - 26;
+      const forSale = entry.forSale;
+      const label = forSale ? `FOR SALE ₵${entry.price}` : `◈ ${(entry.name ?? "OWNED").toUpperCase()}`;
+      const color = forSale ? 0x39ff88 : 0xffb13c;
+      const g = this.add.graphics().setDepth(7.5);
+      const tw = label.length * 6 + 12;
+      g.fillStyle(0x0a0e18, 0.92).fillRect(px - tw / 2, py - 8, tw, 14);
+      g.lineStyle(1, color, 0.85).strokeRect(px - tw / 2, py - 8, tw, 14);
+      const t = this.add.text(px, py - 1, label, bodyFont(8, { color: hexColor(color), fontStyle: "bold" })).setOrigin(0.5).setDepth(7.6);
+      this.estatePlateObjs.push(g, t);
+      if (forSale) this.tweens.add({ targets: t, alpha: 0.55, duration: 1400, yoyo: true, repeat: -1 });
+    }
+  }
+
+  /** Cursor ghost while placing furniture — shows the piece footprint + red when blocked. */
+  private onHomeHover(pointer: Phaser.Input.Pointer) {
+    if (!this.homeGhostG) return;
+    this.homeGhostG.clear();
+    if (!this.homeEditing || !this.homeSelKind || this.homeIdx < 0) return;
+    const k = furnitureKind(this.homeSelKind);
+    if (!k) return;
+    const tx = Math.floor(pointer.worldX / TILE);
+    const ty = Math.floor(pointer.worldY / TILE);
+    if (tx < 1 || tx > 13 || ty < 1 || ty > 9) return;
+    const blocked = (tx === VENUE_MAT_TILE[0] && ty === VENUE_MAT_TILE[1]) || this.homeDraft.some((p) => p.x === tx && p.y === ty);
+    const c = blocked ? 0xff3b6b : k.color;
+    this.homeGhostG.fillStyle(c, 0.25).fillRoundedRect(tx * TILE + 2, ty * TILE + 2, k.w * TILE - 4, k.h * TILE - 4, 4);
+    this.homeGhostG.lineStyle(1.5, c, 0.9).strokeRoundedRect(tx * TILE + 2, ty * TILE + 2, k.w * TILE - 4, k.h * TILE - 4, 4);
   }
 
   /** Re-render placed furniture + the ownership/editor controls from the current estate state. */
@@ -2402,6 +2478,7 @@ export default class OnlineScene extends Phaser.Scene {
   private renderHomeControls() {
     for (const o of this.homeUi) o.destroy();
     this.homeUi = [];
+    if (!this.homeEditing) this.homeGhostG?.clear(); // drop the cursor ghost when the editor closes
     const push = <T extends Phaser.GameObjects.GameObject>(o: T): T => {
       this.homeUi.push(o);
       return o;
@@ -2456,8 +2533,9 @@ export default class OnlineScene extends Phaser.Scene {
     push(this.add.text(16, H - 60, status, displayFont(13, { color: "#ffcf8a", fontStyle: "bold" })).setScrollFactor(0).setDepth(1200));
     if (e.mine) {
       btn(16, H - 38, "FURNISH (F)", 0xffb13c, () => this.startFurnishing());
-      if (e.forSale) btn(150, H - 38, "UNLIST", 0x9aa3b2, () => this.net.estateUnlist());
-      else btn(150, H - 38, "LIST FOR SALE ₵3000", 0x00e5ff, () => this.net.estateList(3000));
+      btn(140, H - 38, "LOCKBOX", 0x8dfff0, () => this.openService("stash"));
+      if (e.forSale) btn(250, H - 38, "UNLIST", 0x9aa3b2, () => this.net.estateUnlist());
+      else btn(250, H - 38, "LIST FOR SALE ₵3000", 0x00e5ff, () => this.net.estateList(3000));
     } else if (!e.owner || e.forSale) {
       btn(16, H - 38, `BUY THIS HOME ₵${e.price} (B)`, 0x39ff88, () => this.net.estateBuy());
     } else {
@@ -2480,6 +2558,7 @@ export default class OnlineScene extends Phaser.Scene {
     const tx = Math.floor(pointer.worldX / TILE);
     const ty = Math.floor(pointer.worldY / TILE);
     if (tx < 1 || tx > 13 || ty < 1 || ty > 9) return; // inside the 15×11 room walls
+    if (tx === VENUE_MAT_TILE[0] && ty === VENUE_MAT_TILE[1]) return; // never bury the exit mat
     const i = this.homeDraft.findIndex((p) => p.x === tx && p.y === ty);
     if (i >= 0) this.homeDraft.splice(i, 1);
     else if (this.homeDraft.length < 40) this.homeDraft.push({ k: this.homeSelKind, x: tx, y: ty });
@@ -2672,7 +2751,7 @@ export default class OnlineScene extends Phaser.Scene {
   private walkToZoneFromMap(dest: string) {
     if (dest === this.zone) {
       this.registry.set("pendingMapDest", null);
-      this.rsExamine(`You arrive at ${INTERIOR_TITLES[dest] ?? DISTRICTS[this.parseZone(dest)]?.name ?? dest}.`);
+      this.rsExamine(`You arrive at ${this.zoneLabelFor(dest)}.`);
       return;
     }
 
@@ -2697,7 +2776,7 @@ export default class OnlineScene extends Phaser.Scene {
     this.attackTargetId = null;
     this.pendingInteract = npc;
     this.clickMove.setDestination(npc.x, npc.y, this.zoneGrid, this.net.pred.x, this.net.pred.y);
-    const label = DISTRICTS[this.parseZone(dest)]?.name ?? INTERIOR_TITLES[dest] ?? dest.toUpperCase();
+    const label = this.zoneLabelFor(dest);
     if (dest.startsWith("d") && this.isCityHub && dest !== "d0") {
       this.rsExamine(`Walking to deploy gate — transit onward to ${label}.`);
     } else {

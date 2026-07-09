@@ -264,6 +264,8 @@ export type ServerMsg =
   | { t: "stashv"; items: Item[] } // owning client's personal stash (login + on change)
   // player housing — the current estate's ownership + furniture (sent on entering an est{K} home + on change)
   | { t: "estate"; id: string; owner: string | null; ownerName: string | null; mine: boolean; forSale: boolean; price: number; furniture: EstateFurniture[] }
+  // player housing — the whole street's ownership at a glance (sent on entering THE ESTATES)
+  | { t: "estates_dir"; list: { i: number; owner: string | null; name: string | null; forSale: boolean; price: number }[] }
   | { t: "equipped"; items: Item[]; maxHp: number } // owning client's equipped gear + derived max HP
   | { t: "achv"; ids: string[] } // full unlocked achievement set (sent on login)
   | { t: "ach"; id: string; name: string; reward: number } // a freshly-unlocked achievement

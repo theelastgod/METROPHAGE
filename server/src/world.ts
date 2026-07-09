@@ -204,7 +204,7 @@ export const parseZone = (z: string | null): number => {
 import { getFragment, DIVE_DEFAULT_FRAGMENTS } from "../../src/game/fragments";
 import { WORLD_EVENTS, type WorldEventDef } from "../../src/game/worldEvents";
 import { WORLD_EVENT } from "../../src/config";
-import { ESTATES, ESTATES_ZONE, buildHomeRoom, parseEstateInterior, sanitizeFurniture, ESTATE_BASE_PRICE, type FurniturePiece } from "../../src/world/estates";
+import { ESTATES, ESTATES_ZONE, ESTATE_COUNT, buildHomeRoom, parseEstateInterior, sanitizeFurniture, ESTATE_BASE_PRICE, type FurniturePiece } from "../../src/world/estates";
 
 export const INTERIOR_ZONES = new Set(["safe", "clinic", "bar", "den", "shop", ESTATES_ZONE]);
 /** All named (non-district) zones the Worker routes by name — interiors + subway + wilderness bridges. */
@@ -2241,6 +2241,7 @@ export class WorldDO {
     this.send(ws, { t: "inv", items: p.inventory }); // hydrate their held gear
     this.send(ws, { t: "stashv", items: p.stash }); // hydrate the personal stash (lockbox)
     if (parseEstateInterior(this.zoneName) !== null) await this.sendEstate(ws, p); // hydrate this home's ownership + furniture
+    if (this.zoneName === ESTATES_ZONE) await this.sendEstatesDir(ws); // hydrate the street's FOR SALE / owner plates
     this.sendLoadout(ws, p); // hydrate equipped gear + derived max HP
     this.noteDeepest(p); // arriving in this district may set a "deepest reached" milestone
     this.send(ws, { t: "achv", ids: [...p.achv] }); // hydrate the unlocked achievement set
@@ -3103,12 +3104,21 @@ export class WorldDO {
   /** TENEMENT lockbox — move an item between bag and personal stash. Server-authoritative:
    *  gated to home-kind building interiors (index%5===1, mirroring the client venue cycle),
    *  cap-checked both ways, persisted with inventory in one upsert (no split-brain on crash). */
-  private onStash(ws: WebSocket, msg: Extract<ClientMsg, { t: "stash" }>) {
+  private async onStash(ws: WebSocket, msg: Extract<ClientMsg, { t: "stash" }>) {
     const p = this.playerFor(ws);
     if (!p) return;
     const sys = (t: string) => this.sendTo(p.id, { t: "sys", text: t });
+    // the lockbox works in: a district TENEMENT, a hub RESIDENCE, or a home YOU OWN
     const bldg = parseBuildingInterior(this.zoneName);
-    if (!bldg || bldg.index % 5 !== 1) return sys("find a TENEMENT lockbox to use your stash");
+    const isTenement = !!bldg && bldg.index % 5 === 1;
+    const hubK = parseHubInterior(this.zoneName);
+    const isHubHome = hubK !== null && ONLINE_CITY.buildings[hubK]?.kind === "home";
+    let isOwnHome = false;
+    if (parseEstateInterior(this.zoneName) !== null) {
+      if (!this.estate) await this.loadEstate();
+      isOwnHome = this.estate?.owner === p.id;
+    }
+    if (!isTenement && !isHubHome && !isOwnHome) return sys("find a TENEMENT lockbox, a hub RESIDENCE, or your own home to use your stash");
     if (msg.action === "deposit") {
       const i = p.inventory.findIndex((it) => it.id === msg.itemId);
       if (i < 0) return sys("that item isn't in your bag");
@@ -3171,6 +3181,26 @@ export class WorldDO {
     if (!this.estate) await this.loadEstate();
     if (!this.estate) return;
     this.send(ws, this.estateMsg(p));
+  }
+
+  /** The whole street's ownership at a glance — lets the ESTATES overworld hang
+   *  FOR SALE / owner plates over every door without visiting each home. */
+  private async sendEstatesDir(ws: WebSocket): Promise<void> {
+    const { results } = await this.env.DB.prepare("SELECT id, owner, owner_name, price, for_sale FROM estates")
+      .all<{ id: string; owner: string | null; owner_name: string | null; price: number; for_sale: number }>();
+    const byId = new Map(results.map((r) => [r.id, r]));
+    const list = [];
+    for (let i = 0; i < ESTATE_COUNT; i++) {
+      const r = byId.get(`est${i}`);
+      list.push({
+        i,
+        owner: r?.owner ?? null,
+        name: r?.owner_name ?? null,
+        forSale: r?.owner ? !!r.for_sale : true,
+        price: r?.owner ? r.price : ESTATE_BASE_PRICE,
+      });
+    }
+    this.send(ws, { t: "estates_dir", list });
   }
 
   private broadcastEstate(): void {

@@ -79,6 +79,7 @@ export default class NetClient {
   inventory: Item[] = []; // server-authoritative held gear (sent on login + on change)
   stash: Item[] = []; // personal safe storage (TENEMENT lockbox), server-authoritative
   estate: null | { id: string; owner: string | null; ownerName: string | null; mine: boolean; forSale: boolean; price: number; furniture: EstateFurniture[] } = null; // current home (est{K})
+  estatesDir: { i: number; owner: string | null; name: string | null; forSale: boolean; price: number }[] = []; // street-wide ownership (THE ESTATES)
   equipped: Item[] = []; // currently equipped items (one per slot), server-authoritative
   maxHp = PLAYER_HP; // derived from equipped +HP mods
   trade: null | {
@@ -176,6 +177,7 @@ export default class NetClient {
   onInventory?: () => void; // fired when the server pushes an inventory update
   onStash?: () => void; // fired when the server pushes a stash update
   onEstate?: () => void; // fired when the server pushes an estate ownership/furniture update
+  onEstatesDir?: () => void; // fired when the server pushes the street-wide ownership directory
   onCampaign?: () => void; // fired when the active campaign quest changes (story allies re-react)
   onRedirect?: (zone: string) => void;
   /** Memory fragments this player has recovered (dive rewards; welcome + live updates). */
@@ -612,6 +614,9 @@ export default class NetClient {
     } else if (msg.t === "estate") {
       this.estate = { id: msg.id, owner: msg.owner, ownerName: msg.ownerName, mine: msg.mine, forSale: msg.forSale, price: msg.price, furniture: msg.furniture };
       this.onEstate?.();
+    } else if (msg.t === "estates_dir") {
+      this.estatesDir = msg.list;
+      this.onEstatesDir?.();
     } else if (msg.t === "equipped") {
       this.equipped = msg.items;
       this.maxHp = msg.maxHp;
