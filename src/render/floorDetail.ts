@@ -60,16 +60,16 @@ export function paintFloorDetail(
         if ((h & 63) === 5) g.fillStyle(0xbfd0ff, 0.045).fillRect(x + 4 + (h % 24), y + 4 + ((h >> 5) % 24), 1, 1);
         if ((h & 127) === 37) g.fillStyle(0xffffff, 0.035).fillRect(x + 6 + (h % 20), y + 8 + ((h >> 4) % 20), 2, 1);
       } else {
-        if ((h & 15) === 3) g.fillStyle(0x182030, 0.06).fillRect(x, y, TILE / 2, TILE / 2);
-        if ((h & 15) === 11) g.fillStyle(0x101828, 0.05).fillRect(x + TILE / 2, y + TILE / 2, TILE / 2, TILE / 2);
+        if ((h & 31) === 3) g.fillStyle(0x182030, 0.06).fillRect(x, y, TILE / 2, TILE / 2);
+        if ((h & 31) === 11) g.fillStyle(0x101828, 0.05).fillRect(x + TILE / 2, y + TILE / 2, TILE / 2, TILE / 2);
 
-        if ((h & 31) === 0) {
+        if ((h & 63) === 0) {
           g.fillStyle(0x9aa8b8, 0.08).fillRect(x + 4 + (h % 22), y + 4 + ((h >> 5) % 22), 1, 1);
         }
-        if ((h & 63) === 7) {
+        if ((h & 127) === 7) {
           g.fillStyle(0x6a7a8a, 0.06).fillRect(x + 10 + ((h >> 4) % 14), y + 12 + (h % 12), 2, 1);
         }
-        if ((h & 127) === 19) {
+        if ((h & 255) === 19) {
           g.fillStyle(0x00e5ff, 0.075).fillEllipse(x + TILE / 2, y + TILE / 2 + 4, TILE * 0.58, TILE * 0.24);
           g.fillStyle(0xff2bd6, 0.042).fillEllipse(x + TILE / 2 + 3, y + TILE / 2 + 5, TILE * 0.38, TILE * 0.13);
           g.lineStyle(1, 0xbfe8ff, 0.12).strokeEllipse(x + TILE / 2, y + TILE / 2 + 4, TILE * 0.5, TILE * 0.18);

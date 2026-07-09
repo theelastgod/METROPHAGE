@@ -67,7 +67,11 @@ if (import.meta.env.DEV) {
   w.__enterCity = () => {
     if (!game.registry.get("classId")) game.registry.set("classId", "metrophage");
     if (!game.registry.get("customization")) game.registry.set("customization", randomCustomization("metrophage"));
-    game.scene.start("Online", { zone: "safe" });
+    // route through the ACTIVE scene's plugin so it stops (game-level start leaves the
+    // menu running behind the world — it silently halved measured FPS in profiling)
+    const cur = game.scene.getScenes(true)[0];
+    if (cur) cur.scene.start("Online", { zone: "safe" });
+    else game.scene.start("Online", { zone: "safe" });
   };
   w.__playtest = {
     offline: () => {

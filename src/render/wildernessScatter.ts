@@ -107,9 +107,9 @@ export function scatterWildernessProps(
       const t = row[tx];
       if (isWall(t) || t === TILE_WATER) continue;
       const h = hash(tx, ty, profile.salt);
-      // declutter: thin the overall junk field (~40% fewer props) so trails and
+      // declutter: thin the overall junk field (~60% fewer props) so trails and
       // clearings read clean instead of wall-to-wall salvage. Deterministic per tile.
-      if (hash(tx, ty, 9973) % 5 < 2) continue;
+      if (hash(tx, ty, 9973) % 5 < 3) continue;
       const x = tx * TILE + TILE / 2;
       const y = ty * TILE + TILE / 2;
 

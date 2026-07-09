@@ -84,6 +84,32 @@ export function updateSettings(patch: Partial<SettingsData>): SettingsData {
   return current;
 }
 
+/** GPU-based tier ceiling. The frame is fullscreen-post-FX-bound (bloom + chromatic
+ *  aberration at the backing resolution), so the GPU — not cores/RAM — sets the real
+ *  ceiling. Integrated GPUs choke at 2560×1440: measured ~18 FPS in the hub on an Intel
+ *  Iris until this capped them to medium (1920×1080 = 4× fewer fullscreen pixels).
+ *  Cached so the throwaway WebGL context is created at most once. */
+let gpuCapCache: Exclude<GraphicsQuality, "auto"> | null | undefined;
+function detectGpuCap(): Exclude<GraphicsQuality, "auto"> | null {
+  if (gpuCapCache !== undefined) return gpuCapCache;
+  gpuCapCache = null;
+  if (typeof document === "undefined") return null;
+  try {
+    const c = document.createElement("canvas");
+    const gl = (c.getContext("webgl") || c.getContext("experimental-webgl")) as WebGLRenderingContext | null;
+    if (!gl) return (gpuCapCache = "low"); // no WebGL at all → software / very weak
+    const ext = gl.getExtension("WEBGL_debug_renderer_info");
+    const r = (ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) : "").toLowerCase();
+    // Apple-silicon integrated GPUs are strong — leave them uncapped.
+    if (/apple\s*m\d/.test(r)) return (gpuCapCache = null);
+    // Intel integrated (HD/UHD/Iris) + software renderers choke on fullscreen FX.
+    if (/(intel|hd graphics|uhd|iris|swiftshader|llvmpipe|software|microsoft basic)/.test(r)) return (gpuCapCache = "medium");
+    return (gpuCapCache = null); // discrete/unknown → trust the core/RAM heuristic
+  } catch {
+    return (gpuCapCache = null);
+  }
+}
+
 /** Heuristic device tier for auto graphics quality. */
 export function detectDeviceTier(): Exclude<GraphicsQuality, "auto"> {
   if (typeof navigator === "undefined") return "medium";
@@ -91,9 +117,11 @@ export function detectDeviceTier(): Exclude<GraphicsQuality, "auto"> {
   const cores = navigator.hardwareConcurrency ?? 8;
   const mem = nav.deviceMemory ?? 8;
   const mobile = /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
-  if (mobile || cores <= 4 || mem <= 4) return "low";
-  if (cores <= 8 || mem <= 8) return "medium";
-  return "high";
+  let tier: Exclude<GraphicsQuality, "auto"> = mobile || cores <= 4 || mem <= 4 ? "low" : cores <= 8 || mem <= 8 ? "medium" : "high";
+  // the GPU ceiling wins — a 16-core box with an Intel iGPU is still a medium machine
+  const gpuCap = detectGpuCap();
+  if (gpuCap && TIER_ORDER.indexOf(gpuCap) < TIER_ORDER.indexOf(tier)) tier = gpuCap;
+  return tier;
 }
 
 const TIER_ORDER: Exclude<GraphicsQuality, "auto">[] = ["low", "medium", "high"];
