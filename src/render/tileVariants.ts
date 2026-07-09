@@ -1,5 +1,9 @@
 import Phaser from "phaser";
-import { variantOf } from "../world/district";
+import { variantOf, COLLIDING_TILES } from "../world/district";
+
+/** Wall/building/roof cells (incl. scattered variants) — darkened harder so blocked
+ *  masses recede and the walkable street reads bright, top-down-legible. */
+const SOLID = new Set<number>(COLLIDING_TILES);
 
 /**
  * Scatter the real-art tile variants across a freshly-created tilemap layer to break the
@@ -28,10 +32,18 @@ export function jitterTileTint(layer: Phaser.Tilemaps.TilemapLayer): void {
   layer.forEachTile((tile) => {
     if (tile.index < 0) return;
     const h = ((tile.x * 374761393) ^ (tile.y * 668265263) ^ (tile.index * 2246822519)) >>> 0;
-    // base band 0.80–1.00, with ~1/8 of tiles pushed into a darker 0.62–0.74 band so the
-    // surface reads as grimy and uneven rather than a clean repeating grid
-    const dark = (h & 7) === 0;
-    const f = dark ? 0.62 + ((h >>> 3) % 12) / 100 : 0.8 + ((h >>> 3) % 21) / 100;
+    let f: number;
+    if (SOLID.has(tile.index)) {
+      // building/wall masses recede — a darker band (0.42–0.60) so blocked space reads
+      // clearly distinct from the walkable street (huge top-down navigation + combat win)
+      f = 0.42 + ((h >>> 3) % 19) / 100;
+    } else {
+      // walkable surfaces are pulled DOWN into a dark-street band so the busy pink floor
+      // panels recede and the neon accents (player, enemies, loot, doors) pop against
+      // them; ~1/8 pushed darker still for grimy unevenness
+      const dark = (h & 7) === 0;
+      f = dark ? 0.42 + ((h >>> 3) % 12) / 100 : 0.56 + ((h >>> 3) % 20) / 100;
+    }
     const v = Math.max(0, Math.min(255, Math.round(f * 255)));
     tile.tint = (v << 16) | (v << 8) | v;
     tile.tintFill = false;
