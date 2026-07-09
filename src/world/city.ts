@@ -369,9 +369,11 @@ export function buildCity(seed = 1337, w = CITY_W, h = CITY_H): CityMap {
       fill(grid, { x1: ix1, y1: iy1, x2: ix2, y2: iy2 }, pal.wall);
 
       const kind = KINDS[(bid + Math.floor(roll * 100)) % KINDS.length];
-      // NOT all buildings are enterable — ~60% get a door, the rest are scenery
+      // EVERY hub building is enterable now (walk in, meet its resident). Still consume the
+      // roll so the rest of the deterministic layout is unchanged.
+      rand();
       let door: [number, number] | undefined;
-      if (rand() < 0.6) {
+      {
         const doorX = Math.round((ix1 + ix2) / 2);
         const doorY = iy2; // a walkable opening in the building's bottom wall
         grid[doorY][doorX] = pal.sidewalk;

@@ -105,7 +105,7 @@ import { campaignHud, Campaign } from "../net/campaign";
 import OnlineCosmetics from "../ui/OnlineCosmetics";
 import OnlineMap from "../ui/OnlineMap";
 import { applyCosmetic } from "../game/cosmetics";
-import { npcDef, AMBIENT_NPCS, INTERIOR_PLAN, keeperFor, districtResident } from "../game/cityNpcs";
+import { npcDef, AMBIENT_NPCS, INTERIOR_PLAN, keeperFor, districtResident, hubResident } from "../game/cityNpcs";
 import { bountyForNpc } from "../game/bounties";
 import type { PlayerLook } from "../net/protocol";
 import { setOnlinePlayer } from "../economy/session";
@@ -276,6 +276,25 @@ const districtBuildingKind = (index: number) => DISTRICT_BUILDING_KINDS[index % 
 const parseBuildingInterior = (z: string): { district: number; index: number } | null => {
   const m = /^d(\d+)i(\d+)$/.exec(z);
   return m ? { district: parseInt(m[1], 10), index: parseInt(m[2], 10) } : null;
+};
+/** Hub building interior — zone id "h{buildingIndex}" (every plaza building is enterable). */
+const parseHubInterior = (z: string): number | null => {
+  const m = /^h(\d+)$/.exec(z);
+  if (!m) return null;
+  const i = parseInt(m[1], 10);
+  return i >= 0 && i < ONLINE_CITY.buildings.length ? i : null;
+};
+/** Readable interior label per hub building kind (shown on the door + interior header). */
+const HUB_INTERIOR_TITLE: Record<string, string> = {
+  home: "RESIDENCE", shop: "SHOP", bar: "BAR", clinic: "CLINIC", den: "DEN",
+  guild: "GUILD HALL", hotel: "HOTEL", hospital: "HOSPITAL", subway: "TRANSIT OFFICE",
+  stadium: "ARENA LOBBY", citycenter: "CITY HALL",
+};
+/** Door accent per hub building kind, so a building's colour reads its type from across the plaza. */
+const HUB_DOOR_COLOR: Record<string, number> = {
+  home: 0xffb13c, shop: 0x00e5ff, bar: 0x9dff3c, clinic: 0x39ff88, den: 0xff2bd6,
+  guild: 0x4d8cff, hotel: 0xff79c6, hospital: 0x8dfff0, subway: 0xff3b6b,
+  stadium: 0xf7ff3c, citycenter: 0xb06bff,
 };
 
 /** Doors in the hub that open into building interiors (each its own no-combat zone). */
@@ -511,7 +530,8 @@ export default class OnlineScene extends Phaser.Scene {
       !!INTERIOR_TITLES[rawZone] || rawZone === "subway" || rawZone === TUTORIAL_ZONE || this.isBridge || this.isDive;
     this.zone = this.isBridge ? rawZone : named ? rawZone : "d" + this.parseZone(data?.zone);
     this.isTutorial = this.zone === TUTORIAL_ZONE;
-    this.interior = !!INTERIOR_TITLES[this.zone] || this.zone === "safe" || !!parseBuildingInterior(this.zone); // hub + building interiors (incl. per-district)
+    this.interior =
+      !!INTERIOR_TITLES[this.zone] || this.zone === "safe" || !!parseBuildingInterior(this.zone) || parseHubInterior(this.zone) !== null; // hub plaza + district + hub-building interiors
     this.isCityHub = this.zone === "safe";
     this.isSubway = this.zone === "subway";
     this.fromZone = data?.from ?? "d0"; // where 'H' returns to from inside an interior
@@ -736,39 +756,64 @@ export default class OnlineScene extends Phaser.Scene {
           const cdef = npcDef(c.id);
           if (cdef) this.makeTalkNpc(cdef.name, cdef.look, cdef.lines, c.tile[0] * TILE + TILE / 2, c.tile[1] * TILE + TILE / 2, cdef.id);
         }
+        // EVERY building on the plaza is enterable — wire each one's door to its own h{K}
+        // interior (a distinct resident lives inside). FRLG walk-in + click/E both enter.
+        ONLINE_CITY.buildings.forEach((b, k) => {
+          if (!b.door) return;
+          const [dtx, dty] = b.door;
+          if (isWall(grid[dty]?.[dtx] as number)) return;
+          const dest = `h${k}`;
+          const doorColor = HUB_DOOR_COLOR[b.kind] ?? 0x8dfff0;
+          this.makeDoor({ dest, label: HUB_INTERIOR_TITLE[b.kind] ?? "BUILDING", tile: [dtx, dty], color: doorColor, flat: true });
+          const dg = this.add.graphics().setDepth(4.5);
+          const wx = dtx * TILE;
+          const wy = (dty - 1) * TILE;
+          dg.fillStyle(0x05060f, 0.96).fillRect(wx + 6, wy + 8, TILE - 12, TILE - 8);
+          dg.fillStyle(doorColor, 0.9).fillRect(wx + 4, wy + 5, TILE - 8, 3);
+          dg.lineStyle(2, doorColor, 0.6).strokeRect(wx + 6, wy + 8, TILE - 12, TILE - 8);
+          this.add.image(wx + TILE / 2, wy + TILE / 2, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(doorColor).setDepth(4.4).setScale(0.4).setAlpha(0.28);
+          this.districtDoors.push({ tx: dtx, ty: dty, dest });
+        });
         this.drawHubProps();
       } else {
         const bi = parseBuildingInterior(this.zone);
-        const kind = bi ? districtBuildingKind(bi.index) : this.zone;
-        const title = INTERIOR_TITLES[this.zone] ?? (bi ? `▣ ${DISTRICT_VENUE_TITLE[districtBuildingKind(bi.index)]}` : "▣ INTERIOR");
+        const hb = bi ? null : parseHubInterior(this.zone);
+        const isBldg = !!bi || hb !== null;
+        const kind = bi ? districtBuildingKind(bi.index) : hb !== null ? ONLINE_CITY.buildings[hb].kind : this.zone;
+        const accent = bi ? (DISTRICTS[bi.district]?.accent ?? 0x39ff88) : hb !== null ? (HUB_DOOR_COLOR[kind] ?? 0x39ff88) : 0x39ff88;
+        const venueTitle = DISTRICT_VENUE_TITLE[kind as keyof typeof DISTRICT_VENUE_TITLE];
+        const title =
+          INTERIOR_TITLES[this.zone] ?? (isBldg ? `▣ ${venueTitle ?? HUB_INTERIOR_TITLE[kind] ?? kind.toUpperCase()}` : "▣ INTERIOR");
         const backName = bi ? (DISTRICTS[bi.district]?.name ?? "the district") : "METRO CITY";
         this.add
           .text(this.worldW / 2, 4 * TILE, title, { fontFamily: "Courier New, monospace", fontSize: "20px", color: "#39ff88", fontStyle: "bold" })
           .setOrigin(0.5)
           .setDepth(6);
         this.add
-          .text(this.worldW / 2, 4 * TILE + 26, bi ? "no combat · talk: E · step on the door mat to leave" : `no combat · talk: E · H to return to ${backName}`, {
+          .text(this.worldW / 2, 4 * TILE + 26, isBldg ? `no combat · talk: E · step on the door mat to leave` : `no combat · talk: E · H to return to ${backName}`, {
             fontFamily: "Courier New, monospace",
             fontSize: "11px",
             color: "#9aa3b2",
           })
           .setOrigin(0.5)
           .setDepth(6);
-        // seat the room's occupants. District buildings get their own DISTINCT named
-        // resident (so every door opens on a unique face, not a generic clone); hub
-        // interiors keep their themed keeper + authored residents.
+        // seat the room's occupants. Every building interior (district + hub) gets its own
+        // DISTINCT named resident so every door opens on a unique face; the safehouse keeps
+        // its authored keeper + residents.
         const residents = INTERIOR_PLAN[this.zone]?.[0] ?? [];
         const occupants = bi
           ? [districtResident(bi.district, bi.index)]
-          : [keeperFor(kind), ...residents.map((id) => npcDef(id)).filter((d): d is NonNullable<typeof d> => !!d)];
-        const seats = bi ? VENUE_NPC_TILES : INTERIOR_NPC_TILES;
+          : hb !== null
+            ? [hubResident(hb)]
+            : [keeperFor(kind), ...residents.map((id) => npcDef(id)).filter((d): d is NonNullable<typeof d> => !!d)];
+        const seats = isBldg ? VENUE_NPC_TILES : INTERIOR_NPC_TILES;
         occupants.forEach((o, i) => {
           const [tx, ty] = seats[i % seats.length];
           this.makeTalkNpc(o.name, o.look, o.lines, tx * TILE + TILE / 2, ty * TILE + TILE / 2, o.id);
         });
-        // venue services — each district venue DOES something: shop=vendor caches,
+        // venue services — each service-kind building DOES something: shop=vendor caches,
         // home=personal stash, guild=cell registrar + forge, den=black market, bar=contracts
-        if (bi) {
+        if (isBldg) {
           const VENUE_SERVICES: Record<string, { svc: string; name: string; tag: string; color: number; look: PlayerLook }[]> = {
             shop: [{ svc: "vendor", name: "CLERK", tag: "WARES", color: 0x00e5ff, look: hubLook({ color: 0x00e5ff, skin: 0xe6b58c, hair: "buzz", hairColor: 0x2a1d14 }) }],
             home: [{ svc: "stash", name: "CUSTODIAN", tag: "LOCKBOX", color: 0xffb13c, look: hubLook({ color: 0xffb13c, skin: 0xc98a5e, hair: "bun", hairColor: 0x1b1820 }) }],
@@ -796,13 +841,13 @@ export default class OnlineScene extends Phaser.Scene {
           const matY = VENUE_MAT_TILE[1] * TILE;
           const mg = this.add.graphics().setDepth(2.5);
           mg.fillStyle(0x0a0e18, 0.9).fillRect(matX + 3, matY + 2, TILE - 6, TILE - 4);
-          mg.lineStyle(2, DISTRICTS[bi.district]?.accent ?? 0x39ff88, 0.85).strokeRect(matX + 3, matY + 2, TILE - 6, TILE - 4);
-          mg.fillStyle(DISTRICTS[bi.district]?.accent ?? 0x39ff88, 0.35).fillRect(matX + 7, matY + TILE - 9, TILE - 14, 3);
+          mg.lineStyle(2, accent, 0.85).strokeRect(matX + 3, matY + 2, TILE - 6, TILE - 4);
+          mg.fillStyle(accent, 0.35).fillRect(matX + 7, matY + TILE - 9, TILE - 14, 3);
           this.add
             .text(matX + TILE / 2, matY + TILE / 2 - 2, "▼", { fontFamily: "Courier New, monospace", fontSize: "13px", color: "#eafdff", fontStyle: "bold" })
             .setOrigin(0.5)
             .setDepth(2.6);
-          this.dressVenueRoom(kind, DISTRICTS[bi.district]?.accent ?? 0x39ff88);
+          this.dressVenueRoom(kind, accent);
         }
       }
     } else if (this.isBridge && bridgeDef) {
@@ -2615,7 +2660,7 @@ export default class OnlineScene extends Phaser.Scene {
           this.doorTransit = true;
           this.enterZone(d.dest);
         }
-      } else if (this.interior && parseBuildingInterior(this.zone)) {
+      } else if (this.interior && (parseBuildingInterior(this.zone) || parseHubInterior(this.zone) !== null)) {
         const p = this.net.pred;
         if (Math.floor(p.x / TILE) === VENUE_MAT_TILE[0] && Math.floor(p.y / TILE) === VENUE_MAT_TILE[1]) {
           this.doorTransit = true;

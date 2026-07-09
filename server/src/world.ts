@@ -221,8 +221,19 @@ export const parseBuildingInterior = (z: string | null): { district: number; ind
   return { district, index };
 };
 
+/** Hub building interior — zone id "h{buildingIndex}". Every building on the shared city
+ *  plaza is enterable; each is a no-combat room and H returns to "safe". Bounded to the
+ *  procedural hub's building count so a bogus id can't spin up an unbounded zone. */
+export const parseHubInterior = (z: string | null): number | null => {
+  const m = z ? /^h(\d+)$/.exec(z) : null;
+  if (!m) return null;
+  const i = parseInt(m[1], 10);
+  return i >= 0 && i < ONLINE_CITY.buildings.length ? i : null;
+};
+
 /** Zones the Worker routes by exact name or pattern (named zones + building interiors). */
-export const isNamedZone = (z: string | null): boolean => !!z && (NAMED_ZONES.has(z) || parseBuildingInterior(z) !== null);
+export const isNamedZone = (z: string | null): boolean =>
+  !!z && (NAMED_ZONES.has(z) || parseBuildingInterior(z) !== null || parseHubInterior(z) !== null);
 
 export interface Env {
   WORLD: DurableObjectNamespace;
@@ -671,6 +682,18 @@ export class WorldDO {
       this.interior = true;
       this.zoneName = zone!;
       this.districtIndex = bldg.district;
+      this.grid = buildVenueRoom();
+      this.spawn = VENUE_SPAWN;
+      this.nodes = [];
+      void this.state.storage.put("zone", zone);
+      return;
+    }
+    // Hub building interiors ("h{K}") — walk into any building on the shared plaza. Each is a
+    // no-combat room; districtIndex is irrelevant (H returns to "safe", handled client-side).
+    if (parseHubInterior(zone) !== null) {
+      this.interior = true;
+      this.zoneName = zone!;
+      this.districtIndex = 0;
       this.grid = buildVenueRoom();
       this.spawn = VENUE_SPAWN;
       this.nodes = [];

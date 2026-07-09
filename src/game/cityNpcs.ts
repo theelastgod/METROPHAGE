@@ -172,10 +172,30 @@ export const DISTRICT_RESIDENTS: CityNpcDef[] = [
   { id: "res_glass", name: "GLASS", look: look({ color: 0x6b9bff, skin: 0xe6b58c, hair: "undercut", hairColor: 0x6b9bff, visor: "scan", gloves: "wraps" }), lines: ["I move windows. Don't ask which way.", "Whole tower's transparent if you know the right pane."] },
 ];
 
+/** Extra residents so the 30-building hub can seat a distinct face in every one (roster ≥ 30). */
+const HUB_EXTRA_RESIDENTS: CityNpcDef[] = [
+  { id: "res_juniper", name: "JUNIPER", look: look({ color: 0x8bff6a, sex: "f", head: "none", skin: 0xe6b58c, hair: "long", hairColor: 0x2a1d14, cloak: "cape" }), lines: ["I grow real green up here. Smell it?", "The towers ration oxygen. My roof gives it away."] },
+  { id: "res_tin", name: "TIN", look: look({ color: 0x9aa3b2, head: "cap", skin: 0xa9794a, hair: "buzz", gloves: "wraps", faceMark: "scar" }), lines: ["I fix boots. Everyone forgets their feet.", "Walk soft. This district bites ankles."] },
+  { id: "res_mercy", name: "MERCY", look: look({ color: 0x39ff88, sex: "f", head: "hood", skin: 0xf3d2b8, hair: "bun", hairColor: 0xc7cdd8, decal: "cross" }), lines: ["Free patch-ups, no questions, no corp forms.", "Bleed quietly. The walls have ears."] },
+  { id: "res_borne", name: "BORNE", look: look({ color: 0xffb13c, build: "bulky", skin: 0x4f3220, hair: "short", beard: "goatee" }), lines: ["I move freight nobody wants logged.", "You didn't see me. I didn't see you."] },
+  { id: "res_lace", name: "LACE", look: look({ color: 0xff79c6, sex: "f", head: "crown", skin: 0xc98a5e, hair: "braids", hairColor: 0xff5fb0, cloak: "cape", accentColor: 0x00e5ff }), lines: ["I dress the whole plaza. Even you, someday.", "Style is the only armor they can't confiscate."] },
+  { id: "res_odd", name: "ODD", look: look({ color: 0xb06bff, head: "none", skin: 0x7c4f30, hair: "undercut", hairColor: 0xb06bff, visor: "scan", antennae: true }), lines: ["I count things that aren't there yet.", "The city talks in numbers. I just listen."] },
+  { id: "res_salt", name: "SALT", look: look({ color: 0x6b9bff, build: "bulky", sex: "f", skin: 0xe6b58c, hair: "ponytail", hairColor: 0x1b1820, strap: true }), lines: ["Dock-hand hands, dock-hand grip. Try me.", "I've hauled worse than you up these stairs."] },
+  { id: "res_pip", name: "PIP", look: look({ color: 0xf7ff3c, head: "cap", skin: 0xa9794a, hair: "short", hairColor: 0x1b1820, faceMark: "tattoo" }), lines: ["Runner rumors, two creds a scoop.", "Heard your name on the wire. Not saying where."] },
+];
+const ALL_RESIDENTS = [...DISTRICT_RESIDENTS, ...HUB_EXTRA_RESIDENTS];
+
 /** A distinct resident for a district building interior — deterministic per building, so
  *  the same door always opens on the same character. */
 export function districtResident(district: number, index: number): CityNpcDef {
   return DISTRICT_RESIDENTS[((district * 5 + index) >>> 0) % DISTRICT_RESIDENTS.length];
+}
+
+/** A distinct resident for a hub building interior. The 30 hub buildings index 0..29 into a
+ *  ≥30-strong roster, so every door on the plaza opens on its own unique face. */
+export function hubResident(index: number): CityNpcDef {
+  const n = ALL_RESIDENTS.length;
+  return ALL_RESIDENTS[((index % n) + n) % n];
 }
 
 /** Regional quest-givers scattered in the expanded city's outer districts. */
