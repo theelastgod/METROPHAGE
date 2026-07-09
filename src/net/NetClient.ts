@@ -1,7 +1,7 @@
 import { stepMove, NET_TICK_MS, PLAYER_HP, type MoveState } from "./sim";
 import { PLAYER } from "../config";
 import type { TileGrid } from "../world/district";
-import type { ClientMsg, ServerMsg, InputCmd, PlayerLook, Item } from "./protocol";
+import type { ClientMsg, ServerMsg, InputCmd, PlayerLook, Item, EstateFurniture } from "./protocol";
 
 export interface RemotePlayer {
   id: string;
@@ -78,6 +78,7 @@ export default class NetClient {
   pvpEscrow = 0;
   inventory: Item[] = []; // server-authoritative held gear (sent on login + on change)
   stash: Item[] = []; // personal safe storage (TENEMENT lockbox), server-authoritative
+  estate: null | { id: string; owner: string | null; ownerName: string | null; mine: boolean; forSale: boolean; price: number; furniture: EstateFurniture[] } = null; // current home (est{K})
   equipped: Item[] = []; // currently equipped items (one per slot), server-authoritative
   maxHp = PLAYER_HP; // derived from equipped +HP mods
   trade: null | {
@@ -174,6 +175,7 @@ export default class NetClient {
   onWelcome?: (x: number, y: number) => void;
   onInventory?: () => void; // fired when the server pushes an inventory update
   onStash?: () => void; // fired when the server pushes a stash update
+  onEstate?: () => void; // fired when the server pushes an estate ownership/furniture update
   onRedirect?: (zone: string) => void;
   /** Memory fragments this player has recovered (dive rewards; welcome + live updates). */
   fragments: string[] = [];
@@ -603,6 +605,9 @@ export default class NetClient {
     } else if (msg.t === "stashv") {
       this.stash = msg.items;
       this.onStash?.();
+    } else if (msg.t === "estate") {
+      this.estate = { id: msg.id, owner: msg.owner, ownerName: msg.ownerName, mine: msg.mine, forSale: msg.forSale, price: msg.price, furniture: msg.furniture };
+      this.onEstate?.();
     } else if (msg.t === "equipped") {
       this.equipped = msg.items;
       this.maxHp = msg.maxHp;
@@ -661,6 +666,19 @@ export default class NetClient {
   /** TENEMENT lockbox — server validates the venue, caps, and item ownership. */
   stashAction(action: "deposit" | "withdraw", itemId: string) {
     this.sendMsg({ t: "stash", action, itemId });
+  }
+
+  estateBuy() {
+    this.sendMsg({ t: "estate", action: "buy" });
+  }
+  estateList(price: number) {
+    this.sendMsg({ t: "estate", action: "list", price });
+  }
+  estateUnlist() {
+    this.sendMsg({ t: "estate", action: "unlist" });
+  }
+  estateFurnish(furniture: EstateFurniture[]) {
+    this.sendMsg({ t: "estate", action: "furnish", furniture });
   }
   tutorialSkip() {
     this.sendMsg({ t: "tutorial", action: "skip" });

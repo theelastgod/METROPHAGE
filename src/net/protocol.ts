@@ -109,6 +109,8 @@ export type ClientMsg =
   | { t: "tutorial"; action: "skip" | "graduate" | "progress" | "mode"; kind?: string; mode?: "quick" | "full" }
   | { t: "buy"; sku: string } // vendor purchase (heal / gear cache), priced + validated server-side
   | { t: "emote"; kind: number; ping: boolean; x: number; y: number } // emote (above avatar) or world ping
+  // player housing (THE ESTATES) — buy/resell/furnish an est{K} home; server owns ownership in D1
+  | { t: "estate"; action: "buy" | "list" | "unlist" | "furnish"; price?: number; furniture?: EstateFurniture[] }
   | {
       t: "trade";
       action: "request" | "accept" | "offer" | "confirm" | "cancel";
@@ -116,6 +118,13 @@ export type ClientMsg =
       credits?: number;
       cores?: number;
     };
+
+/** A placed furniture item in a home (mirrors world/estates FurniturePiece). */
+export interface EstateFurniture {
+  k: string;
+  x: number;
+  y: number;
+}
 
 export interface TradeOffer {
   credits: number;
@@ -253,6 +262,8 @@ export type ServerMsg =
   | { t: "event"; id: string; name: string; tagline: string; hex: string; phase: "telegraph" | "active" | "end"; seconds: number }
   | { t: "inv"; items: Item[] } // the owning client's full inventory (login + on change)
   | { t: "stashv"; items: Item[] } // owning client's personal stash (login + on change)
+  // player housing — the current estate's ownership + furniture (sent on entering an est{K} home + on change)
+  | { t: "estate"; id: string; owner: string | null; ownerName: string | null; mine: boolean; forSale: boolean; price: number; furniture: EstateFurniture[] }
   | { t: "equipped"; items: Item[]; maxHp: number } // owning client's equipped gear + derived max HP
   | { t: "achv"; ids: string[] } // full unlocked achievement set (sent on login)
   | { t: "ach"; id: string; name: string; reward: number } // a freshly-unlocked achievement

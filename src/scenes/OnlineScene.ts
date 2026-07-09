@@ -97,6 +97,7 @@ import { scatterWorldProps } from "../render/propScatter";
 import OnlineMinimap from "../ui/OnlineMinimap";
 import RsQuestLog from "../ui/RsQuestLog";
 import { CITY_HUB_SPAWN, ENV_IDENTITY, envAt, ONLINE_CITY } from "../world/city";
+import { ESTATES, ESTATES_ZONE, buildHomeRoom, parseEstateInterior, FURNITURE, furnitureKind, type FurniturePiece } from "../world/estates";
 import { paintCityEnvWash, paintCityStorefrontReflections } from "../render/cityTerrainPolish";
 import { paintCityBuildingFacades, buildingExteriorAccent } from "../render/buildingFacades";
 import NetClient, { type NetEnemy } from "../net/NetClient";
@@ -290,6 +291,9 @@ const HUB_INTERIOR_TITLE: Record<string, string> = {
   guild: "GUILD HALL", hotel: "HOTEL", hospital: "HOSPITAL", subway: "TRANSIT OFFICE",
   stadium: "ARENA LOBBY", citycenter: "CITY HALL",
 };
+/** 0xRRGGBB → "#rrggbb" CSS string. */
+const hexColor = (c: number) => "#" + (c & 0xffffff).toString(16).padStart(6, "0");
+
 /** Door accent per hub building kind, so a building's colour reads its type from across the plaza. */
 const HUB_DOOR_COLOR: Record<string, number> = {
   home: 0xffb13c, shop: 0x00e5ff, bar: 0x9dff3c, clinic: 0x39ff88, den: 0xff2bd6,
@@ -305,6 +309,7 @@ const CITY_HUB_DOORS: { dest: string; label: string; tile: [number, number]; col
   { dest: "den", label: "THE DEN", tile: hubT(4, 6), color: 0xff2bd6 },
   { dest: "subway", label: "▼ THE UNDERLINE", tile: hubT(-12, 0), color: 0xff3b6b },
   { dest: "vault", label: "◆ THE PROVING (weekly)", tile: hubT(12, 0), color: 0xffb13c },
+  { dest: "estates", label: "▶ THE ESTATES (homes)", tile: hubT(-6, 4), color: 0xffb13c },
   { dest: "d0", label: "▶ DEPLOY GATE", tile: [HUB_CX, HUB_CY + 7], color: 0x39ff88 }, // south edge of the plaza — steps from spawn, not a 50-tile hike
 ];
 
@@ -442,6 +447,7 @@ export default class OnlineScene extends Phaser.Scene {
   private isSubway = false; // THE UNDERLINE — an indoor COMBAT dungeon zone
   private isDive = false; // ICE VAULT — the instanced fragment dive (v0–v6)
   private isBridge = false; // wilderness corridor between two districts
+  private isEstates = false; // THE ESTATES — the residential street of purchasable homes
   private bridgeIndex = -1;
   private fromZone = "d0"; // district to return to when leaving the safehouse
   private districtDoors: { tx: number; ty: number; dest: string }[] = []; // FRLG walk-in doors
@@ -471,6 +477,14 @@ export default class OnlineScene extends Phaser.Scene {
   private nearNpc: ZoneNpc | null = null;
   private interactPrompt?: Phaser.GameObjects.Text;
   private speechBubble?: Phaser.GameObjects.Text;
+
+  // THE ESTATES — home interior state (ownership prompt + furniture editor)
+  private homeIdx = -1;
+  private homeFurnLayer?: Phaser.GameObjects.Container;
+  private homeEditing = false;
+  private homeSelKind: string | null = null;
+  private homeDraft: FurniturePiece[] = [];
+  private homeUi: Phaser.GameObjects.GameObject[] = [];
 
   private isTutorial = false;
   private tutorialPanel!: Phaser.GameObjects.Text;
@@ -527,14 +541,30 @@ export default class OnlineScene extends Phaser.Scene {
     const diveIdx = parseDiveZone(rawZone);
     this.isDive = diveIdx >= 0;
     const named =
-      !!INTERIOR_TITLES[rawZone] || rawZone === "subway" || rawZone === TUTORIAL_ZONE || this.isBridge || this.isDive;
+      !!INTERIOR_TITLES[rawZone] ||
+      rawZone === "subway" ||
+      rawZone === TUTORIAL_ZONE ||
+      rawZone === ESTATES_ZONE ||
+      !!parseBuildingInterior(rawZone) ||
+      parseHubInterior(rawZone) !== null ||
+      parseEstateInterior(rawZone) !== null ||
+      this.isBridge ||
+      this.isDive;
     this.zone = this.isBridge ? rawZone : named ? rawZone : "d" + this.parseZone(data?.zone);
     this.isTutorial = this.zone === TUTORIAL_ZONE;
     this.interior =
-      !!INTERIOR_TITLES[this.zone] || this.zone === "safe" || !!parseBuildingInterior(this.zone) || parseHubInterior(this.zone) !== null; // hub plaza + district + hub-building interiors
+      !!INTERIOR_TITLES[this.zone] ||
+      this.zone === "safe" ||
+      this.zone === ESTATES_ZONE ||
+      !!parseBuildingInterior(this.zone) ||
+      parseHubInterior(this.zone) !== null ||
+      parseEstateInterior(this.zone) !== null; // hub plaza + estates street + all building/home interiors
     this.isCityHub = this.zone === "safe";
+    this.isEstates = this.zone === ESTATES_ZONE;
     this.isSubway = this.zone === "subway";
     this.fromZone = data?.from ?? "d0"; // where 'H' returns to from inside an interior
+    this.homeIdx = -1; // reset home-editor state unless this zone is an est{K} interior
+    this.homeEditing = false;
     this.districtDoors = [];
     this.doorTransit = false; // scene instances are reused across zone starts — reset triggers
     this.districtIndex = this.isDive
@@ -581,7 +611,13 @@ export default class OnlineScene extends Phaser.Scene {
           : this.isCityHub
             ? ONLINE_CITY.grid
             : this.interior
-              ? (parseBuildingInterior(this.zone) ? buildVenueRoom() : buildSafehouse())
+              ? this.isEstates
+                ? ESTATES.grid
+                : parseEstateInterior(this.zone) !== null
+                  ? buildHomeRoom()
+                  : parseBuildingInterior(this.zone) || parseHubInterior(this.zone) !== null
+                    ? buildVenueRoom()
+                    : buildSafehouse()
               : this.isBridge
                 ? buildBridgeGrid(bridgeDef!)
                 : buildGrid(def);
@@ -775,6 +811,10 @@ export default class OnlineScene extends Phaser.Scene {
           this.districtDoors.push({ tx: dtx, ty: dty, dest });
         });
         this.drawHubProps();
+      } else if (this.isEstates) {
+        this.buildEstatesZone();
+      } else if (parseEstateInterior(this.zone) !== null) {
+        this.buildHomeInterior(parseEstateInterior(this.zone)!);
       } else {
         const bi = parseBuildingInterior(this.zone);
         const hb = bi ? null : parseHubInterior(this.zone);
@@ -1029,6 +1069,7 @@ export default class OnlineScene extends Phaser.Scene {
     this.net.classId = (this.registry.get("classId") as string) || "metrophage";
     this.net.arrival = fastArrival ? "fast" : "organic";
     this.net.travelFrom = fastArrival ? undefined : this.fromZone;
+    this.wireHomeAfterNet(); // if this is an est{K} home, hook estate updates + furniture placement
     const tutorialMode =
       data?.tutorialMode ?? (this.registry.get("tutorialMode") as TutorialMode | undefined) ?? getSettings().tutorialMode;
     if (this.isTutorial) this.registry.set("tutorialMode", tutorialMode);
@@ -1506,6 +1547,16 @@ export default class OnlineScene extends Phaser.Scene {
       }
       if (this.mapPanel.open && e.key === "Escape") {
         this.mapPanel.close();
+        return;
+      }
+      // home controls: (F)urnish your own home, (B)uy an unclaimed/for-sale one
+      if ((e.key === "f" || e.key === "F") && this.homeIdx >= 0 && this.net.estate?.mine && !this.homeEditing) {
+        this.startFurnishing();
+        return;
+      }
+      if ((e.key === "b" || e.key === "B") && this.homeIdx >= 0 && !this.homeEditing) {
+        const es = this.net.estate;
+        if (es && (!es.owner || es.forSale) && !es.mine) this.net.estateBuy();
         return;
       }
       if (e.key === "h" || e.key === "H") {
@@ -2228,6 +2279,185 @@ export default class OnlineScene extends Phaser.Scene {
       .setDepth(7);
   }
 
+  /** THE ESTATES overworld — a residential street; each facade door opens an est{K} home. */
+  private buildEstatesZone() {
+    this.add
+      .text(this.worldW / 2, 3 * TILE, "▣ THE ESTATES", displayFont(20, { color: "#ffb13c", fontStyle: "bold" }))
+      .setOrigin(0.5)
+      .setDepth(6)
+      .setShadow(0, 0, "#ffb13c", 8, true, true);
+    this.add
+      .text(this.worldW / 2, 3 * TILE + 24, "residential district · buy a home, then furnish it · H returns to METRO CITY", bodyFont(11, { color: "#9aa3b2" }))
+      .setOrigin(0.5)
+      .setDepth(6);
+    for (const plot of ESTATES.plots) {
+      const [dtx, dty] = plot.door;
+      const color = 0xffb13c;
+      this.makeDoor({ dest: `est${plot.id}`, label: `HOME ${plot.id + 1}`, tile: [dtx, dty], color, flat: true });
+      this.add
+        .image(dtx * TILE + TILE / 2, dty * TILE + TILE / 2, GLOW_KEY)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setTint(color)
+        .setDepth(4.4)
+        .setScale(0.42)
+        .setAlpha(0.3);
+      this.add.text(dtx * TILE + TILE / 2, dty * TILE - 12, `▣ ${plot.id + 1}`, bodyFont(9, { color: "#ffcf8a", fontStyle: "bold" })).setOrigin(0.5).setDepth(7);
+      this.districtDoors.push({ tx: dtx, ty: dty, dest: `est${plot.id}` });
+    }
+    this.add
+      .text(this.worldW / 2, this.worldH - TILE, "▲ H — return to METRO CITY", displayFont(10, { color: "#39ff88", fontStyle: "bold" }))
+      .setOrigin(0.5)
+      .setDepth(7);
+  }
+
+  /** A private home interior (est{K}) — an empty room the owner furnishes. Ownership +
+   *  furniture are server-authoritative; the client reacts to the pushed estate state. */
+  private buildHomeInterior(idx: number) {
+    this.homeIdx = idx;
+    this.homeEditing = false;
+    this.homeSelKind = null;
+    this.homeDraft = [];
+    this.add
+      .text(this.worldW / 2, 2.4 * TILE, `▣ HOME ${idx + 1}`, displayFont(18, { color: "#ffb13c", fontStyle: "bold" }))
+      .setOrigin(0.5)
+      .setDepth(6);
+    this.add
+      .text(this.worldW / 2, 2.4 * TILE + 20, "no combat · step on the door mat (▼) to leave", bodyFont(10, { color: "#9aa3b2" }))
+      .setOrigin(0.5)
+      .setDepth(6);
+    // exit mat → returns to THE ESTATES street
+    const matX = VENUE_MAT_TILE[0] * TILE;
+    const matY = VENUE_MAT_TILE[1] * TILE;
+    const mg = this.add.graphics().setDepth(2.5);
+    mg.fillStyle(0x0a0e18, 0.9).fillRect(matX + 3, matY + 2, TILE - 6, TILE - 4);
+    mg.lineStyle(2, 0xffb13c, 0.85).strokeRect(matX + 3, matY + 2, TILE - 6, TILE - 4);
+    mg.fillStyle(0xffb13c, 0.35).fillRect(matX + 7, matY + TILE - 9, TILE - 14, 3);
+    this.add.text(matX + TILE / 2, matY + TILE / 2 - 2, "▼", displayFont(13, { color: "#eafdff", fontStyle: "bold" })).setOrigin(0.5).setDepth(2.6);
+    this.homeFurnLayer = this.add.container(0, 0).setDepth(3);
+    // NOTE: net-dependent wiring (onEstate callback, pointer placement, first render) is
+    // deferred to wireHomeAfterNet() — this method runs before this.net is constructed.
+  }
+
+  /** Home wiring that needs this.net (called once the NetClient exists). */
+  private wireHomeAfterNet() {
+    if (this.homeIdx < 0) return;
+    this.net.onEstate = () => this.refreshHome();
+    this.input.off("pointerdown", this.onHomePointer, this);
+    this.input.on("pointerdown", this.onHomePointer, this);
+    this.refreshHome();
+  }
+
+  /** Re-render placed furniture + the ownership/editor controls from the current estate state. */
+  private refreshHome() {
+    if (this.homeIdx < 0 || !this.homeFurnLayer) return;
+    const e = this.net.estate;
+    const pieces = this.homeEditing ? this.homeDraft : e?.furniture ?? [];
+    this.homeFurnLayer.removeAll(true);
+    for (const pc of pieces) {
+      const k = furnitureKind(pc.k);
+      if (!k) continue;
+      const x = pc.x * TILE;
+      const y = pc.y * TILE;
+      const w = k.w * TILE;
+      const h = k.h * TILE;
+      const g = this.add.graphics();
+      g.fillStyle(k.color, 0.5).fillRoundedRect(x + 2, y + 2, w - 4, h - 4, 4);
+      g.lineStyle(1.5, k.color, 0.95).strokeRoundedRect(x + 2, y + 2, w - 4, h - 4, 4);
+      const t = this.add.text(x + w / 2, y + h / 2, k.name[0], bodyFont(11, { color: hexColor(k.color), fontStyle: "bold" })).setOrigin(0.5);
+      this.homeFurnLayer.add(g);
+      this.homeFurnLayer.add(t);
+    }
+    this.renderHomeControls();
+  }
+
+  /** The estate control bar (buy / furnish / list) + the furniture palette when editing. */
+  private renderHomeControls() {
+    for (const o of this.homeUi) o.destroy();
+    this.homeUi = [];
+    const push = <T extends Phaser.GameObjects.GameObject>(o: T): T => {
+      this.homeUi.push(o);
+      return o;
+    };
+    const W = this.scale.width;
+    const H = this.scale.height;
+    const btn = (x: number, y: number, label: string, color: number, cb: () => void) => {
+      const t = push(this.add.text(x, y, label, displayFont(12, { color: hexColor(color), fontStyle: "bold" })))
+        .setScrollFactor(0)
+        .setDepth(1200)
+        .setPadding(9, 5, 9, 5)
+        .setInteractive({ useHandCursor: true });
+      t.setBackgroundColor("#0a0e18dd");
+      t.on("pointerdown", cb);
+      return t;
+    };
+    const e = this.net.estate;
+    if (!e) {
+      push(this.add.text(16, H - 40, "loading home…", bodyFont(11, { color: "#9aa3b2" })).setScrollFactor(0).setDepth(1200));
+      return;
+    }
+    if (this.homeEditing) {
+      push(this.add.text(16, 14, "FURNISH — pick an item, click a tile to place · click a piece to remove", bodyFont(11, { color: "#ffcf8a" })).setScrollFactor(0).setDepth(1200));
+      FURNITURE.forEach((f, i) => {
+        const col = 16 + (i % 6) * 120;
+        const row = 36 + Math.floor(i / 6) * 28;
+        const sel = this.homeSelKind === f.id;
+        const c = push(this.add.text(col, row, `${sel ? "▸ " : ""}${f.name} ₵${f.price}`, bodyFont(11, { color: sel ? "#ffffff" : hexColor(f.color) })))
+          .setScrollFactor(0)
+          .setDepth(1200)
+          .setPadding(6, 3, 6, 3)
+          .setInteractive({ useHandCursor: true });
+        c.setBackgroundColor(sel ? "#3a2a10ee" : "#0a0e18cc");
+        c.on("pointerdown", () => {
+          this.homeSelKind = f.id;
+          this.renderHomeControls();
+        });
+      });
+      push(this.add.text(16, H - 62, `placed: ${this.homeDraft.length} / 40`, bodyFont(11, { color: "#9aa3b2" })).setScrollFactor(0).setDepth(1200));
+      btn(W - 230, H - 40, "SAVE LAYOUT", 0x39ff88, () => {
+        this.net.estateFurnish(this.homeDraft);
+        this.homeEditing = false;
+        this.refreshHome();
+      });
+      btn(W - 96, H - 40, "CANCEL", 0xff3b6b, () => {
+        this.homeEditing = false;
+        this.refreshHome();
+      });
+      return;
+    }
+    const status = e.mine ? "YOUR HOME" : e.owner ? `Owned by ${e.ownerName ?? "someone"}` : "UNCLAIMED HOME";
+    push(this.add.text(16, H - 60, status, displayFont(13, { color: "#ffcf8a", fontStyle: "bold" })).setScrollFactor(0).setDepth(1200));
+    if (e.mine) {
+      btn(16, H - 38, "FURNISH (F)", 0xffb13c, () => this.startFurnishing());
+      if (e.forSale) btn(150, H - 38, "UNLIST", 0x9aa3b2, () => this.net.estateUnlist());
+      else btn(150, H - 38, "LIST FOR SALE ₵3000", 0x00e5ff, () => this.net.estateList(3000));
+    } else if (!e.owner || e.forSale) {
+      btn(16, H - 38, `BUY THIS HOME ₵${e.price} (B)`, 0x39ff88, () => this.net.estateBuy());
+    } else {
+      push(this.add.text(16, H - 38, "not for sale", bodyFont(11, { color: "#9aa3b2" })).setScrollFactor(0).setDepth(1200));
+    }
+  }
+
+  private startFurnishing() {
+    const e = this.net.estate;
+    if (!e?.mine) return;
+    this.homeDraft = (e.furniture ?? []).map((p) => ({ ...p }));
+    this.homeSelKind = this.homeSelKind ?? FURNITURE[0].id;
+    this.homeEditing = true;
+    this.refreshHome();
+  }
+
+  /** Click-to-place / click-to-remove furniture while editing a home. */
+  private onHomePointer(pointer: Phaser.Input.Pointer) {
+    if (!this.homeEditing || !this.homeSelKind || this.homeIdx < 0) return;
+    const tx = Math.floor(pointer.worldX / TILE);
+    const ty = Math.floor(pointer.worldY / TILE);
+    if (tx < 1 || tx > 13 || ty < 1 || ty > 9) return; // inside the 15×11 room walls
+    const i = this.homeDraft.findIndex((p) => p.x === tx && p.y === ty);
+    if (i >= 0) this.homeDraft.splice(i, 1);
+    else if (this.homeDraft.length < 40) this.homeDraft.push({ k: this.homeSelKind, x: tx, y: ty });
+    this.refreshHome();
+  }
+
   /** A door into a building interior — a glowing portal you enter with E (or click).
    *  `flat` skips the free-standing portal box (district doorways draw their own
    *  recessed FRLG-style opening in the wall face instead). */
@@ -2675,7 +2905,7 @@ export default class OnlineScene extends Phaser.Scene {
           this.doorTransit = true;
           this.enterZone(d.dest);
         }
-      } else if (this.interior && (parseBuildingInterior(this.zone) || parseHubInterior(this.zone) !== null)) {
+      } else if (this.interior && (parseBuildingInterior(this.zone) || parseHubInterior(this.zone) !== null || parseEstateInterior(this.zone) !== null)) {
         const p = this.net.pred;
         if (Math.floor(p.x / TILE) === VENUE_MAT_TILE[0] && Math.floor(p.y / TILE) === VENUE_MAT_TILE[1]) {
           this.doorTransit = true;

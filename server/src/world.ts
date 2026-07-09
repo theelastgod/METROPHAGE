@@ -204,8 +204,9 @@ export const parseZone = (z: string | null): number => {
 import { getFragment, DIVE_DEFAULT_FRAGMENTS } from "../../src/game/fragments";
 import { WORLD_EVENTS, type WorldEventDef } from "../../src/game/worldEvents";
 import { WORLD_EVENT } from "../../src/config";
+import { ESTATES, ESTATES_ZONE, buildHomeRoom, parseEstateInterior, sanitizeFurniture, ESTATE_BASE_PRICE, type FurniturePiece } from "../../src/world/estates";
 
-export const INTERIOR_ZONES = new Set(["safe", "clinic", "bar", "den", "shop"]);
+export const INTERIOR_ZONES = new Set(["safe", "clinic", "bar", "den", "shop", ESTATES_ZONE]);
 /** All named (non-district) zones the Worker routes by name — interiors + subway + wilderness bridges. */
 export const NAMED_ZONES = new Set([...INTERIOR_ZONES, "subway", "vault", TUTORIAL_ZONE, ...BRIDGE_ZONE_IDS, ...DIVE_ZONE_IDS]);
 
@@ -233,7 +234,7 @@ export const parseHubInterior = (z: string | null): number | null => {
 
 /** Zones the Worker routes by exact name or pattern (named zones + building interiors). */
 export const isNamedZone = (z: string | null): boolean =>
-  !!z && (NAMED_ZONES.has(z) || parseBuildingInterior(z) !== null || parseHubInterior(z) !== null);
+  !!z && (NAMED_ZONES.has(z) || parseBuildingInterior(z) !== null || parseHubInterior(z) !== null || parseEstateInterior(z) !== null);
 
 export interface Env {
   WORLD: DurableObjectNamespace;
@@ -663,8 +664,31 @@ export class WorldDO {
       void this.state.storage.put("zone", "safe");
       return;
     }
+    // THE ESTATES overworld — a no-combat residential street; each facade door opens an est{K} home.
+    if (zone === ESTATES_ZONE) {
+      this.interior = true;
+      this.zoneName = ESTATES_ZONE;
+      this.districtIndex = 0;
+      this.grid = ESTATES.grid;
+      this.spawn = { x: ESTATES.spawn[0] * TILE + TILE / 2, y: ESTATES.spawn[1] * TILE + TILE / 2 };
+      this.nodes = [];
+      void this.state.storage.put("zone", zone);
+      return;
+    }
+    // Private home interiors ("est{K}") — an empty room; the owner's furniture is layered on
+    // the client from the D1-owned layout. No combat.
+    if (parseEstateInterior(zone) !== null) {
+      this.interior = true;
+      this.zoneName = zone!;
+      this.districtIndex = 0;
+      this.grid = buildHomeRoom();
+      this.spawn = VENUE_SPAWN;
+      this.nodes = [];
+      void this.state.storage.put("zone", zone);
+      return;
+    }
     // Small building interiors (clinic, bar, den, shop) — no-combat rooms off the hub.
-    if (zone && INTERIOR_ZONES.has(zone) && zone !== "safe") {
+    if (zone && INTERIOR_ZONES.has(zone) && zone !== "safe" && zone !== ESTATES_ZONE) {
       this.interior = true;
       this.zoneName = zone;
       this.districtIndex = 0;
@@ -1307,6 +1331,7 @@ export class WorldDO {
     if (msg.t === "unequip") return this.onUnequip(ws, msg);
     if (msg.t === "inv_move") return this.onInvMove(ws, msg);
     if (msg.t === "stash") return this.onStash(ws, msg);
+    if (msg.t === "estate") return this.onEstate(ws, msg);
     if (msg.t === "craft") return this.onCraft(ws, msg);
     if (msg.t === "buy") return this.onBuy(ws, msg);
     if (msg.t === "chat") return this.onChat(ws, msg);
@@ -2215,6 +2240,7 @@ export class WorldDO {
     }
     this.send(ws, { t: "inv", items: p.inventory }); // hydrate their held gear
     this.send(ws, { t: "stashv", items: p.stash }); // hydrate the personal stash (lockbox)
+    if (parseEstateInterior(this.zoneName) !== null) await this.sendEstate(ws, p); // hydrate this home's ownership + furniture
     this.sendLoadout(ws, p); // hydrate equipped gear + derived max HP
     this.noteDeepest(p); // arriving in this district may set a "deepest reached" milestone
     this.send(ws, { t: "achv", ids: [...p.achv] }); // hydrate the unlocked achievement set
@@ -3102,6 +3128,112 @@ export class WorldDO {
     } else return;
     this.sendTo(p.id, { t: "inv", items: p.inventory });
     this.sendTo(p.id, { t: "stashv", items: p.stash });
+  }
+
+  // ── THE ESTATES — player-owned, furnishable homes (est{K}). Ownership + furniture live in
+  //    D1 so any estate DO + a resale by another player share one source of truth. ────────
+  private estate: { owner: string | null; ownerName: string | null; price: number; forSale: boolean; furniture: FurniturePiece[] } | null = null;
+
+  private async loadEstate(): Promise<void> {
+    if (parseEstateInterior(this.zoneName) === null) {
+      this.estate = null;
+      return;
+    }
+    const row = await this.env.DB.prepare("SELECT owner, owner_name, price, for_sale, furniture FROM estates WHERE id = ?")
+      .bind(this.zoneName)
+      .first<{ owner: string | null; owner_name: string | null; price: number; for_sale: number; furniture: string }>();
+    let furn: unknown = [];
+    try {
+      furn = JSON.parse(row?.furniture || "[]");
+    } catch {
+      furn = [];
+    }
+    this.estate = row
+      ? { owner: row.owner, ownerName: row.owner_name, price: row.price, forSale: !!row.for_sale, furniture: sanitizeFurniture(furn) }
+      : { owner: null, ownerName: null, price: ESTATE_BASE_PRICE, forSale: true, furniture: [] };
+  }
+
+  private estateMsg(p: PlayerState) {
+    const e = this.estate!;
+    return {
+      t: "estate" as const,
+      id: this.zoneName,
+      owner: e.owner,
+      ownerName: e.ownerName,
+      mine: !!e.owner && e.owner === p.id,
+      forSale: e.forSale,
+      price: e.owner ? e.price : ESTATE_BASE_PRICE,
+      furniture: e.furniture,
+    };
+  }
+
+  private async sendEstate(ws: WebSocket, p: PlayerState): Promise<void> {
+    if (!this.estate) await this.loadEstate();
+    if (!this.estate) return;
+    this.send(ws, this.estateMsg(p));
+  }
+
+  private broadcastEstate(): void {
+    if (!this.estate) return;
+    for (const p of this.players.values()) this.sendTo(p.id, this.estateMsg(p));
+  }
+
+  private async persistEstate(): Promise<void> {
+    const e = this.estate;
+    if (!e) return;
+    await this.env.DB.prepare(
+      "INSERT INTO estates (id, owner, owner_name, price, for_sale, furniture, updated) VALUES (?,?,?,?,?,?,?) " +
+        "ON CONFLICT(id) DO UPDATE SET owner=excluded.owner, owner_name=excluded.owner_name, price=excluded.price, for_sale=excluded.for_sale, furniture=excluded.furniture, updated=excluded.updated",
+    )
+      .bind(this.zoneName, e.owner, e.ownerName, e.price, e.forSale ? 1 : 0, JSON.stringify(e.furniture), Date.now())
+      .run();
+  }
+
+  private async onEstate(ws: WebSocket, msg: Extract<ClientMsg, { t: "estate" }>): Promise<void> {
+    const p = this.playerFor(ws);
+    if (!p) return;
+    if (parseEstateInterior(this.zoneName) === null) return;
+    if (!this.estate) await this.loadEstate();
+    const e = this.estate!;
+    const sys = (t: string) => this.sendTo(p.id, { t: "sys", text: t });
+    if (msg.action === "buy") {
+      if (e.owner === p.id) return sys("you already own this home");
+      if (e.owner && !e.forSale) return sys("this home isn't for sale");
+      const price = e.owner ? e.price : ESTATE_BASE_PRICE;
+      if (p.credits < price) return sys(`not enough credits — this home costs ₵${price}`);
+      p.credits -= price;
+      p.dirty = true;
+      if (e.owner) {
+        // resale: the proceeds go to the previous owner via the cross-zone mailbox
+        await this.env.DB.prepare("INSERT INTO mailbox (player, credits, reason, created_at) VALUES (?,?,?,?)")
+          .bind(e.owner, price, "estate sale", Date.now())
+          .run();
+      }
+      e.owner = p.id;
+      e.ownerName = p.name;
+      e.forSale = false;
+      await this.persistEstate();
+      sys(`◈ home purchased for ₵${price} — press F to furnish it`);
+      this.broadcastEstate();
+    } else if (msg.action === "list") {
+      if (e.owner !== p.id) return sys("only the owner can list this home");
+      e.price = Math.max(100, Math.min(10_000_000, Math.round(msg.price ?? e.price)));
+      e.forSale = true;
+      await this.persistEstate();
+      sys(`◈ listed for sale — ₵${e.price}`);
+      this.broadcastEstate();
+    } else if (msg.action === "unlist") {
+      if (e.owner !== p.id) return sys("only the owner can unlist this home");
+      e.forSale = false;
+      await this.persistEstate();
+      sys("◈ delisted — this home is no longer for sale");
+      this.broadcastEstate();
+    } else if (msg.action === "furnish") {
+      if (e.owner !== p.id) return sys("only the owner can decorate this home");
+      e.furniture = sanitizeFurniture(msg.furniture ?? []);
+      await this.persistEstate();
+      this.broadcastEstate();
+    }
   }
 
   private onInput(ws: WebSocket, msg: Extract<ClientMsg, { t: "input" }>) {
