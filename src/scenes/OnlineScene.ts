@@ -286,7 +286,7 @@ const CITY_HUB_DOORS: { dest: string; label: string; tile: [number, number]; col
   { dest: "den", label: "THE DEN", tile: hubT(4, 6), color: 0xff2bd6 },
   { dest: "subway", label: "▼ THE UNDERLINE", tile: hubT(-12, 0), color: 0xff3b6b },
   { dest: "vault", label: "◆ THE PROVING (weekly)", tile: hubT(12, 0), color: 0xffb13c },
-  { dest: "d0", label: "▶ DEPLOY GATE", tile: [HUB_CX, HUB_CY + Math.round(ONLINE_CITY.h * 0.14)], color: 0x39ff88 },
+  { dest: "d0", label: "▶ DEPLOY GATE", tile: [HUB_CX, HUB_CY + 7], color: 0x39ff88 }, // south edge of the plaza — steps from spawn, not a 50-tile hike
 ];
 
 /** East-edge trail guides — forward into the wilderness corridor before the next district. */
@@ -2055,38 +2055,113 @@ export default class OnlineScene extends Phaser.Scene {
 
   /** Decorative city furniture for the hub plaza — a centre fountain, benches, and a
    *  holo-board — so the safe zone reads as a lived-in square, not an empty tile field. */
+  /** Dress the hub plaza into a lived-in neon square: paving decal, a centre fountain,
+   *  streetlights, planters, ramen carts, arcade cabinets, holo-boards, benches and a
+   *  wayfinding post. All decorative (no collision) — the interactables are placed
+   *  elsewhere; these fill the space between them so the safe zone reads as a real city. */
   private drawHubProps() {
+    const ADD = Phaser.BlendModes.ADD;
     const w = (dx: number, dy: number): [number, number] => [(HUB_CX + dx) * TILE + TILE / 2, (HUB_CY + dy) * TILE + TILE / 2];
-    // central fountain, north of the operatives' stalls
+    const hex = (c: number) => "#" + (c & 0xffffff).toString(16).padStart(6, "0");
+    const glow = (x: number, y: number, c: number, sx: number, sy: number, a: number, d = 3.5) =>
+      this.add.image(x, y, GLOW_KEY).setBlendMode(ADD).setTint(c).setDepth(d).setScale(sx, sy).setAlpha(a);
+
+    // ── plaza paving: concentric neon rings centred on the square + a lit path south ──
+    const [cx, cy] = w(0, 0);
+    const ring = this.add.graphics().setDepth(2.6);
+    ring.lineStyle(2, 0x29e7ff, 0.13).strokeEllipse(cx, cy, 320, 158);
+    ring.lineStyle(1, 0xff2bd6, 0.1).strokeEllipse(cx, cy, 230, 116);
+    ring.lineStyle(1, 0x29e7ff, 0.07).strokeEllipse(cx, cy, 410, 205);
+    for (let i = 0; i < 5; i++) ring.fillStyle(0x39ff88, 0.05).fillRect(cx - 24 + i * 11, cy + 120, 6, 96); // guide stripes → deploy gate
+
+    // ── central fountain ──
     const [fx, fy] = w(0, -8);
     const f = this.add.graphics().setDepth(4);
-    f.fillStyle(0x0d1220, 1).fillEllipse(fx, fy + 4, 96, 52); // basin shadow/rim
-    f.lineStyle(3, 0x2a3350, 1).strokeEllipse(fx, fy, 92, 46);
-    f.fillStyle(0x123048, 0.95).fillEllipse(fx, fy, 84, 40); // water
-    f.fillStyle(0x1e5a78, 0.5).fillEllipse(fx, fy - 2, 62, 28);
-    f.fillStyle(0x0a1420, 1).fillEllipse(fx, fy - 2, 20, 12); // central plinth
-    f.fillStyle(0x2a3350, 1).fillRect(fx - 3, fy - 20, 6, 20); // spout column
-    this.add.image(fx, fy - 20, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(0x29e7ff).setDepth(5).setScale(0.7).setAlpha(0.3);
-    // water shimmer — a few slow glints
-    for (let i = 0; i < 4; i++) {
-      const gl = this.add.image(fx + (i - 1.5) * 20, fy + ((i % 2) - 0.5) * 14, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(0x8dfff0).setDepth(5).setScale(0.28).setAlpha(0.18);
-      this.tweens.add({ targets: gl, alpha: 0.4, scale: 0.4, duration: 1400 + i * 300, yoyo: true, repeat: -1, ease: "sine.inout" });
+    f.fillStyle(0x0d1220, 1).fillEllipse(fx, fy + 5, 104, 56);
+    f.lineStyle(3, 0x2a3350, 1).strokeEllipse(fx, fy, 100, 50);
+    f.fillStyle(0x123048, 0.95).fillEllipse(fx, fy, 90, 44);
+    f.fillStyle(0x1e5a78, 0.5).fillEllipse(fx, fy - 2, 66, 30);
+    f.fillStyle(0x0a1420, 1).fillEllipse(fx, fy - 2, 22, 13);
+    f.fillStyle(0x2a3350, 1).fillRect(fx - 3, fy - 24, 6, 24);
+    glow(fx, fy - 24, 0x29e7ff, 0.85, 0.85, 0.32, 5);
+    for (let i = 0; i < 5; i++) {
+      const gl = glow(fx + (i - 2) * 18, fy + ((i % 2) - 0.5) * 16, 0x8dfff0, 0.28, 0.28, 0.18, 5);
+      this.tweens.add({ targets: gl, alpha: 0.42, scale: 0.42, duration: 1300 + i * 260, yoyo: true, repeat: -1, ease: "sine.inout" });
     }
-    // benches flanking the plaza
-    for (const [bx, by] of [w(-6, 2), w(6, 2), w(-12, 7), w(12, 7)]) {
+
+    // ── streetlights ringing the plaza (warm ground pools) ──
+    const streetlight = (x: number, y: number) => {
+      const g = this.add.graphics().setDepth(6);
+      g.fillStyle(0x0a0e18, 1).fillRect(x - 2, y - 34, 4, 38);
+      g.fillStyle(0x1a2233, 1).fillRect(x - 8, y - 38, 16, 5);
+      g.fillStyle(0xffe0a0, 0.95).fillRect(x - 7, y - 34, 14, 2);
+      glow(x, y - 32, 0xffb86a, 1.0, 0.5, 0.22, 5.5);
+      glow(x, y + 10, 0xffd98a, 1.5, 0.8, 0.12, 3);
+    };
+    for (const [x, y] of [w(-10, -6), w(10, -6), w(-10, 6), w(10, 6), w(-10, 0), w(10, 0), w(-2, -11), w(2, -11)]) streetlight(x, y);
+
+    // ── planters (neon foliage) ──
+    const planter = (x: number, y: number, c: number) => {
+      const g = this.add.graphics().setDepth(4);
+      g.fillStyle(0x141a26, 1).fillRect(x - 10, y - 3, 20, 9);
+      g.fillStyle(0x0a0e18, 1).fillRect(x - 10, y + 6, 20, 3);
+      for (let i = 0; i < 5; i++) g.fillStyle(c, 0.8).fillRect(x - 8 + i * 4, y - 3 - (i % 2 ? 9 : 5), 2, i % 2 ? 9 : 5);
+      glow(x, y - 6, c, 0.4, 0.4, 0.14);
+    };
+    for (const [x, y, c] of [[...w(-6, -3), 0x39ff88], [...w(6, -3), 0x39ff88], [...w(-6, 3), 0x9dff3c], [...w(6, 3), 0x9dff3c], [...w(-2, 9), 0x39ff88], [...w(2, 9), 0x39ff88]] as [number, number, number][]) planter(x, y, c);
+
+    // ── ramen carts (rising steam) ──
+    const cart = (x: number, y: number) => {
+      const g = this.add.graphics().setDepth(6);
+      g.fillStyle(0x2a1a14, 1).fillRect(x - 16, y - 6, 32, 16);
+      for (let i = 0; i < 6; i++) g.fillStyle(i % 2 ? 0xff7a4c : 0x1a1010, 0.95).fillRect(x - 16 + i * 5.4, y - 14, 4, 7);
+      g.fillStyle(0xffd98a, 0.6).fillRect(x - 14, y - 4, 28, 2);
+      glow(x, y - 2, 0xff9a5c, 0.5, 0.4, 0.16, 5.5);
+      const st = glow(x, y - 16, 0xdfe8ff, 0.4, 0.4, 0.16, 6);
+      this.tweens.add({ targets: st, y: y - 32, alpha: 0, scale: 0.7, duration: 2200, repeat: -1 });
+    };
+    cart(...w(-10, 3));
+    cart(...w(10, -3));
+
+    // ── arcade cabinets (glowing screens) ──
+    const arcade = (x: number, y: number, c: number) => {
+      const g = this.add.graphics().setDepth(6);
+      g.fillStyle(0x12172a, 1).fillRect(x - 9, y - 20, 18, 26);
+      g.fillStyle(c, 0.9).fillRect(x - 7, y - 17, 14, 10);
+      g.fillStyle(0x0a0e18, 1).fillRect(x - 6, y - 4, 12, 4);
+      glow(x, y - 12, c, 0.5, 0.5, 0.22, 5.8);
+    };
+    arcade(...w(-10, -3), 0xff2bd6);
+    arcade(...w(10, 3), 0x00e5ff);
+
+    // ── holo-billboards ──
+    const billboard = (x: number, y: number, text: string, c: number) => {
+      const g = this.add.graphics().setDepth(4);
+      g.fillStyle(0x0a0e18, 0.92).fillRect(x - 38, y - 22, 76, 28);
+      g.lineStyle(1.5, c, 0.85).strokeRect(x - 38, y - 22, 76, 28);
+      g.fillStyle(c, 1).fillRect(x - 1, y + 6, 2, 16);
+      glow(x, y - 8, c, 1.2, 0.6, 0.16, 3.9);
+      const t = this.add.text(x, y - 8, text, bodyFont(9, { color: hex(c), align: "center" })).setOrigin(0.5).setDepth(6);
+      this.tweens.add({ targets: t, alpha: 0.55, duration: 1700, yoyo: true, repeat: -1 });
+    };
+    billboard(...w(0, -13), "METRO CITY\nSAFE ZONE", 0x39ff88);
+    billboard(...w(-14, -9), "NEON\nCORE", 0xff2bd6);
+    billboard(...w(14, -9), "CORP\nROW", 0x29e7ff);
+
+    // ── benches ──
+    for (const [bx, by] of [w(-6, 1), w(6, 1), w(-4, 5), w(4, 5)]) {
       const bg = this.add.graphics().setDepth(4);
       bg.fillStyle(0x151b2c, 1).fillRect(bx - 16, by - 3, 32, 7);
       bg.fillStyle(0x0a0e18, 1).fillRect(bx - 14, by + 4, 3, 5).fillRect(bx + 11, by + 4, 3, 5);
       bg.fillStyle(0x29e7ff, 0.3).fillRect(bx - 16, by - 3, 32, 1);
     }
-    // holo-board landmark above the fountain
-    const [hx, hy] = w(0, -13);
-    const hb = this.add.graphics().setDepth(4);
-    hb.fillStyle(0x0a0e18, 0.9).fillRect(hx - 34, hy - 20, 68, 26);
-    hb.lineStyle(1.5, 0x39ff88, 0.8).strokeRect(hx - 34, hy - 20, 68, 26);
-    hb.fillStyle(0x39ff88, 1).fillRect(hx - 1, hy + 6, 2, 14);
-    this.add.image(hx, hy - 7, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(0x39ff88).setDepth(3.9).setScale(1.1, 0.5).setAlpha(0.14);
-    this.add.text(hx, hy - 7, "METRO CITY\nSAFE ZONE", bodyFont(9, { color: "#39ff88", align: "center" })).setOrigin(0.5).setDepth(6);
+
+    // ── wayfinding post → the deploy gate just south ──
+    const [sx, sy] = w(0, 4);
+    const sg = this.add.graphics().setDepth(6);
+    sg.fillStyle(0x0a0e18, 0.95).fillRect(sx - 32, sy - 9, 64, 15);
+    sg.lineStyle(1.5, 0x39ff88, 0.9).strokeRect(sx - 32, sy - 9, 64, 15);
+    this.add.text(sx, sy - 2, "▼ DEPLOY", displayFont(9, { color: "#39ff88", fontStyle: "bold" })).setOrigin(0.5).setDepth(7);
   }
 
   /** A door into a building interior — a glowing portal you enter with E (or click).
