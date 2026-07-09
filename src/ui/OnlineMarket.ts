@@ -92,7 +92,9 @@ export default class OnlineMarket {
       return o;
     };
     const D = 1700;
-    const { x, y, w, h } = modalRect(1120, 680);
+    // design space is 960×540; the old 1120×680 rendered at ~116%×126% and overflowed
+    // the page. Keep it a compact modal with comfortable margins.
+    const { x, y, w, h } = modalRect(792, 452);
     const listRowH = uiDim(60);
     const listCardH = uiDim(58);
     const stallRowH = uiDim(38);
