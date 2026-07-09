@@ -105,7 +105,7 @@ import { campaignHud, Campaign } from "../net/campaign";
 import OnlineCosmetics from "../ui/OnlineCosmetics";
 import OnlineMap from "../ui/OnlineMap";
 import { applyCosmetic } from "../game/cosmetics";
-import { npcDef, AMBIENT_NPCS, INTERIOR_PLAN, keeperFor } from "../game/cityNpcs";
+import { npcDef, AMBIENT_NPCS, INTERIOR_PLAN, keeperFor, districtResident } from "../game/cityNpcs";
 import { bountyForNpc } from "../game/bounties";
 import type { PlayerLook } from "../net/protocol";
 import { setOnlinePlayer } from "../economy/session";
@@ -754,9 +754,13 @@ export default class OnlineScene extends Phaser.Scene {
           })
           .setOrigin(0.5)
           .setDepth(6);
-        // seat the room's occupants — a themed keeper (+ any authored residents for hub interiors)
+        // seat the room's occupants. District buildings get their own DISTINCT named
+        // resident (so every door opens on a unique face, not a generic clone); hub
+        // interiors keep their themed keeper + authored residents.
         const residents = INTERIOR_PLAN[this.zone]?.[0] ?? [];
-        const occupants = [keeperFor(kind), ...residents.map((id) => npcDef(id)).filter((d): d is NonNullable<typeof d> => !!d)];
+        const occupants = bi
+          ? [districtResident(bi.district, bi.index)]
+          : [keeperFor(kind), ...residents.map((id) => npcDef(id)).filter((d): d is NonNullable<typeof d> => !!d)];
         const seats = bi ? VENUE_NPC_TILES : INTERIOR_NPC_TILES;
         occupants.forEach((o, i) => {
           const [tx, ty] = seats[i % seats.length];

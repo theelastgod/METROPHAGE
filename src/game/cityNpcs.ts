@@ -143,6 +143,41 @@ export function keeperFor(kind: string): CityNpcDef {
   return KEEPERS[kind] ?? KEEPERS.home;
 }
 
+/** Distinct named residents that inhabit district building interiors — every enterable
+ *  building gets its own character so walking inside meets a unique face, not a clone. */
+export const DISTRICT_RESIDENTS: CityNpcDef[] = [
+  { id: "res_nix", name: "NIX", look: look({ color: 0x29e7ff, head: "hood", skin: 0x7c4f30, hair: "undercut", hairColor: 0x1b1820, faceMark: "tattoo", cloak: "coat" }), lines: ["I sell what the towers won't admit they lost.", "Names cost extra."] },
+  { id: "res_solenne", name: "SOLENNE", look: look({ color: 0xff79c6, sex: "f", head: "beret", skin: 0xf3d2b8, hair: "bun", hairColor: 0x1b1820, cloak: "coat", accentColor: 0x00e5ff }), lines: ["I ran corp security for nine years. Ask me anything.", "Everyone in here is running from a spreadsheet."] },
+  { id: "res_raze", name: "RAZE", look: look({ color: 0xff3b6b, build: "bulky", skin: 0x4f3220, hair: "buzz", beard: "stubble", faceMark: "scar", strap: true }), lines: ["Muscle's cheap. Loyalty isn't.", "You paying, or just breathing my air?"] },
+  { id: "res_moth", name: "MOTH", look: look({ color: 0x9dff3c, sex: "f", skin: 0xe6b58c, hair: "braids", hairColor: 0x9dff3c, visor: "scan", antennae: true }), lines: ["I live behind the ICE. It's quieter there.", "Don't touch the terminal. It bites."] },
+  { id: "res_dash", name: "DASH", look: look({ color: 0xf7ff3c, head: "cap", skin: 0xa9794a, hair: "short", legGear: "boots", strap: true }), lines: ["Fastest legs in the district. Payload's my business.", "Ten minutes, cross-town, no questions."] },
+  { id: "res_cinder", name: "CINDER", look: look({ color: 0xff5a3c, skin: 0xc98a5e, hair: "mohawk", hairColor: 0xff5a3c, gloves: "wraps", faceMark: "scar" }), lines: ["Everything burns eventually. I just help it along.", "Stand back from the workbench."] },
+  { id: "res_echo", name: "ECHO", look: look({ color: 0xb06bff, sex: "f", head: "none", skin: 0x7c4f30, hair: "long", hairColor: 0xb06bff, accentColor: 0x00e5ff }), lines: ["I press the city's noise into songs.", "Stay for the set. It's free. The drinks aren't."] },
+  { id: "res_tallow", name: "TALLOW", look: look({ color: 0xffb13c, build: "bulky", skin: 0x4f3220, hair: "short", beard: "full", gloves: "wraps" }), lines: ["Hot broth, real protein. Mostly.", "Sit. Eat. Don't ask what's in it."] },
+  { id: "res_wren", name: "WREN", look: look({ color: 0x8bff6a, sex: "f", head: "cap", skin: 0xe6b58c, hair: "ponytail", hairColor: 0x2a1d14, gloves: "wraps" }), lines: ["If it has moving parts, I can fix it or break it.", "Chrome's only as good as its mechanic."] },
+  { id: "res_pike", name: "PIKE", look: look({ color: 0x4d8cff, build: "bulky", skin: 0x7c4f30, hair: "buzz", beard: "goatee", shoulders: "spikes", strap: true }), lines: ["This block's under my watch. Behave.", "Trouble walks in, trouble limps out."] },
+  { id: "res_hollow", name: "HOLLOW", look: look({ color: 0xb06bff, head: "hood", skin: 0xa9794a, hair: "short", hairColor: 0xc7cdd8, faceMark: "tattoo" }), lines: ["I've seen how it ends. Doesn't help.", "The Blank's already inside you. You just haven't noticed."] },
+  { id: "res_ferro", name: "FERRO", look: look({ color: 0xff2bd6, build: "bulky", sex: "f", skin: 0x4f3220, hair: "undercut", hairColor: 0x1b1820, gloves: "wraps", accentColor: 0x00e5ff }), lines: ["I forge what the corps won't license.", "Bring cores. Leave your doubts outside."] },
+  { id: "res_static", name: "STATIC", look: look({ color: 0x00e5ff, head: "none", skin: 0xe6b58c, hair: "mohawk", hairColor: 0x00e5ff, visor: "band", antennae: true }), lines: ["Loudest signal in the sprawl, baby.", "You feel that bass? That's your heart syncing up."] },
+  { id: "res_rook", name: "ROOK", look: look({ color: 0x6b9bff, head: "beret", skin: 0xf3d2b8, hair: "short", hairColor: 0x4a2f1c, cloak: "coat", beard: "stubble" }), lines: ["Every move you make, someone's already countered.", "Sit. Play a round. Learn something."] },
+  { id: "res_plume", name: "PLUME", look: look({ color: 0xff79c6, sex: "f", head: "crown", skin: 0xc98a5e, hair: "long", hairColor: 0xff5fb0, decal: "skull" }), lines: ["Chems, scents, moods — I bottle all three.", "One breath and you'll forgive the whole city."] },
+  { id: "res_grist", name: "GRIST", look: look({ color: 0xf7a23c, build: "bulky", skin: 0x4f3220, hair: "short", hairColor: 0xc7cdd8, beard: "full" }), lines: ["Real grain, ground here. Rare as gold now.", "The towers eat paste. Down here we eat bread."] },
+  { id: "res_velvet", name: "VELVET", look: look({ color: 0xff2bd6, sex: "f", head: "none", skin: 0x7c4f30, hair: "bun", hairColor: 0x1b1820, cloak: "cape", accentColor: 0xff79c6 }), lines: ["First one's watered. You'll thank me.", "Everyone tells the bar the truth eventually."] },
+  { id: "res_coil", name: "COIL", look: look({ color: 0x9dff3c, head: "cap", skin: 0xa9794a, hair: "buzz", gloves: "wraps", faceMark: "scar" }), lines: ["I keep this block's lights on. Mostly by theft.", "Don't touch that junction unless you like dancing."] },
+  { id: "res_ash", name: "ASH", look: look({ color: 0x9aa3b2, sex: "f", head: "hood", skin: 0xf3d2b8, hair: "long", hairColor: 0xc7cdd8 }), lines: ["I keep his room the way he left it.", "The district forgets. I don't."] },
+  { id: "res_brick", name: "BRICK", look: look({ color: 0xffb13c, build: "bulky", skin: 0x4f3220, hair: "buzz", beard: "full", gloves: "wraps", shoulders: "pads" }), lines: ["I built half these walls. Poured the rest.", "Nothing in this district stands without me."] },
+  { id: "res_sparrow", name: "SPARROW", look: look({ color: 0xff5ad0, sex: "f", head: "hood", skin: 0xe6b58c, hair: "short", hairColor: 0x1b1820, strap: true, legGear: "boots" }), lines: ["Light fingers, lighter conscience.", "Check your pockets before you leave. Just kidding. Mostly."] },
+  { id: "res_lumen", name: "LUMEN", look: look({ color: 0x29e7ff, sex: "f", head: "none", skin: 0xa9794a, hair: "braids", hairColor: 0x29e7ff, antennae: true, accentColor: 0xff2bd6 }), lines: ["I paint with the city's own glow.", "Neon's the only honest colour left."] },
+  { id: "res_quill", name: "QUILL", look: look({ color: 0xf7ff3c, head: "beret", skin: 0x7c4f30, hair: "short", hairColor: 0x1b1820, cloak: "coat" }), lines: ["Someone has to write down what really happened.", "The feeds lie. My ink doesn't."] },
+  { id: "res_glass", name: "GLASS", look: look({ color: 0x6b9bff, skin: 0xe6b58c, hair: "undercut", hairColor: 0x6b9bff, visor: "scan", gloves: "wraps" }), lines: ["I move windows. Don't ask which way.", "Whole tower's transparent if you know the right pane."] },
+];
+
+/** A distinct resident for a district building interior — deterministic per building, so
+ *  the same door always opens on the same character. */
+export function districtResident(district: number, index: number): CityNpcDef {
+  return DISTRICT_RESIDENTS[((district * 5 + index) >>> 0) % DISTRICT_RESIDENTS.length];
+}
+
 /** Regional quest-givers scattered in the expanded city's outer districts. */
 export const REGIONAL_NPCS: CityNpcDef[] = [
   {
