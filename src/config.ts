@@ -29,8 +29,9 @@ export const DISTRICT_SCALE = 3;
 export const DISTRICT_GRID_W = GRID_W * DISTRICT_SCALE;
 export const DISTRICT_GRID_H = GRID_H * DISTRICT_SCALE;
 
-/** Online hub city scale (base 180×144 tiles). 2.5× → 450×360 (~4.5× area for 500+ runners). */
-export const CITY_SCALE = 2.5;
+/** Online hub city scale. Base is now a compact 112×88 (see city.ts) — a walkable town of
+ *  ~30 buildings around the plaza — so the multiplier is 1×. */
+export const CITY_SCALE = 1;
 
 /** Legacy default world size (district-scale); prefer gridDims() for per-zone bounds. */
 export const WORLD_W = DISTRICT_GRID_W * TILE;

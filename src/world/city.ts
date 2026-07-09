@@ -28,8 +28,11 @@ import {
   type TileGrid,
 } from "./district";
 
-const CITY_BASE_W = 180;
-const CITY_BASE_H = 144;
+// Compact hub: a walkable town of ~30 buildings ringing the central plaza, not a 450-tile
+// sprawl. (Was 180×144 ×2.5 = 450×360 / ~605 buildings.) Fixtures anchor to the plaza
+// centre via hubT(), so they follow the smaller footprint automatically.
+const CITY_BASE_W = 112;
+const CITY_BASE_H = 88;
 export const CITY_W = Math.round(CITY_BASE_W * CITY_SCALE);
 export const CITY_H = Math.round(CITY_BASE_H * CITY_SCALE);
 
@@ -264,9 +267,7 @@ function blockRanges(size: number): Array<[number, number]> {
 }
 
 /** Build the big city grid + metadata: an avenue grid of environment-zoned blocks. */
-export function buildCity(seed = 1337): CityMap {
-  const w = CITY_W;
-  const h = CITY_H;
+export function buildCity(seed = 1337, w = CITY_W, h = CITY_H): CityMap {
   const rand = mulberry32(seed);
   const grid: TileGrid = [];
   for (let y = 0; y < h; y++) grid.push(new Array(w).fill(TILE_FLOOR));
@@ -298,8 +299,10 @@ export function buildCity(seed = 1337): CityMap {
   const cx = Math.round(w / 2);
   const cy = Math.round(h / 2);
   const plazas: Rect[] = [];
-  const plazaRx = Math.max(8, Math.round(w * 0.022));
-  const plazaRy = Math.max(7, Math.round(h * 0.019));
+  // The plaza must always contain the hand-placed hub fixtures (venue doors at ±12 x,
+  // citizen NPCs at +14 y, mining nodes) so none strand inside a building after a shrink.
+  const plazaRx = Math.max(14, Math.round(w * 0.022));
+  const plazaRy = Math.max(16, Math.round(h * 0.019));
   const central: Rect = { x1: cx - plazaRx, y1: cy - plazaRy, x2: cx + plazaRx, y2: cy + plazaRy };
   fill(grid, central, TILE_PLAZA);
   plazas.push(central);
