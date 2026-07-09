@@ -322,18 +322,25 @@ export default class NetClient {
       this.acc -= NET_TICK_MS;
       this.netTick();
     }
-    // smooth remotes / enemies toward their latest authoritative target
+    // Smooth remotes / enemies / shots toward their latest authoritative target with a
+    // FRAME-RATE-INDEPENDENT exponential ease: a = 1 - e^(-k·dt). A fixed per-frame factor
+    // makes remotes crawl at low FPS (0.3/frame is 3× slower in wall-clock at 20 FPS than
+    // 60) — the #1 cause of rubber-banding on weaker machines. k tuned so a≈0.3 (units) /
+    // 0.6 (shots) at 60 FPS, but now correct at any frame rate.
+    const dtSec = Math.min(dtMs, 100) / 1000; // clamp a stalled frame so nothing teleports
+    const aUnit = 1 - Math.exp(-21 * dtSec);
+    const aShot = 1 - Math.exp(-55 * dtSec);
     for (const r of this.remotes.values()) {
-      r.x += (r.tx - r.x) * 0.3;
-      r.y += (r.ty - r.y) * 0.3;
+      r.x += (r.tx - r.x) * aUnit;
+      r.y += (r.ty - r.y) * aUnit;
     }
     for (const e of this.enemies.values()) {
-      e.x += (e.tx - e.x) * 0.3;
-      e.y += (e.ty - e.y) * 0.3;
+      e.x += (e.tx - e.x) * aUnit;
+      e.y += (e.ty - e.y) * aUnit;
     }
     for (const s of this.shots.values()) {
-      s.x += (s.tx - s.x) * 0.6; // shots move fast — track closely
-      s.y += (s.ty - s.y) * 0.6;
+      s.x += (s.tx - s.x) * aShot; // shots move fast — track closely
+      s.y += (s.ty - s.y) * aShot;
     }
   }
 
