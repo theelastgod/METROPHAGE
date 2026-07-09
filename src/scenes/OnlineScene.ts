@@ -35,6 +35,7 @@ import {
   buildBridgeGrid,
   buildSafehouse,
   buildVenueRoom,
+  districtBuildings,
   VENUE_MAT_TILE,
   buildSubway,
   buildDive,
@@ -604,7 +605,7 @@ export default class OnlineScene extends Phaser.Scene {
             }
           : undefined,
       buildings:
-        !this.isCityHub && !this.interior && !this.isSubway && !this.isDive && !this.isTutorial && !this.isBridge ? def.layout.buildings : undefined,
+        !this.isCityHub && !this.interior && !this.isSubway && !this.isDive && !this.isTutorial && !this.isBridge ? districtBuildings(def) : undefined,
       lightweight: this.isCityHub,
     });
     if (this.isCityHub) {
@@ -634,8 +635,8 @@ export default class OnlineScene extends Phaser.Scene {
         worldW: this.worldW,
         worldH: this.worldH,
       });
-      for (let i = 0; i < def.layout.buildings.length; i += 3) {
-        const b = def.layout.buildings[i];
+      for (let i = 0; i < districtBuildings(def).length; i += 3) {
+        const b = districtBuildings(def)[i];
         const cx = ((b.x1 + b.x2) / 2) * TILE * 2 + TILE / 2;
         const cy = ((b.y1 + b.y2) / 2) * TILE * 2 + TILE / 2;
         this.atmosphere.addHologram(cx, cy, zoneAccent);
@@ -658,10 +659,10 @@ export default class OnlineScene extends Phaser.Scene {
           placed++;
         }
       }
-      paintRooftopLights(this, def.layout.buildings, (b) => ({ x1: b.x1 * 2, y1: b.y1 * 2, x2: b.x2 * 2, y2: b.y2 * 2 }), () => zoneAccent);
+      paintRooftopLights(this, districtBuildings(def), (b) => ({ x1: b.x1 * 2, y1: b.y1 * 2, x2: b.x2 * 2, y2: b.y2 * 2 }), () => zoneAccent);
       this.roofParallax = installRoofParallax(
         this,
-        def.layout.buildings.map((b) => ({ x1: b.x1 * 2, y1: b.y1 * 2, x2: b.x2 * 2, y2: b.y2 * 2 })),
+        districtBuildings(def).map((b) => ({ x1: b.x1 * 2, y1: b.y1 * 2, x2: b.x2 * 2, y2: b.y2 * 2 })),
         zoneAccent,
       );
     }
@@ -673,7 +674,7 @@ export default class OnlineScene extends Phaser.Scene {
     // Every district building gets an enterable door on its south face — walk up + E (or click)
     // drops you into that building's interior ("d{N}i{K}"); H returns to the district.
     if (!this.interior && !this.isSubway && !this.isDive && !this.isTutorial && !this.isCityHub && !this.isBridge) {
-      def.layout.buildings.forEach((b, i) => {
+      districtBuildings(def).forEach((b, i) => {
         // door colour matches the building's roof (buildingExteriorAccent) so you can
         // read "amber shop / magenta bar" at a glance and orient by landmark colour
         const doorColor = buildingExteriorAccent(districtBuildingKind(i));
@@ -722,10 +723,12 @@ export default class OnlineScene extends Phaser.Scene {
           const py = hubNpc.tile[1] * TILE + TILE / 2;
           const key = lookKey(hubNpc.look);
           bakeRemoteLook(this, key, hubNpc.look);
-          this.add.image(px, py + 8, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(hubNpc.color).setDepth(8).setScale(0.6).setAlpha(0.45);
+          // each operative works a market STALL with an always-visible sign, so a new
+          // runner reads what every stand offers from across the plaza
+          this.drawServiceStall(px, py, hubNpc.name, hubNpc.tag, hubNpc.color);
+          this.add.image(px, py + 6, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(hubNpc.color).setDepth(8).setScale(0.5).setAlpha(0.4);
           const spr = this.add.sprite(px, py, key, 0).setTint(0xffffff).setDepth(9).setInteractive({ useHandCursor: true });
           spr.on("pointerdown", () => this.openService(hubNpc.svc));
-          drawHubNpcPlate(this, px, py, hubNpc.name, hubNpc.tag, hubNpc.color);
           this.npcs.push({ kind: "service", svc: hubNpc.svc, name: `${hubNpc.name} · ${hubNpc.tag}`, x: px, y: py });
         }
         for (const door of CITY_HUB_DOORS) this.makeDoor(door);
@@ -733,6 +736,7 @@ export default class OnlineScene extends Phaser.Scene {
           const cdef = npcDef(c.id);
           if (cdef) this.makeTalkNpc(cdef.name, cdef.look, cdef.lines, c.tile[0] * TILE + TILE / 2, c.tile[1] * TILE + TILE / 2, cdef.id);
         }
+        this.drawHubProps();
       } else {
         const bi = parseBuildingInterior(this.zone);
         const kind = bi ? districtBuildingKind(bi.index) : this.zone;
@@ -2018,6 +2022,71 @@ export default class OnlineScene extends Phaser.Scene {
         g.fillStyle(0x29e7ff, 0.75).fillRect(t(x) + 17, t(3) + 4, 3, 11);
       }
     }
+  }
+
+  /** A market STALL that houses a hub service operative: striped awning, a counter the
+   *  NPC stands behind, and an always-visible sign board so a runner reads what each
+   *  stand offers from across the plaza. Purely cosmetic — the NPC sprite + interaction
+   *  are placed by the caller. */
+  private drawServiceStall(px: number, py: number, name: string, tag: string, color: number) {
+    const hex = "#" + (color & 0xffffff).toString(16).padStart(6, "0");
+    const W = 84, hw = W / 2;
+    const ay = py - 40; // awning line
+    const g = this.add.graphics().setDepth(6);
+    // support posts
+    g.fillStyle(0x161c2c, 1).fillRect(px - hw + 1, ay + 10, 3, 46).fillRect(px + hw - 4, ay + 10, 3, 46);
+    // striped awning
+    g.fillStyle(0x0a0e18, 0.94).fillRect(px - hw, ay, W, 13);
+    for (let i = 0; i < 7; i++) g.fillStyle(i % 2 ? color : 0x141a2a, 0.9).fillRect(px - hw + 2 + i * 11.6, ay + 2, 10, 9);
+    g.fillStyle(color, 0.9).fillRect(px - hw, ay, W, 2);
+    // sign board above the awning — always visible
+    const sy = ay - 17;
+    g.fillStyle(0x05060f, 0.96).fillRect(px - hw, sy, W, 15);
+    g.lineStyle(1.5, color, 0.95).strokeRect(px - hw, sy, W, 15);
+    this.add.image(px, sy + 7, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(color).setDepth(5.8).setScale(0.7, 0.35).setAlpha(0.3);
+    this.add.text(px, sy + 7, tag, displayFont(11, { color: hex, fontStyle: "bold" })).setOrigin(0.5).setDepth(10);
+    // counter drawn OVER the NPC's feet so they read as standing behind the stand
+    const cg = this.add.graphics().setDepth(9.5);
+    cg.fillStyle(0x111730, 0.98).fillRect(px - hw + 4, py + 12, W - 8, 13);
+    cg.fillStyle(color, 0.5).fillRect(px - hw + 4, py + 12, W - 8, 2);
+    cg.fillStyle(0x05060f, 0.6).fillRect(px - hw + 4, py + 23, W - 8, 2);
+    this.add.text(px, py + 31, name, bodyFont(9, { color: "#9aa3b2" })).setOrigin(0.5).setDepth(10);
+  }
+
+  /** Decorative city furniture for the hub plaza — a centre fountain, benches, and a
+   *  holo-board — so the safe zone reads as a lived-in square, not an empty tile field. */
+  private drawHubProps() {
+    const w = (dx: number, dy: number): [number, number] => [(HUB_CX + dx) * TILE + TILE / 2, (HUB_CY + dy) * TILE + TILE / 2];
+    // central fountain, north of the operatives' stalls
+    const [fx, fy] = w(0, -8);
+    const f = this.add.graphics().setDepth(4);
+    f.fillStyle(0x0d1220, 1).fillEllipse(fx, fy + 4, 96, 52); // basin shadow/rim
+    f.lineStyle(3, 0x2a3350, 1).strokeEllipse(fx, fy, 92, 46);
+    f.fillStyle(0x123048, 0.95).fillEllipse(fx, fy, 84, 40); // water
+    f.fillStyle(0x1e5a78, 0.5).fillEllipse(fx, fy - 2, 62, 28);
+    f.fillStyle(0x0a1420, 1).fillEllipse(fx, fy - 2, 20, 12); // central plinth
+    f.fillStyle(0x2a3350, 1).fillRect(fx - 3, fy - 20, 6, 20); // spout column
+    this.add.image(fx, fy - 20, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(0x29e7ff).setDepth(5).setScale(0.7).setAlpha(0.3);
+    // water shimmer — a few slow glints
+    for (let i = 0; i < 4; i++) {
+      const gl = this.add.image(fx + (i - 1.5) * 20, fy + ((i % 2) - 0.5) * 14, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(0x8dfff0).setDepth(5).setScale(0.28).setAlpha(0.18);
+      this.tweens.add({ targets: gl, alpha: 0.4, scale: 0.4, duration: 1400 + i * 300, yoyo: true, repeat: -1, ease: "sine.inout" });
+    }
+    // benches flanking the plaza
+    for (const [bx, by] of [w(-6, 2), w(6, 2), w(-12, 7), w(12, 7)]) {
+      const bg = this.add.graphics().setDepth(4);
+      bg.fillStyle(0x151b2c, 1).fillRect(bx - 16, by - 3, 32, 7);
+      bg.fillStyle(0x0a0e18, 1).fillRect(bx - 14, by + 4, 3, 5).fillRect(bx + 11, by + 4, 3, 5);
+      bg.fillStyle(0x29e7ff, 0.3).fillRect(bx - 16, by - 3, 32, 1);
+    }
+    // holo-board landmark above the fountain
+    const [hx, hy] = w(0, -13);
+    const hb = this.add.graphics().setDepth(4);
+    hb.fillStyle(0x0a0e18, 0.9).fillRect(hx - 34, hy - 20, 68, 26);
+    hb.lineStyle(1.5, 0x39ff88, 0.8).strokeRect(hx - 34, hy - 20, 68, 26);
+    hb.fillStyle(0x39ff88, 1).fillRect(hx - 1, hy + 6, 2, 14);
+    this.add.image(hx, hy - 7, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(0x39ff88).setDepth(3.9).setScale(1.1, 0.5).setAlpha(0.14);
+    this.add.text(hx, hy - 7, "METRO CITY\nSAFE ZONE", bodyFont(9, { color: "#39ff88", align: "center" })).setOrigin(0.5).setDepth(6);
   }
 
   /** A door into a building interior — a glowing portal you enter with E (or click).

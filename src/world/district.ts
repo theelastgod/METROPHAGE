@@ -141,6 +141,15 @@ function carve(grid: TileGrid, tx: number, ty: number, tile = TILE_FLOOR) {
 }
 
 /** Build a district's tile grid deterministically from its DistrictDef. */
+/** How many of a district's authored buildings to actually place — capped so combat
+ *  districts read as an open street with a few structures, not a dense block maze. */
+export const DISTRICT_BUILDING_CAP = 5;
+/** The buildings a district actually uses (first N). Shared by the grid builder and the
+ *  client's door/façade passes so walls, doorways and roofs all agree on the same set. */
+export function districtBuildings(def: DistrictDef): Rect[] {
+  return def.layout.buildings.slice(0, DISTRICT_BUILDING_CAP);
+}
+
 export function buildGrid(def: DistrictDef = DISTRICTS[0]): TileGrid {
   const gw = DISTRICT_GRID_W;
   const gh = DISTRICT_GRID_H;
@@ -159,7 +168,8 @@ export function buildGrid(def: DistrictDef = DISTRICTS[0]): TileGrid {
     grid[y][gw - 1] = TILE_WALL;
   }
 
-  const { buildings, plaza, laneRows, laneCols } = def.layout;
+  const { plaza, laneRows, laneCols } = def.layout;
+  const buildings = districtBuildings(def); // capped for a more open, less maze-dense combat floor
   const ROOF_CYCLE = [TILE_WALL, TILE_WALL_CORP, TILE_WALL_RES, TILE_WALL_IND, TILE_WALL_SLUM];
   buildings.forEach((b, i) => fill(grid, scaleRect(b), ROOF_CYCLE[i % ROOF_CYCLE.length]));
   if (plaza) fill(grid, scaleRect(plaza), TILE_PLAZA);
