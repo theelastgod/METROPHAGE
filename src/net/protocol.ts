@@ -109,8 +109,8 @@ export type ClientMsg =
   | { t: "tutorial"; action: "skip" | "graduate" | "progress" | "mode"; kind?: string; mode?: "quick" | "full" }
   | { t: "buy"; sku: string } // vendor purchase (heal / gear cache), priced + validated server-side
   | { t: "emote"; kind: number; ping: boolean; x: number; y: number } // emote (above avatar) or world ping
-  // player housing (THE ESTATES) — buy/resell/furnish an est{K} home; server owns ownership in D1
-  | { t: "estate"; action: "buy" | "list" | "unlist" | "furnish"; price?: number; furniture?: EstateFurniture[] }
+  // player housing (THE ESTATES) — buy/resell/furnish/sign an est{K} home; server owns ownership in D1
+  | { t: "estate"; action: "buy" | "list" | "unlist" | "furnish" | "sign"; price?: number; furniture?: EstateFurniture[] }
   | {
       t: "trade";
       action: "request" | "accept" | "offer" | "confirm" | "cancel";
@@ -262,8 +262,18 @@ export type ServerMsg =
   | { t: "event"; id: string; name: string; tagline: string; hex: string; phase: "telegraph" | "active" | "end"; seconds: number }
   | { t: "inv"; items: Item[] } // the owning client's full inventory (login + on change)
   | { t: "stashv"; items: Item[] } // owning client's personal stash (login + on change)
-  // player housing — the current estate's ownership + furniture (sent on entering an est{K} home + on change)
-  | { t: "estate"; id: string; owner: string | null; ownerName: string | null; mine: boolean; forSale: boolean; price: number; furniture: EstateFurniture[] }
+  // player housing — the current estate's ownership + furniture + visitor book (sent on entering an est{K} home + on change)
+  | {
+      t: "estate";
+      id: string;
+      owner: string | null;
+      ownerName: string | null;
+      mine: boolean;
+      forSale: boolean;
+      price: number;
+      furniture: EstateFurniture[];
+      guests: { n: string; at: number; s: string }[];
+    }
   // player housing — the whole street's ownership at a glance (sent on entering THE ESTATES)
   | { t: "estates_dir"; list: { i: number; owner: string | null; name: string | null; forSale: boolean; price: number }[] }
   | { t: "equipped"; items: Item[]; maxHp: number } // owning client's equipped gear + derived max HP

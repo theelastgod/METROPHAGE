@@ -106,6 +106,7 @@ export const parseEstateInterior = (z: string | null): number | null => {
 export interface FurnitureKind {
   id: string;
   name: string;
+  glyph: string; // 1-2 chars drawn on the placed piece (name initials collide at 24 kinds)
   color: number;
   w: number; // footprint in tiles (for the editor palette + render size)
   h: number;
@@ -113,18 +114,31 @@ export interface FurnitureKind {
 }
 
 export const FURNITURE: FurnitureKind[] = [
-  { id: "bed", name: "Bed", color: 0x4d8cff, w: 2, h: 1, price: 40 },
-  { id: "sofa", name: "Sofa", color: 0xff79c6, w: 2, h: 1, price: 60 },
-  { id: "table", name: "Table", color: 0xffb13c, w: 1, h: 1, price: 30 },
-  { id: "chair", name: "Chair", color: 0xf7ff3c, w: 1, h: 1, price: 15 },
-  { id: "rug", name: "Rug", color: 0xb06bff, w: 2, h: 2, price: 35 },
-  { id: "plant", name: "Plant", color: 0x39ff88, w: 1, h: 1, price: 20 },
-  { id: "lamp", name: "Lamp", color: 0xffe08a, w: 1, h: 1, price: 25 },
-  { id: "shelf", name: "Shelf", color: 0x9dff3c, w: 1, h: 1, price: 30 },
-  { id: "locker", name: "Locker", color: 0x8dfff0, w: 1, h: 1, price: 45 },
-  { id: "terminal", name: "Terminal", color: 0x00e5ff, w: 1, h: 1, price: 70 },
-  { id: "poster", name: "Poster", color: 0xff3b6b, w: 1, h: 1, price: 18 },
-  { id: "crate", name: "Crate", color: 0x9aa3b2, w: 1, h: 1, price: 12 },
+  // ids are persisted in saved layouts — never rename, only append
+  { id: "bed", name: "Bed", glyph: "BD", color: 0x4d8cff, w: 2, h: 1, price: 40 },
+  { id: "sofa", name: "Sofa", glyph: "SF", color: 0xff79c6, w: 2, h: 1, price: 60 },
+  { id: "table", name: "Table", glyph: "TB", color: 0xffb13c, w: 1, h: 1, price: 30 },
+  { id: "chair", name: "Chair", glyph: "CH", color: 0xf7ff3c, w: 1, h: 1, price: 15 },
+  { id: "rug", name: "Rug", glyph: "RG", color: 0xb06bff, w: 2, h: 2, price: 35 },
+  { id: "plant", name: "Plant", glyph: "PL", color: 0x39ff88, w: 1, h: 1, price: 20 },
+  { id: "lamp", name: "Lamp", glyph: "LP", color: 0xffe08a, w: 1, h: 1, price: 25 },
+  { id: "shelf", name: "Shelf", glyph: "SH", color: 0x9dff3c, w: 1, h: 1, price: 30 },
+  { id: "locker", name: "Locker", glyph: "LK", color: 0x8dfff0, w: 1, h: 1, price: 45 },
+  { id: "terminal", name: "Terminal", glyph: "TM", color: 0x00e5ff, w: 1, h: 1, price: 70 },
+  { id: "poster", name: "Poster", glyph: "PS", color: 0xff3b6b, w: 1, h: 1, price: 18 },
+  { id: "crate", name: "Crate", glyph: "CR", color: 0x9aa3b2, w: 1, h: 1, price: 12 },
+  { id: "holo_tv", name: "Holo-TV", glyph: "TV", color: 0x29e7ff, w: 2, h: 1, price: 90 },
+  { id: "bar_counter", name: "Bar counter", glyph: "BA", color: 0x9dff3c, w: 2, h: 1, price: 80 },
+  { id: "bookcase", name: "Bookcase", glyph: "BK", color: 0xd9a066, w: 1, h: 1, price: 45 },
+  { id: "desk", name: "Desk", glyph: "DK", color: 0x8fb8ff, w: 2, h: 1, price: 55 },
+  { id: "aquarium", name: "Aquarium", glyph: "AQ", color: 0x66e0ff, w: 2, h: 1, price: 110 },
+  { id: "neon_sign", name: "Neon sign", glyph: "NS", color: 0xff2bd6, w: 1, h: 1, price: 65 },
+  { id: "arcade", name: "Arcade cab", glyph: "AR", color: 0xf7ff3c, w: 1, h: 1, price: 95 },
+  { id: "jukebox", name: "Jukebox", glyph: "JB", color: 0xff79c6, w: 1, h: 1, price: 85 },
+  { id: "vending", name: "Vending unit", glyph: "VN", color: 0x39ff88, w: 1, h: 1, price: 60 },
+  { id: "weapon_rack", name: "Weapon rack", glyph: "WR", color: 0xff3b6b, w: 1, h: 1, price: 75 },
+  { id: "trophy", name: "Trophy case", glyph: "TR", color: 0xffd24a, w: 1, h: 1, price: 120 },
+  { id: "server_rack", name: "Server rack", glyph: "SV", color: 0x00e5ff, w: 1, h: 1, price: 100 },
 ];
 
 export const furnitureKind = (id: string): FurnitureKind | undefined => FURNITURE.find((f) => f.id === id);
@@ -138,6 +152,42 @@ export interface FurniturePiece {
 
 /** Default asking price for a never-owned estate (credits). */
 export const ESTATE_BASE_PRICE = 2500;
+
+// ── guestbook ────────────────────────────────────────────────────────────────
+/** One signature in a home's visitor book. */
+export interface GuestEntry {
+  n: string; // visitor name
+  at: number; // ms timestamp
+  s: string; // stamp — one of GUEST_STAMPS, chosen server-side (no free text)
+}
+
+/** Canned signature stamps — server picks one, so nothing player-written is stored. */
+export const GUEST_STAMPS = [
+  "was here",
+  "nice place",
+  "cozy",
+  "rent?",
+  "left a fingerprint",
+  "borrowed a chair",
+  "the neon suits you",
+  "10/10 would trespass again",
+] as const;
+
+/** Validate + clamp a guestbook coming out of D1 (bound it like the furniture). */
+export function sanitizeGuestbook(raw: unknown): GuestEntry[] {
+  if (!Array.isArray(raw)) return [];
+  const out: GuestEntry[] = [];
+  for (const e of raw) {
+    if (out.length >= 24) break;
+    if (!e || typeof e !== "object") continue;
+    const n = String((e as GuestEntry).n ?? "").slice(0, 16);
+    const at = Number((e as GuestEntry).at ?? 0);
+    const s = String((e as GuestEntry).s ?? "").slice(0, 32);
+    if (!n || !Number.isFinite(at)) continue;
+    out.push({ n, at, s });
+  }
+  return out;
+}
 
 /** Validate + clamp a furniture layout coming off the wire (owner-supplied, so bound it). */
 export function sanitizeFurniture(raw: unknown): FurniturePiece[] {

@@ -491,6 +491,8 @@ export default class OnlineScene extends Phaser.Scene {
   private homeUi: Phaser.GameObjects.GameObject[] = [];
   private homeGhostG?: Phaser.GameObjects.Graphics; // cursor ghost while placing furniture
   private estatePlateObjs: Phaser.GameObjects.GameObject[] = []; // FOR SALE / owner plates on the street
+  // ambient pedestrians strolling the hub streets — pure client-side set dressing
+  private wanderers: { spr: Phaser.GameObjects.Sprite; x: number; y: number; tx: number; ty: number; speed: number; pauseUntil: number; bob: number }[] = [];
 
   private isTutorial = false;
   private tutorialPanel!: Phaser.GameObjects.Text;
@@ -576,6 +578,7 @@ export default class OnlineScene extends Phaser.Scene {
     this.homeGhostG = undefined;
     this.homeDraft = [];
     this.estatePlateObjs = [];
+    this.wanderers = []; // scene restart destroyed the sprites — drop the stale refs
     this.districtDoors = [];
     this.doorTransit = false; // scene instances are reused across zone starts — reset triggers
     this.districtIndex = this.isDive
@@ -834,6 +837,7 @@ export default class OnlineScene extends Phaser.Scene {
           this.districtDoors.push({ tx: dtx, ty: dty, dest });
         });
         this.drawHubProps();
+        this.spawnHubWanderers();
       } else if (this.isEstates) {
         this.buildEstatesZone();
       } else if (parseEstateInterior(this.zone) !== null) {
@@ -1581,6 +1585,11 @@ export default class OnlineScene extends Phaser.Scene {
       if ((e.key === "b" || e.key === "B") && this.homeIdx >= 0 && !this.homeEditing) {
         const es = this.net.estate;
         if (es && (!es.owner || es.forSale) && !es.mine) this.net.estateBuy();
+        return;
+      }
+      if ((e.key === "g" || e.key === "G") && this.homeIdx >= 0 && !this.homeEditing) {
+        const es = this.net.estate;
+        if (es?.owner && !es.mine) this.net.estateSign();
         return;
       }
       if (e.key === "h" || e.key === "H") {
@@ -2435,6 +2444,101 @@ export default class OnlineScene extends Phaser.Scene {
     }
   }
 
+  /** Ambient pedestrians for the hub — a dozen strangers strolling the streets so the
+   *  compact town reads inhabited even at low player counts. Pure set dressing: seeded
+   *  looks, grid-aware wandering, non-interactive (never pushed to this.npcs). */
+  private spawnHubWanderers() {
+    let seed = 90210;
+    const rnd = () => {
+      seed = (seed * 16807) % 2147483647;
+      return seed / 2147483647;
+    };
+    const colors = [0x8bff6a, 0x6b9bff, 0xff79c6, 0xf7ff3c, 0x9aa3b2, 0xb06bff, 0x39ff88, 0xffb13c];
+    const skins = [0xf3d2b8, 0xe6b58c, 0xc98a5e, 0xa9794a, 0x7c4f30, 0x4f3220];
+    const hairs = ["short", "long", "buzz", "undercut", "bun", "braids", "dreads", "ponytail"] as const;
+    const cloaks = ["coat", "cape", "none", "none"] as const;
+    const grid = ONLINE_CITY.grid;
+    const walkable = (tx: number, ty: number) => grid[ty]?.[tx] !== undefined && !isWall(grid[ty][tx]);
+    for (let i = 0; i < 12; i++) {
+      // scatter on walkable street tiles in a ring around the plaza
+      let tx = 0;
+      let ty = 0;
+      for (let tries = 0; tries < 40; tries++) {
+        const ang = rnd() * Math.PI * 2;
+        const r = 9 + rnd() * 17;
+        tx = Math.round(HUB_CX + Math.cos(ang) * r);
+        ty = Math.round(HUB_CY + Math.sin(ang) * r * 0.8);
+        if (walkable(tx, ty)) break;
+      }
+      if (!walkable(tx, ty)) continue;
+      const look = hubLook({
+        color: colors[Math.floor(rnd() * colors.length)],
+        sex: rnd() < 0.5 ? "f" : "m",
+        skin: skins[Math.floor(rnd() * skins.length)],
+        hair: hairs[Math.floor(rnd() * hairs.length)],
+        hairColor: rnd() < 0.3 ? colors[Math.floor(rnd() * colors.length)] : 0x1b1820,
+        cloak: cloaks[Math.floor(rnd() * cloaks.length)],
+        head: rnd() < 0.25 ? "cap" : "none",
+      });
+      const key = lookKey(look);
+      bakeRemoteLook(this, key, look);
+      const x = tx * TILE + TILE / 2;
+      const y = ty * TILE + TILE / 2;
+      const spr = this.add.sprite(x, y, key, 0).setDepth(8.5).setAlpha(0.92);
+      this.wanderers.push({ spr, x, y, tx, ty, speed: 34 + rnd() * 26, pauseUntil: this.time.now + rnd() * 3000, bob: rnd() * Math.PI * 2 });
+    }
+  }
+
+  /** Per-frame stroll: walk 3–8 tiles along a walkable cardinal run, pause, turn. */
+  private updateWanderers(dt: number) {
+    if (this.wanderers.length === 0) return;
+    const grid = ONLINE_CITY.grid;
+    const walkable = (tx: number, ty: number) => grid[ty]?.[tx] !== undefined && !isWall(grid[ty][tx]);
+    const now = this.time.now;
+    for (const wd of this.wanderers) {
+      if (now < wd.pauseUntil) continue;
+      const gx = wd.tx * TILE + TILE / 2;
+      const gy = wd.ty * TILE + TILE / 2;
+      const dx = gx - wd.x;
+      const dy = gy - wd.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist < 2) {
+        // arrived — pick a new walkable cardinal run (3-8 tiles), else pause and retry
+        const curTx = Math.round((wd.x - TILE / 2) / TILE);
+        const curTy = Math.round((wd.y - TILE / 2) / TILE);
+        const dirs = [
+          [1, 0],
+          [-1, 0],
+          [0, 1],
+          [0, -1],
+        ].sort(() => Math.random() - 0.5);
+        let picked = false;
+        for (const [ddx, ddy] of dirs) {
+          const len = 3 + Math.floor(Math.random() * 6);
+          let reach = 0;
+          for (let s = 1; s <= len; s++) {
+            if (!walkable(curTx + ddx * s, curTy + ddy * s)) break;
+            reach = s;
+          }
+          if (reach >= 2) {
+            wd.tx = curTx + ddx * reach;
+            wd.ty = curTy + ddy * reach;
+            wd.spr.setFlipX(ddx < 0);
+            picked = true;
+            break;
+          }
+        }
+        wd.pauseUntil = now + (picked ? 600 + Math.random() * 2200 : 1500);
+        continue;
+      }
+      const step = (wd.speed * dt) / 1000;
+      wd.x += (dx / dist) * Math.min(step, dist);
+      wd.y += (dy / dist) * Math.min(step, dist);
+      wd.bob += dt * 0.012;
+      wd.spr.setPosition(wd.x, wd.y + Math.sin(wd.bob) * 1.2);
+    }
+  }
+
   /** Cursor ghost while placing furniture — shows the piece footprint + red when blocked. */
   private onHomeHover(pointer: Phaser.Input.Pointer) {
     if (!this.homeGhostG) return;
@@ -2467,7 +2571,7 @@ export default class OnlineScene extends Phaser.Scene {
       const g = this.add.graphics();
       g.fillStyle(k.color, 0.5).fillRoundedRect(x + 2, y + 2, w - 4, h - 4, 4);
       g.lineStyle(1.5, k.color, 0.95).strokeRoundedRect(x + 2, y + 2, w - 4, h - 4, 4);
-      const t = this.add.text(x + w / 2, y + h / 2, k.name[0], bodyFont(11, { color: hexColor(k.color), fontStyle: "bold" })).setOrigin(0.5);
+      const t = this.add.text(x + w / 2, y + h / 2, k.glyph, bodyFont(10, { color: hexColor(k.color), fontStyle: "bold" })).setOrigin(0.5);
       this.homeFurnLayer.add(g);
       this.homeFurnLayer.add(t);
     }
@@ -2538,8 +2642,32 @@ export default class OnlineScene extends Phaser.Scene {
       else btn(250, H - 38, "LIST FOR SALE ₵3000", 0x00e5ff, () => this.net.estateList(3000));
     } else if (!e.owner || e.forSale) {
       btn(16, H - 38, `BUY THIS HOME ₵${e.price} (B)`, 0x39ff88, () => this.net.estateBuy());
+      if (e.owner) btn(260, H - 38, "SIGN GUESTBOOK (G)", 0xb06bff, () => this.net.estateSign());
     } else {
       push(this.add.text(16, H - 38, "not for sale", bodyFont(11, { color: "#9aa3b2" })).setScrollFactor(0).setDepth(1200));
+      btn(130, H - 38, "SIGN GUESTBOOK (G)", 0xb06bff, () => this.net.estateSign());
+    }
+    // visitor book — latest signatures, bottom-right (owned homes only)
+    if (e.owner) {
+      const guests = e.guests ?? [];
+      push(
+        this.add
+          .text(W - 16, H - 104, `◈ GUESTBOOK (${guests.length})`, displayFont(11, { color: "#b06bff", fontStyle: "bold" }))
+          .setOrigin(1, 0)
+          .setScrollFactor(0)
+          .setDepth(1200),
+      );
+      guests.slice(0, 3).forEach((gst, i) => {
+        push(
+          this.add
+            .text(W - 16, H - 86 + i * 16, `${gst.n} — ${gst.s}`, bodyFont(10, { color: "#cbb3e8" }))
+            .setOrigin(1, 0)
+            .setScrollFactor(0)
+            .setDepth(1200),
+        );
+      });
+      if (guests.length === 0)
+        push(this.add.text(W - 16, H - 86, "no signatures yet", bodyFont(10, { color: "#6b7184" })).setOrigin(1, 0).setScrollFactor(0).setDepth(1200));
     }
   }
 
@@ -2957,6 +3085,7 @@ export default class OnlineScene extends Phaser.Scene {
 
   update(_t: number, dt: number) {
     if (!this.net) return;
+    if (this.isCityHub) this.updateWanderers(dt); // ambient pedestrians (hub only)
     const k = this.keys;
     const dn = (key?: Phaser.Input.Keyboard.Key) => (!this.chatOpen && key?.isDown ? 1 : 0);
     let mx = Math.sign(dn(k.D) + dn(k.RIGHT) - dn(k.A) - dn(k.LEFT));
@@ -3767,6 +3896,11 @@ export default class OnlineScene extends Phaser.Scene {
     // brand-new player is most lost, so point straight at him (unless the arc is done).
     if (!stage) return camp.done ? null : fixerTarget();
     if (stage.on.type === "talk") return fixerTarget();
+    if (stage.on.type === "visit") {
+      // HOMESTEAD — the objective is walking THE ESTATES street, so aim at its hub door
+      const est = CITY_HUB_DOORS.find((d) => d.dest === "estates");
+      if (est) return { ...toWorld(est.tile), label: "THE ESTATES" };
+    }
     const gate = CITY_HUB_DOORS.find((d) => d.dest === "d0");
     if (!gate) return null;
     return { ...toWorld(gate.tile), label: "DEPLOY GATE" };

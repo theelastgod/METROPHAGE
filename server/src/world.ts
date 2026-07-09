@@ -204,7 +204,19 @@ export const parseZone = (z: string | null): number => {
 import { getFragment, DIVE_DEFAULT_FRAGMENTS } from "../../src/game/fragments";
 import { WORLD_EVENTS, type WorldEventDef } from "../../src/game/worldEvents";
 import { WORLD_EVENT } from "../../src/config";
-import { ESTATES, ESTATES_ZONE, ESTATE_COUNT, buildHomeRoom, parseEstateInterior, sanitizeFurniture, ESTATE_BASE_PRICE, type FurniturePiece } from "../../src/world/estates";
+import {
+  ESTATES,
+  ESTATES_ZONE,
+  ESTATE_COUNT,
+  buildHomeRoom,
+  parseEstateInterior,
+  sanitizeFurniture,
+  sanitizeGuestbook,
+  GUEST_STAMPS,
+  ESTATE_BASE_PRICE,
+  type FurniturePiece,
+  type GuestEntry,
+} from "../../src/world/estates";
 
 export const INTERIOR_ZONES = new Set(["safe", "clinic", "bar", "den", "shop", ESTATES_ZONE]);
 /** All named (non-district) zones the Worker routes by name — interiors + subway + wilderness bridges. */
@@ -2242,6 +2254,8 @@ export class WorldDO {
     this.send(ws, { t: "stashv", items: p.stash }); // hydrate the personal stash (lockbox)
     if (parseEstateInterior(this.zoneName) !== null) await this.sendEstate(ws, p); // hydrate this home's ownership + furniture
     if (this.zoneName === ESTATES_ZONE) await this.sendEstatesDir(ws); // hydrate the street's FOR SALE / owner plates
+    // HOMESTEAD beat — walking into THE ESTATES (or any home there) is the objective
+    if (this.zoneName === ESTATES_ZONE || parseEstateInterior(this.zoneName) !== null) this.campaignEvent(p, "visit");
     this.sendLoadout(ws, p); // hydrate equipped gear + derived max HP
     this.noteDeepest(p); // arriving in this district may set a "deepest reached" milestone
     this.send(ws, { t: "achv", ids: [...p.achv] }); // hydrate the unlocked achievement set
@@ -3142,25 +3156,33 @@ export class WorldDO {
 
   // ── THE ESTATES — player-owned, furnishable homes (est{K}). Ownership + furniture live in
   //    D1 so any estate DO + a resale by another player share one source of truth. ────────
-  private estate: { owner: string | null; ownerName: string | null; price: number; forSale: boolean; furniture: FurniturePiece[] } | null = null;
+  private estate: { owner: string | null; ownerName: string | null; price: number; forSale: boolean; furniture: FurniturePiece[]; guests: GuestEntry[] } | null = null;
 
   private async loadEstate(): Promise<void> {
     if (parseEstateInterior(this.zoneName) === null) {
       this.estate = null;
       return;
     }
-    const row = await this.env.DB.prepare("SELECT owner, owner_name, price, for_sale, furniture FROM estates WHERE id = ?")
+    const row = await this.env.DB.prepare("SELECT owner, owner_name, price, for_sale, furniture, guestbook FROM estates WHERE id = ?")
       .bind(this.zoneName)
-      .first<{ owner: string | null; owner_name: string | null; price: number; for_sale: number; furniture: string }>();
-    let furn: unknown = [];
-    try {
-      furn = JSON.parse(row?.furniture || "[]");
-    } catch {
-      furn = [];
-    }
+      .first<{ owner: string | null; owner_name: string | null; price: number; for_sale: number; furniture: string; guestbook: string }>();
+    const parse = (raw: string | undefined): unknown => {
+      try {
+        return JSON.parse(raw || "[]");
+      } catch {
+        return [];
+      }
+    };
     this.estate = row
-      ? { owner: row.owner, ownerName: row.owner_name, price: row.price, forSale: !!row.for_sale, furniture: sanitizeFurniture(furn) }
-      : { owner: null, ownerName: null, price: ESTATE_BASE_PRICE, forSale: true, furniture: [] };
+      ? {
+          owner: row.owner,
+          ownerName: row.owner_name,
+          price: row.price,
+          forSale: !!row.for_sale,
+          furniture: sanitizeFurniture(parse(row.furniture)),
+          guests: sanitizeGuestbook(parse(row.guestbook)),
+        }
+      : { owner: null, ownerName: null, price: ESTATE_BASE_PRICE, forSale: true, furniture: [], guests: [] };
   }
 
   private estateMsg(p: PlayerState) {
@@ -3174,6 +3196,7 @@ export class WorldDO {
       forSale: e.forSale,
       price: e.owner ? e.price : ESTATE_BASE_PRICE,
       furniture: e.furniture,
+      guests: e.guests,
     };
   }
 
@@ -3212,10 +3235,10 @@ export class WorldDO {
     const e = this.estate;
     if (!e) return;
     await this.env.DB.prepare(
-      "INSERT INTO estates (id, owner, owner_name, price, for_sale, furniture, updated) VALUES (?,?,?,?,?,?,?) " +
-        "ON CONFLICT(id) DO UPDATE SET owner=excluded.owner, owner_name=excluded.owner_name, price=excluded.price, for_sale=excluded.for_sale, furniture=excluded.furniture, updated=excluded.updated",
+      "INSERT INTO estates (id, owner, owner_name, price, for_sale, furniture, guestbook, updated) VALUES (?,?,?,?,?,?,?,?) " +
+        "ON CONFLICT(id) DO UPDATE SET owner=excluded.owner, owner_name=excluded.owner_name, price=excluded.price, for_sale=excluded.for_sale, furniture=excluded.furniture, guestbook=excluded.guestbook, updated=excluded.updated",
     )
-      .bind(this.zoneName, e.owner, e.ownerName, e.price, e.forSale ? 1 : 0, JSON.stringify(e.furniture), Date.now())
+      .bind(this.zoneName, e.owner, e.ownerName, e.price, e.forSale ? 1 : 0, JSON.stringify(e.furniture), JSON.stringify(e.guests), Date.now())
       .run();
   }
 
@@ -3262,6 +3285,15 @@ export class WorldDO {
       if (e.owner !== p.id) return sys("only the owner can decorate this home");
       e.furniture = sanitizeFurniture(msg.furniture ?? []);
       await this.persistEstate();
+      this.broadcastEstate();
+    } else if (msg.action === "sign") {
+      // visitors sign the book; the stamp is server-chosen so nothing player-written persists
+      if (!e.owner) return sys("nobody lives here yet — nothing to sign");
+      if (e.owner === p.id) return sys("it's your own guestbook, choom");
+      const stamp = GUEST_STAMPS[Math.floor(Math.random() * GUEST_STAMPS.length)];
+      e.guests = [{ n: p.name, at: Date.now(), s: stamp }, ...e.guests.filter((g) => g.n !== p.name)].slice(0, 24);
+      await this.persistEstate();
+      sys(`◈ signed — "${p.name} ${stamp}"`);
       this.broadcastEstate();
     }
   }

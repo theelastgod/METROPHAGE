@@ -8,7 +8,7 @@
 // only falls to massed fire and a district event sweeps every runner standing in
 // it — the arc deliberately funnels players into the same fights.
 
-export type QuestTriggerType = "infect" | "dive" | "kill" | "secure" | "boss" | "event" | "talk";
+export type QuestTriggerType = "infect" | "dive" | "kill" | "secure" | "boss" | "event" | "visit" | "talk";
 
 export interface QuestStage {
   id: string;
@@ -79,13 +79,45 @@ export const QUESTS: QuestDef[] = [
     setsFlag: "wake_done",
   },
 
+  // ── INTERLUDE — HOMESTEAD ─────────────────────────────────────────────────
+  // A breather beat between the first two acts: the FIXER sends you to THE ESTATES.
+  // Blanks get reprinted because nothing in the city is theirs — an address is the
+  // first thing REISSUE can't quietly take back. New "visit" trigger (fires on
+  // entering the estates street or any home there); reward fronts most of a first home.
+  {
+    id: "homestead",
+    name: "HOMESTEAD",
+    giver: "fixer",
+    offerTree: "homestead_offer",
+    requiresFlag: "wake_done",
+    stages: [
+      {
+        id: "walk",
+        journal:
+          "THE FIXER says every prior me had the same weakness: nowhere to stand. No address, no anchor — nothing REISSUE had to pry out of my hands. There's a residential strip off the plaza called THE ESTATES. They want me to go look at it. Just look.",
+        objective: "Walk THE ESTATES — the door is off the plaza",
+        on: { type: "visit", count: 1 },
+      },
+      {
+        id: "deed",
+        journal:
+          "Twelve doors. Some already have names on them — runners like me, who decided they were staying. I keep thinking about what the last me wrote: don't let them tell you you're new. A door with my name on it would make that harder for them.",
+        objective: "Return to the FIXER",
+        on: { type: "talk" },
+        talkTree: "homestead_final",
+      },
+    ],
+    reward: { xp: 220, currency: 2000, loot: 1, lootBoost: 1 },
+    setsFlag: "homestead_done",
+  },
+
   // ── ACT II — DEAD RECKONING ───────────────────────────────────────────────
   {
     id: "dead_reckoning",
     name: "DEAD RECKONING",
     giver: "fixer",
     offerTree: "reckoning_offer",
-    requiresFlag: "wake_done",
+    requiresFlag: "homestead_done",
     stages: [
       {
         id: "trail",

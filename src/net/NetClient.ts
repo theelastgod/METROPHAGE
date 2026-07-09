@@ -78,7 +78,18 @@ export default class NetClient {
   pvpEscrow = 0;
   inventory: Item[] = []; // server-authoritative held gear (sent on login + on change)
   stash: Item[] = []; // personal safe storage (TENEMENT lockbox), server-authoritative
-  estate: null | { id: string; owner: string | null; ownerName: string | null; mine: boolean; forSale: boolean; price: number; furniture: EstateFurniture[] } = null; // current home (est{K})
+  estate:
+    | null
+    | {
+        id: string;
+        owner: string | null;
+        ownerName: string | null;
+        mine: boolean;
+        forSale: boolean;
+        price: number;
+        furniture: EstateFurniture[];
+        guests: { n: string; at: number; s: string }[];
+      } = null; // current home (est{K})
   estatesDir: { i: number; owner: string | null; name: string | null; forSale: boolean; price: number }[] = []; // street-wide ownership (THE ESTATES)
   equipped: Item[] = []; // currently equipped items (one per slot), server-authoritative
   maxHp = PLAYER_HP; // derived from equipped +HP mods
@@ -612,7 +623,7 @@ export default class NetClient {
       this.stash = msg.items;
       this.onStash?.();
     } else if (msg.t === "estate") {
-      this.estate = { id: msg.id, owner: msg.owner, ownerName: msg.ownerName, mine: msg.mine, forSale: msg.forSale, price: msg.price, furniture: msg.furniture };
+      this.estate = { id: msg.id, owner: msg.owner, ownerName: msg.ownerName, mine: msg.mine, forSale: msg.forSale, price: msg.price, furniture: msg.furniture, guests: msg.guests ?? [] };
       this.onEstate?.();
     } else if (msg.t === "estates_dir") {
       this.estatesDir = msg.list;
@@ -688,6 +699,9 @@ export default class NetClient {
   }
   estateFurnish(furniture: EstateFurniture[]) {
     this.sendMsg({ t: "estate", action: "furnish", furniture });
+  }
+  estateSign() {
+    this.sendMsg({ t: "estate", action: "sign" });
   }
   tutorialSkip() {
     this.sendMsg({ t: "tutorial", action: "skip" });

@@ -122,6 +122,93 @@ export const DIALOGUE_TREES: Record<string, DialogueTree> = {
     },
   },
 
+  // ── INTERLUDE — HOMESTEAD ─────────────────────────────────────────────────
+  homestead_offer: {
+    start: "intro",
+    nodes: {
+      intro: {
+        speaker: "FIXER",
+        portrait: "fixer",
+        lines: [
+          "Before I hand you anything heavier — one errand. No shooting. Try to contain your disappointment.",
+          "There's a strip off the plaza. THE ESTATES. Twelve doors, real locks, deeds the corps never bothered to digitize.",
+          "Every you before this one had the same weakness, choom. Nowhere to stand. Nothing that had to be TAKEN.",
+        ],
+        choices: [
+          { text: "Why does a door matter?", goto: "why" },
+          { text: "You're sending me house-hunting?", goto: "snark" },
+        ],
+      },
+      why: {
+        speaker: "FIXER",
+        portrait: "fixer",
+        lines: [
+          "REISSUE works because you're deletable. No address, no name on anything, no neighbour who'd notice the new face.",
+          "A door with your name on it is the cheapest anti-erasure tech ever built.",
+          "Go walk the street. That's all. Look at the doors and picture your name on one.",
+        ],
+        choices: [
+          { text: "I'll go look. [Accept]", action: "accept" },
+          { text: "Later.", goto: "decline" },
+        ],
+      },
+      snark: {
+        speaker: "FIXER",
+        portrait: "fixer",
+        lines: [
+          "I'm sending you to exist somewhere on purpose. Radical concept in this city.",
+          "Humour me. Walk the strip, then come back and tell me it was pointless.",
+        ],
+        choices: [
+          { text: "Fine. [Accept]", action: "accept" },
+          { text: "Later.", goto: "decline" },
+        ],
+      },
+      decline: {
+        speaker: "FIXER",
+        portrait: "fixer",
+        lines: ["Sure. Keep sleeping in doorways that belong to Helios.", "The street's not going anywhere. Unlike, historically, you."],
+      },
+    },
+  },
+
+  homestead_final: {
+    start: "back",
+    nodes: {
+      back: {
+        speaker: "FIXER",
+        portrait: "fixer",
+        lines: [
+          "So? Twelve doors. Some with names already — SPARROW's been three cycles in hers, and nobody's managed to reprint HER.",
+          "That's not coincidence, choom. It's the whole trick.",
+        ],
+        choices: [
+          { text: "I pictured it. My name on one.", goto: "keys" },
+          { text: "It's just a room.", goto: "justroom" },
+        ],
+      },
+      justroom: {
+        speaker: "FIXER",
+        portrait: "fixer",
+        lines: [
+          "'Just a room.' Yeah. And you're 'just a Blank', per Helios paperwork.",
+          "A room they can't enter without breaking something is the difference between a person and an asset tag.",
+        ],
+        then: "keys",
+      },
+      keys: {
+        speaker: "FIXER",
+        portrait: "fixer",
+        lines: [
+          "Here. Key money — call it severance the last you never collected.",
+          "It won't cover the whole deed. Earn the rest. It should cost you something to stay.",
+          "Buy the door. Furnish it ugly. Sign someone's guestbook. Be findable, on YOUR terms.",
+        ],
+        choices: [{ text: "On my terms. [Finish]", action: "complete" }],
+      },
+    },
+  },
+
   // ── ACT II — DEAD RECKONING ───────────────────────────────────────────────
   reckoning_offer: {
     start: "intro",
