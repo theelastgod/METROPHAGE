@@ -2211,6 +2211,21 @@ export default class OnlineScene extends Phaser.Scene {
     sg.fillStyle(0x0a0e18, 0.95).fillRect(sx - 32, sy - 9, 64, 15);
     sg.lineStyle(1.5, 0x39ff88, 0.9).strokeRect(sx - 32, sy - 9, 64, 15);
     this.add.text(sx, sy - 2, "▼ DEPLOY", displayFont(9, { color: "#39ff88", fontStyle: "bold" })).setOrigin(0.5).setDepth(7);
+
+    // ── PVP herald → make THE CRUCIBLE findable the moment you spawn ──
+    // A red billboard up top + a signpost by the deploy gate: PvP is the arena in the SE
+    // corner of every combat district, so a new runner reads where to fight from the plaza.
+    billboard(...w(8, -13), "⚔ PVP\nCRUCIBLE", 0xff3b6b);
+    const [px, py] = w(5, 4);
+    const pg = this.add.graphics().setDepth(6);
+    pg.fillStyle(0x14060a, 0.96).fillRect(px - 60, py - 10, 120, 17);
+    pg.lineStyle(1.5, 0xff3b6b, 0.95).strokeRect(px - 60, py - 10, 120, 17);
+    pg.fillStyle(0xff3b6b, 1).fillRect(px - 62, py - 10, 2, 17);
+    glow(px, py - 2, 0xff3b6b, 1.1, 0.5, 0.14, 3.6);
+    this.add
+      .text(px, py - 2, "⚔ PVP · THE CRUCIBLE — SE of every district", displayFont(9, { color: "#ff6b7a", fontStyle: "bold" }))
+      .setOrigin(0.5)
+      .setDepth(7);
   }
 
   /** A door into a building interior — a glowing portal you enter with E (or click).
@@ -4063,6 +4078,26 @@ export default class OnlineScene extends Phaser.Scene {
         .text(z.x + z.w / 2, z.y + uiDim(26), `◈ $METRO CONTEST ZONE`, bodyFont(9, { color: "#9aa3b2" }))
         .setOrigin(0.5, 0)
         .setDepth(4);
+      // a spawn-side beacon that points at the arena, so a runner who just deployed can
+      // find PvP from where they land (the arena is tucked in the district's SE corner)
+      const def = DISTRICTS[this.districtIndex];
+      if (def) {
+        const spx = def.spawnTile[0] * DISTRICT_SCALE * TILE + TILE / 2;
+        const spy = def.spawnTile[1] * DISTRICT_SCALE * TILE + TILE / 2;
+        const acx = z.x + z.w / 2;
+        const acy = z.y + z.h / 2;
+        const ang = Math.atan2(acy - spy, acx - spx);
+        const bx = spx + Math.cos(ang) * 46;
+        const by = spy + Math.sin(ang) * 46 - 24;
+        const bg = this.add.graphics().setDepth(6);
+        bg.fillStyle(0x14060a, 0.95).fillRect(bx - 52, by - 9, 104, 15);
+        bg.lineStyle(1.5, 0xff3b6b, 0.9).strokeRect(bx - 52, by - 9, 104, 15);
+        this.add
+          .text(bx, by - 2, "⚔ THE CRUCIBLE ▶", displayFont(9, { color: "#ff6b7a", fontStyle: "bold" }))
+          .setOrigin(0.5)
+          .setDepth(7)
+          .setRotation(0);
+      }
     }
   }
 

@@ -144,7 +144,7 @@ export default class OnlineMap {
     const m = zone.match(/^d(\d+)$/);
     if (m) {
       const d = DISTRICTS[parseInt(m[1], 10)];
-      return d ? `${d.name} — ${d.subtitle}. Threat ${d.threat}.` : label;
+      return d ? `${d.name} — ${d.subtitle}. Threat ${d.threat}. ⚔ PvP: THE CRUCIBLE in the SE corner.` : label;
     }
     const w = zone.match(/^w(\d+)$/);
     if (w) {
