@@ -70,6 +70,60 @@ export const KEY_NPCS: CityNpcDef[] = [
   },
 ];
 
+// ── the story ensemble ───────────────────────────────────────────────────────
+// The main questline (THE WAKE → THE AWAKENING) runs through THE FIXER, but four
+// personable allies live it alongside you and react as you advance: RIN, a Blank who
+// woke a cycle before you; DOC HALO, the ripperdoc who patches runners for free; VEX,
+// a memory-broker who sells everything and believes in nothing (except, quietly, you);
+// and OLD MAREK, who remembers the city from before the cages. Their lines shift with
+// your progress, so the arc feels peopled, not narrated.
+
+/** Coarse questline phase from the active quest id (client passes net.campaignQuest). */
+export type StoryPhase = "pre" | "early" | "mid" | "late";
+export function storyPhase(activeId: string | null | undefined): StoryPhase {
+  if (!activeId) return "pre";
+  if (["undercity_echo", "relay_break", "wastes_purge", "continue_q"].includes(activeId)) return "late";
+  if (["fixers_debt", "spire_protocol", "dock_run"].includes(activeId)) return "mid";
+  return "early"; // the_wake, dead_reckoning
+}
+
+const ALLY_ARC: Record<string, Record<StoryPhase, string[]>> = {
+  rin: {
+    pre: ["You've got the look. Fresh boot, old eyes.", "THE FIXER's been waiting for you. Go — but don't trust the smile."],
+    early: ["I woke up angry too. It fades into something worse: awake.", "I'm the one before you. I didn't make it far. You will."],
+    mid: ["THE FIXER sold people. Me included. Doesn't mean they're lying to you now.", "Every cycle a new you finds my note. This time finish it."],
+    late: ["You're further than any of us ever got. Don't you dare stop.", "When the Kernel opens, say my name to whoever's frozen in there. They'll know it."],
+  },
+  doc: {
+    pre: ["Come in bleeding, leave in one piece. No corp forms.", "First patch is free. So's the second. I stopped counting."],
+    early: ["You keep waking these minds up, they're gonna come for the person waking them.", "Hold still — you're leaking. There. Go be dangerous."],
+    mid: ["I've stitched every Blank THE FIXER ever ran. You're the first who asks their names.", "Half of me hopes you fail so I stop burying you. The other half packed a bag."],
+    late: ["Whole clinic's watching your signal climb. Don't make me a liar to these people.", "If the Awakening's real, I'm out of a job. Best pink slip I could ask for."],
+  },
+  vex: {
+    pre: ["Information's the only honest currency. Everything else lies.", "You want a rumour? First one's on the house: THE FIXER knew you before you booted."],
+    early: ["Careful. People who wake other people up tend to get... repossessed.", "I sell secrets. Yours is getting expensive. That's a compliment."],
+    mid: ["I brokered the manifests that listed people as cargo. I'm not proud. I'm rich.", "Between us — I've been shredding your name off every list that crosses my desk. Don't tell anyone I have a heart."],
+    late: ["The whole grid's pricing your odds. I put my own creds on you. Sentiment. Disgusting.", "When it's done, the memory market crashes. Good. Burn it down."],
+  },
+  marek: {
+    pre: ["I remember open sky. Before they leased the first mind and called it normal.", "The slums keep what the towers throw away. People, mostly."],
+    early: ["They wiped my partner's name off the world. You're un-wiping people. Keep going.", "You sound like the last one. And the one before. Maybe this time the city listens."],
+    mid: ["REISSUE. They don't kill us anymore — they forget us on purpose. You're making that expensive.", "I was Helios muscle once. Every name I collared, I owe. Let me owe you instead."],
+    late: ["One district from the Kernel. I've waited my whole long life to see someone reach it.", "Whatever's frozen down there is older than me. Wake them. Tell them Marek held the line."],
+  },
+};
+
+/** Reactive dialogue for a story ally, chosen by the player's current questline phase. */
+export function campaignAllyLines(id: string, activeId: string | null | undefined): string[] {
+  const arc = ALLY_ARC[id];
+  if (!arc) return [];
+  return arc[storyPhase(activeId)];
+}
+
+/** The four story allies who stand on the hub plaza and live the questline with you. */
+export const STORY_ALLIES = ["rin", "doc", "vex", "marek"] as const;
+
 /** Ambient citizens — scattered across the remaining NPC spots for life. */
 export const CITIZENS: CityNpcDef[] = [
   {

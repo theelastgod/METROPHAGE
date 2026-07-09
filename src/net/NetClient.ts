@@ -176,6 +176,7 @@ export default class NetClient {
   onInventory?: () => void; // fired when the server pushes an inventory update
   onStash?: () => void; // fired when the server pushes a stash update
   onEstate?: () => void; // fired when the server pushes an estate ownership/furniture update
+  onCampaign?: () => void; // fired when the active campaign quest changes (story allies re-react)
   onRedirect?: (zone: string) => void;
   /** Memory fragments this player has recovered (dive rewards; welcome + live updates). */
   fragments: string[] = [];
@@ -461,7 +462,10 @@ export default class NetClient {
           this.escortActive = !!sp.escort;
           this.xp = sp.xp;
           this.level = sp.level;
-          this.campaignQuest = sp.campaignQuest;
+          if (sp.campaignQuest !== this.campaignQuest) {
+            this.campaignQuest = sp.campaignQuest;
+            this.onCampaign?.();
+          }
           this.campaignStage = sp.campaignStage;
           this.campaignProgress = sp.campaignProgress;
           this.campaignObjective = sp.campaignObjective;

@@ -106,7 +106,7 @@ import { campaignHud, Campaign } from "../net/campaign";
 import OnlineCosmetics from "../ui/OnlineCosmetics";
 import OnlineMap from "../ui/OnlineMap";
 import { applyCosmetic } from "../game/cosmetics";
-import { npcDef, AMBIENT_NPCS, INTERIOR_PLAN, keeperFor, districtResident, hubResident } from "../game/cityNpcs";
+import { npcDef, AMBIENT_NPCS, INTERIOR_PLAN, keeperFor, districtResident, hubResident, campaignAllyLines, STORY_ALLIES } from "../game/cityNpcs";
 import { bountyForNpc } from "../game/bounties";
 import type { PlayerLook } from "../net/protocol";
 import { setOnlinePlayer } from "../economy/session";
@@ -248,8 +248,12 @@ const CITY_HUB_NPCS: { svc: string; name: string; tag: string; color: number; ti
 /** Ambient regulars who linger in the safehouse hub for life (the quest-giver citizens
  *  RIN/DOC/VEX/SABLE now live in their own building interiors below). */
 const CITY_HUB_CITIZENS: { id: string; tile: [number, number] }[] = [
-  { id: "marek", tile: hubT(-4, 2) },
-  { id: "amb_tech", tile: hubT(4, 2) },
+  // the four story allies who live the questline with you (reactive dialogue per act)
+  { id: "rin", tile: hubT(-5, 2) },
+  { id: "doc", tile: hubT(5, 2) },
+  { id: "vex", tile: hubT(-5, -3) },
+  { id: "marek", tile: hubT(5, -3) },
+  { id: "amb_tech", tile: hubT(9, 2) },
 ];
 
 /** Titles shown atop each interior zone. */
@@ -790,7 +794,19 @@ export default class OnlineScene extends Phaser.Scene {
         for (const door of CITY_HUB_DOORS) this.makeDoor(door);
         for (const c of CITY_HUB_CITIZENS) {
           const cdef = npcDef(c.id);
-          if (cdef) this.makeTalkNpc(cdef.name, cdef.look, cdef.lines, c.tile[0] * TILE + TILE / 2, c.tile[1] * TILE + TILE / 2, cdef.id);
+          if (!cdef) continue;
+          const px = c.tile[0] * TILE + TILE / 2;
+          const py = c.tile[1] * TILE + TILE / 2;
+          // story allies react to the player's questline act; ambient citizens keep static lines
+          const isAlly = (STORY_ALLIES as readonly string[]).includes(c.id);
+          const lines = isAlly ? campaignAllyLines(c.id, this.net?.campaignQuest) : cdef.lines;
+          this.makeTalkNpc(cdef.name, cdef.look, lines, px, py, cdef.id);
+          if (isAlly) {
+            this.add
+              .text(px, py - 24, `◈ ${cdef.name}`, bodyFont(8, { color: "#9fe8ff", fontStyle: "bold" }))
+              .setOrigin(0.5)
+              .setDepth(9);
+          }
         }
         // EVERY building on the plaza is enterable — wire each one's door to its own h{K}
         // interior (a distinct resident lives inside). FRLG walk-in + click/E both enter.
@@ -1070,6 +1086,7 @@ export default class OnlineScene extends Phaser.Scene {
     this.net.arrival = fastArrival ? "fast" : "organic";
     this.net.travelFrom = fastArrival ? undefined : this.fromZone;
     this.wireHomeAfterNet(); // if this is an est{K} home, hook estate updates + furniture placement
+    this.net.onCampaign = () => this.refreshAllyLines(); // story allies re-react as the questline advances
     const tutorialMode =
       data?.tutorialMode ?? (this.registry.get("tutorialMode") as TutorialMode | undefined) ?? getSettings().tutorialMode;
     if (this.isTutorial) this.registry.set("tutorialMode", tutorialMode);
@@ -2336,6 +2353,17 @@ export default class OnlineScene extends Phaser.Scene {
     this.homeFurnLayer = this.add.container(0, 0).setDepth(3);
     // NOTE: net-dependent wiring (onEstate callback, pointer placement, first render) is
     // deferred to wireHomeAfterNet() — this method runs before this.net is constructed.
+  }
+
+  /** Re-point the hub's story allies at the dialogue for the player's current questline act. */
+  private refreshAllyLines() {
+    if (!this.isCityHub) return;
+    for (const n of this.npcs) {
+      if (n.kind === "talk" && n.npcId && (STORY_ALLIES as readonly string[]).includes(n.npcId)) {
+        n.lines = campaignAllyLines(n.npcId, this.net.campaignQuest);
+        n.lineIdx = 0;
+      }
+    }
   }
 
   /** Home wiring that needs this.net (called once the NetClient exists). */
