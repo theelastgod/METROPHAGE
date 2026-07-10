@@ -988,12 +988,24 @@ export class WorldDO {
     return AFFIXES[WorldDO.weekNow() % AFFIXES.length];
   }
 
+  /** UTC day the garrison's condition was applied — arrival announcements quote THIS day,
+   *  so a zone alive across midnight never advertises stats it isn't running. */
+  private modDay = -1;
+
+  /** Compass octant from (dx,dy) in screen space (y-down), for hunt hints. */
+  private static compass(dx: number, dy: number): string {
+    const oct = ["E", "SE", "S", "SW", "W", "NW", "N", "NE"];
+    return oct[((Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) % 8) + 8) % 8];
+  }
+
   /** Today's district condition — hp/speed onto the fresh garrison (credits apply on kill).
    *  Deterministic per (district, day); the client shows the same condition on the map. */
   private applyDistrictMod() {
     if (!/^d\d+$/.test(this.zoneName)) return;
-    const mod = dailyDistrictMod(this.districtIndex);
+    this.modDay = dayIndex();
+    const mod = dailyDistrictMod(this.districtIndex, this.modDay);
     for (const e of this.enemies.values()) {
+      if (e.boss) continue; // bosses run their own raid scaling — no daily swing on tuned fights
       e.hp = Math.round(e.hp * mod.enemyHpMult);
       e.maxHp = Math.round(e.maxHp * mod.enemyHpMult);
       if (e.baseMaxHp) e.baseMaxHp = Math.round(e.baseMaxHp * mod.enemyHpMult);
@@ -2299,14 +2311,15 @@ export class WorldDO {
     if (this.zoneName === ESTATES_ZONE) await this.sendEstatesDir(ws); // hydrate the street's FOR SALE / owner plates
     // HOMESTEAD beat — walking into THE ESTATES (or any home there) is the objective
     if (this.zoneName === ESTATES_ZONE || parseEstateInterior(this.zoneName) !== null) this.campaignEvent(p, "visit");
-    // district arrivals: today's condition + the day's bounty, so the hunt is known
+    // district arrivals: the RUNNING condition + the day's bounty, so the hunt is known
     if (/^d\d+$/.test(this.zoneName)) {
-      const dm = dailyDistrictMod(this.districtIndex);
+      const dm = dailyDistrictMod(this.districtIndex, this.modDay >= 0 ? this.modDay : dayIndex());
       this.send(ws, { t: "sys", text: `◈ district condition — ${dm.name}: ${dm.blurb}` });
       await this.maybePromoteHvt();
       for (const e of this.enemies.values())
         if (e.hvt && e.hp > 0) {
-          this.send(ws, { t: "sys", text: `◈ HIGH-VALUE TARGET active: ${e.name} — ${HVT_BOUNTY_MULT}× bounty. Hunt it down.` });
+          const dir = WorldDO.compass(e.x - this.spawn.x, e.y - this.spawn.y);
+          this.send(ws, { t: "sys", text: `◈ HIGH-VALUE TARGET active: ${e.name} — ${HVT_BOUNTY_MULT}× bounty · last pinged ${dir} of the deploy point.` });
           break;
         }
     }
@@ -2856,6 +2869,11 @@ export class WorldDO {
       p.dirty = true;
       sys(`accepted — ${q.name}`);
       this.sendCampaignBeat(ws, p);
+      // a "visit" first beat completes instantly if the player is ALREADY standing in the
+      // target zone — no leave-and-re-enter dance (visit normally fires on zone login)
+      if (q.stages[0]?.on.type === "visit" && (this.zoneName === ESTATES_ZONE || parseEstateInterior(this.zoneName) !== null)) {
+        this.campaignEvent(p, "visit");
+      }
       return;
     }
     if (msg.action === "talk") {
