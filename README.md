@@ -52,7 +52,8 @@ $METRO is a tradeable on-chain token bridged to server-authoritative `credits`.
 - In-game currency is off-chain `credits`.
 - Sign-up: MetaMask + free message; wallet is auto-switched to Robinhood Chain.
 - Cash-out pool is **100% player-funded** (starts empty).
-- **Rate spread**: deposit 1 ◈ → 110 ₵, withdraw 125 ₵ → 1 ◈.
+- **Rate spread** (Robinhood launch): deposit 1 ◈ → **100 ₵**, withdraw **125 ₵** → 1 ◈
+  (~20% stays in the pool). Min cash-out **250 ₵** (2 ◈). Daily cap **50k ₵** / player.
 - On Robinhood Chain, treasury signs ERC-20 payouts (needs a little ETH for gas);
   players pay gas on deposits.
 - Mainnet stays disarmed (`METRO_MAINNET_ARMED`) until counsel signs off.

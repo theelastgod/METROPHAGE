@@ -157,4 +157,5 @@ Pre-CA: `cd server && node scripts/mainnet-prepare.mjs` then put
 5. Smoke (trusted five, standalone): `move combat kit quest abuse` with server up.
 6. `$METRO`: secrets **before** `VITE_METRO_MINT`. Mainnet stays counsel-gated
    (`METRO_MAINNET_ARMED` off by default). Never arm without counsel sign-off.
-7. Rates 110/125 and player-funded pool are **frozen** — do not redesign mid-launch.
+7. Rates (Robinhood launch): **100 in / 125 out**, min **250 ₵**, daily cap **50k ₵**,
+   player-funded pool — treat as launch constants; don't redesign mid-launch without a migration note.

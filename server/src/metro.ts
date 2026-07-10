@@ -17,27 +17,29 @@
 import type { D1Database } from "@cloudflare/workers-types";
 
 export const BRIDGE = {
-  // $METRO is a FIXED-supply pump.fun token (1,000,000,000, mint authority revoked) that the
-  // developer CANNOT mint or seed into the game treasury at launch. The cash-out pool is
-  // therefore 100% player-funded: deposits fill it, withdrawals drain it, and the bridge
-  // never promises a payout the treasury does not actually hold (see poolMetro()).
+  // ── Robinhood Chain launch economics (ERC-20 on RH L2) ──────────────────
+  // Fixed-supply $METRO; developer does NOT seed the cash-out pool. Deposits fill
+  // it, withdrawals drain it, empty pool = reject + refund credits.
   //
-  // The rate SPREAD is what makes that economy self-sustaining: depositing is generous
-  // (1 $METRO -> 110 credits) while cashing out costs more (125 credits -> 1 $METRO), so
-  // every round trip leaves ~12% of the tokens in the pool. That float is the yield that
-  // pays players who only ever earn credits in-game and never deposit.
+  // Retail-friendly integers (RH app audience):
+  //   deposit  1 $METRO → 100 ₵
+  //   withdraw 125 ₵ → 1 $METRO
+  // Round-trip keeps 20% of the credit value in the pool (wider than the old 12%
+  // Solana/pump.fun spread) so early cash-outs from a cold pool are safer.
   //
-  // Rates are chain-agnostic (off-chain ledger). On Solana, treasury never spends SOL
-  // (player fee-payer claims). On EVM, treasury signs fully-formed ERC-20 transfers and
-  // needs a small ETH gas float; player still pays gas for deposits.
-  depositCreditsPerMetro: 110, // credits granted per 1 $METRO deposited
-  withdrawCreditsPerMetro: 125, // credits burned per 1 $METRO withdrawn
-  minWithdrawCredits: 500, // withdraw floor
-  withdrawCooldownMs: 60_000, // min gap between a player's withdrawals
-  dailyCapCredits: 100_000, // max credits withdrawn per player per rolling 24h
-  metroDecimals: 6, // display/ledger precision (ERC-20 decimals read on-chain)
-  // Abandoned claims refund after this TTL (must exceed typical block/finality windows).
-  claimTtlMs: 10 * 60_000,
+  // L2 gas is cheap → lower min cash-out (2 $METRO). Daily cap is tighter at launch
+  // so one account can't empty a thin pool. On-chain ERC-20 decimals are still read
+  // live; metroDecimals is ledger rounding only.
+  //
+  // Gas: deposits paid by player; withdrawals are treasury-signed ERC-20 transfers
+  // (treasury needs a small ETH float on Robinhood Chain).
+  depositCreditsPerMetro: 100, // 1 $METRO deposited → 100 credits
+  withdrawCreditsPerMetro: 125, // 125 credits → 1 $METRO cashed out
+  minWithdrawCredits: 250, // 2 $METRO floor (L2-friendly)
+  withdrawCooldownMs: 30_000, // 30s between withdraws (snappier on L2)
+  dailyCapCredits: 50_000, // 400 $METRO/day max per player at launch
+  metroDecimals: 6, // off-chain rounding; contract decimals used for chain amounts
+  claimTtlMs: 10 * 60_000, // abandoned claims refund after 10 min
 } as const;
 
 const DAY_MS = 86_400_000;

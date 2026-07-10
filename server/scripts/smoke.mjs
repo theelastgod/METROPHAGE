@@ -2309,41 +2309,35 @@ async function metro() {
   const a0 = await get(`/metro/account?player=whale`);
   const start = a0.credits ?? 0;
 
-  // LAUNCH DAY (pump.fun, no dev seeding): the cash-out pool starts EMPTY, so a
-  // withdraw must be rejected even with plenty of credits — and fully refunded.
+  // LAUNCH DAY (Robinhood Chain ERC-20, no dev seeding): pool starts EMPTY.
+  // Rates: deposit 100 ₵ / $METRO, withdraw 125 ₵ / $METRO (see server BRIDGE).
   const p0 = await get(`/metro/pool`);
   const wEmpty = await post(`/metro/withdraw`, { player: "whale", wallet: WALLET, credits: 1000 });
   const aAfterEmpty = await get(`/metro/account?player=whale`);
 
-  // the first player deposit BOOTSTRAPS the pool: 20 $METRO -> 20*110 = 2200 credits
+  // first deposit BOOTSTRAPS the pool: 20 $METRO -> 20*100 = 2000 credits
   const txSig = "DEPOSIT_" + Date.now();
   const d = await post(`/metro/deposit`, { player: "whale", wallet: WALLET, txSig, metro: 20 });
   const p1 = await get(`/metro/pool`);
 
-  // withdrawing costs more than depositing pays (the spread): 1000 credits -> 8 $METRO.
-  // $0-LAUNCH: withdraw returns a CLAIM (player pays the network fee, treasury only
-  // signs); the pool is reserved while the claim is pending, and confirm finalizes it.
+  // spread: 1000 credits -> 8 $METRO (1000/125). Claim reserves pool while pending.
   const q = await get(`/metro/quote?credits=1000`);
   const w = await post(`/metro/withdraw`, { player: "whale", wallet: WALLET, credits: 1000 });
   const a1 = await get(`/metro/account?player=whale`);
-  const pPending = await get(`/metro/pool`); // reserved while pending: 20 - 8 = 12
+  const pPending = await get(`/metro/pool`); // reserved: 20 - 8 = 12
   const claimSig = "CLAIM_" + Date.now();
   const cf = await post(`/metro/withdraw/confirm`, { player: "whale", withdrawId: w.withdrawId, txSig: claimSig });
-  const p2 = await get(`/metro/pool`); // pool keeps the spread after confirm: 12
+  const p2 = await get(`/metro/pool`); // after confirm: 12
 
-  // confirm is once-only, and a used tx signature can't finalize anything else
   const cf2 = await post(`/metro/withdraw/confirm`, { player: "whale", withdrawId: w.withdrawId, txSig: claimSig });
 
-  // anti-abuse: immediate 2nd withdraw hits the cooldown; a bad wallet is rejected
   const wc = await post(`/metro/withdraw`, { player: "whale", wallet: WALLET, credits: 1000 });
   const wb = await post(`/metro/withdraw`, { player: "whale", wallet: "not-a-wallet", credits: 1000 });
 
-  // pauper (600 credits, no prior withdraw -> no cooldown): 50000 is within the daily
-  // cap but over balance, so the ATOMIC debit fails -> insufficient; tiny -> below-min.
+  // pauper: over-balance hits insufficient; 100 ₵ is below min (250)
   const wi = await post(`/metro/withdraw`, { player: "pauper", wallet: WALLET, credits: 50000 });
   const wm = await post(`/metro/withdraw`, { player: "pauper", wallet: WALLET, credits: 100 });
 
-  // the SAME tx can't be claimed twice
   const dd = await post(`/metro/deposit`, { player: "whale", wallet: WALLET, txSig, metro: 20 });
   const a2 = await get(`/metro/account?player=whale`);
 
@@ -2351,11 +2345,11 @@ async function metro() {
     poolStartsEmpty: p0.ok && p0.poolMetro === 0 && p0.phase === "bootstrap",
     emptyPoolRejected: wEmpty.ok === false && /pool/.test(wEmpty.reason || ""),
     emptyPoolRefunded: aAfterEmpty.credits === start,
-    depositCredited: d.ok && d.credits === 2200,
+    depositCredited: d.ok && d.credits === 2000,
     poolFilledByDeposit: p1.ok && p1.poolMetro === 20 && p1.phase === "open",
     quoteUsesSpread: q.ok && q.metro === 8,
     withdrawIsClaim: w.ok && w.status === "claim" && !!w.claimTx && w.withdrawId > 0,
-    withdrawDebited: w.ok && w.metro === 8 && a1.credits === start + 2200 - 1000,
+    withdrawDebited: w.ok && w.metro === 8 && a1.credits === start + 2000 - 1000,
     pendingReservesPool: pPending.ok && pPending.poolMetro === 12,
     claimConfirmed: cf.ok && cf.metro === 8,
     poolRetainsSpread: p2.ok && p2.poolMetro === 12,

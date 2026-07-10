@@ -8,7 +8,7 @@ When pump.fun (or similar) gives you the mint CA, follow §3–5 **in order**.
 | Rule | Why |
 |------|-----|
 | Cash-out pool starts empty | Fixed-supply token — dev cannot mint into treasury |
-| Deposit 1 ◈ → 110 ₵ · withdraw 125 ₵ → 1 ◈ | Spread funds the pool |
+| Deposit 1 ◈ → 100 ₵ · withdraw 125 ₵ → 1 ◈ | RH launch spread funds the pool |
 | Treasury never spends SOL | Withdrawals are player-fee **claims** |
 | Secrets before client mint | Live panel + sim settlement = fabricatable deposits |
 | `METRO_MAINNET_ARMED` counsel-gated | Mainnet never arms by accident |

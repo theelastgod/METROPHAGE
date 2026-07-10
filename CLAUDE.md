@@ -48,8 +48,8 @@ hard way:
 
 ## Hard constraints (do not violate)
 
-- **$METRO economy is FROZEN by user decision**: rates 110/125, player-funded pool,
-  claim-based $0-gas withdrawals. Don't redesign it.
+- **$METRO economy (Robinhood Chain launch)**: rates **100 in / 125 out**, min **250 ₵**,
+  daily cap **50k ₵**, player-funded pool. Don't redesign mid-launch without a note.
 - **Mainnet is counsel-gated**: `METRO_MAINNET_ARMED` stays off. Devnet only.
 - CA go-live order (SHIPPING.md §5): server secrets FIRST, then client
   `VITE_METRO_MINT` — sim settlement trusts claimed deposits, so a live panel

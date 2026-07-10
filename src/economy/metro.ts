@@ -155,10 +155,20 @@ export function getMetroStatus(): MetroStatus {
   };
 }
 
+// ── Token framing for Robinhood Chain ERC-20 launch ────────────────────────
+// Fixed 1B human units (contract may use 18 decimals; game talks in whole $METRO).
+// P2E share is smaller than the old pump.fun pitch — most supply is market float on
+// RH; the bridge only ever pays from the player-funded deposit pool, not this pool.
 export const METRO_TOTAL_SUPPLY = 1_000_000_000;
-export const METRO_P2E_POOL = 250_000_000;
+/** Soft design budget for lifetime earn rates (not a mintable on-chain allocation). */
+export const METRO_P2E_POOL = 100_000_000; // 10% of supply — design ceiling for rewards math
 export const METRO_MAX_PLAYERS = 100_000;
-export const METRO_PER_PLAYER_BUDGET = Math.round(METRO_P2E_POOL / METRO_MAX_PLAYERS);
+export const METRO_PER_PLAYER_BUDGET = Math.round(METRO_P2E_POOL / METRO_MAX_PLAYERS); // = 1_000
+
+/** Bridge rates (must match server/src/metro.ts BRIDGE — shown in UI when pool offline). */
+export const METRO_DEPOSIT_CREDITS = 100;
+export const METRO_WITHDRAW_CREDITS = 125;
+export const METRO_MIN_WITHDRAW_CREDITS = 250;
 
 export function fmtMetro(n: number): string {
   const strip = (s: string) => s.replace(/\.?0+$/, "");

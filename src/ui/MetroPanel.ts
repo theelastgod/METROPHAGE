@@ -132,7 +132,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
       if (!p.ok) return;
       pool = p;
       $("m-pool").textContent = `◈ ${fmtMetro(p.poolMetro)}`;
-      $("m-rates").textContent = `in: 1◈ → ${p.depositCreditsPerMetro}₵ · out: ${p.withdrawCreditsPerMetro}₵ → 1◈`;
+      $("m-rates").textContent = `in: 1◈ → ${p.depositCreditsPerMetro}₵ · out: ${p.withdrawCreditsPerMetro}₵ → 1◈ · min ${p.minWithdrawCredits ?? 250}₵`;
       const chainLabel =
         p.chain === "robinhood" || p.networkName
           ? String(p.networkName || "Robinhood Chain")
