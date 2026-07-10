@@ -4,6 +4,7 @@ import type { TileGrid } from "../world/district";
 import type { ClientMsg, ServerMsg, InputCmd, PlayerLook, Item, EstateFurniture } from "./protocol";
 import { PROTOCOL_VERSION } from "./protocol";
 import { tutorialStepAt } from "./tutorial";
+import { walletSessionSecret } from "../economy/wallet";
 
 /** True when the page is on a public host but the WS URL still points at loopback —
  *  the classic "forgot VITE_SERVER_URL" Pages footgun. */
@@ -17,10 +18,12 @@ export function isServerUrlMisconfigured(wsUrl: string): boolean {
 
 /** Guest-identity device secret — generated once per callsign on this device and bound
  *  server-side on first login. Stops anyone else logging in as your name and selling
- *  your house. Wallet sign-ins don't need it (the signature is the proof). */
-function deviceSecretFor(name: string): string | undefined {
+ *  your house. Wallet sign-ins don't need it (the signature is the proof).
+ *  Exported so title-screen create can mint the secret before the first WS login. */
+export function ensureGuestDeviceSecret(name: string): string | undefined {
   try {
     const key = "mp_secret_" + (name || "").toLowerCase().replace(/[^a-z0-9_-]/g, "");
+    if (!key || key === "mp_secret_") return undefined;
     let s = localStorage.getItem(key);
     if (!s) {
       s = crypto.randomUUID();
@@ -30,6 +33,11 @@ function deviceSecretFor(name: string): string | undefined {
   } catch {
     return undefined; // storage unavailable (private mode) — plays as an unbound guest
   }
+}
+
+/** @deprecated use ensureGuestDeviceSecret */
+function deviceSecretFor(name: string): string | undefined {
+  return ensureGuestDeviceSecret(name);
 }
 
 export interface RemotePlayer {
@@ -242,12 +250,16 @@ export default class NetClient {
   escortActive = false;
   /** connecting | connected | reconnecting | offline */
   onConnectionState?: (state: "connecting" | "connected" | "reconnecting" | "offline") => void;
+  /** Fired once when the server rejects wallet auth (stale sig / missing session). */
+  onAuthRequired?: () => void;
 
   private ws?: WebSocket;
   private manualClose = false;
   private reconnectAttempts = 0;
+  private authRetryUsed = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingGraduate = false;
+  private pendingSkip = false;
   private intent = { mx: 0, my: 0 };
   private seq = 0;
   private pending: InputCmd[] = [];
@@ -275,10 +287,13 @@ export default class NetClient {
     }
   }
 
-  /** Optional signed wallet proof; when set, login is a durable wallet identity. */
-  private auth?: { wallet: string; sig: string; ts: number };
-  setAuth(proof?: { wallet: string; sig: string; ts: number }) {
+  /** Optional signed wallet proof; when set, login is a durable wallet identity.
+   *  sig/ts optional when a bound device session is enough for zone travel. */
+  private auth?: { wallet: string; sig?: string; ts?: number };
+  setAuth(proof?: { wallet: string; sig?: string; ts?: number }) {
     this.auth = proof;
+    // New proof can be retried once if the previous attempt was session-only.
+    if (proof?.sig) this.authRetryUsed = false;
   }
 
   equip(itemId: string) {
@@ -311,7 +326,17 @@ export default class NetClient {
     this.onConnectionState?.(this.reconnectAttempts > 0 ? "reconnecting" : "connecting");
     const ws = new WebSocket(this.url);
     this.ws = ws;
-    ws.onopen = () =>
+    ws.onopen = () => {
+      const auth = this.auth;
+      const session = auth?.wallet ? walletSessionSecret(auth.wallet) : undefined;
+      // Only forward sig/ts when present (session resume sends wallet alone).
+      const authFields =
+        auth?.wallet
+          ? {
+              wallet: auth.wallet,
+              ...(auth.sig && Number.isFinite(auth.ts) ? { sig: auth.sig, ts: auth.ts } : {}),
+            }
+          : {};
       ws.send(
         JSON.stringify({
           t: "login",
@@ -321,13 +346,21 @@ export default class NetClient {
           arrival: this.arrival,
           classId: this.classId,
           secret: deviceSecretFor(this.name),
+          ...(session ? { session } : {}),
           ...(this.travelFrom ? { from: this.travelFrom } : {}),
-          ...(this.auth ?? {}),
+          ...authFields,
         } satisfies ClientMsg),
       );
+    };
     ws.onmessage = (e) => this.onMessage(e.data);
-    ws.onclose = () => {
+    ws.onclose = (ev) => {
       this.connected = false;
+      // 4001 = wallet auth rejected — ask the host to re-sign once (no reconnect loop).
+      if (ev.code === 4001 && this.auth?.wallet && !this.authRetryUsed) {
+        this.authRetryUsed = true;
+        this.onAuthRequired?.();
+        return;
+      }
       if (!this.manualClose) this.scheduleReconnect();
     };
     ws.onerror = () => {
@@ -509,7 +542,10 @@ export default class NetClient {
         });
       }
       this.onWelcome?.(msg.x, msg.y);
-      if (this.pendingGraduate) {
+      if (this.pendingSkip) {
+        this.pendingSkip = false;
+        this.tutorialSkip();
+      } else if (this.pendingGraduate) {
         this.pendingGraduate = false;
         this.tutorialGraduate();
       }
@@ -652,7 +688,14 @@ export default class NetClient {
       this.tutorialTeach = msg.teach;
       this.tutorialHint = msg.hint;
     } else if (msg.t === "redirect") {
+      // Stop auto-reconnect to the OLD zone (tutorial graduate / skip was racing
+      // scheduleReconnect and dropping people back into the drill yard).
+      this.manualClose = true;
       this.connected = false;
+      if (this.reconnectTimer) {
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
+      }
       this.pushChat({ from: "", ch: "sys", text: msg.text, faction: -1, sys: true });
       this.onRedirect?.(msg.zone);
     } else if (msg.t === "story") {
@@ -784,6 +827,11 @@ export default class NetClient {
     this.sendMsg({ t: "estate", action: "sign" });
   }
   tutorialSkip() {
+    if (!this.connected) {
+      this.pendingSkip = true;
+      return;
+    }
+    this.pendingSkip = false;
     this.sendMsg({ t: "tutorial", action: "skip" });
   }
   tutorialGraduate() {

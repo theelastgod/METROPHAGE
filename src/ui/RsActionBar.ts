@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { drawHudPanel } from "./panelChrome";
 import { bodyFont, displayFont } from "./typography";
 import { onlineHudStack, uiDim, uiGap } from "./uiLayout";
+import { prefersMobileUx } from "../systems/Mobile";
 
 export interface ActionBarSlot {
   key: string;
@@ -21,19 +22,28 @@ export default class RsActionBar {
   private readonly x: number;
   private readonly y: number;
   private readonly w: number;
-  private readonly h = uiDim(40);
+  private readonly h: number;
+  private readonly slotW: number;
   private activeKey: string | null = null;
 
   constructor(scene: Phaser.Scene, slots: ActionBarSlot[]) {
     this.scene = scene;
     this.slots = slots;
-    const slotW = uiDim(54);
+    // Slightly taller/wider slots when many (mobile adds Chat).
+    this.slotW = uiDim(slots.length >= 4 ? 50 : 54);
+    this.h = uiDim(slots.length >= 4 ? 44 : 40);
     const gap = uiGap("sm");
-    this.w = slots.length * slotW + (slots.length - 1) * gap + uiGap("lg");
+    this.w = slots.length * this.slotW + (slots.length - 1) * gap + uiGap("lg");
     const stack = onlineHudStack(scene.scale.height);
-    // right-anchored so the left-anchored equip hotbar never collides with it
-    this.x = scene.scale.width - this.w - uiDim(12);
-    this.y = stack.actionY;
+    if (prefersMobileUx()) {
+      // Centered under the top chrome — free of stick (BL) and actions (BR).
+      this.x = Math.max(uiDim(8), (scene.scale.width - this.w) / 2);
+      this.y = uiDim(92);
+    } else {
+      // right-anchored so the left-anchored equip hotbar never collides with it
+      this.x = scene.scale.width - this.w - uiDim(12);
+      this.y = stack.actionY + (stack.actionH - this.h) / 2;
+    }
     this.g = scene.add.graphics().setScrollFactor(0).setDepth(1050);
     this.redraw();
   }
@@ -53,7 +63,7 @@ export default class RsActionBar {
     this.zones = [];
 
     drawHudPanel(g, this.x, this.y, this.w, this.h);
-    const slotW = uiDim(54);
+    const slotW = this.slotW;
     const gap = uiDim(6);
     let sx = this.x + uiDim(8);
     for (const slot of this.slots) {
@@ -78,7 +88,7 @@ export default class RsActionBar {
       }
 
       const z = this.scene.add
-        .zone(sx, this.y + uiDim(6), slotW, this.h - uiDim(12))
+        .zone(sx, this.y + uiDim(4), slotW, this.h - uiDim(8))
         .setOrigin(0)
         .setScrollFactor(0)
         .setInteractive({ useHandCursor: true })
@@ -93,8 +103,7 @@ export default class RsActionBar {
 
   private redrawHover(sx: number, slot: ActionBarSlot, hover: boolean) {
     if (hover) {
-      const slotW = uiDim(72);
-      this.g.lineStyle(2, slot.color, 1).strokeRoundedRect(sx, this.y + uiDim(6), slotW, this.h - uiDim(12), 3);
+      this.g.lineStyle(2, slot.color, 1).strokeRoundedRect(sx, this.y + uiDim(4), this.slotW, this.h - uiDim(8), 3);
     }
   }
 

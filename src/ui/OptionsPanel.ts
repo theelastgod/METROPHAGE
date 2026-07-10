@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import { effectiveGraphicsQuality, getSettings, updateSettings, type GraphicsQuality, type SettingsData } from "../systems/Settings";
+import { prefersMobileUx } from "../systems/Mobile";
 import { drawPanelFrame } from "./panelChrome";
 import { dimBackdrop, modalRect, panelPad, uiDim, uiFont, uiGap } from "./uiLayout";
 
@@ -59,7 +60,14 @@ export default class OptionsPanel {
     this.text(this.x + panelPad(), this.y + uiGap("lg"), "OPTIONS", "#eafdff", 15, D);
 
     let ry = this.y + uiDim(58);
-    this.addRow("rsControls", "RS CONTROLS (opt-in)", true, ry, D, "#f7ff3c");
+    this.addRow(
+      "rsControls",
+      prefersMobileUx() ? "TAP-TO-WALK (locked on phone)" : "TAP-TO-WALK (opt-in)",
+      true,
+      ry,
+      D,
+      "#f7ff3c",
+    );
     ry += this.rowH;
     this.addCycleRow("uiDensity", "HUD DENSITY", ["new", "full"] as unknown as GraphicsQuality[], ry, D, "#39ff88");
     ry += this.rowH;
@@ -128,6 +136,8 @@ export default class OptionsPanel {
       const next = row.cycle[(i + 1 + row.cycle.length) % row.cycle.length];
       updateSettings({ [row.key]: next } as Partial<SettingsData>);
     } else if (row.toggle) {
+      // Phones need tap-to-walk — don't let it flip off and soft-lock movement.
+      if (row.key === "rsControls" && prefersMobileUx() && getSettings().rsControls) return;
       updateSettings({ [row.key]: !getSettings()[row.key] } as Partial<SettingsData>);
     } else if (row.key === "uiScale") {
       const v = Phaser.Math.Clamp(localX / row.trackW, 0, 1);

@@ -421,7 +421,7 @@ async function lookpersist() {
         }
       };
       ws.addEventListener("message", onMsg);
-      ws.send(JSON.stringify({ t: "login", name: nm, faction: 0, ...(look ? { look } : {}) }));
+      ws.send(JSON.stringify({ t: "login", name: nm, faction: 0, secret: `smk-${nm}`, ...(look ? { look } : {}) }));
     });
 
   // Phase 1: A logs in WITH a look, then disconnects (server persists on close).
@@ -1322,7 +1322,7 @@ async function cosmetic() {
         }
       };
       ws.addEventListener("message", onMsg);
-      ws.send(JSON.stringify({ t: "login", name, faction: 0, look }));
+      ws.send(JSON.stringify({ t: "login", name, faction: 0, secret: `smk-${name}`, look }));
     });
 
   const D = await connect();
@@ -1460,39 +1460,20 @@ async function bounty() {
 }
 
 async function shop() {
+  // BUY MECHANICS only — "kills earn credits" is already asserted by `combat`.
+  // (The old grind-for-220₵ intro was wall-blind and flaked once districts got
+  // hub-ring spawns + enemy movement patterns.) Harness pre-seeds: shopcash 2000₵.
   const ws = await connect();
   const store = { x: 0, y: 0, enemies: [], inventory: [], credits: 0 };
   ws.addEventListener("message", (ev) => {
     const m = JSON.parse(ev.data);
     if (m.t === "inv") store.inventory = m.items;
   });
-  const w = await login(ws, "shopper_" + Math.random().toString(36).slice(2, 6));
+  const w = await login(ws, "shopcash");
   store.x = w.x;
   store.y = w.y;
   trackState(ws, w.id, store);
-  await sleep(250);
-
-  // earn credits by killing cops until we can afford a tuned cache (180)
-  const nearest = () => {
-    let b = null, bd = 1e9;
-    for (const e of store.enemies) {
-      const d = Math.hypot(e.x - store.x, e.y - store.y);
-      if (d < bd) { bd = d; b = e; }
-    }
-    return b;
-  };
-  let seq = 0;
-  const t0 = Date.now();
-  while (Date.now() - t0 < 25000 && (store.credits || 0) < 220) {
-    const e = nearest();
-    if (e) {
-      const dx = e.x - store.x, dy = e.y - store.y, d = Math.hypot(dx, dy) || 1;
-      seq++;
-      ws.send(JSON.stringify({ t: "input", seq, mx: d > 110 ? dx / d : 0, my: d > 110 ? dy / d : 0 }));
-      ws.send(JSON.stringify({ t: "fire", seq, aim: Math.atan2(dy, dx) }));
-    }
-    await sleep(45);
-  }
+  await sleep(600);
   const creditsBefore = store.credits || 0;
   const invBefore = store.inventory.length;
 
@@ -1511,7 +1492,7 @@ async function shop() {
   await sleep(200);
 
   const checks = {
-    earnedCredits: creditsBefore >= 150,
+    seededCredits: creditsBefore >= 150,
     cacheGranted: store.inventory.length >= invBefore + 1 && !!bought && bought.rarity === "tuned",
     creditsDeducted: creditsAfter === creditsBefore - 150,
     overspendRejected: (store.credits || 0) === cMid && store.inventory.length === invMid,
@@ -1525,10 +1506,13 @@ async function shop() {
 }
 
 async function bestiary() {
-  const WW = 1280, WH = 960;
   const ws = await connect();
   const store = { x: 0, y: 0, enemies: [] };
   const w = await login(ws, "zoologist");
+  // Districts are DISTRICT_SCALE× the old design size — tour the REAL bounds from
+  // welcome.world, or AOI culling only ever shows the spawn-ring patrol cops.
+  const WW = w.world?.w ?? 1280;
+  const WH = w.world?.h ?? 960;
   store.x = w.x;
   store.y = w.y;
   trackState(ws, w.id, store);
@@ -1537,13 +1521,18 @@ async function bestiary() {
   const collect = () => {
     for (const e of store.enemies) if (!e.boss) seen.add(e.kind);
   };
-  // tour the corners + centre, collecting the enemy archetypes seen in AOI along the way
-  const waypoints = [[120, 120], [WW - 120, 120], [WW - 120, WH - 120], [120, WH - 120], [WW / 2, WH / 2]];
+  const enough = () => seen.size >= 3 && [...seen].some((k) => k >= 4);
+  // tour a spread ring + centre, collecting the archetypes seen in AOI along the way
+  const waypoints = [
+    [WW * 0.3, WH * 0.3], [WW * 0.7, WH * 0.3], [WW * 0.5, WH * 0.5],
+    [WW * 0.3, WH * 0.7], [WW * 0.7, WH * 0.7], [WW * 0.5, WH * 0.15],
+  ];
   let seq = 0;
-  for (const [tx, ty] of waypoints) {
+  outer: for (const [tx, ty] of waypoints) {
     const t0 = Date.now();
-    while (Date.now() - t0 < 6000) {
+    while (Date.now() - t0 < 14000) {
       collect();
+      if (enough()) break outer; // variety proven — stop touring
       const dx = tx - store.x, dy = ty - store.y, d = Math.hypot(dx, dy) || 1;
       if (d < 50) break;
       seq++;
@@ -2776,7 +2765,7 @@ async function look() {
       }
     };
     a.addEventListener("message", onMsg);
-    a.send(JSON.stringify({ t: "login", name: "looker", faction: 2, look: A_LOOK }));
+    a.send(JSON.stringify({ t: "login", name: "looker", faction: 2, secret: "smk-looker", look: A_LOOK }));
   });
   const b = await connect();
   const wb = await login(b, "viewer", 0);

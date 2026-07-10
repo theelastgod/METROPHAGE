@@ -1,10 +1,10 @@
 import Phaser from "phaser";
-import { COLORS } from "../config";
+import { COLORS, VIEW_H, VIEW_W } from "../config";
 
 import { drawPanelFrame } from "./panelChrome";
-import { dimBackdrop, modalRect, panelPad, uiDim, uiGap } from "./uiLayout";
+import { dimBackdrop, panelPad, uiDim, uiGap } from "./uiLayout";
 import { bodyFont, displayFont } from "./typography";
-import { addPanelGlow, drawScanlines as studioScanlines } from "./studioChrome";
+import { addPanelGlow } from "./studioChrome";
 
 export type WalletStep = "connect" | "sign" | "play";
 
@@ -43,15 +43,9 @@ const STEP_LABELS: Array<{ id: WalletStep; label: string }> = [
   { id: "play", label: "ENTER" },
 ];
 
-function panelHeight(actionCount: number) {
-  if (actionCount === 0) return 340;
-  const base = actionCount <= 1 ? 420 : 320;
-  const perBtn = 64;
-  return base + actionCount * perBtn;
-}
-
 /**
  * Centered identity gate — wallet connect + sign-in for the title screen.
+ * Layout is a single top-down stack so headline/body/actions never overlap.
  */
 export default class WalletSignInPanel {
   private scene: Phaser.Scene;
@@ -61,7 +55,7 @@ export default class WalletSignInPanel {
   private glow?: Phaser.GameObjects.Image;
   private backdrop: Phaser.GameObjects.Container;
   private objs: Phaser.GameObjects.GameObject[] = [];
-  private frame = modalRect(580, panelHeight(1));
+  private frame = { x: 0, y: 0, w: 0, h: 0 };
   private visible = false;
   private pulse = 0;
   private state: WalletPanelState | null = null;
@@ -85,8 +79,6 @@ export default class WalletSignInPanel {
   show(state: WalletPanelState) {
     this.visible = true;
     this.state = state;
-    this.frame = modalRect(580, panelHeight(Math.max(1, state.actions.length)));
-    if (state.offsetY) this.frame.y += uiDim(state.offsetY);
     this.backdrop.setVisible(true);
     this.root.setVisible(true);
     this.render(state);
@@ -94,8 +86,8 @@ export default class WalletSignInPanel {
       targets: this.root,
       alpha: 1,
       scale: 1,
-      duration: 320,
-      ease: "Back.out",
+      duration: 280,
+      ease: "Cubic.out",
     });
   }
 
@@ -148,34 +140,31 @@ export default class WalletSignInPanel {
     return STEP_LABELS.findIndex((s) => s.id === step);
   }
 
-  private drawScanlines(g: Phaser.GameObjects.Graphics, x: number, y: number, w: number, h: number) {
-    g.fillStyle(0x00e5ff, 0.025);
-    for (let ly = y; ly < y + h; ly += uiDim(4)) {
-      g.fillRect(x, ly, w, 1);
-    }
+  private panelWidth() {
+    const max = Math.min(uiDim(560), VIEW_W - uiDim(48));
+    return Math.max(uiDim(320), max);
   }
 
   private drawAnimOverlay() {
     const ag = this.animG;
     ag.clear();
     if (!this.state) return;
-    const { x, y } = this.frame;
 
     if (this.state.status === "busy") {
-      const statusY = y + uiDim(118);
-      const r = uiDim(8) + Math.sin(this.pulse) * uiDim(2);
-      ag.lineStyle(1, COLORS.neonYellow, 0.35 + Math.sin(this.pulse) * 0.15).strokeCircle(x + uiDim(30), statusY + uiDim(8), r);
-      ag.lineStyle(1, COLORS.neonYellow, 0.15).strokeCircle(x + uiDim(30), statusY + uiDim(8), r + uiDim(6));
+      const { x, y } = this.frame;
+      const statusY = y + uiDim(108);
+      const r = uiDim(7) + Math.sin(this.pulse) * uiDim(1.5);
+      ag.lineStyle(1, COLORS.neonYellow, 0.35 + Math.sin(this.pulse) * 0.15).strokeCircle(x + uiDim(28), statusY + uiDim(10), r);
     }
 
     for (let i = 0; i < this.btnRects.length; i++) {
       const btn = this.btnRects[i];
       if (btn.act.primary ?? this.state.actions.indexOf(btn.act) === 0) {
-        const pulse = 0.06 + Math.sin(this.pulse) * 0.03;
+        const pulse = 0.05 + Math.sin(this.pulse) * 0.025;
         ag.fillStyle(btn.act.color, pulse).fillRoundedRect(btn.x + uiDim(2), btn.y + uiDim(2), btn.w - uiDim(4), btn.h - uiDim(4), 3);
       }
       if (i === this.hoverBtn) {
-        const inset = uiDim(3);
+        const inset = uiDim(2);
         ag.lineStyle(uiDim(2), btn.act.color, 1).strokeRoundedRect(
           btn.x + inset,
           btn.y + inset,
@@ -190,170 +179,264 @@ export default class WalletSignInPanel {
   private render(state: WalletPanelState) {
     this.hoverBtn = -1;
     this.clearDynamic();
-    const { x, y, w, h } = this.frame;
+
+    const pad = panelPad();
+    const gap = uiGap("md");
+    const w = this.panelWidth();
+    const innerW = w - pad * 2;
+    const wrapW = innerW - uiGap("sm");
+
+    // ── Measure content first so the frame height fits text (no clipping/overlap) ──
+    const measure = (text: string, style: Phaser.Types.GameObjects.Text.TextStyle) => {
+      const t = this.scene.add.text(0, 0, text, style).setVisible(false);
+      const h = t.height;
+      const tw = t.width;
+      t.destroy();
+      return { h, w: tw };
+    };
+
+    const headlineStyle = displayFont(20, {
+      color: "#eafdff",
+      fontStyle: "bold",
+      wordWrap: { width: wrapW },
+    });
+    const bodyStyle = bodyFont(13, {
+      color: "#9aa3b2",
+      wordWrap: { width: wrapW },
+      lineSpacing: uiDim(4),
+    });
+    const headlineM = measure(state.headline || " ", headlineStyle);
+    const bodyM = measure(state.body || " ", bodyStyle);
+
+    let btnH = uiDim(56);
+    const btnGap = uiGap("sm");
+    const n = state.actions.length;
+    let actionH = n > 0 ? n * btnH + (n - 1) * btnGap : 0;
+
+    // Vertical budget (design-stack):
+    // header 52 · steps 40 · status 36 · content gap · headline · body · actions · footer 36
+    const headerH = uiDim(52);
+    const stepsH = uiDim(40);
+    const statusH = uiDim(36);
+    const contentPad = uiGap("lg");
+    const footerH = uiDim(36);
+    const stackGaps = gap * 4; // between major sections
+
+    let contentBlock =
+      contentPad + headlineM.h + uiGap("sm") + bodyM.h + contentPad;
+    // Cap body-driven growth so the panel stays on screen with many actions.
+    const maxPanel = VIEW_H - uiDim(24);
+    let fixedChrome =
+      headerH + stepsH + statusH + stackGaps + actionH + footerH + pad * 2;
+    const maxContent = Math.max(uiDim(80), maxPanel - fixedChrome);
+    if (contentBlock > maxContent) contentBlock = maxContent;
+
+    let h = fixedChrome + contentBlock;
+    // Many actions (guest CONTINUE = 5) can outgrow the view on their own — clamping h
+    // alone let the button stack march past the frame and off-screen. Shrink the
+    // buttons to fit before clamping.
+    if (h > maxPanel && n > 0) {
+      const minBtn = uiDim(42);
+      const shrinkPer = Math.ceil((h - maxPanel) / n);
+      const squeezed = Math.max(minBtn, btnH - shrinkPer);
+      fixedChrome -= (btnH - squeezed) * n;
+      btnH = squeezed;
+      actionH = n * btnH + (n - 1) * btnGap;
+      h = fixedChrome + contentBlock;
+    }
+    if (h > maxPanel) h = maxPanel;
+
+    // Dead-center the modal on screen; only nudge down when a runner preview sits above.
+    let x = (VIEW_W - w) / 2;
+    let y = (VIEW_H - h) / 2;
+    if (state.offsetY) {
+      // Keep the panel optically centered under the preview instead of shoving it to the bottom.
+      y = Math.min(y + uiDim(state.offsetY) * 0.55, VIEW_H - h - uiDim(12));
+    }
+    y = Math.max(uiDim(8), Math.min(y, VIEW_H - h - uiDim(8)));
+    this.frame = { x, y, w, h };
+
     const g = this.g;
     g.clear();
-
     drawPanelFrame(g, x, y, w, h);
     this.glow?.destroy();
     const glowTint = state.status === "error" ? 0xff3b6b : state.status === "ready" ? 0x39ff88 : COLORS.neonCyan;
-    this.glow = addPanelGlow(this.scene, x, y, w, h, glowTint, 0.12);
+    this.glow = addPanelGlow(this.scene, x, y, w, h, glowTint, 0.1);
     this.root.addAt(this.glow, 0);
-    studioScanlines(g, x + panelPad(), y + uiDim(64), w - panelPad() * 2, h - uiDim(88));
 
-    // left accent rail
-    g.fillStyle(COLORS.neonCyan, 0.55).fillRect(x + uiDim(4), y + uiDim(14), uiDim(3), h - uiDim(28));
+    // Left accent
+    g.fillStyle(COLORS.neonCyan, 0.55).fillRect(x + uiDim(4), y + uiDim(12), uiDim(3), h - uiDim(24));
 
-    // header band
-    g.fillStyle(0x120a24, 0.94).fillRect(x + uiGap("md"), y + uiGap("xs"), w - uiGap("lg"), uiDim(58));
-    g.lineStyle(1, COLORS.neonCyan, 0.4).lineBetween(x + panelPad(), y + uiDim(62), x + w - panelPad(), y + uiDim(62));
-
+    // ── Header ──
+    let cy = y + uiDim(10);
+    g.fillStyle(0x120a24, 0.94).fillRect(x + uiGap("sm"), cy, w - uiGap("lg"), headerH - uiDim(4));
     this.add(
       this.scene.add
-        .text(x + panelPad(), y + uiGap("md"), "◢ METROPHAGE", displayFont(20, { color: "#00e5ff", fontStyle: "bold" }))
+        .text(x + pad, cy + uiDim(8), "◢ METROPHAGE", displayFont(18, { color: "#00e5ff", fontStyle: "bold" }))
         .setOrigin(0, 0)
-        .setShadow(0, 0, "#00e5ff", 4, true, true),
+        .setShadow(0, 0, "#00e5ff", 3, true, true),
     );
     this.add(
       this.scene.add
-        .text(x + w - panelPad(), y + uiGap("lg"), "SOLANA · $METRO", bodyFont(11, { color: "#6b7184" }))
+        .text(x + w - pad, cy + uiDim(14), "ROBINHOOD · ETH L2", bodyFont(10, { color: "#6b7184" }))
         .setOrigin(1, 0),
     );
+    cy += headerH;
+    g.lineStyle(1, COLORS.neonCyan, 0.35).lineBetween(x + pad, cy - uiDim(4), x + w - pad, cy - uiDim(4));
 
-    // step rail with progress connector
-    const stepY = y + uiDim(80);
-    const railPad = panelPad();
-    const stepW = (w - railPad * 2) / STEP_LABELS.length;
+    // ── Steps ──
+    cy += uiGap("sm");
+    const stepY = cy;
+    const stepW = innerW / STEP_LABELS.length;
     const cur = this.stepIndex(state.step);
-
-    g.lineStyle(2, 0x2a2440, 0.8);
-    g.lineBetween(x + railPad + stepW * 0.5, stepY + uiDim(14), x + w - railPad - stepW * 0.5, stepY + uiDim(14));
+    g.lineStyle(2, 0x2a2440, 0.75);
+    g.lineBetween(x + pad + stepW * 0.5, stepY + uiDim(14), x + w - pad - stepW * 0.5, stepY + uiDim(14));
     if (cur > 0) {
-      const progEnd = x + railPad + stepW * (cur + 0.5);
       g.lineStyle(2, COLORS.neonGreen, 0.65);
-      g.lineBetween(x + railPad + stepW * 0.5, stepY + uiDim(14), progEnd, stepY + uiDim(14));
+      g.lineBetween(x + pad + stepW * 0.5, stepY + uiDim(14), x + pad + stepW * (cur + 0.5), stepY + uiDim(14));
     }
-
     STEP_LABELS.forEach((s, i) => {
-      const sx = x + railPad + i * stepW;
-      const boxW = stepW - uiGap("md");
+      const sx = x + pad + i * stepW;
+      const boxW = stepW - uiGap("sm");
       const active = s.id === state.step;
       const done = cur > i;
       const accent = active ? 0x00e5ff : done ? 0x39ff88 : 0x2a2440;
-      g.fillStyle(accent, active ? 0.28 : done ? 0.14 : 0.08).fillRoundedRect(sx, stepY, boxW, uiDim(34), 4);
-      g.lineStyle(1, accent, active ? 1 : 0.5).strokeRoundedRect(sx, stepY, boxW, uiDim(34), 4);
+      g.fillStyle(accent, active ? 0.22 : done ? 0.12 : 0.06).fillRoundedRect(sx, stepY, boxW, uiDim(30), 4);
+      g.lineStyle(1, accent, active ? 0.95 : 0.45).strokeRoundedRect(sx, stepY, boxW, uiDim(30), 4);
       const prefix = done ? "✓" : `${i + 1}`;
       this.add(
         this.scene.add
-          .text(sx + boxW / 2, stepY + uiGap("sm"), `${prefix} ${s.label}`, bodyFont(10, { color: active ? "#eafdff" : done ? "#39ff88" : "#5a6172", fontStyle: active ? "bold" : "normal" }))
+          .text(
+            sx + boxW / 2,
+            stepY + uiDim(7),
+            `${prefix} ${s.label}`,
+            bodyFont(10, { color: active ? "#eafdff" : done ? "#39ff88" : "#5a6172", fontStyle: active ? "bold" : "normal" }),
+          )
           .setOrigin(0.5, 0),
       );
     });
+    cy += stepsH + gap;
 
-    // status pill
-    const statusY = y + uiDim(128);
+    // ── Status row ──
+    const statusY = cy;
     const dotColor = STATUS_COLOR[state.status];
-    const pillW = uiDim(200);
-    g.fillStyle(0x0a1020, 0.85).fillRoundedRect(x + uiDim(22), statusY - uiDim(4), pillW, uiDim(28), 6);
-    g.lineStyle(1, parseInt(dotColor.slice(1), 16), 0.55).strokeRoundedRect(x + uiDim(22), statusY - uiDim(4), pillW, uiDim(28), 6);
-    g.fillStyle(parseInt(dotColor.slice(1), 16), 0.95).fillCircle(x + uiDim(38), statusY + uiDim(10), uiDim(4));
+    // Fit the pill to the text (capped) — a fixed pill was cropping copy mid-word.
+    const statusMaxW = state.wallet ? innerW * 0.55 : innerW;
+    const statusM = measure((state.statusText || "").toUpperCase(), bodyFont(11, { fontStyle: "bold" }));
+    let statusText = (state.statusText || "").toUpperCase();
+    if (statusM.w > statusMaxW - uiDim(40)) {
+      // Ellipsize instead of hard-cropping mid-glyph.
+      const keep = Math.max(8, Math.floor(statusText.length * ((statusMaxW - uiDim(48)) / statusM.w)));
+      statusText = statusText.slice(0, keep).trimEnd() + "…";
+    }
+    const statusTextM = measure(statusText, bodyFont(11, { fontStyle: "bold" }));
+    const statusPillW = Math.min(statusMaxW, statusTextM.w + uiDim(40));
+    g.fillStyle(0x0a1020, 0.9).fillRoundedRect(x + pad, statusY, statusPillW, uiDim(28), 6);
+    g.lineStyle(1, parseInt(dotColor.slice(1), 16), 0.5).strokeRoundedRect(x + pad, statusY, statusPillW, uiDim(28), 6);
+    g.fillStyle(parseInt(dotColor.slice(1), 16), 0.95).fillCircle(x + pad + uiDim(14), statusY + uiDim(14), uiDim(4));
     this.add(
       this.scene.add
-        .text(x + uiDim(50), statusY + uiDim(2), state.statusText.toUpperCase(), bodyFont(11, { color: dotColor, fontStyle: "bold" }))
+        .text(x + pad + uiDim(26), statusY + uiDim(6), statusText, bodyFont(11, { color: dotColor, fontStyle: "bold" }))
         .setOrigin(0, 0),
     );
 
     if (state.wallet) {
-      const chipW = uiDim(172);
-      const chipX = x + w - uiDim(22) - chipW;
-      g.fillStyle(0x0a1830, 0.92).fillRoundedRect(chipX, statusY - uiDim(4), chipW, uiDim(28), 6);
-      g.lineStyle(1, COLORS.neonGreen, 0.75).strokeRoundedRect(chipX, statusY - uiDim(4), chipW, uiDim(28), 6);
+      const chipLabel = `◈ ${this.short(state.wallet)}`;
+      const chipW = Math.min(innerW * 0.4, uiDim(160));
+      const chipX = x + w - pad - chipW;
+      g.fillStyle(0x0a1830, 0.92).fillRoundedRect(chipX, statusY, chipW, uiDim(28), 6);
+      g.lineStyle(1, COLORS.neonGreen, 0.7).strokeRoundedRect(chipX, statusY, chipW, uiDim(28), 6);
       this.add(
         this.scene.add
-          .text(chipX + chipW / 2, statusY + uiDim(10), `◈ ${this.short(state.wallet)}`, bodyFont(11, { color: "#39ff88", fontStyle: "bold" }))
+          .text(chipX + chipW / 2, statusY + uiDim(14), chipLabel, bodyFont(11, { color: "#39ff88", fontStyle: "bold" }))
           .setOrigin(0.5),
       );
     }
+    cy += statusH + gap;
 
-    const btnH = uiDim(54);
-    const btnGap = uiGap("md");
-    const footerH = uiDim(44);
-    const actionBlockH = state.actions.length * btnH + Math.max(0, state.actions.length - 1) * btnGap;
-    const actionTop = y + h - footerH - uiGap("lg") - actionBlockH;
+    // ── Content (headline + body) — centered in the middle of the panel ──
+    const contentTop = cy;
+    const contentH = contentBlock;
+    g.fillStyle(0x08061a, 0.5).fillRoundedRect(x + pad, contentTop, innerW, contentH, 6);
+    g.lineStyle(1, 0x1b2740, 0.55).strokeRoundedRect(x + pad, contentTop, innerW, contentH, 6);
 
-    const contentY = y + uiDim(168);
-    const contentBottom = state.actions.length > 0 ? actionTop - uiGap("xl") : y + h - footerH - uiGap("lg");
-    const contentH = Math.max(uiDim(72), contentBottom - contentY);
-    const compact = state.actions.length === 0;
+    // Stack headline + body as a unit, then center that unit inside the box.
+    const stackH = headlineM.h + uiGap("sm") + Math.min(bodyM.h, contentH - contentPad * 2 - headlineM.h - uiGap("sm"));
+    const stackTop = contentTop + Math.max(contentPad, (contentH - stackH) / 2);
+    const midX = x + w / 2;
 
-    if (!compact) {
-      g.fillStyle(0x08061a, 0.55).fillRoundedRect(x + panelPad(), contentY, w - panelPad() * 2, contentH, 6);
-      g.lineStyle(1, 0x1b2740, 0.6).strokeRoundedRect(x + panelPad(), contentY, w - panelPad() * 2, contentH, 6);
-      this.drawScanlines(g, x + panelPad() + uiGap("xs"), contentY + uiGap("xs"), w - panelPad() * 2 - uiGap("sm"), contentH - uiGap("sm"));
-    }
+    const headlineCentered = displayFont(20, {
+      color: "#eafdff",
+      fontStyle: "bold",
+      align: "center",
+      wordWrap: { width: wrapW },
+    });
+    const bodyCentered = bodyFont(13, {
+      color: "#9aa3b2",
+      align: "center",
+      wordWrap: { width: wrapW },
+      lineSpacing: uiDim(4),
+    });
 
-    const headlineY = contentY + uiGap("md");
-    const bodyY = headlineY + uiDim(40);
     this.add(
       this.scene.add
-        .text(x + panelPad() + uiGap("sm"), headlineY, state.headline, displayFont(compact ? 22 : 24, { color: "#eafdff", fontStyle: "bold", wordWrap: { width: w - panelPad() * 2 - uiGap("lg") } }))
-        .setOrigin(0, 0),
+        .text(midX, stackTop, state.headline, headlineCentered)
+        .setOrigin(0.5, 0),
     );
+
+    const bodyY = stackTop + headlineM.h + uiGap("sm");
+    const bodyMaxH = contentTop + contentH - contentPad - bodyY;
     const bodyText = this.scene.add
-      .text(x + panelPad() + uiGap("sm"), bodyY, state.body, bodyFont(14, { color: "#9aa3b2", wordWrap: { width: w - panelPad() * 2 - uiGap("lg") } }))
-      .setOrigin(0, 0);
+      .text(midX, bodyY, state.body, bodyCentered)
+      .setOrigin(0.5, 0);
+    if (bodyMaxH <= uiDim(20)) {
+      // No room in a squeezed panel — hiding beats spilling over the action buttons.
+      bodyText.setVisible(false);
+    } else if (bodyText.height > bodyMaxH) {
+      // Crop from top of the text object; origin is center-x so crop x is still 0-based.
+      bodyText.setCrop(0, 0, wrapW + uiDim(4), bodyMaxH);
+    }
     this.add(bodyText);
+    cy = contentTop + contentH + gap;
 
-    if (compact) {
-      const tipY = bodyY + uiDim(72);
-      this.add(
-        this.scene.add
-          .text(x + w / 2, tipY, "Install Phantom, Backpack, or Solflare\nThen refresh this page", bodyFont(12, { color: "#5a6172", align: "center" }))
-          .setOrigin(0.5, 0),
-      );
-    }
-
-    // security strip — sits just above the action block; decorative, so it yields
-    // (hides) when the wrapped body copy runs long instead of overlapping it
-    if (state.actions.length > 0) {
-      const stripY = actionTop - uiDim(30);
-      if (bodyText.y + bodyText.height + uiGap("sm") <= stripY) {
-        g.fillStyle(0x0e1830, 0.5).fillRect(x + panelPad(), stripY, w - panelPad() * 2, uiDim(22));
-        g.lineStyle(1, COLORS.neonCyan, 0.25).lineBetween(x + panelPad(), stripY, x + w - panelPad(), stripY);
-        this.add(
-          this.scene.add
-            .text(x + w / 2, stripY + uiGap("sm"), "NO TX FEE  ·  READ-ONLY CONNECT  ·  ONE RUNNER PER WALLET", bodyFont(9, { color: "#4a5266" }))
-            .setOrigin(0.5, 0),
-        );
-      }
-    }
-
-    // actions — anchored above footer
-    const btnW = w - panelPad() * 2;
-    let ay = actionTop;
+    // ── Actions ──
+    const btnW = innerW;
+    let ay = cy;
     for (const act of state.actions) {
-      const bx = x + panelPad();
+      const bx = x + pad;
       const primary = act.primary ?? state.actions.indexOf(act) === 0;
       const fill = primary ? act.color : 0x0e0c1c;
-      const alpha = primary ? 0.32 : 0.88;
-      const rim = uiDim(2);
+      const alpha = primary ? 0.28 : 0.9;
       g.fillStyle(fill, alpha).fillRoundedRect(bx, ay, btnW, btnH, 4);
       g.lineStyle(uiDim(primary ? 2 : 1), act.color, primary ? 0.95 : 0.5).strokeRoundedRect(
-        bx + rim,
-        ay + rim,
-        btnW - rim * 2,
-        btnH - rim * 2,
+        bx + uiDim(1),
+        ay + uiDim(1),
+        btnW - uiDim(2),
+        btnH - uiDim(2),
         4,
       );
 
+      // Two clean lines: label + sub — sub drops out when the stack was squeezed short.
+      const twoLine = btnH >= uiDim(50);
       const label = this.scene.add
-        .text(bx + uiGap("lg"), ay + uiGap("md"), act.label, displayFont(primary ? 17 : 15, { color: primary ? "#eafdff" : this.hex(act.color), fontStyle: "bold" }))
-        .setOrigin(0, 0);
+        .text(bx + uiGap("lg"), ay + (twoLine ? uiDim(17) : btnH / 2), act.label, displayFont(primary ? 15 : 14, {
+          color: primary ? "#eafdff" : this.hex(act.color),
+          fontStyle: "bold",
+        }))
+        .setOrigin(0, 0.5);
       const sub = this.scene.add
-        .text(bx + uiGap("lg"), ay + uiDim(32), act.sub, bodyFont(10, { color: "#7a8295", wordWrap: { width: btnW - uiGap("section") } }))
-        .setOrigin(0, 0);
+        .text(bx + uiGap("lg"), ay + uiDim(32), act.sub, bodyFont(10, {
+          color: "#7a8295",
+          wordWrap: { width: btnW - uiDim(48) },
+        }))
+        .setOrigin(0, 0)
+        .setVisible(twoLine);
+      // Single-line sub: crop if it wraps past the button.
+      if (sub.height > uiDim(16)) {
+        sub.setCrop(0, 0, btnW - uiDim(48), uiDim(14));
+      }
       const chev = this.scene.add
-        .text(bx + btnW - uiDim(16), ay + btnH / 2, "▸", displayFont(18, { color: this.hex(act.color) }))
+        .text(bx + btnW - uiDim(18), ay + btnH / 2, "▸", displayFont(16, { color: this.hex(act.color) }))
         .setOrigin(0.5);
       this.add(label);
       this.add(sub);
@@ -365,7 +448,7 @@ export default class WalletSignInPanel {
       zone.on("pointerover", () => {
         this.hoverBtn = btnIdx;
         label.setColor("#ffffff");
-        chev.setScale(1.15);
+        chev.setScale(1.12);
         this.drawAnimOverlay();
       });
       zone.on("pointerout", () => {
@@ -379,17 +462,24 @@ export default class WalletSignInPanel {
 
       ay += btnH + btnGap;
     }
+    cy = n > 0 ? ay - btnGap + gap : cy;
 
-    // supported wallets + disconnect
-    this.add(
-      this.scene.add
-        .text(x + panelPad(), y + h - uiDim(38), "METAMASK · ROBINHOOD CHAIN (ETH L2)", bodyFont(10, { color: "#4a5266" }))
-        .setOrigin(0, 0),
-    );
+    // ── Footer ── (decorative — drop it when the action stack was squeezed to fit,
+    // or the rule/text lands on top of the last button)
+    const footerY = y + h - footerH;
+    const squeezed = n > 0 && btnH < uiDim(50);
+    if (!squeezed) {
+      g.lineStyle(1, 0x1b2740, 0.5).lineBetween(x + pad, footerY, x + w - pad, footerY);
+      this.add(
+        this.scene.add
+          .text(x + pad, footerY + uiDim(10), "METAMASK · ROBINHOOD CHAIN", bodyFont(10, { color: "#4a5266" }))
+          .setOrigin(0, 0),
+      );
+    }
 
     if (state.showDisconnect && state.onDisconnect) {
       const link = this.scene.add
-        .text(x + w - uiDim(24), y + h - uiDim(34), "disconnect wallet", bodyFont(10, { color: "#6b7184" }))
+        .text(x + w - pad, footerY + uiDim(10), "disconnect", bodyFont(10, { color: "#6b7184" }))
         .setOrigin(1, 0)
         .setInteractive({ useHandCursor: true });
       link.on("pointerover", () => link.setColor("#ff3b6b"));

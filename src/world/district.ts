@@ -499,15 +499,36 @@ export function spawnPoint(grid: TileGrid, def: DistrictDef = DISTRICTS[0]): { x
   return { x: TILE * 1.5, y: TILE * 1.5 };
 }
 
-/** Spawn at a trail gate when entering from another zone; falls back to district spawn. */
+/** True for FRLG-scale one-screen rooms (15×11 venue / home). */
+export function isVenueSizedZone(zone: string | null | undefined): boolean {
+  if (!zone) return false;
+  return /^d\d+i\d+$/.test(zone) || /^h\d+$/.test(zone) || /^est\d+$/.test(zone);
+}
+
+/** Hub service rooms that reuse the full safehouse floor plan. */
+export function isSafehouseSizedInterior(zone: string | null | undefined): boolean {
+  return zone === "clinic" || zone === "bar" || zone === "den" || zone === "shop" || zone === "vault";
+}
+
+/** Spawn at a trail gate when entering from another zone; falls back to the zone's
+ *  canonical spawn (when the caller knows it), then the district spawn. */
 export function spawnPointForTravel(
   grid: TileGrid,
   zone: string,
   fromZone: string | undefined,
   def?: DistrictDef,
+  zoneSpawn?: { x: number; y: number },
 ): { x: number; y: number } {
-  // stepping INTO a district building interior — always arrive just above the door mat
-  if (/^d\d+i\d+$/.test(zone)) return { x: VENUE_SPAWN.x, y: VENUE_SPAWN.y };
+  // Compact venue rooms (district buildings, hub buildings, estate homes) — always the
+  // mat-adjacent entry tile. Using district/safehouse coords here put runners OUTSIDE
+  // the 15×11 walls after walking in.
+  if (isVenueSizedZone(zone)) {
+    return { x: VENUE_SPAWN.x, y: VENUE_SPAWN.y };
+  }
+  // Named hub service interiors (clinic/bar/den/shop/vault) use the large safehouse plan.
+  if (isSafehouseSizedInterior(zone)) {
+    return { x: SAFEHOUSE_SPAWN.x, y: SAFEHOUSE_SPAWN.y };
+  }
   // stepping OUT of a district building interior ("d{N}i{K}") — arrive at that building's
   // doorstep, the same street tile its door portal occupies (mirrors the client's door math)
   const bm = fromZone ? /^d(\d+)i(\d+)$/.exec(fromZone) : null;
@@ -516,8 +537,18 @@ export function spawnPointForTravel(
     if (b) {
       const tx = Math.round((b.x1 + b.x2) / 2) * S;
       const ty = b.y2 * S + 1;
-      if (grid[ty]?.[tx] !== undefined && !isWall(grid[ty][tx])) {
-        return { x: tx * TILE + TILE / 2, y: ty * TILE + TILE / 2 };
+      // Prefer a walkable tile near the door — never spawn inside the building footprint.
+      const candidates: Array<[number, number]> = [
+        [tx, ty],
+        [tx, ty + 1],
+        [tx - 1, ty],
+        [tx + 1, ty],
+        [tx, ty + 2],
+      ];
+      for (const [cx, cy] of candidates) {
+        if (grid[cy]?.[cx] !== undefined && !isWall(grid[cy][cx])) {
+          return { x: cx * TILE + TILE / 2, y: cy * TILE + TILE / 2 };
+        }
       }
     }
   }
@@ -529,7 +560,27 @@ export function spawnPointForTravel(
       return { x: tx * TILE + TILE / 2, y: ty * TILE + TILE / 2 };
     }
   }
+  // No explicit gate mapping — the zone's own canonical spawn beats guessing from a
+  // district def (which, evaluated against a NAMED zone's grid like estates/subway,
+  // used to land runners at the 48,48 corner fallback).
+  if (zoneSpawn) {
+    const tx = Math.floor(zoneSpawn.x / TILE);
+    const ty = Math.floor(zoneSpawn.y / TILE);
+    if (grid[ty]?.[tx] !== undefined && !isWall(grid[ty][tx])) {
+      return { x: zoneSpawn.x, y: zoneSpawn.y };
+    }
+  }
   if (def) return spawnPoint(grid, def);
+  // Last resort: first walkable tile on this grid (never invent district coords for small rooms).
+  const gw = gridW(grid);
+  const gh = gridH(grid);
+  for (let y = 1; y < gh - 1; y++) {
+    for (let x = 1; x < gw - 1; x++) {
+      if (!isWall(grid[y][x])) {
+        return { x: x * TILE + TILE / 2, y: y * TILE + TILE / 2 };
+      }
+    }
+  }
   const [wx, wy] = bridgeWestTile(getBridge(0));
   return { x: wx * TILE + TILE / 2, y: wy * TILE + TILE / 2 };
 }

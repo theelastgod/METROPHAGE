@@ -22,8 +22,65 @@ interface SolanaProvider {
   signMessage?(message: Uint8Array, encoding?: string): Promise<{ signature: Uint8Array }>;
 }
 
+const ADDR_KEY = "mp_wallet_addr_v1";
+const CHAIN_KEY = "mp_wallet_chain_v1";
+
 let lastConnectedAddress: string | null = null;
 let lastChain: "evm" | "solana" | null = null;
+
+try {
+  lastConnectedAddress = localStorage.getItem(ADDR_KEY);
+  const ch = localStorage.getItem(CHAIN_KEY);
+  lastChain = ch === "evm" || ch === "solana" ? ch : null;
+} catch {
+  /* private mode */
+}
+
+function persistConnection(addr: string | null, chain: "evm" | "solana" | null) {
+  lastConnectedAddress = addr;
+  lastChain = chain;
+  try {
+    if (addr) {
+      localStorage.setItem(ADDR_KEY, addr);
+      if (chain) localStorage.setItem(CHAIN_KEY, chain);
+    } else {
+      localStorage.removeItem(ADDR_KEY);
+      localStorage.removeItem(CHAIN_KEY);
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Device-bound wallet session secret — bound server-side after the first successful
+ * MetaMask signature. Zone travel reuses this so you don't re-sign every district.
+ */
+export function walletSessionSecret(wallet: string): string | undefined {
+  try {
+    const addr = (wallet || "").toLowerCase().replace(/[^a-z0-9x]/g, "");
+    if (addr.length < 8) return undefined;
+    const key = "mp_wsession_" + addr;
+    let s = localStorage.getItem(key);
+    if (!s) {
+      s = crypto.randomUUID();
+      localStorage.setItem(key, s);
+    }
+    return s;
+  } catch {
+    return undefined;
+  }
+}
+
+export function clearWalletSessionSecret(wallet?: string) {
+  try {
+    if (wallet) {
+      localStorage.removeItem("mp_wsession_" + wallet.toLowerCase().replace(/[^a-z0-9x]/g, ""));
+    }
+  } catch {
+    /* ignore */
+  }
+}
 
 function getEvm(): EvmProvider | null {
   const w = window as unknown as {
@@ -63,6 +120,28 @@ export function connectedWallet(): string | null {
 
 export function connectedChain(): "evm" | "solana" | null {
   return lastChain;
+}
+
+/**
+ * Silently restore a previously-approved MetaMask account (no popup).
+ * Call once at boot / title screen so zone travel keeps the address.
+ */
+export async function restoreWalletSession(): Promise<string | null> {
+  const eth = getEvm();
+  if (eth) {
+    try {
+      const accounts = (await eth.request({ method: "eth_accounts" })) as string[];
+      const addr = accounts?.[0] ?? null;
+      if (addr) {
+        persistConnection(addr, "evm");
+        return addr;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  // Fall back to last remembered address (session secret still authenticates zones).
+  return lastConnectedAddress;
 }
 
 /**
@@ -124,11 +203,14 @@ export async function connectWallet(): Promise<string | null> {
     try {
       // Put MetaMask on Robinhood Chain before accounts (sign-up + $METRO live there).
       await ensureRobinhoodNetwork();
-      const accounts = (await eth.request({ method: "eth_requestAccounts" })) as string[];
+      // Prefer already-authorized accounts (no extra permission popup).
+      let accounts = (await eth.request({ method: "eth_accounts" })) as string[];
+      if (!accounts?.length) {
+        accounts = (await eth.request({ method: "eth_requestAccounts" })) as string[];
+      }
       const addr = accounts?.[0] ?? null;
       if (addr) {
-        lastConnectedAddress = addr;
-        lastChain = "evm";
+        persistConnection(addr, "evm");
         return addr;
       }
     } catch {
@@ -138,10 +220,9 @@ export async function connectWallet(): Promise<string | null> {
   const sol = getSolana();
   if (!sol) return null;
   try {
-    const res = await sol.connect();
+    const res = await sol.connect({ onlyIfTrusted: true }).catch(() => sol.connect());
     const addr = res.publicKey.toString();
-    lastConnectedAddress = addr;
-    lastChain = "solana";
+    persistConnection(addr, "solana");
     return addr;
   } catch {
     return null;
@@ -149,8 +230,8 @@ export async function connectWallet(): Promise<string | null> {
 }
 
 export async function disconnectWallet(): Promise<void> {
-  lastConnectedAddress = null;
-  lastChain = null;
+  if (lastConnectedAddress) clearWalletSessionSecret(lastConnectedAddress);
+  persistConnection(null, null);
   try {
     await getSolana()?.disconnect();
   } catch {

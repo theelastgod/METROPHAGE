@@ -46,6 +46,9 @@ import { uiGap } from "../ui/spacing";
 import { bodyFont, displayFont, uiFont } from "../ui/typography";
 import { drawPanelFrame } from "../ui/panelChrome";
 import { connectedWallet } from "../economy/wallet";
+import { writeLocalRunner } from "../systems/LocalRunner";
+import { ensureGuestDeviceSecret } from "../net/NetClient";
+import { prefersMobileUx } from "../systems/Mobile";
 
 interface Row {
   label: string;
@@ -76,14 +79,18 @@ export default class CustomizeScene extends Phaser.Scene {
   private scrollHint!: Phaser.GameObjects.Text;
   private rowScroll = 0;
 
-  private readonly panelX = Math.round(VIEW_W * 0.52);
+  private readonly mobile = prefersMobileUx();
+  private readonly panelX = Math.round(VIEW_W * (this.mobile ? 0.48 : 0.52));
   private readonly panelW = VIEW_W - this.panelX - MENU_PAD;
   private readonly previewX = MENU_PAD;
   private readonly previewW = this.panelX - this.previewX - uiDim(6);
-  private readonly listTop = uiDim(176);
-  private readonly listBottom = VIEW_H - uiDim(88);
-  private readonly rowH = uiDim(32);
+  private readonly listTop = uiDim(this.mobile ? 168 : 176);
+  private readonly listBottom = VIEW_H - uiDim(this.mobile ? 100 : 88);
+  /** Taller rows on phones so ◀ ▶ and row hits are thumb-sized. */
+  private readonly rowH = uiDim(this.mobile ? 44 : 32);
   private readonly visibleRows = Math.max(4, Math.floor((this.listBottom - this.listTop) / this.rowH));
+  private dragScrollY = 0;
+  private dragScrollActive = false;
 
   constructor() {
     super("Customize");
@@ -94,7 +101,11 @@ export default class CustomizeScene extends Phaser.Scene {
       this.scene.start("Select");
       return;
     }
-    if (!connectedWallet() && !this.registry.get("walletAddress") && !this.registry.get("offlinePlay")) {
+    // Guest multiplayer (no wallet) or wallet-bound creation.
+    const guestOk =
+      !!this.registry.get("guestPlay") ||
+      !!this.registry.get("offlinePlay"); /* legacy flag */
+    if (!connectedWallet() && !this.registry.get("walletAddress") && !guestOk) {
       this.scene.start("Select");
       return;
     }
@@ -115,10 +126,17 @@ export default class CustomizeScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setShadow(0, 0, "#ff2bd6", 6, true, true);
 
-    const wallet = (this.registry.get("walletAddress") as string | undefined) ?? connectedWallet() ?? "—";
-    const short = wallet.length > 12 ? `${wallet.slice(0, 4)}…${wallet.slice(-4)}` : wallet;
+    const wallet = (this.registry.get("walletAddress") as string | undefined) ?? connectedWallet();
+    const guest = !wallet && guestOk;
+    const sub = guest
+      ? `MULTIPLAYER SAVE  ·  no wallet · progress sticks to this device  ·  ${this.classDef.name}`
+      : (() => {
+          const w = wallet ?? "—";
+          const short = w.length > 12 ? `${w.slice(0, 4)}…${w.slice(-4)}` : w;
+          return `ONE-TIME CREATION  ·  bound to wallet ${short}  ·  ${this.classDef.name}`;
+        })();
     this.add
-      .text(VIEW_W / 2, uiDim(96), `ONE-TIME CREATION  ·  bound to wallet ${short}  ·  ${this.classDef.name}`, bodyFont(13, { color: "#f7ff3c" }))
+      .text(VIEW_W / 2, uiDim(96), sub, bodyFont(13, { color: guest ? "#39ff88" : "#f7ff3c" }))
       .setOrigin(0.5);
 
     const py = uiDim(128);
@@ -334,8 +352,8 @@ export default class CustomizeScene extends Phaser.Scene {
   private makeCallsignField() {
     const x = this.panelX;
     const w = this.panelW;
-    const y = uiDim(132);
-    const h = uiDim(36);
+    const y = uiDim(this.mobile ? 128 : 132);
+    const h = uiDim(this.mobile ? 44 : 36);
     const g = asMenuUi(this.add.graphics().setDepth(9));
     g.fillStyle(0x0b0716, 0.9).fillRect(x, y, w, h);
     g.lineStyle(uiDim(2), 0x00e5ff, 0.7).strokeRect(x, y, w, h);
@@ -348,15 +366,38 @@ export default class CustomizeScene extends Phaser.Scene {
     );
     this.callsignText = asMenuUi(
       this.add
-        .text(x + w - uiDim(14), y + h / 2, "", {
-        fontFamily: "Courier New, monospace",
-        fontSize: uiFont(18),
-        color: "#eafdff",
-        fontStyle: "bold",
-      })
+        .text(x + w - uiDim(this.mobile ? 72 : 14), y + h / 2, "", {
+          fontFamily: "Courier New, monospace",
+          fontSize: uiFont(this.mobile ? 16 : 18),
+          color: "#eafdff",
+          fontStyle: "bold",
+        })
         .setOrigin(1, 0.5)
         .setDepth(10),
     );
+    // Tap field to type (soft keyboard on phones).
+    const fieldZone = asMenuUi(
+      this.add
+        .zone(x, y, w - (this.mobile ? uiDim(64) : 0), h)
+        .setOrigin(0)
+        .setDepth(12)
+        .setInteractive({ useHandCursor: true }),
+    );
+    fieldZone.on("pointerdown", () => this.promptCallsign());
+    if (this.mobile) {
+      const rnd = asMenuUi(
+        this.add
+          .text(x + w - uiDim(10), y + h / 2, "RND", bodyFont(12, { color: "#39ff88", fontStyle: "bold" }))
+          .setOrigin(1, 0.5)
+          .setDepth(13)
+          .setInteractive({ useHandCursor: true }),
+      );
+      rnd.on("pointerdown", (p: Phaser.Input.Pointer) => {
+        p.event?.stopPropagation?.();
+        this.cust.callsign = randomCallsign();
+        this.renderCallsign();
+      });
+    }
     this.renderCallsign();
     this.time.addEvent({
       delay: 420,
@@ -366,6 +407,23 @@ export default class CustomizeScene extends Phaser.Scene {
         this.renderCallsign();
       },
     });
+  }
+
+  /** Soft keyboard on mobile; no-op if keyboard already works. */
+  private promptCallsign() {
+    if (typeof window === "undefined") return;
+    // Prefer HTML input for reliable soft keyboard on iOS/Android.
+    if (this.mobile) {
+      const next = window.prompt("CALLSIGN (A–Z 0–9 -)", this.cust.callsign || "");
+      if (next == null) return;
+      this.cust.callsign = next
+        .toUpperCase()
+        .replace(/[^A-Z0-9-]/g, "")
+        .slice(0, CALLSIGN_MAX);
+      this.renderCallsign();
+      return;
+    }
+    // Desktop: focus stays on keyboard handler already active.
   }
 
   private renderCallsign() {
@@ -402,11 +460,34 @@ export default class CustomizeScene extends Phaser.Scene {
     const panelBg = asMenuUi(this.add.graphics().setDepth(8));
     panelBg.fillStyle(0x0b0716, 0.96).fillRect(this.panelX, this.listTop - uiGap("sm"), this.panelW, listH + uiGap("lg"));
     panelBg.lineStyle(uiDim(2), this.classDef.color, 0.5).strokeRect(this.panelX, this.listTop - uiGap("sm"), this.panelW, listH + uiGap("lg"));
-    this.add
-      .zone(this.panelX, this.listTop, this.panelW, listH)
-      .setOrigin(0)
-      .setInteractive()
-      .on("wheel", (_p: Phaser.Input.Pointer, _dx: number, dy: number) => this.scrollList(dy > 0 ? 1 : -1));
+    // Scroll surface — must be UI-camera (scrollFactor 0) or touches miss on mobile.
+    const scrollZone = asMenuUi(
+      this.add
+        .zone(this.panelX, this.listTop, this.panelW, listH)
+        .setOrigin(0)
+        .setDepth(9)
+        .setInteractive(),
+    );
+    scrollZone.on("wheel", (_p: Phaser.Input.Pointer, _dx: number, dy: number) => this.scrollList(dy > 0 ? 1 : -1));
+    // Touch drag scroll (phones have no wheel).
+    scrollZone.on("pointerdown", (p: Phaser.Input.Pointer) => {
+      this.dragScrollActive = true;
+      this.dragScrollY = p.y;
+    });
+    this.input.on("pointermove", (p: Phaser.Input.Pointer) => {
+      if (!this.dragScrollActive || !p.isDown) return;
+      const dy = p.y - this.dragScrollY;
+      if (Math.abs(dy) >= this.rowH * 0.55) {
+        this.scrollList(dy > 0 ? -1 : 1);
+        this.dragScrollY = p.y;
+      }
+    });
+    this.input.on("pointerup", () => {
+      this.dragScrollActive = false;
+    });
+    this.input.on("pointerupoutside", () => {
+      this.dragScrollActive = false;
+    });
   }
 
   private maxRowScroll() {
@@ -433,43 +514,58 @@ export default class CustomizeScene extends Phaser.Scene {
 
   private renderRows() {
     this.rowG = asMenuUi(this.add.graphics().setDepth(10));
+    const btnSize = uiDim(this.mobile ? 40 : 28);
     this.rows.forEach((row, i) => {
       this.rowTexts.push(
         asMenuUi(
           this.add
-            .text(this.panelX + uiDim(16), 0, row.label, bodyFont(13, { color: "#9aa3b2" }))
+            .text(this.panelX + uiDim(16), 0, row.label, bodyFont(this.mobile ? 14 : 13, { color: "#9aa3b2" }))
             .setOrigin(0, 0.5)
-            .setDepth(11),
+            .setDepth(14),
         ),
       );
       this.rowValTexts.push(
         asMenuUi(
           this.add
-            .text(VIEW_W - MENU_PAD - uiDim(48), 0, "", bodyFont(13, { color: "#eafdff" }))
+            .text(VIEW_W - MENU_PAD - uiDim(this.mobile ? 56 : 48), 0, "", bodyFont(this.mobile ? 14 : 13, { color: "#eafdff" }))
             .setOrigin(1, 0.5)
-            .setDepth(11),
+            .setDepth(14),
         ),
       );
-      const sw = this.add
-        .rectangle(0, 0, uiDim(14), uiDim(14), 0xffffff)
-        .setStrokeStyle(uiDim(1), 0x000000, 0.6);
+      const sw = asMenuUi(
+        this.add
+          .rectangle(0, 0, uiDim(this.mobile ? 18 : 14), uiDim(this.mobile ? 18 : 14), 0xffffff)
+          .setStrokeStyle(uiDim(1), 0x000000, 0.6)
+          .setDepth(14),
+      );
       sw.setVisible(false);
       this.rowSwatches.push(sw);
 
-      const left = this.add
-        .text(0, 0, "◀", { fontFamily: "monospace", fontSize: uiFont(14), color: "#6b7184" })
-        .setOrigin(0.5)
-        .setInteractive({ useHandCursor: true });
-      const right = this.add
-        .text(0, 0, "▶", { fontFamily: "monospace", fontSize: uiFont(14), color: "#6b7184" })
-        .setOrigin(0.5)
-        .setInteractive({ useHandCursor: true });
-      left.on("pointerdown", () => {
+      // Big thumb targets — text alone was ~14px and nearly untappable on phones.
+      const left = asMenuUi(
+        this.add
+          .text(0, 0, "◀", displayFont(this.mobile ? 20 : 14, { color: "#00e5ff", fontStyle: "bold" }))
+          .setOrigin(0.5)
+          .setDepth(16)
+          .setInteractive({ useHandCursor: true, hitArea: new Phaser.Geom.Rectangle(-btnSize / 2, -btnSize / 2, btnSize, btnSize), hitAreaCallback: Phaser.Geom.Rectangle.Contains }),
+      );
+      const right = asMenuUi(
+        this.add
+          .text(0, 0, "▶", displayFont(this.mobile ? 20 : 14, { color: "#00e5ff", fontStyle: "bold" }))
+          .setOrigin(0.5)
+          .setDepth(16)
+          .setInteractive({ useHandCursor: true, hitArea: new Phaser.Geom.Rectangle(-btnSize / 2, -btnSize / 2, btnSize, btnSize), hitAreaCallback: Phaser.Geom.Rectangle.Contains }),
+      );
+      left.on("pointerdown", (p: Phaser.Input.Pointer) => {
+        p.event?.stopPropagation?.();
+        this.dragScrollActive = false;
         this.rowIndex = i;
         row.cycle(-1);
         this.renderRowValues();
       });
-      right.on("pointerdown", () => {
+      right.on("pointerdown", (p: Phaser.Input.Pointer) => {
+        p.event?.stopPropagation?.();
+        this.dragScrollActive = false;
         this.rowIndex = i;
         row.cycle(1);
         this.renderRowValues();
@@ -477,12 +573,23 @@ export default class CustomizeScene extends Phaser.Scene {
       this.rowLeftBtns.push(left);
       this.rowRightBtns.push(right);
 
-      const z = this.add
-        .zone(0, 0, this.panelW - uiDim(16), this.rowH)
-        .setOrigin(0, 0.5)
-        .setInteractive({ useHandCursor: true });
-      z.on("pointerdown", () => {
+      // Full-row hit: left third = prev, right two-thirds = next (mobile-friendly).
+      const z = asMenuUi(
+        this.add
+          .zone(0, 0, this.panelW - uiDim(16), this.rowH)
+          .setOrigin(0, 0.5)
+          .setDepth(15)
+          .setInteractive({ useHandCursor: true }),
+      );
+      z.on("pointerdown", (p: Phaser.Input.Pointer) => {
+        p.event?.stopPropagation?.();
+        this.dragScrollActive = false;
         this.rowIndex = i;
+        // Local X within the zone (origin left-center).
+        const localX = p.x - z.x;
+        const w = this.panelW - uiDim(16);
+        if (localX < w * 0.35) row.cycle(-1);
+        else row.cycle(1);
         this.renderRowValues();
       });
       this.rowZones.push(z);
@@ -492,6 +599,8 @@ export default class CustomizeScene extends Phaser.Scene {
   }
 
   private layoutRows() {
+    const leftX = this.panelX + uiDim(this.mobile ? 200 : 180);
+    const rightX = VIEW_W - MENU_PAD - uiDim(this.mobile ? 14 : 8);
     this.rows.forEach((_row, i) => {
       const visible = i >= this.rowScroll && i < this.rowScroll + this.visibleRows;
       const y = this.rowY(i);
@@ -503,12 +612,12 @@ export default class CustomizeScene extends Phaser.Scene {
       }
       this.rowLeftBtns[i].setVisible(visible);
       this.rowRightBtns[i].setVisible(visible);
-      this.rowZones[i].setVisible(visible);
+      this.rowZones[i].setVisible(visible).setActive(visible);
       if (visible) {
-        this.rowLeftBtns[i].setPosition(this.panelX + uiDim(180), y);
-        this.rowRightBtns[i].setPosition(VIEW_W - MENU_PAD - uiDim(8), y);
+        this.rowLeftBtns[i].setPosition(leftX, y);
+        this.rowRightBtns[i].setPosition(rightX, y);
         this.rowZones[i].setPosition(this.panelX + uiDim(8), y);
-        this.rowSwatches[i].setPosition(VIEW_W - MENU_PAD - uiDim(28), y);
+        this.rowSwatches[i].setPosition(VIEW_W - MENU_PAD - uiDim(this.mobile ? 36 : 28), y);
       } else {
         this.rowSwatches[i].setVisible(false);
       }
@@ -516,7 +625,11 @@ export default class CustomizeScene extends Phaser.Scene {
     if (this.scrollHint) {
       const max = this.maxRowScroll();
       this.scrollHint.setText(
-        max > 0 ? `scroll ▲▼  ·  ${this.rowScroll + 1}–${Math.min(this.rowScroll + this.visibleRows, this.rows.length)} of ${this.rows.length}` : "",
+        max > 0
+          ? this.mobile
+            ? `drag list · tap ◀ ▶  ·  ${this.rowScroll + 1}–${Math.min(this.rowScroll + this.visibleRows, this.rows.length)}/${this.rows.length}`
+            : `scroll ▲▼  ·  ${this.rowScroll + 1}–${Math.min(this.rowScroll + this.visibleRows, this.rows.length)} of ${this.rows.length}`
+          : "",
       );
     }
   }
@@ -602,7 +715,9 @@ export default class CustomizeScene extends Phaser.Scene {
         .text(
           VIEW_W / 2,
           footerY - MENU_SECTION_GAP,
-          "TYPE callsign · ↑↓ row · ←→ option · scroll wheel · ENTER to deploy",
+          this.mobile
+            ? "TAP callsign · TAP ◀ ▶ to change look · drag list · DEPLOY"
+            : "TYPE callsign · ↑↓ row · ←→ option · scroll wheel · ENTER to deploy",
           bodyFont(10, { color: "#6b7184" }),
         )
         .setOrigin(0.5)
@@ -668,6 +783,15 @@ export default class CustomizeScene extends Phaser.Scene {
     this.registry.set("customization", this.cust);
     this.registry.set("resume", false);
     this.registry.set("characterLocked", true);
+    this.registry.set("guestPlay", true);
+    // Mint guest device secret now so the first multiplayer login binds this runner.
+    ensureGuestDeviceSecret(this.cust.callsign);
+    // Local profile = CONTINUE key; server guest row = real multiplayer save.
+    writeLocalRunner({
+      callsign: this.cust.callsign,
+      classId: this.classDef.id,
+      customization: this.cust,
+    });
     transitionTo(this, "Prologue", undefined, { style: "deploy", accent: this.classDef.color });
   }
 }

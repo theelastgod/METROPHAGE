@@ -80,6 +80,11 @@ export type ClientMsg =
       /** Guest-identity device secret — generated client-side, bound to the callsign on
        *  first login, required to log in as that callsign thereafter (wallet sig bypasses). */
       secret?: string;
+      /**
+       * Wallet device session — bound after the first successful MetaMask signature.
+       * Lets zone travel re-auth without another personal_sign popup.
+       */
+      session?: string;
     }
   | { t: "inv_move"; from: number; to: number }
   | { t: "stash"; action: "deposit" | "withdraw"; itemId: string } // TENEMENT lockbox — move an item bag↔stash

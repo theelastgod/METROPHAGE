@@ -87,3 +87,20 @@ export function verifyWalletLogin(p: WalletProof, now = Date.now()): string | nu
     return null;
   }
 }
+
+/**
+ * Canonical player id for a wallet address without verifying a signature.
+ * Used for device-session resume after the first signed login.
+ */
+export function walletPlayerId(wallet: string): string | null {
+  try {
+    const w = (wallet || "").trim();
+    if (!w) return null;
+    if (isEvmWallet(w)) return "w:" + getAddress(w);
+    // Solana base58 addresses are typically 32–44 chars
+    if (w.length >= 32 && w.length <= 48 && !w.startsWith("0x")) return "w:" + w;
+    return null;
+  } catch {
+    return null;
+  }
+}

@@ -51,6 +51,7 @@ import {
   buildVenueRoom,
   districtBuildings,
   VENUE_MAT_TILE,
+  VENUE_SPAWN,
   buildSubway,
   buildDive,
   parseDiveZone,
@@ -60,6 +61,8 @@ import {
   TUTORIAL_PORTAL,
   TUTORIAL_PORTAL_RADIUS,
   TUTORIAL_SPAWN,
+  isVenueSizedZone,
+  isSafehouseSizedInterior,
   isWall,
   type TileGrid,
 } from "../world/district";
@@ -96,7 +99,7 @@ import {
 import { fadeInScene, transitionTo } from "../systems/transitions";
 import { juiceShake, juiceFlash, juiceHitStop, juiceZoomPunch, juiceNeonPulse } from "../systems/juice";
 import Particles from "../render/Particles";
-import { playCombatPose } from "../assets/combatAnim";
+import { playCombatPose, resetCombatPose } from "../assets/combatAnim";
 import { gamepadIntent } from "../systems/Input";
 import { t } from "../i18n";
 import Synth from "../audio/Synth";
@@ -136,7 +139,7 @@ import { npcDef, AMBIENT_NPCS, INTERIOR_PLAN, keeperFor, districtResident, hubRe
 import { bountyForNpc } from "../game/bounties";
 import type { PlayerLook } from "../net/protocol";
 import { setOnlinePlayer } from "../economy/session";
-import { connectedWallet, signWalletLogin } from "../economy/wallet";
+import { connectedWallet, signWalletLogin, walletSessionSecret, restoreWalletSession } from "../economy/wallet";
 import { loginMessage } from "../net/protocol";
 import {
   sanitizeCustomization,
@@ -147,6 +150,9 @@ import {
   PLAYER_CUSTOM_KEY,
   type Customization,
 } from "../game/customization";
+import { touchLocalRunnerZone, writeLocalRunner, hasLocalRunner } from "../systems/LocalRunner";
+import { prefersMobileUx } from "../systems/Mobile";
+import MobileControls from "../ui/MobileControls";
 
 const SERVER_URL =
   (import.meta.env as Record<string, string | undefined>).VITE_SERVER_URL ??
@@ -533,6 +539,9 @@ export default class OnlineScene extends Phaser.Scene {
   private isTutorial = false;
   private tutorialPanel!: Phaser.GameObjects.Text;
   private tutorialSkipBtn!: Phaser.GameObjects.Text;
+  private tutorialSkipSub?: Phaser.GameObjects.Text;
+  private mobilePad?: MobileControls;
+  private lastDashGhostAt = 0;
   private tutorialPortalGlow!: Phaser.GameObjects.Image;
   private tutorialChamberG?: Phaser.GameObjects.Graphics;
 
@@ -562,6 +571,10 @@ export default class OnlineScene extends Phaser.Scene {
   /** Offline/connecting drill preview — local movement until the server welcomes us. */
   private drillLocal: MoveState | null = null;
   private drillLocalAcc = 0;
+  /** Long-press → context menu on touch (no right-click). */
+  private longPressTimer?: Phaser.Time.TimerEvent;
+  private longPressPtr: { x: number; y: number; id: number } | null = null;
+  private longPressConsumed = false;
   constructor() {
     super("Online");
   }
@@ -607,6 +620,8 @@ export default class OnlineScene extends Phaser.Scene {
     this.isEstates = this.zone === ESTATES_ZONE;
     this.isSubway = this.zone === "subway";
     this.fromZone = data?.from ?? "d0"; // where 'H' returns to from inside an interior
+    // Persist offline resume (zone + ensure profile exists even if they only had registry state).
+    this.persistLocalRunnerSnapshot();
     this.homeIdx = -1; // reset home-editor state unless this zone is an est{K} interior
     this.homeEditing = false;
     this.homeUi = []; // scene restart destroyed the objects — drop the stale refs
@@ -1064,47 +1079,39 @@ export default class OnlineScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setScrollFactor(0)
       .setDepth(1200)
-      .setVisible(false);
-    // touch devices have no H key — give dungeons/interiors a tappable way back up
-    if (this.sys.game.device.input.touch && (this.isSubway || this.isDive || (this.interior && !this.isCityHub))) {
-      const surface = this.add
-        .text(this.scale.width / 2, uiDim(36), "▲ SURFACE", displayFont(13, {
-          color: "#eafdff",
-          fontStyle: "bold",
-          backgroundColor: "#0b0716dd",
-          padding: { x: uiDim(14), y: uiDim(8) },
-        }))
-        .setOrigin(0.5, 0)
-        .setScrollFactor(0)
-        .setDepth(1200)
-        .setInteractive({ useHandCursor: true });
-      surface.on("pointerdown", () => this.travelOrganic(this.fromZone));
-    }
-    // touch kit — no SPACE/Q/E on a phone: three thumb buttons above the action bar
-    if (this.sys.game.device.input.touch && !this.isTutorial) {
-      const stack = onlineHudStack(this.scale.height);
-      const bSize = uiDim(46);
-      const bx0 = this.scale.width - uiDim(12) - bSize / 2;
-      const by = stack.actionY - uiGap("md") - bSize / 2;
-      const mkKitBtn = (dx: number, label: string, color: string, fn: () => void) => {
-        const b = this.add
-          .text(bx0 - dx, by, label, displayFont(15, {
-            color,
+      .setVisible(false)
+      .setInteractive({ useHandCursor: true });
+    // Tap the prompt on phones (no E key).
+    this.interactPrompt.on("pointerdown", (ptr: Phaser.Input.Pointer) => {
+      ptr.event?.stopPropagation?.();
+      this.doInteract();
+    });
+    // Mobile landscape: D-pad + action cluster + surface exit.
+    if (this.mobileUx()) {
+      if (this.isSubway || this.isDive || (this.interior && !this.isCityHub)) {
+        const surface = this.add
+          .text(this.scale.width / 2, uiDim(36), "▲ SURFACE", displayFont(14, {
+            color: "#eafdff",
             fontStyle: "bold",
             backgroundColor: "#0b0716dd",
-            padding: { x: uiDim(12), y: uiDim(10) },
+            padding: { x: uiDim(16), y: uiDim(10) },
           }))
-          .setOrigin(0.5)
+          .setOrigin(0.5, 0)
           .setScrollFactor(0)
           .setDepth(1200)
-          .setAlpha(0.85)
           .setInteractive({ useHandCursor: true });
-        b.on("pointerdown", fn);
-      };
-      mkKitBtn(0, "⇢", "#00e5ff", () => this.tryDash());
-      mkKitBtn(bSize + uiGap("sm"), "Q", "#ff2bd6", () => this.tryAbility());
-      mkKitBtn((bSize + uiGap("sm")) * 2, "E", "#f7ff3c", () => this.tryAbility2());
-      mkKitBtn((bSize + uiGap("sm")) * 3, "R", "#ff8a1f", () => this.tryUlt());
+        surface.on("pointerdown", (ptr: Phaser.Input.Pointer) => {
+          ptr.event?.stopPropagation?.();
+          this.travelOrganic(this.fromZone);
+        });
+      }
+      this.mobilePad = new MobileControls(this, {
+        onDash: () => this.tryDash(),
+        onAbility: () => this.tryAbility(),
+        onAbility2: () => this.tryAbility2(),
+        onUlt: () => this.tryUlt(),
+        onInteract: () => this.doInteract(),
+      });
     }
 
     // Local player — your full customization (build/head/visor/shoulders/decal/cloak/
@@ -1181,6 +1188,7 @@ export default class OnlineScene extends Phaser.Scene {
     };
     this.net.onWelcome = (x, y) => {
       this.drillLocal = null;
+      this.restoreLocalBody();
       this.me.setPosition(x, y).setVisible(true);
       this.cameras.main.startFollow(this.me, true, 0.18, 0.18);
       setOnlinePlayer(this.net.id);
@@ -1404,20 +1412,27 @@ export default class OnlineScene extends Phaser.Scene {
     this.rsSkillsPanel = new RsSkillsPanel(this, this.rsSkills);
     const simpleHud = getSettings().uiDensity === "new";
     // Simple HUD: Bag / Map / Quests only — market & skills open via keys once you need them.
+    const mobile = this.mobileUx();
     this.rsActionBar = new RsActionBar(
       this,
       simpleHud
         ? [
-            { key: "inv", label: "Bag", sub: "I", color: 0x00e5ff, onClick: () => this.inv?.toggle() },
-            { key: "map", label: "Map", sub: "M", color: 0x39ff88, onClick: () => this.mapPanel?.toggle(this.net.discovered, this.net.unlocked, this.zone) },
-            { key: "quests", label: "Quests", sub: "J", color: 0xb06bff, onClick: () => this.refreshQuestLog(true) },
+            { key: "inv", label: "Bag", sub: mobile ? "tap" : "I", color: 0x00e5ff, onClick: () => this.inv?.toggle() },
+            { key: "map", label: "Map", sub: mobile ? "tap" : "M", color: 0x39ff88, onClick: () => this.mapPanel?.toggle(this.net.discovered, this.net.unlocked, this.zone) },
+            { key: "quests", label: "Quests", sub: mobile ? "tap" : "J", color: 0xb06bff, onClick: () => this.refreshQuestLog(true) },
+            ...(mobile
+              ? [{ key: "chat", label: "Chat", sub: "tap", color: 0x9aa3b2, onClick: () => this.openChat() }]
+              : []),
           ]
         : [
-            { key: "inv", label: "Bag", sub: "I", color: 0x00e5ff, onClick: () => this.inv?.toggle() },
-            { key: "skills", label: "Skills", sub: "'", color: 0xf7ff3c, onClick: () => this.rsSkillsPanel.toggle() },
-            { key: "map", label: "Map", sub: "M", color: 0x39ff88, onClick: () => this.mapPanel?.toggle(this.net.discovered, this.net.unlocked, this.zone) },
-            { key: "market", label: "Market", sub: "K", color: 0xff2bd6, onClick: () => this.market?.toggle(this.net.marketListings, this.net.inventory, this.net.id, this.net.credits, this.net.metro) },
-            { key: "quests", label: "Quests", sub: "J", color: 0xb06bff, onClick: () => this.refreshQuestLog(true) },
+            { key: "inv", label: "Bag", sub: mobile ? "tap" : "I", color: 0x00e5ff, onClick: () => this.inv?.toggle() },
+            { key: "skills", label: "Skills", sub: mobile ? "tap" : "'", color: 0xf7ff3c, onClick: () => this.rsSkillsPanel.toggle() },
+            { key: "map", label: "Map", sub: mobile ? "tap" : "M", color: 0x39ff88, onClick: () => this.mapPanel?.toggle(this.net.discovered, this.net.unlocked, this.zone) },
+            { key: "market", label: "Market", sub: mobile ? "tap" : "K", color: 0xff2bd6, onClick: () => this.market?.toggle(this.net.marketListings, this.net.inventory, this.net.id, this.net.credits, this.net.metro) },
+            { key: "quests", label: "Quests", sub: mobile ? "tap" : "J", color: 0xb06bff, onClick: () => this.refreshQuestLog(true) },
+            ...(mobile
+              ? [{ key: "chat", label: "Chat", sub: "tap", color: 0x9aa3b2, onClick: () => this.openChat() }]
+              : []),
           ],
     );
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
@@ -1429,7 +1444,41 @@ export default class OnlineScene extends Phaser.Scene {
         this.handleRightClick(pointer);
         return;
       }
-      if (this.usingRsControls() && !this.isTutorial) this.handleLeftClick(pointer);
+      if (!this.usingRsControls()) return;
+      // Virtual stick / action buttons own the gesture — never pathfind under thumbs.
+      if (this.mobilePad?.containsScreen(pointer.x, pointer.y)) return;
+      // HUD / kit buttons / interactive sprites own the gesture — don't pathfind under them.
+      const hits = this.input.hitTestPointer(pointer);
+      if (
+        hits.some((go) => {
+          const o = go as Phaser.GameObjects.GameObject & { scrollFactorX?: number; depth?: number };
+          return (o.scrollFactorX ?? 1) === 0 || (o.depth ?? 0) >= 1000;
+        })
+      ) {
+        return;
+      }
+      // Mobile: hold for context menu; short tap walks/attacks on release.
+      if (this.mobileUx()) {
+        this.beginLongPress(pointer);
+        return;
+      }
+      this.handleLeftClick(pointer);
+    });
+    this.input.on("pointerup", (pointer: Phaser.Input.Pointer) => {
+      this.endMobilePointer(pointer);
+    });
+    this.input.on("pointerupoutside", (pointer: Phaser.Input.Pointer) => {
+      this.endMobilePointer(pointer);
+    });
+    this.input.on("pointermove", (pointer: Phaser.Input.Pointer) => {
+      if (!this.longPressPtr || this.longPressPtr.id !== pointer.id) return;
+      const dx = pointer.x - this.longPressPtr.x;
+      const dy = pointer.y - this.longPressPtr.y;
+      // Drag cancels long-press menu but still walks on release from new pos.
+      if (dx * dx + dy * dy > 22 * 22) {
+        this.longPressTimer?.remove(false);
+        this.longPressTimer = undefined;
+      }
     });
     if (this.isCityHub) this.spawnMiningNodes([hubT(-2, 2), hubT(2, 6), hubT(-4, 8)]);
 
@@ -1439,17 +1488,16 @@ export default class OnlineScene extends Phaser.Scene {
     }
 
     // area chat panel (bottom-left) — everyone in this zone sees the same feed.
-    // Sized in scaled units so the frame matches its uiFont interior, and stacked
-    // directly above the hotbar row so nothing collides.
-    const chatH = uiDim(176);
-    this.chatPanel = new OnlineChatPanel(
-      this,
-      uiDim(12),
-      onlineHudStack(this.scale.height).hotbarY - uiGap("sm") - chatH,
-      uiDim(380),
-      chatH,
-      1000,
-    );
+    // Mobile: compact + lifted so it doesn't sit under the virtual stick.
+    const mobileHud = this.mobileUx();
+    const chatH = uiDim(mobileHud ? 88 : 176);
+    const chatW = uiDim(mobileHud ? 280 : 380);
+    const chatX = mobileHud ? this.scale.width / 2 - chatW / 2 : uiDim(12);
+    // Mobile: top strip under Bag/Map bar; avoid covering the drill lesson card.
+    const chatY = mobileHud
+      ? uiDim(this.isTutorial ? 200 : 140)
+      : onlineHudStack(this.scale.height).hotbarY - uiGap("sm") - chatH;
+    this.chatPanel = new OnlineChatPanel(this, chatX, chatY, chatW, chatH, 1000);
     this.chatPanel.setArea(this.chatAreaLabel());
     // online roster — right edge, tucked under the area map
     this.rosterText = this.add
@@ -1604,20 +1652,7 @@ export default class OnlineScene extends Phaser.Scene {
         return;
       }
       if (e.key === "e" || e.key === "E") {
-        if (this.isTutorial && this.nearPortal) {
-          this.enterTutorialPortal();
-          return;
-        }
-        if (this.nearNpc) {
-          if (this.nearNpc.kind === "service" && this.nearNpc.svc) this.openService(this.nearNpc.svc);
-          else if (this.nearNpc.kind === "door" && this.nearNpc.dest) this.enterZone(this.nearNpc.dest);
-          else if (this.nearNpc.kind === "transit" && this.nearNpc.dest) this.enterZone(this.nearNpc.dest);
-          else if (this.nearNpc.kind === "instructor") this.talkInstructor(this.nearNpc);
-          else this.talkNpc(this.nearNpc);
-          return;
-        }
-        // nothing to interact with — E is the class secondary (as the class cards say)
-        this.tryAbility2();
+        this.doInteract();
         return;
       }
       if (e.key === "g" || e.key === "G") {
@@ -1723,7 +1758,7 @@ export default class OnlineScene extends Phaser.Scene {
       }
       if (e.key === "h" || e.key === "H") {
         if (this.isTutorial) {
-          this.showBubble(this.me.x, this.me.y, "Finish the drill — or SKIP — then use the portal.");
+          this.showBubble(this.me.x, this.me.y, "Finish the drill — or hit SKIP TO CITY (top-right).");
           return;
         }
         const indoors = this.interior || this.isSubway || this.isDive;
@@ -1776,6 +1811,8 @@ export default class OnlineScene extends Phaser.Scene {
       }
     });
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.unmountMobileChatInput();
+      this.cancelLongPress();
       this.net?.disconnect();
       setOnlinePlayer(null);
     });
@@ -1789,33 +1826,92 @@ export default class OnlineScene extends Phaser.Scene {
     }
   }
 
-  /** Resolve a signed wallet identity (if a wallet is connected), then connect. A
-   *  connected wallet signs the login message → a durable wallet account; otherwise,
-   *  or if the user declines the signature, we connect as a guest keyed by callsign. */
-  private async signInThenConnect() {
-    const addr = connectedWallet() || (this.registry.get("walletAddress") as string | undefined);
-    if (addr) {
-      // Reuse a fresh title-screen MetaMask proof when still inside the ±2 min window.
-      const cached = this.registry.get("walletProof") as { wallet: string; sig: string; ts: number } | undefined;
-      if (cached?.wallet && cached.sig && Math.abs(Date.now() - cached.ts) < 90_000) {
-        this.net.setAuth({ wallet: cached.wallet, sig: cached.sig, ts: cached.ts });
-      } else {
-        const ts = Date.now();
-        const signed = await signWalletLogin(loginMessage(addr, ts), addr);
-        if (signed) {
-          const proof = { wallet: signed.address, sig: signed.signature, ts };
-          this.net.setAuth(proof);
-          this.registry.set("walletProof", proof);
-        }
-      }
+  /**
+   * Keep a device-local runner profile so CONTINUE works without MetaMask.
+   * Guest server progress still keys off callsign + device secret on login.
+   */
+  private persistLocalRunnerSnapshot() {
+    const cust = this.registry.get("customization") as Customization | undefined;
+    if (!cust?.callsign) return;
+    const classId = (this.registry.get("classId") as string) || "metrophage";
+    if (hasLocalRunner()) {
+      touchLocalRunnerZone(this.zone);
+    } else {
+      writeLocalRunner({
+        callsign: cust.callsign,
+        classId,
+        customization: cust,
+        lastZone: this.zone,
+      });
     }
+  }
+
+  /**
+   * Wallet identity for WS login — prefer a silent path so zone travel never
+   * re-opens MetaMask:
+   *  1) fresh title-screen signature (≤2 min)
+   *  2) device session secret (bound after first successful signed login)
+   *  3) only then prompt MetaMask (first connect / session never bound)
+   */
+  private async signInThenConnect() {
+    let addr =
+      connectedWallet() || (this.registry.get("walletAddress") as string | undefined) || undefined;
+    if (!addr) {
+      // Silent restore after page reload (eth_accounts — no popup).
+      addr = (await restoreWalletSession()) ?? undefined;
+      if (addr) this.registry.set("walletAddress", addr);
+    }
+    if (addr) {
+      await this.applyWalletAuth(addr, /* allowPrompt */ false);
+    }
+    // If session resume fails (never bound / new device), re-sign once silently-as-possible.
+    this.net.onAuthRequired = () => {
+      void (async () => {
+        const a =
+          connectedWallet() || (this.registry.get("walletAddress") as string | undefined);
+        if (!a) return;
+        await this.applyWalletAuth(a, /* allowPrompt */ true);
+        this.net.retryConnect();
+      })();
+    };
     this.net.connect();
+  }
+
+  /** Prefer cached sig → device session (silent) → optional MetaMask personal_sign. */
+  private async applyWalletAuth(addr: string, allowPrompt: boolean) {
+    // Always mint/load the device session so NetClient can attach it.
+    walletSessionSecret(addr);
+    const cached = this.registry.get("walletProof") as
+      | { wallet: string; sig: string; ts: number }
+      | undefined;
+    // Match server FRESH_MS (120s) with a small safety margin.
+    if (cached?.wallet && cached.sig && Math.abs(Date.now() - cached.ts) < 110_000) {
+      this.net.setAuth({ wallet: cached.wallet, sig: cached.sig, ts: cached.ts });
+      return;
+    }
+    if (!allowPrompt) {
+      // Session resume — no personal_sign. Server accepts wallet + bound session.
+      // If the session was never bound, onAuthRequired re-signs once.
+      this.net.setAuth({ wallet: addr });
+      return;
+    }
+    const ts = Date.now();
+    const signed = await signWalletLogin(loginMessage(addr, ts), addr);
+    if (signed) {
+      const proof = { wallet: signed.address, sig: signed.signature, ts };
+      this.net.setAuth(proof);
+      this.registry.set("walletProof", proof);
+    }
   }
 
   /** Local wander spawn while the socket connects (tutorial + safe social zones). */
   private soloSpawnPoint(): { x: number; y: number } | null {
     if (this.isTutorial) return TUTORIAL_SPAWN;
     if (this.isCityHub) return CITY_HUB_SPAWN;
+    // Compact FRLG rooms (district buildings, hub facades, estate homes) — mat entry tile.
+    // SAFEHOUSE_SPAWN is centre of the large safehouse plan and sits OUTSIDE 15×11 walls.
+    if (isVenueSizedZone(this.zone)) return VENUE_SPAWN;
+    if (isSafehouseSizedInterior(this.zone)) return SAFEHOUSE_SPAWN;
     if (this.interior && !this.isSubway) return SAFEHOUSE_SPAWN;
     return null;
   }
@@ -1866,10 +1962,99 @@ export default class OnlineScene extends Phaser.Scene {
     this.chatOpen = true;
     this.chatBuffer = "";
     this.chatPanel.setComposing(true, this.chatBuffer);
+    // Mobile soft keyboard: Phaser keyboard often doesn't receive text on iOS/Android.
+    if (this.mobileUx()) this.mountMobileChatInput();
   }
   private closeChat() {
     this.chatOpen = false;
     this.chatPanel.setComposing(false, "");
+    this.unmountMobileChatInput();
+  }
+
+  private mobileChatEl: HTMLInputElement | null = null;
+
+  private mobileChatWrap: HTMLDivElement | null = null;
+
+  private mountMobileChatInput() {
+    this.unmountMobileChatInput();
+    const wrap = document.createElement("div");
+    wrap.style.cssText =
+      "position:fixed;left:0;right:0;bottom:0;z-index:50;display:flex;gap:8px;align-items:center;" +
+      "padding:10px 10px max(12px,env(safe-area-inset-bottom));" +
+      "background:linear-gradient(180deg,transparent,rgba(4,2,10,.94) 28%);" +
+      "box-sizing:border-box;touch-action:manipulation;";
+    const el = document.createElement("input");
+    el.type = "text";
+    el.autocomplete = "off";
+    el.autocapitalize = "off";
+    el.spellcheck = false;
+    el.maxLength = 200;
+    el.placeholder = "say something…";
+    el.setAttribute("enterkeyhint", "send");
+    el.style.cssText =
+      "flex:1;min-width:0;box-sizing:border-box;padding:12px 14px;" +
+      "font:14px 'IBM Plex Mono',monospace;color:#eafdff;" +
+      "background:rgba(7,6,26,.96);border:1px solid #00e5ff;border-radius:6px;" +
+      "outline:none;-webkit-user-select:text;user-select:text;touch-action:manipulation;";
+    const send = document.createElement("button");
+    send.type = "button";
+    send.textContent = "SEND";
+    send.style.cssText =
+      "flex:0 0 auto;padding:12px 14px;font:12px 'IBM Plex Mono',monospace;font-weight:700;" +
+      "letter-spacing:.08em;color:#04020a;background:#00e5ff;border:none;border-radius:6px;" +
+      "touch-action:manipulation;";
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.textContent = "✕";
+    cancel.style.cssText =
+      "flex:0 0 auto;padding:12px 12px;font:14px 'IBM Plex Mono',monospace;" +
+      "color:#9aa3b2;background:rgba(20,16,40,.95);border:1px solid #2a2440;border-radius:6px;" +
+      "touch-action:manipulation;";
+    el.addEventListener("input", () => {
+      this.chatBuffer = el.value.slice(0, 200);
+      this.renderChatInput();
+    });
+    el.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        this.submitChat();
+        this.closeChat();
+      }
+    });
+    send.addEventListener("click", (e) => {
+      e.preventDefault();
+      this.chatBuffer = el.value.slice(0, 200);
+      this.submitChat();
+      this.closeChat();
+    });
+    cancel.addEventListener("click", (e) => {
+      e.preventDefault();
+      this.closeChat();
+    });
+    wrap.append(el, send, cancel);
+    document.body.appendChild(wrap);
+    this.mobileChatWrap = wrap;
+    this.mobileChatEl = el;
+    window.setTimeout(() => el.focus(), 30);
+  }
+
+  private unmountMobileChatInput() {
+    if (this.mobileChatEl) {
+      try {
+        this.mobileChatEl.blur();
+      } catch {
+        /* ignore */
+      }
+      this.mobileChatEl = null;
+    }
+    if (this.mobileChatWrap) {
+      try {
+        this.mobileChatWrap.remove();
+      } catch {
+        /* ignore */
+      }
+      this.mobileChatWrap = null;
+    }
   }
   private renderChatInput() {
     this.chatPanel.setComposing(true, this.chatBuffer);
@@ -2079,22 +2264,101 @@ export default class OnlineScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(1005);
 
+    // High-visibility skip — big enough to notice on load / mobile, works while linking.
+    this.buildTutorialSkipCta();
+  }
+
+  /** Always-on SKIP control so runners can bail into the live city during cold start. */
+  private buildTutorialSkipCta() {
+    const btnW = uiDim(this.mobileUx() ? 168 : 200);
+    const btnH = uiDim(this.mobileUx() ? 44 : 52);
+    // Mobile: top-left — top-right is crowded with options + status on phones.
+    const bx = this.mobileUx() ? uiDim(12) : this.scale.width - uiDim(16) - btnW;
+    const by = uiDim(this.mobileUx() ? 8 : 12);
+
+    const bg = this.add.graphics().setScrollFactor(0).setDepth(1006);
+    const drawBg = (hot: boolean) => {
+      bg.clear();
+      bg.fillStyle(hot ? 0x39ff88 : 0x0d1a14, hot ? 0.95 : 0.92);
+      bg.fillRoundedRect(bx, by, btnW, btnH, uiDim(6));
+      bg.lineStyle(uiDim(2), hot ? 0xffffff : 0x39ff88, 1);
+      bg.strokeRoundedRect(bx, by, btnW, btnH, uiDim(6));
+      if (!hot) {
+        bg.fillStyle(0x39ff88, 0.12);
+        bg.fillRoundedRect(bx + uiDim(2), by + uiDim(2), btnW - uiDim(4), btnH - uiDim(4), uiDim(4));
+      }
+    };
+    drawBg(false);
+
     this.tutorialSkipBtn = this.add
-      .text(VIEW_W - 14, 14, "SKIP TUTORIAL", {
-        fontFamily: mono,
-        fontSize: uiFont(11),
-        color: "#ff7a3c",
+      .text(bx + btnW / 2, by + uiDim(14), "SKIP TO CITY →", displayFont(15, {
+        color: "#39ff88",
         fontStyle: "bold",
-        backgroundColor: "#1a1020cc",
-        padding: { x: 10, y: 6 },
-      })
-      .setOrigin(1, 0)
+      }))
+      .setOrigin(0.5, 0)
       .setScrollFactor(0)
-      .setDepth(1006)
+      .setDepth(1007)
+      .setShadow(0, 0, "#39ff88", 6, true, true);
+
+    this.tutorialSkipSub = this.add
+      .text(bx + btnW / 2, by + uiDim(34), "enter the game now", bodyFont(10, { color: "#9dffc4" }))
+      .setOrigin(0.5, 0)
+      .setScrollFactor(0)
+      .setDepth(1007);
+
+    const zone = this.add
+      .zone(bx, by, btnW, btnH)
+      .setOrigin(0)
+      .setScrollFactor(0)
+      .setDepth(1008)
       .setInteractive({ useHandCursor: true });
-    this.tutorialSkipBtn.on("pointerover", () => this.tutorialSkipBtn.setColor("#ffb347"));
-    this.tutorialSkipBtn.on("pointerout", () => this.tutorialSkipBtn.setColor("#ff7a3c"));
-    this.tutorialSkipBtn.on("pointerdown", () => this.net.tutorialSkip());
+    zone.on("pointerover", () => {
+      drawBg(true);
+      this.tutorialSkipBtn.setColor("#041208");
+      this.tutorialSkipSub?.setColor("#0a2014");
+    });
+    zone.on("pointerout", () => {
+      drawBg(false);
+      this.tutorialSkipBtn.setColor("#39ff88");
+      this.tutorialSkipSub?.setColor("#9dffc4");
+    });
+    zone.on("pointerdown", () => this.skipTutorialToCity());
+
+    // Soft pulse so it reads during the "linking…" load screen.
+    this.tweens.add({
+      targets: [this.tutorialSkipBtn, this.tutorialSkipSub],
+      alpha: { from: 0.85, to: 1 },
+      duration: 700,
+      yoyo: true,
+      repeat: -1,
+      ease: "Sine.inOut",
+    });
+  }
+
+  /** Skip drill immediately — queues skip if socket still linking, else server skip. */
+  private skipTutorialToCity() {
+    if (!this.isTutorial || !this.net) return;
+    if (this.net.connected) {
+      this.net.tutorialSkip();
+      this.tutorialSkipBtn?.setText("DEPLOYING…");
+      this.tutorialSkipSub?.setText("opening the city");
+      return;
+    }
+    // Cold start / offline: mark skip so welcome auto-graduates, and show feedback.
+    this.net.tutorialSkip();
+    this.tutorialSkipBtn?.setText("QUEUED…");
+    this.tutorialSkipSub?.setText("skips when linked");
+    this.showBubble(
+      this.me?.x ?? 0,
+      this.me?.y ?? 0,
+      "Skip queued — you'll drop into the city as soon as the server links.",
+    );
+    // Also hard-jump after a short wait if the socket never comes up.
+    this.time.delayedCall(4500, () => {
+      if (!this.isTutorial || !this.net || this.net.connected) return;
+      this.registry.set("tutorialMode", getSettings().tutorialMode);
+      transitionTo(this, "Online", { zone: "safe" }, { style: "deploy", accent: 0x39ff88 });
+    });
   }
 
   private reportTutorialPanel(kind: string) {
@@ -2119,9 +2383,77 @@ export default class OnlineScene extends Phaser.Scene {
     return true;
   }
 
-  /** RS click-to-walk is opt-in; drill yard always uses action (WASD + hold slash). */
+  /** Phone / tablet primary UX — do NOT use Phaser's touch flag (true on most desktops). */
+  private mobileUx(): boolean {
+    return prefersMobileUx();
+  }
+
+  /**
+   * RS click-to-walk: opt-in on desktop; on mobile, tap still paths when the
+   * D-pad is idle (phones also get directional arrows + action buttons).
+   * Desktop tutorial stays pure action mode.
+   */
   private usingRsControls(): boolean {
+    if (prefersMobileUx()) return true;
     return !this.isTutorial && getSettings().rsControls;
+  }
+
+  private beginLongPress(pointer: Phaser.Input.Pointer) {
+    this.cancelLongPress();
+    this.longPressConsumed = false;
+    this.longPressPtr = { x: pointer.x, y: pointer.y, id: pointer.id };
+    this.longPressTimer = this.time.delayedCall(420, () => {
+      if (!this.longPressPtr) return;
+      this.longPressConsumed = true;
+      const px = this.longPressPtr.x;
+      const py = this.longPressPtr.y;
+      this.longPressPtr = null;
+      this.longPressTimer = undefined;
+      this.handleRightClick({ x: px, y: py } as Phaser.Input.Pointer);
+    });
+  }
+
+  private cancelLongPress() {
+    this.longPressTimer?.remove(false);
+    this.longPressTimer = undefined;
+    this.longPressPtr = null;
+  }
+
+  /** End of a mobile tap: walk/attack if it wasn't a long-press menu. */
+  private endMobilePointer(pointer: Phaser.Input.Pointer) {
+    if (!this.mobileUx()) {
+      this.cancelLongPress();
+      return;
+    }
+    const pending = this.longPressPtr;
+    const wasMenu = this.longPressConsumed;
+    this.longPressTimer?.remove(false);
+    this.longPressTimer = undefined;
+    this.longPressPtr = null;
+    if (wasMenu) {
+      this.longPressConsumed = false;
+      return;
+    }
+    if (!pending || pending.id !== pointer.id) return;
+    // Walk/attack from release position (or start if they barely moved).
+    this.handleLeftClick({ x: pointer.x, y: pointer.y } as Phaser.Input.Pointer);
+  }
+
+  /** Shared interact (E key / prompt tap / ◆ kit button). */
+  private doInteract() {
+    if (this.isTutorial && this.nearPortal) {
+      this.enterTutorialPortal();
+      return;
+    }
+    if (this.nearNpc) {
+      if (this.nearNpc.kind === "service" && this.nearNpc.svc) this.openService(this.nearNpc.svc);
+      else if (this.nearNpc.kind === "door" && this.nearNpc.dest) this.enterZone(this.nearNpc.dest);
+      else if (this.nearNpc.kind === "transit" && this.nearNpc.dest) this.enterZone(this.nearNpc.dest);
+      else if (this.nearNpc.kind === "instructor") this.talkInstructor(this.nearNpc);
+      else this.talkNpc(this.nearNpc);
+      return;
+    }
+    this.tryAbility2();
   }
 
   /** Wilderness corridor — trail signage, gate guides, and a mid-path scavenger. */
@@ -2229,7 +2561,7 @@ export default class OnlineScene extends Phaser.Scene {
       return;
     }
     if (!this.net.tutorialPortalOpen) {
-      this.showBubble(this.me.x, this.me.y, "Finish the drills first — or press SKIP (top-right).");
+      this.showBubble(this.me.x, this.me.y, "Finish the drills first — or hit SKIP TO CITY (top-right).");
       return;
     }
     if (!fromClick && !this.nearPortal) return;
@@ -3317,7 +3649,7 @@ export default class OnlineScene extends Phaser.Scene {
   }
 
   private syncRsChrome() {
-    if (!this.usingRsControls() || this.isTutorial) return;
+    if (!this.usingRsControls()) return;
     const key = this.inv?.open
       ? "inv"
       : this.rsSkillsPanel?.open
@@ -3511,7 +3843,14 @@ export default class OnlineScene extends Phaser.Scene {
       mx = Math.sign(pad.mx);
       my = Math.sign(pad.my);
     }
-    const rs = this.usingRsControls() && !this.isTutorial;
+    // On-screen D-pad (mobile landscape) — same authority as WASD / stick.
+    const touchPad = this.mobilePad?.intent();
+    if (touchPad?.active) {
+      mx = touchPad.mx;
+      my = touchPad.my;
+    }
+    // Mobile includes tutorial; desktop drill stays pure action (no auto-path).
+    const rs = this.usingRsControls() && (!this.isTutorial || prefersMobileUx());
     if (rs) {
       if (mx !== 0 || my !== 0) {
         this.clickMove.cancel();
@@ -3525,7 +3864,7 @@ export default class OnlineScene extends Phaser.Scene {
         my = ci.my;
         this.clickMove.tick(dt);
       }
-      if (!this.blockRsInput()) {
+      if (!this.blockRsInput() && !this.mobileUx()) {
         const wp = this.cameras.main.getWorldPoint(this.input.activePointer.x, this.input.activePointer.y);
         let hint: TileCursorHint = "walk";
         if (this.pickEnemyAt(wp.x, wp.y) !== null) hint = "enemy";
@@ -3541,6 +3880,12 @@ export default class OnlineScene extends Phaser.Scene {
         this.connectDotTimer = 0;
         this.connectDots = (this.connectDots + 1) % 4;
       }
+    }
+
+    // Hide on-screen controls while menus / chat steal focus.
+    if (this.mobilePad) {
+      const showPad = !this.blockRsInput() && !this.chatOpen && !this.net.dead;
+      this.mobilePad.setVisible(showPad);
     }
 
     this.net.setIntent(mx, my);
@@ -3619,15 +3964,19 @@ export default class OnlineScene extends Phaser.Scene {
       const moving = mx !== 0 || my !== 0;
       if (moving) this.meDir.set(mx, my);
       driveChar(this.me, this.meDir.x, this.meDir.y, moving);
-      // Local dash afterimages — same language as remote bursts.
+      // Local dash afterimages — throttle so we don't spawn one sprite per render frame.
       if (performance.now() < this.net.predDashUntil && !this.net.dead) {
-        const ghost = this.add
-          .sprite(this.me.x, this.me.y, this.me.texture.key, this.me.frame.name)
-          .setAlpha(0.35)
-          .setDepth(8)
-          .setScale(this.me.scaleX, this.me.scaleY)
-          .setTint(0x00e5ff);
-        this.tweens.add({ targets: ghost, alpha: 0, duration: 220, onComplete: () => ghost.destroy() });
+        const nowDash = this.time.now;
+        if (nowDash - (this.lastDashGhostAt ?? 0) > 45) {
+          this.lastDashGhostAt = nowDash;
+          const ghost = this.add
+            .sprite(this.me.x, this.me.y, this.me.texture.key, this.me.frame.name)
+            .setAlpha(0.35)
+            .setDepth(8)
+            .setScale(this.me.scaleX, this.me.scaleY)
+            .setTint(0x00e5ff);
+          this.tweens.add({ targets: ghost, alpha: 0, duration: 220, onComplete: () => ghost.destroy() });
+        }
       }
     }
     this.updateEscort("me", this.me.x, this.me.y, this.net.connected && this.net.escortActive && !this.net.dead);
@@ -3661,10 +4010,15 @@ export default class OnlineScene extends Phaser.Scene {
             .setAlpha(0.75),
         );
       }
-      // remote dash — peel one ghost per rendered frame while the snapshot says burst
+      // remote dash afterimage — throttled (was one sprite every render frame)
       if (r.dash && !r.dead) {
-        const ghost = this.add.sprite(s.x, s.y, s.texture.key, s.frame.name).setAlpha(0.3).setDepth(8);
-        this.tweens.add({ targets: ghost, alpha: 0, duration: 240, onComplete: () => ghost.destroy() });
+        const nowR = this.time.now;
+        const last = (s.getData("dashGhostAt") as number) ?? 0;
+        if (nowR - last > 50) {
+          s.setData("dashGhostAt", nowR);
+          const ghost = this.add.sprite(s.x, s.y, s.texture.key, s.frame.name).setAlpha(0.3).setDepth(8);
+          this.tweens.add({ targets: ghost, alpha: 0, duration: 240, onComplete: () => ghost.destroy() });
+        }
       }
       // swap to the remote's baked look-texture when it first arrives / changes (cached by shape)
       const key = r.look ? lookKey(r.look) : PLAYER_KEY;
@@ -3679,9 +4033,13 @@ export default class OnlineScene extends Phaser.Scene {
       const rdx = r.tx - r.x;
       const rdy = r.ty - r.y;
       driveChar(s, rdx, rdy, rdx * rdx + rdy * rdy > 0.4); // walk from their heading
-      // spawn fade (260ms) — computed per frame because dead-alpha also writes here
+      // spawn fade (260ms). Alive remotes always full solid — never leave death-ghost alpha.
       const bornFade = Math.min(1, (this.time.now - (s.getData("born") ?? 0)) / 260);
-      s.setPosition(r.x, r.y).setVisible(!r.dead).setAlpha((r.dead ? 0.25 : 1) * bornFade);
+      if (!r.dead && (s.alpha < 0.95 || s.angle !== 0 || Math.abs(s.scaleX - 1.15) > 0.2)) {
+        this.tweens.killTweensOf(s);
+        s.setAngle(0).setScale(1.15).setTint(r.look ? 0xffffff : 0xff79c6);
+      }
+      s.setPosition(r.x, r.y).setVisible(!r.dead).setAlpha((r.dead ? 0.3 : 1) * bornFade);
       const rShadow = s.getData("shadow") as Phaser.GameObjects.Image | undefined;
       rShadow?.setPosition(r.x, r.y + 12).setVisible(!r.dead).setAlpha(0.4 * bornFade);
       this.remoteLabels.get(id)?.setPosition(r.x, r.y - 22).setVisible(!r.dead);
@@ -3698,21 +4056,50 @@ export default class OnlineScene extends Phaser.Scene {
       }
     }
 
-    // FIRE — RS mode auto-attacks locked target; action mode fires while held.
+    // FIRE — RS auto-attacks locked target; action mode hold-click; mobile ATK button.
     const ptr = this.input.activePointer;
-    const rsFire = rs && this.attackTargetId !== null;
-    const actionFire = !rs && ptr.isDown;
+    const mobileFire = !!this.mobilePad?.isFireHeld();
+    // Mobile ATK always works (even in RS/tap mode). Desktop action uses hold-click.
+    const rsFire = rs && this.attackTargetId !== null && !mobileFire;
+    const actionFire = (!rs && ptr.isDown && !this.mobilePad?.containsScreen(ptr.x, ptr.y)) || mobileFire;
     let aim: number | null = null;
     if (rsFire) {
       const tgt = this.net.enemies.get(this.attackTargetId!);
       if (!tgt) this.attackTargetId = null;
       else {
-        const dist = Math.hypot(tgt.x - this.net.pred.x, tgt.y - this.net.pred.y);
-        if (dist <= this.attackRange) aim = Math.atan2(tgt.y - this.net.pred.y, tgt.x - this.net.pred.x);
+        const origin = this.playerPos();
+        const dist = Math.hypot(tgt.x - origin.x, tgt.y - origin.y);
+        if (dist <= this.attackRange) aim = Math.atan2(tgt.y - origin.y, tgt.x - origin.x);
       }
     } else if (actionFire) {
-      const wp = this.cameras.main.getWorldPoint(ptr.x, ptr.y);
-      aim = Math.atan2(wp.y - this.net.pred.y, wp.x - this.net.pred.x);
+      if (mobileFire) {
+        // Hold ATK: aim at nearest enemy in range, else face walk direction.
+        let bestId: number | null = null;
+        let best: { x: number; y: number } | null = null;
+        let bestD = this.attackRange * 1.35;
+        const origin = this.playerPos();
+        for (const [id, e] of this.net.enemies) {
+          if (e.hp <= 0) continue;
+          const d = Math.hypot(e.x - origin.x, e.y - origin.y);
+          if (d < bestD) {
+            bestD = d;
+            best = e;
+            bestId = id;
+          }
+        }
+        if (best && bestId !== null) {
+          this.attackTargetId = bestId;
+          aim = Math.atan2(best.y - origin.y, best.x - origin.x);
+        } else {
+          const fx = this.meDir.x || (mx !== 0 ? mx : 1);
+          const fy = this.meDir.y || my;
+          aim = Math.atan2(fy, fx);
+        }
+      } else {
+        const origin = this.playerPos();
+        const wp = this.cameras.main.getWorldPoint(ptr.x, ptr.y);
+        aim = Math.atan2(wp.y - origin.y, wp.x - origin.x);
+      }
     }
     if (
       aim !== null &&
@@ -3753,7 +4140,11 @@ export default class OnlineScene extends Phaser.Scene {
         driveChar(this.me, this.meDir.x, this.meDir.y, false);
       }
     }
-    this.me.setVisible(!this.net.dead && (this.net.connected || !!this.drillLocal));
+    const showMe = !this.net.dead && (this.net.connected || !!this.drillLocal);
+    this.me.setVisible(showMe);
+    // Death pose ends at alpha ~0.35; hit flash only dips to ~0.55. Catch stuck ghosts
+    // without cancelling a mid-hit flash every frame.
+    if (showMe && this.me.alpha <= 0.4) this.restoreLocalBody();
     this.meLight.update(this.me.x, this.me.y, this.time.now);
     this.meLight.setVisible(this.me.visible);
 
@@ -3800,9 +4191,9 @@ export default class OnlineScene extends Phaser.Scene {
         // advance until the drill yard socket is up (was the silent "stuck on movement" bug).
         body = [
           "◢ DRILL YARD — LINKING…",
-          "You can walk while connecting, but lessons only clear once the server confirms them.",
+          "You can walk while connecting. Lessons need the server.",
           this.connectionState === "reconnecting" ? "▸ reconnecting — hold on" : "▸ connecting to drill server…",
-          "▸ if this hangs, press R to retry or SKIP TUTORIAL (top-right once linked)",
+          "▸ want in now? hit SKIP TO CITY (top-right) — works during load",
         ].join("\n");
       } else {
         const stepLine = step
@@ -3849,15 +4240,18 @@ export default class OnlineScene extends Phaser.Scene {
       this.nearNpc = near;
 
       if (this.interactPrompt) {
+        const tap = prefersMobileUx();
         let msg = "";
         if (this.net.tutorialPortalOpen && this.nearPortal) {
-          msg = "▸ E — enter DEPLOY GATE (one way · live city)";
+          msg = tap ? "▸ TAP — enter DEPLOY GATE (one way · live city)" : "▸ E — enter DEPLOY GATE (one way · live city)";
         } else if (near && step && near.kind === "instructor" && near.lessonKind === step.kind) {
-          msg = `▸ E — talk to ${near.name}`;
+          msg = tap ? `▸ TAP — talk to ${near.name}` : `▸ E — talk to ${near.name}`;
         } else if (inst && step?.kind !== "portal") {
-          msg = `▸ head to ${chamber?.title.replace("◢ ", "") ?? "the next chamber"} · find ${inst.name}`;
+          msg = tap
+            ? `▸ tap-walk to ${chamber?.title.replace("◢ ", "") ?? "the next chamber"} · find ${inst.name}`
+            : `▸ head to ${chamber?.title.replace("◢ ", "") ?? "the next chamber"} · find ${inst.name}`;
         } else if (this.net.tutorialPortalOpen) {
-          msg = "▸ walk east to the DEPLOY GATE";
+          msg = tap ? "▸ tap-walk east to the DEPLOY GATE" : "▸ walk east to the DEPLOY GATE";
         }
         this.interactPrompt.setText(msg).setVisible(!!msg);
       }
@@ -3889,7 +4283,17 @@ export default class OnlineScene extends Phaser.Scene {
               : `talk to ${near.name}`
         : "";
       const walkIn = !!near && near.kind === "door" && !!near.dest && /^d\d+i\d+$/.test(near.dest);
-      this.interactPrompt.setText(near ? (walkIn ? `▸ walk up / E — ${near.name}` : `▸ E — ${label}`) : "").setVisible(!!near);
+      const tap = prefersMobileUx();
+      const prompt = near
+        ? walkIn
+          ? tap
+            ? `▸ TAP / walk up — ${near.name}`
+            : `▸ walk up / E — ${near.name}`
+          : tap
+            ? `▸ TAP — ${label}`
+            : `▸ E — ${label}`
+        : "";
+      this.interactPrompt.setText(prompt).setVisible(!!near);
     }
 
     // enemies (server-simulated) — tinted by HSS archetype (matches singleplayer reads)
@@ -4136,11 +4540,19 @@ export default class OnlineScene extends Phaser.Scene {
     // Free-tier Durable Object cold start — copy after 2s so hangs feel intentional.
     if (!st.connected && (this.connectionState === "connecting" || this.connectionState === "reconnecting") && waitMs > 2000 && waitMs < 24000) {
       this.hud.setColor("#f7ff3c");
-      this.hud.setText([
-        this.connectionState === "reconnecting" ? "⏳ RECONNECTING…" : "⏳ WAKING DISTRICT…",
-        "Free-tier cold start can take a few seconds. Walk around while it links.",
-        "R to retry · ESC menu",
-      ]);
+      this.hud.setText(
+        this.isTutorial
+          ? [
+              this.connectionState === "reconnecting" ? "⏳ RECONNECTING…" : "⏳ WAKING DRILL YARD…",
+              "Cold start can take a few seconds — walk around while it links.",
+              "Or hit SKIP TO CITY (top-right) to enter the game now.",
+            ]
+          : [
+              this.connectionState === "reconnecting" ? "⏳ RECONNECTING…" : "⏳ WAKING DISTRICT…",
+              "Free-tier cold start can take a few seconds. Walk around while it links.",
+              "R to retry · ESC menu",
+            ],
+      );
       return;
     }
     if (!st.connected && (this.connectionState === "offline" || waitMs > 24000)) {
@@ -4148,10 +4560,8 @@ export default class OnlineScene extends Phaser.Scene {
       if (this.isTutorial) {
         this.hud.setText([
           "⚠  DRILL SERVER OFFLINE — preview movement only",
-          "Start the game server, then press R to retry:",
-          "  cd server && npm run dev",
-          "  (or from project root: npm run dev:online)",
-          "Press ESC to return to the menu.",
+          "Hit SKIP TO CITY (top-right) to enter the live city anyway.",
+          "Or R to retry · ESC for menu.",
         ]);
       } else {
         this.hud.setText([
@@ -4870,6 +5280,12 @@ export default class OnlineScene extends Phaser.Scene {
     });
   }
 
+  /** Undo death/hit combat poses so the runner is fully solid again. */
+  private restoreLocalBody() {
+    if (!this.me) return;
+    resetCombatPose(this.me, 1);
+  }
+
   /** Death is a MOMENT: hit-stop + blood-dark wash + SIGNAL LOST / REPRINT + reboot countdown,
    *  then a white rebirth flash when the server respawns you. */
   private updateDeathSequence() {
@@ -4890,6 +5306,9 @@ export default class OnlineScene extends Phaser.Scene {
       this.tweens.add({ targets: this.deathOverlay, alpha: 0, duration: 300 });
       this.deadText.setVisible(false);
       this.deathSub.setVisible(false);
+      // Death pose leaves alpha 0.25 + crushed scale + tilted angle — reset or you
+      // respawn as a permanent ghost (the "body disappeared" bug).
+      this.restoreLocalBody();
       juiceFlash(this, 260, 220, 240, 255);
       juiceZoomPunch(this, 0.04, 180);
       this.pops?.popHeal(this.me.x, this.me.y - 28, "REPRINT COMPLETE");
@@ -5188,7 +5607,14 @@ export default class OnlineScene extends Phaser.Scene {
   }
 
   private controlHint() {
-    if (this.isTutorial) return "WASD move · CLICK fire · ENTER chat · SKIP (top-right)";
+    if (this.isTutorial) {
+      return prefersMobileUx() || this.mobileUx()
+        ? "STICK move · hold ATK fire · Q/E/R/⇢ · ◆ use · SKIP TO CITY"
+        : "WASD · CLICK fire · SKIP TO CITY (top-right, works while loading)";
+    }
+    if (prefersMobileUx() || (this.usingRsControls() && this.mobileUx())) {
+      return "STICK move · TAP path/enemy · hold ATK · Q/E/R/⇢ · ◆ use · Bag/Map/Chat";
+    }
     if (this.usingRsControls()) {
       return "CLICK walk · RIGHT-CLICK menu · Q/E/R abilities · SPACE dash · M map · ENTER chat";
     }
@@ -5249,7 +5675,11 @@ export default class OnlineScene extends Phaser.Scene {
   }
 
   private handleLeftClick(pointer: Phaser.Input.Pointer) {
-    const soloWalk = !!this.drillLocal && !this.net.connected && (this.isCityHub || (this.interior && !this.isSubway));
+    // Solo walk while socket connects: hub, interiors, and the drill yard.
+    const soloWalk =
+      !!this.drillLocal &&
+      !this.net.connected &&
+      (this.isTutorial || this.isCityHub || (this.interior && !this.isSubway));
     if (this.blockRsInput() || this.net.dead || (!this.net.connected && !soloWalk)) return;
     const wp = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
     const pos = this.playerPos();

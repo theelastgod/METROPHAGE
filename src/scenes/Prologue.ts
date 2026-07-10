@@ -84,11 +84,19 @@ export default class Prologue extends Phaser.Scene {
       .text(VIEW_W / 2, MENU_FOOTER_Y, "▸ click / SPACE to continue", bodyFont(14, { color: "#6b7184" }))
       .setOrigin(0.5);
 
-    this.add
-      .text(VIEW_W - MENU_PAD, uiDim(20), "SKIP ▸", bodyFont(13, { color: "#6b7184" }))
+    const skip = this.add
+      .text(VIEW_W - MENU_PAD, uiDim(16), "SKIP INTRO →", displayFont(14, {
+        color: "#39ff88",
+        fontStyle: "bold",
+        backgroundColor: "#0d1a14ee",
+        padding: { x: uiDim(14), y: uiDim(10) },
+      }))
       .setOrigin(1, 0)
       .setInteractive({ useHandCursor: true })
-      .on("pointerdown", () => this.showActions());
+      .setShadow(0, 0, "#39ff88", 5, true, true);
+    skip.on("pointerover", () => skip.setStyle({ color: "#ffffff", backgroundColor: "#1a3a28" }));
+    skip.on("pointerout", () => skip.setStyle({ color: "#39ff88", backgroundColor: "#0d1a14ee" }));
+    skip.on("pointerdown", () => this.showActions());
 
     this.showBeat();
     this.input.keyboard?.on("keydown-SPACE", () => this.advance());

@@ -20,22 +20,36 @@ import {
 } from "../ui/menuChrome";
 import { uiGap } from "../ui/spacing";
 import { bodyFont, displayFont } from "../ui/typography";
-import { connectedWallet, disconnectWallet, walletAvailable } from "../economy/wallet";
+import {
+  connectedWallet,
+  disconnectWallet,
+  walletAvailable,
+  restoreWalletSession,
+  walletSessionSecret,
+} from "../economy/wallet";
 import {
   ensureWalletConnected,
   fetchWalletIdentity,
   signIdentityProof,
   type WalletIdentity,
 } from "../economy/identity";
-import { lookToCustomization, bakeCustomPlayer, PLAYER_CUSTOM_KEY } from "../game/customization";
+import { lookToCustomization, bakeCustomPlayer, PLAYER_CUSTOM_KEY, type Customization } from "../game/customization";
 import WalletSignInPanel, { type WalletAction } from "../ui/WalletSignInPanel";
 import { t } from "../i18n";
+import {
+  clearLocalRunner,
+  hasLocalRunner,
+  loadLocalRunner,
+  writeLocalRunner,
+} from "../systems/LocalRunner";
+import { ensureGuestDeviceSecret } from "../net/NetClient";
 
-type MenuPhase = "wallet" | "returning" | "create";
+type MenuPhase = "wallet" | "returning" | "create" | "guest_returning";
 
 /**
- * Title screen — full-bleed layout. Wallet connect is required; character creation is
- * one-time per wallet address (checked server-side). Returning players skip customize.
+ * Title screen — full-bleed layout.
+ * Guest multiplayer: callsign + device secret → full server save, no wallet.
+ * Wallet: optional permanent identity (MetaMask); returning players skip customize.
  */
 export default class SelectScene extends Phaser.Scene {
   private hover = -1;
@@ -120,8 +134,15 @@ export default class SelectScene extends Phaser.Scene {
     optBtn.on("pointerdown", () => this.options.toggle());
 
     this.add
-      .text(VIEW_W / 2, MENU_FOOTER_Y, "play free offline · MetaMask sign-up for multiplayer save", bodyFont(11, { color: "#5a6172" }))
+      .text(
+        VIEW_W / 2,
+        MENU_FOOTER_Y,
+        "MetaMask = permanent wallet runner  ·  free play saves multiplayer on this device",
+        bodyFont(11, { color: "#5a6172" }),
+      )
       .setOrigin(0.5);
+
+    this.addSocialLinks();
 
     this.input.keyboard?.on("keydown", (e: KeyboardEvent) => {
       if (e.key === "o" || e.key === "O") {
@@ -137,12 +158,24 @@ export default class SelectScene extends Phaser.Scene {
       if (k >= 1 && k <= CLASSES.length) this.select(k - 1);
     });
 
-    if (this.registry.get("offlinePlay") && !connectedWallet()) {
-      this.enterOfflinePlay();
-    } else {
-      void this.refreshWalletState();
-    }
+    void this.bootWalletGate();
     pinMenuUiLayer(this);
+  }
+
+  /** Restore MetaMask silently if present, else guest multiplayer continue / create. */
+  private async bootWalletGate() {
+    await restoreWalletSession();
+    if (connectedWallet()) {
+      await this.refreshWalletState();
+      return;
+    }
+    if (hasLocalRunner() || this.registry.get("customization")) {
+      this.enterGuestReturning();
+    } else if (this.registry.get("guestPlay") || this.registry.get("offlinePlay")) {
+      this.enterGuestPlay();
+    } else {
+      await this.refreshWalletState();
+    }
   }
 
   private shortWallet(addr: string) {
@@ -187,6 +220,11 @@ export default class SelectScene extends Phaser.Scene {
   }
 
   private enterWalletDisconnected() {
+    // Prefer CONTINUE when a guest runner already exists on this device.
+    if (hasLocalRunner() || this.registry.get("customization")) {
+      this.enterGuestReturning();
+      return;
+    }
     this.phase = "wallet";
     this.syncWalletLabel(null);
     this.classLayer.setVisible(false);
@@ -195,48 +233,48 @@ export default class SelectScene extends Phaser.Scene {
     this.clearActionLayer();
     this.bodyText.setVisible(false);
     const hasWallet = walletAvailable();
-    // MetaMask-first sign-up for durable multiplayer identity; offline still available.
+    // Wallet is the key / recommended path; guest multiplayer remains available.
     this.walletPanel.show({
       step: "connect",
       status: hasWallet ? "ready" : "offline",
-      statusText: hasWallet ? "MetaMask · Robinhood Chain · free sign-in" : "install MetaMask or play offline",
-      headline: "Create your runner",
+      statusText: hasWallet ? "MetaMask · Robinhood Chain · free sign-in" : "install MetaMask · or play free",
+      headline: "Connect your wallet",
       body: hasWallet
-        ? "Sign up with MetaMask on Robinhood Chain (ETH L2). We add the network for you, then one free login message — no gas for sign-up. Or play offline without a wallet."
-        : "Install MetaMask to save a multiplayer identity on Robinhood Chain, or jump in offline now. You can link a wallet later.",
+        ? "Sign up with MetaMask on Robinhood Chain — free message, no gas. Your runner is permanently bound to your address across devices. Prefer no wallet? Play free with a device-locked multiplayer save."
+        : "MetaMask is the permanent multiplayer identity for METROPHAGE. Install it to create a wallet-bound runner, or play free with a save locked to this device.",
       wallet: null,
       actions: this.walletActions([
         ...(hasWallet
           ? [
               {
                 label: "◈ SIGN UP WITH METAMASK",
-                sub: "Robinhood Chain · free message · create or resume",
+                sub: "recommended · Robinhood Chain · free message · permanent id",
                 color: COLORS.neonGreen,
                 primary: true as const,
                 fn: () => void this.onMetaMaskSignUp(),
               },
               {
-                label: "◢ PLAY OFFLINE",
-                sub: "no wallet · device-local until you link later",
+                label: "◢ PLAY FREE · NO WALLET",
+                sub: "multiplayer save on this device · link wallet later",
                 color: COLORS.neonCyan,
                 primary: false as const,
-                fn: () => this.enterOfflinePlay(),
+                fn: () => this.enterGuestPlay(),
               },
             ]
           : [
               {
                 label: "◈ GET METAMASK",
-                sub: "metamask.io · then return to sign up on Robinhood Chain",
+                sub: "recommended · metamask.io · then return to sign up",
                 color: COLORS.neonGreen,
                 primary: true as const,
                 fn: () => window.open("https://metamask.io/download/", "_blank", "noopener"),
               },
               {
-                label: "◢ PLAY OFFLINE",
-                sub: "class select · no wallet required",
+                label: "◢ PLAY FREE · NO WALLET",
+                sub: "multiplayer save on this device · link MetaMask later",
                 color: COLORS.neonCyan,
                 primary: false as const,
-                fn: () => this.enterOfflinePlay(),
+                fn: () => this.enterGuestPlay(),
               },
             ]),
       ]),
@@ -263,14 +301,17 @@ export default class SelectScene extends Phaser.Scene {
     }
     this.registry.set("walletAddress", addr);
     this.registry.set("offlinePlay", false);
+    this.registry.set("guestPlay", false);
     // Auto-advance to sign — full sign-up without a second button press when possible.
     await this.verifyAndAdvance(addr);
   }
 
-  /** Skip wallet gate — character is device-local until they link a wallet later. */
-  private enterOfflinePlay() {
-    this.registry.set("offlinePlay", true);
+  /** Free multiplayer — no wallet. Server save bound to callsign + this device. */
+  private enterGuestPlay() {
+    this.registry.set("guestPlay", true);
+    this.registry.remove("offlinePlay");
     this.registry.remove("walletAddress");
+    this.registry.remove("walletProof");
     this.registry.remove("characterLocked");
     this.walletPanel.hide();
     this.enterCreate();
@@ -278,7 +319,147 @@ export default class SelectScene extends Phaser.Scene {
     this.bodyText
       .setVisible(true)
       .setY(cardTop - uiGap("lg"))
-      .setText("pick a class · you can link a wallet later for multiplayer save");
+      .setText(
+        hasLocalRunner()
+          ? "new runner replaces the multiplayer save on this device"
+          : "pick a class · multiplayer progress saves online · no wallet",
+      );
+  }
+
+  /**
+   * Resume a guest multiplayer runner (no MetaMask).
+   * Server reloads credits/inventory/campaign via callsign + device secret.
+   */
+  private enterGuestReturning() {
+    const local = loadLocalRunner();
+    let cust = this.registry.get("customization") as Customization | undefined;
+    let classId = (this.registry.get("classId") as string | undefined) ?? undefined;
+
+    if (local) {
+      cust = local.customization;
+      classId = local.classId;
+    }
+    if (!cust) {
+      this.enterGuestPlay();
+      return;
+    }
+
+    this.phase = "guest_returning";
+    this.registry.set("guestPlay", true);
+    this.registry.remove("offlinePlay");
+    this.registry.remove("walletAddress");
+    this.registry.set("customization", cust);
+    this.registry.set(
+      "classId",
+      classId ?? CLASSES.find((c) => c.color === cust.color)?.id ?? CLASSES[0].id,
+    );
+    this.registry.set("characterLocked", true);
+    ensureGuestDeviceSecret(cust.callsign);
+    writeLocalRunner({
+      callsign: cust.callsign,
+      classId: (this.registry.get("classId") as string) || "metrophage",
+      customization: cust,
+      lastZone: local?.lastZone,
+    });
+
+    this.syncWalletLabel(null);
+    this.classLayer.setVisible(false);
+    this.clearActionLayer();
+    this.bodyText.setVisible(false);
+    this.walletPanel.hide();
+
+    bakeCustomPlayer(this, cust);
+    this.preview?.destroy();
+    const previewY = VIEW_H * 0.26;
+    drawPreviewPedestal(this, VIEW_W / 2, previewY + uiDim(42), 0x39ff88);
+    this.preview = this.add
+      .image(VIEW_W / 2, previewY, PLAYER_CUSTOM_KEY, 0)
+      .setScale(5.5 * UI_SCALE);
+    this.tweens.add({
+      targets: this.preview,
+      y: previewY - uiDim(4),
+      duration: 2200,
+      yoyo: true,
+      repeat: -1,
+      ease: "Sine.inOut",
+    });
+
+    const hasWallet = walletAvailable();
+    const drillLbl = () => (getSettings().tutorialMode === "full" ? "FULL TRAINING" : "QUICK");
+    const resumeZone = local?.lastZone && local.lastZone !== "tutorial" ? local.lastZone : "safe";
+
+    this.walletPanel.show({
+      step: "play",
+      status: "ready",
+      statusText: "guest multiplayer · link wallet recommended",
+      headline: `Welcome back, ${cust.callsign}`,
+      body: "Your multiplayer save is on the server and locked to this device. CONTINUE loads it. Link MetaMask to bind this runner to your wallet permanently (portable across devices).",
+      wallet: null,
+      offsetY: 36,
+      actions: this.walletActions([
+        {
+          label: "⊕ CONTINUE",
+          sub:
+            resumeZone === "safe"
+              ? "live city · multiplayer save on this device"
+              : `resume multiplayer · last zone ${resumeZone}`,
+          color: COLORS.neonCyan,
+          primary: true,
+          fn: () => this.deployOnline(resumeZone),
+        },
+        ...(hasWallet
+          ? [
+              {
+                label: "◈ LINK METAMASK",
+                sub: "recommended · permanent wallet identity · merge progress",
+                color: COLORS.neonGreen,
+                primary: false as const,
+                fn: () => void this.onMetaMaskSignUp(),
+              },
+            ]
+          : [
+              {
+                label: "◈ GET METAMASK",
+                sub: "recommended · permanent multiplayer identity",
+                color: COLORS.neonGreen,
+                primary: false as const,
+                fn: () => window.open("https://metamask.io/download/", "_blank", "noopener"),
+              },
+            ]),
+        {
+          label: "◢ QUICK DRILL",
+          sub: "core combat · skip to city anytime",
+          color: 0xb06bff,
+          primary: false,
+          fn: () => this.deployOnline("tutorial", "quick"),
+        },
+        {
+          label: "◢ FULL TRAINING",
+          sub: `${drillLbl()} · every city system`,
+          color: 0xb06bff,
+          primary: false,
+          fn: () => this.deployOnline("tutorial", "full"),
+        },
+        {
+          label: "◌ NEW RUNNER",
+          sub: "new callsign · new multiplayer save on this device",
+          color: 0x9aa3b2,
+          primary: false,
+          fn: () => this.startNewGuestRunner(),
+        },
+      ]),
+    });
+  }
+
+  /** Wipe guest profile and open class select. */
+  private startNewGuestRunner() {
+    clearLocalRunner();
+    this.registry.remove("customization");
+    this.registry.remove("classId");
+    this.registry.remove("characterLocked");
+    this.preview?.destroy();
+    this.preview = undefined;
+    this.enterGuestPlay();
   }
 
   /** Wallet is connected — prompt for sign-in and load/create branch. */
@@ -323,7 +504,7 @@ export default class SelectScene extends Phaser.Scene {
     if (!proof) {
       this.showConnectedPending(
         addr,
-        "Signature cancelled or MetaMask could not sign. Retry, or play offline without multiplayer save.",
+        "Signature cancelled or MetaMask could not sign. Retry, or play multiplayer without a wallet.",
         [
           {
             label: "◈ RETRY SIGN UP",
@@ -332,11 +513,13 @@ export default class SelectScene extends Phaser.Scene {
             fn: () => void this.verifyAndAdvance(addr),
           },
           {
-            label: "◢ PLAY OFFLINE",
-            sub: "local character — link MetaMask later",
+            label: hasLocalRunner() ? "⊕ CONTINUE MULTIPLAYER" : "◢ PLAY MULTIPLAYER",
+            sub: hasLocalRunner()
+              ? "resume guest multiplayer save on this device"
+              : "free multiplayer save — no wallet",
             color: COLORS.neonYellow,
             primary: false,
-            fn: () => this.enterOfflinePlay(),
+            fn: () => (hasLocalRunner() ? this.enterGuestReturning() : this.enterGuestPlay()),
           },
         ],
         { status: "error", statusText: "sign-in failed" },
@@ -344,9 +527,10 @@ export default class SelectScene extends Phaser.Scene {
       return;
     }
 
-    // Keep a fresh proof for OnlineScene WS login (must re-sign if stale; store for session).
+    // Keep a fresh proof for OnlineScene WS login + bind device session (zone travel).
     this.registry.set("walletProof", proof);
     this.registry.set("walletAddress", proof.wallet);
+    walletSessionSecret(proof.wallet);
 
     this.showConnectedPending(addr, "Verifying MetaMask identity with the game server…", [], {
       status: "busy",
@@ -378,11 +562,13 @@ export default class SelectScene extends Phaser.Scene {
             fn: () => void this.verifyAndAdvance(addr),
           },
           {
-            label: "◢ PLAY OFFLINE",
-            sub: "skip multiplayer identity for now",
+            label: hasLocalRunner() ? "⊕ CONTINUE MULTIPLAYER" : "◢ PLAY MULTIPLAYER",
+            sub: hasLocalRunner()
+              ? "resume guest multiplayer save on this device"
+              : "free multiplayer save — no wallet",
             color: COLORS.neonYellow,
             primary: false,
-            fn: () => this.enterOfflinePlay(),
+            fn: () => (hasLocalRunner() ? this.enterGuestReturning() : this.enterGuestPlay()),
           },
         ],
         { status: "error", statusText: "auth failed" },
@@ -392,7 +578,7 @@ export default class SelectScene extends Phaser.Scene {
 
     const serverHint =
       result.error === "server_unreachable"
-        ? "Game server is offline. Run npm run dev:online, or create offline and link MetaMask when the server is up."
+        ? "Game server unreachable. Retry MetaMask, or play multiplayer as a guest (saves when the server is up)."
         : (result.detail ?? "Could not reach the identity service.");
     this.showConnectedPending(
       addr,
@@ -405,11 +591,11 @@ export default class SelectScene extends Phaser.Scene {
           fn: () => void this.verifyAndAdvance(addr),
         },
         {
-          label: "◢ CREATE CHARACTER",
-          sub: "class select — wallet address kept for when server is online",
+          label: hasLocalRunner() ? "⊕ CONTINUE MULTIPLAYER" : "◢ PLAY MULTIPLAYER",
+          sub: "guest multiplayer save · no wallet required",
           color: COLORS.neonCyan,
           primary: false,
-          fn: () => this.enterCreate(),
+          fn: () => (hasLocalRunner() ? this.enterGuestReturning() : this.enterGuestPlay()),
         },
       ],
       { status: "error", statusText: "server unreachable" },
@@ -492,8 +678,10 @@ export default class SelectScene extends Phaser.Scene {
 
   private enterCreate() {
     this.phase = "create";
-    this.syncWalletLabel(this.identity?.wallet ?? connectedWallet());
-    this.registry.set("walletAddress", this.identity?.wallet ?? connectedWallet());
+    const wallet = this.identity?.wallet ?? connectedWallet() ?? undefined;
+    this.syncWalletLabel(wallet ?? null);
+    if (wallet) this.registry.set("walletAddress", wallet);
+    else this.registry.remove("walletAddress");
     this.registry.set("characterLocked", false);
     this.clearActionLayer();
     this.walletPanel.hide();
@@ -501,10 +689,15 @@ export default class SelectScene extends Phaser.Scene {
     this.preview = undefined;
     this.classLayer.setVisible(true);
     const cardTop = this.cardRects[0]?.y ?? VIEW_H * 0.38;
+    const guest = !wallet && (!!this.registry.get("guestPlay") || !!this.registry.get("offlinePlay"));
     this.bodyText
       .setVisible(true)
       .setY(cardTop - uiGap("lg"))
-      .setText("choose your class · one-time creation");
+      .setText(
+        guest
+          ? "choose your class · multiplayer save · no wallet"
+          : "choose your class · one-time wallet creation",
+      );
     this.drawFrames();
   }
 
@@ -628,5 +821,87 @@ export default class SelectScene extends Phaser.Scene {
     if (this.options?.isOpen || this.phase !== "create") return;
     this.registry.set("classId", CLASSES[i].id);
     transitionTo(this, "Customize", undefined, { style: "glitch", accent: CLASSES[i].color });
+  }
+
+  /**
+   * Intro social row — X + Telegram brand marks (vector-drawn, no asset pack).
+   * Opens in a new tab so the Phaser canvas keeps the session.
+   */
+  private addSocialLinks() {
+    const iconR = uiDim(13);
+    const rowY = VIEW_H - uiDim(18);
+    // Bottom-left: sits under OPTIONS strip, clear of the centre footer blurb.
+    let cursorX = MENU_PAD;
+
+    const links: Array<{
+      url: string;
+      handle: string;
+      paint: (g: Phaser.GameObjects.Graphics, r: number) => void;
+    }> = [
+      {
+        url: "https://x.com/metrophage",
+        handle: "x.com/metrophage",
+        paint: (g, r) => {
+          // Black disc + white X (current brand mark). Local origin = disc centre.
+          g.fillStyle(0x0a0a0a, 0.95).fillCircle(0, 0, r);
+          g.lineStyle(Math.max(2, r * 0.22), 0xffffff, 1);
+          const s = r * 0.42;
+          g.lineBetween(-s, -s, s, s);
+          g.lineBetween(s, -s, -s, s);
+          g.lineStyle(1, 0x6b7184, 0.65).strokeCircle(0, 0, r);
+        },
+      },
+      {
+        url: "https://t.me/metrophagefun",
+        handle: "t.me/metrophagefun",
+        paint: (g, r) => {
+          // Telegram blue circle + paper-plane glyph.
+          g.fillStyle(0x2aabee, 1).fillCircle(0, 0, r);
+          g.fillStyle(0xffffff, 1);
+          const s = r * 0.55;
+          g.fillTriangle(-s * 0.85, -s * 0.2, s * 0.95, 0, -s * 0.85, s * 0.55);
+          g.fillStyle(0x2aabee, 1);
+          g.fillTriangle(-s * 0.3, s * 0.02, s * 0.2, 0, -s * 0.3, s * 0.32);
+          g.lineStyle(1, 0x8ad4f8, 0.75).strokeCircle(0, 0, r);
+        },
+      },
+    ];
+
+    for (const link of links) {
+      const icon = this.add.graphics();
+      link.paint(icon, iconR);
+
+      const label = this.add
+        .text(iconR + uiDim(8), 0, link.handle, bodyFont(11, { color: "#7a8294" }))
+        .setOrigin(0, 0.5);
+
+      // Container origin at icon centre; hit zone covers icon + handle text.
+      const hitW = iconR * 2 + uiDim(12) + label.width;
+      const hitH = Math.max(iconR * 2 + uiDim(8), uiDim(28));
+      const wrap = this.add
+        .container(cursorX + iconR, rowY, [icon, label])
+        .setDepth(40)
+        .setScrollFactor(0);
+
+      const hit = this.add
+        .zone(label.width / 2, 0, hitW, hitH)
+        .setOrigin(0.5)
+        .setInteractive({ useHandCursor: true });
+      wrap.add(hit);
+
+      hit.on("pointerover", () => {
+        this.tweens.add({ targets: wrap, scale: 1.06, duration: 90, ease: "Sine.out" });
+        label.setColor("#eafdff");
+      });
+      hit.on("pointerout", () => {
+        this.tweens.add({ targets: wrap, scale: 1, duration: 90, ease: "Sine.out" });
+        label.setColor("#7a8294");
+      });
+      hit.on("pointerdown", () => {
+        window.open(link.url, "_blank", "noopener,noreferrer");
+      });
+
+      cursorX += hitW + uiDim(18);
+    }
   }
 }

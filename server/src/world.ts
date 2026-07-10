@@ -64,6 +64,8 @@ import {
   TUTORIAL_PORTAL_RADIUS,
   TUTORIAL_COP_TILE,
   TUTORIAL_NODE_TILE,
+  isVenueSizedZone,
+  isSafehouseSizedInterior,
   type TileGrid,
 } from "../../src/world/district";
 import {
@@ -105,7 +107,7 @@ import { dailyContracts, getDaily, currentDay, repTier, type DailyObjective } fr
 import { RAID_SCRIPT, phaseForHp, raidHpScale } from "../../src/game/raid";
 import { getCosmetic, applyCosmetic } from "../../src/game/cosmetics";
 import { bountyById, type BountyObjective } from "../../src/game/bounties";
-import { verifyWalletLogin } from "./auth";
+import { verifyWalletLogin, walletPlayerId } from "./auth";
 
 /** Inventory is capped so the persisted JSON stays bounded; oldest drops out (FIFO). */
 const INVENTORY_CAP = 24;
@@ -1431,6 +1433,7 @@ export class WorldDO {
         from: msg.from,
         classId: msg.classId,
         secret: msg.secret,
+        session: msg.session,
       });
     if (msg.t === "input") return this.onInput(ws, msg);
     if (msg.t === "fire") return this.onFire(ws, msg);
@@ -2280,7 +2283,16 @@ export class WorldDO {
     rawName: string,
     faction?: number,
     look?: PlayerLook,
-    proof?: { wallet?: string; sig?: string; ts?: number; arrival?: "organic" | "fast"; from?: string; classId?: string; secret?: string },
+    proof?: {
+      wallet?: string;
+      sig?: string;
+      ts?: number;
+      arrival?: "organic" | "fast";
+      from?: string;
+      classId?: string;
+      secret?: string;
+      session?: string;
+    },
   ) {
     const name = (rawName || "").trim().slice(0, 16) || "blank";
     const reject = (text: string) => {
@@ -2312,19 +2324,48 @@ export class WorldDO {
     faction: number | undefined,
     look: PlayerLook | undefined,
     proof:
-      | { wallet?: string; sig?: string; ts?: number; arrival?: "organic" | "fast"; from?: string; classId?: string; secret?: string }
+      | {
+          wallet?: string;
+          sig?: string;
+          ts?: number;
+          arrival?: "organic" | "fast";
+          from?: string;
+          classId?: string;
+          secret?: string;
+          session?: string;
+        }
       | undefined,
     reject: (text: string) => void,
   ) {
-    // Identity: a signature-verified wallet (MetaMask EVM or Solana) is the durable id;
-    // otherwise a guest id derived from the callsign. Unverified claimed wallets rejected.
+    // Identity:
+    //  1) MetaMask/Solana signature (fresh) → durable wallet id
+    //  2) Wallet + device session (bound after first signed login) → same id, no re-sign
+    //  3) Guest multiplayer: callsign + device secret (full D1 save, no wallet required)
     let id: string;
+    let walletSignedIn = false;
     if (proof?.wallet || proof?.sig) {
-      const wid =
+      const verified =
         proof.wallet && proof.sig && Number.isFinite(proof.ts)
           ? verifyWalletLogin({ wallet: proof.wallet, sig: proof.sig, ts: proof.ts! })
           : null;
-      if (!wid) {
+      if (verified) {
+        id = verified;
+        walletSignedIn = true;
+      } else if (proof.wallet && proof.session) {
+        // Session resume (zone travel) — no MetaMask popup.
+        const wid = walletPlayerId(proof.wallet);
+        if (!wid) {
+          this.send(ws, { t: "sys", text: "wallet sign-in failed — bad wallet address" });
+          try {
+            ws.close(4001, "auth");
+          } catch {
+            /* already closing */
+          }
+          return;
+        }
+        id = wid;
+        // secret match checked after loadPlayer below
+      } else {
         this.send(ws, { t: "sys", text: "wallet sign-in failed — bad signature or stale request" });
         try {
           ws.close(4001, "auth");
@@ -2333,7 +2374,6 @@ export class WorldDO {
         }
         return;
       }
-      id = wid;
     } else {
       id = name.toLowerCase().replace(/[^a-z0-9_-]/g, "") || "blank";
       // "__" ids are reserved for authored NPCs (estate owners, market sellers) — a live
@@ -2345,17 +2385,43 @@ export class WorldDO {
     // Guest identities are device-bound: the first login binds the client-generated
     // secret to the callsign; every later login must present it. Without this, ANY
     // visitor could type an existing name and sell that player's house out from under
-    // them. Wallet ids ("w:") skip the gate — the signature is stronger proof.
+    // them. Wallet ids ("w:") use signature on first login, then device session.
     if (!id.startsWith("w:")) {
+      // Guest multiplayer save — progress is real server state; the device secret is the key.
       const presented = (proof?.secret ?? "").slice(0, 64) || null;
-      if (p.secret && p.secret !== presented) {
-        return reject("that callsign is already in use on another device — pick a new name, or connect a wallet to keep this one forever");
+      if (!presented) {
+        return reject("guest save requires a device key — enable storage / cookies for this site, then retry");
       }
-      if (!p.secret && presented) {
-        p.secret = presented; // loadPlayer upserts new rows immediately, so this UPDATE always lands
+      if (p.secret && p.secret !== presented) {
+        return reject("that callsign is already saved on another device — pick a new callsign, or link a wallet to move it");
+      }
+      if (!p.secret) {
+        p.secret = presented;
         await this.env.DB.prepare("UPDATE players SET secret = ? WHERE id = ?").bind(presented, id).run();
       }
     } else {
+      const session = (proof?.session ?? "").slice(0, 64) || null;
+      if (walletSignedIn) {
+        // Fresh MetaMask signature: bind/refresh device session so later zones skip re-sign.
+        if (session) {
+          p.secret = session;
+          await this.env.DB.prepare("UPDATE players SET secret = ? WHERE id = ?").bind(session, id).run();
+        }
+      } else {
+        // Session-only resume: must match the secret bound on a prior signed login.
+        if (!session || !p.secret || p.secret !== session) {
+          this.send(ws, {
+            t: "sys",
+            text: "wallet session expired — sign in once with MetaMask from the title screen",
+          });
+          try {
+            ws.close(4001, "auth");
+          } catch {
+            /* already closing */
+          }
+          return;
+        }
+      }
       // Wallet login: if this device has a guest secret for the same callsign, merge
       // guest progress (credits / look / campaign) into the wallet account once.
       // Lets offline players claim their runner when they link a wallet.
@@ -2404,11 +2470,32 @@ export class WorldDO {
     // class selects the signature ability (validated against the known roster)
     const CLASS_IDS = new Set(["metrophage", "k-guerilla", "wintermute", "swarm"]);
     if (proof?.classId && CLASS_IDS.has(proof.classId)) p.classId = proof.classId;
-    if (proof?.from) {
+    // Zone handoff: always place at the correct entry spawn for this room.
+    // (Venue-sized interiors used to inherit district/safehouse coords via a weak
+    // spawnPointForTravel match and park the runner outside the walls.)
+    if (proof?.from || isVenueSizedZone(this.zoneName) || isSafehouseSizedInterior(this.zoneName)) {
       const def = this.bridgeIndex >= 0 ? undefined : DISTRICTS[this.districtIndex];
-      const s = spawnPointForTravel(this.grid, this.zoneName, proof.from, def);
-      p.x = s.x;
-      p.y = s.y;
+      const s = spawnPointForTravel(this.grid, this.zoneName, proof?.from, def, this.spawn);
+      // Unmapped named-zone travel (subway/estates ← safe) can resolve via a district
+      // design spawn that is a WALL on this zone's real grid — never accept a
+      // wall-locked arrival; the DO's own spawn is the zone's canonical entrance.
+      if (tileIsWall(s.x, s.y, this.grid)) {
+        p.x = this.spawn.x;
+        p.y = this.spawn.y;
+      } else {
+        p.x = s.x;
+        p.y = s.y;
+      }
+      p.dirty = true;
+    } else if (
+      tileIsWall(p.x, p.y, this.grid) ||
+      p.x < 0 ||
+      p.y < 0 ||
+      p.x >= gridDims(this.grid).worldW ||
+      p.y >= gridDims(this.grid).worldH
+    ) {
+      p.x = this.spawn.x;
+      p.y = this.spawn.y;
       p.dirty = true;
     }
     const lookLocked = !!p.look;
@@ -4136,71 +4223,85 @@ export class WorldDO {
     }
     e.hp -= dmg;
     if (e.hp > 0) return;
+    this.onEnemyKilled(e, killer);
+  }
+
+  /** Kill resolution shared by melee/direct hits AND projectile shots — respawn timer,
+   *  rewards (daily-condition creditMult + HVT bounty/demotion), loot, pickups, boss
+   *  cleanup. The projectile loop used to duplicate this inline WITHOUT the daily/HVT
+   *  multipliers, so ranged kills underpaid and the day's HVT hunt never completed
+   *  unless the killing blow was melee. killer is optional: a shot can outlive its
+   *  owner's socket. */
+  private onEnemyKilled(e: Enemy, killer: PlayerState | undefined) {
     const isBoss = !!e.boss;
     const arch = ENEMY_ARCHES[e.kind] ?? ENEMY_ARCHES[0];
+    // A boss reforms slowly (so others can find + fight it); a grunt fast.
     e.respawnTick = this.tick + ticks(isBoss ? BOSS_RESPAWN_MS : 4000);
     if (this.inTutorial()) {
+      if (!killer) return;
       this.tutorialEvent(killer, "kill");
       const pid = this.nextPickupId++;
       this.pickups.set(pid, { id: pid, x: e.x, y: e.y, kind: PICKUP_CORE, dieTick: this.tick + ticks(PICKUP_TTL_MS), bornTick: this.tick });
       return;
     }
     const wasHvt = !!e.hvt;
-    const mult = isBoss ? 12 : wasHvt ? HVT_BOUNTY_MULT : (e.elite?.xpMult ?? 1);
-    const dmod = /^d\d+$/.test(this.zoneName) ? dailyDistrictMod(this.districtIndex) : null;
-    const gained = Math.round(CREDITS_PER_KILL * mult * (dmod?.creditMult ?? 1) * (1 + (killer.guildBonus || 0)));
-    killer.credits += gained;
-    killer.xp += Math.round(XP_PER_KILL * mult);
-    killer.level = levelForXp(killer.xp);
-    killer.dirty = true;
-    this.bumpMeta("f" + killer.faction, isBoss ? 10 : 1);
-    this.campaignEvent(killer, "kill");
-    this.sharedKillCredit(killer, e, isBoss);
-    this.addHeat(killer, HEAT.perKill);
-    this.bumpStat(killer, "kills", 1);
-    if (isBoss) this.bumpStat(killer, "bosses", 1);
-    this.bumpStat(killer, "credits", gained);
-    this.contractEvent(killer, "kill", 1);
-    this.bountyEvent(killer, "kill", 1);
-    if (isBoss) {
-      this.contractEvent(killer, "boss", 1);
-      this.bountyEvent(killer, "boss", 1);
+    if (killer) {
+      const mult = isBoss ? 12 : wasHvt ? HVT_BOUNTY_MULT : (e.elite?.xpMult ?? 1);
+      const dmod = /^d\d+$/.test(this.zoneName) ? dailyDistrictMod(this.districtIndex) : null;
+      const gained = Math.round(CREDITS_PER_KILL * mult * (dmod?.creditMult ?? 1) * (1 + (killer.guildBonus || 0)));
+      killer.credits += gained;
+      killer.xp += Math.round(XP_PER_KILL * mult);
+      killer.level = levelForXp(killer.xp);
+      killer.dirty = true;
+      this.bumpMeta("f" + killer.faction, isBoss ? 10 : 1);
+      this.campaignEvent(killer, "kill");
+      this.sharedKillCredit(killer, e, isBoss);
+      this.addHeat(killer, HEAT.perKill);
+      this.bumpStat(killer, "kills", 1);
+      if (isBoss) this.bumpStat(killer, "bosses", 1);
+      this.bumpStat(killer, "credits", gained);
+      this.contractEvent(killer, "kill", 1);
+      this.bountyEvent(killer, "kill", 1);
+      if (isBoss) {
+        this.contractEvent(killer, "boss", 1);
+        this.bountyEvent(killer, "boss", 1);
+      }
+      this.eliteDeath(e);
+      this.killNova(killer, e);
+      if (wasHvt) {
+        // the day's bounty is claimed — announce, remember the day, and demote the unit so
+        // its respawn is an ordinary garrison trooper (no farmable 25× loop)
+        this.broadcastSys(`◈ ${killer.name} collected the bounty on ${e.name} — ₵${gained}`);
+        this.bountyEvent(killer, "hvt", 1); // GHOST's kill-sheet job pays on top
+        void this.state.storage.put("hvtKilledDay", dayIndex());
+        e.hvt = false;
+        e.name = undefined;
+        e.tint = undefined;
+        e.maxHp = Math.max(1, Math.round(e.maxHp / HVT_HP_MULT));
+        // its backup leaves with it — adds never respawn as permanent garrison
+        for (const [aid, ae] of this.enemies) if (ae.add && !ae.boss) this.enemies.delete(aid);
+      }
+      if (isBoss || e.elite || wasHvt || Math.random() < arch.loot.chance) {
+        killer.inventory.push(rollItem(killer.level, isBoss ? 2.5 : wasHvt ? 2.2 : arch.loot.boost + (e.elite?.lootBonus ?? 0)));
+        if (killer.inventory.length > INVENTORY_CAP) killer.inventory.shift();
+        this.sendTo(killer.id, { t: "inv", items: killer.inventory });
+      }
+      if (isBoss) this.broadcast({ t: "sys", text: `▲ ${killer.name} slew ${e.name} — it will reform soon` });
+    } else {
+      this.eliteDeath(e);
     }
-    this.eliteDeath(e);
-    this.killNova(killer, e);
-    if (wasHvt) {
-      // the day's bounty is claimed — announce, remember the day, and demote the unit so
-      // its respawn is an ordinary garrison trooper (no farmable 25× loop)
-      this.broadcastSys(`◈ ${killer.name} collected the bounty on ${e.name} — ₵${gained}`);
-      this.bountyEvent(killer, "hvt", 1); // GHOST's kill-sheet job pays on top
-      void this.state.storage.put("hvtKilledDay", dayIndex());
-      e.hvt = false;
-      e.name = undefined;
-      e.tint = undefined;
-      e.maxHp = Math.max(1, Math.round(e.maxHp / HVT_HP_MULT));
-      // its backup leaves with it — adds never respawn as permanent garrison
-      for (const [aid, ae] of this.enemies) if (ae.add && !ae.boss) this.enemies.delete(aid);
-    }
-    if (isBoss || e.elite || wasHvt || Math.random() < arch.loot.chance) {
-      killer.inventory.push(rollItem(killer.level, isBoss ? 2.5 : wasHvt ? 2.2 : arch.loot.boost + (e.elite?.lootBonus ?? 0)));
-      if (killer.inventory.length > INVENTORY_CAP) killer.inventory.shift();
-      this.sendTo(killer.id, { t: "inv", items: killer.inventory });
-    }
-    if (isBoss) this.broadcast({ t: "sys", text: `▲ ${killer.name} slew ${e.name} — it will reform soon` });
     if (isBoss) {
       for (const [aid, ae] of this.enemies) if (ae.add) this.enemies.delete(aid);
       this.hazards = [];
     }
-    if (!this.inTutorial()) {
-      if (e.elite || Math.random() < LOOT_DROP_CHANCE) {
-        const kind = Math.random() < 0.42 ? PICKUP_CORE : PICKUP_CREDIT;
-        const pid = this.nextPickupId++;
-        this.pickups.set(pid, { id: pid, x: e.x, y: e.y, kind, dieTick: this.tick + ticks(PICKUP_TTL_MS), bornTick: this.tick });
-      }
-      if (Math.random() < 0.08) {
-        killer.cores += 1;
-        killer.dirty = true;
-      }
+    if (e.elite || Math.random() < LOOT_DROP_CHANCE) {
+      const kind = Math.random() < 0.42 ? PICKUP_CORE : PICKUP_CREDIT;
+      const pid = this.nextPickupId++;
+      this.pickups.set(pid, { id: pid, x: e.x, y: e.y, kind, dieTick: this.tick + ticks(PICKUP_TTL_MS), bornTick: this.tick });
+    }
+    if (killer && Math.random() < 0.08) {
+      killer.cores += 1;
+      killer.dirty = true;
     }
   }
 
@@ -4490,75 +4591,7 @@ export class WorldDO {
             e.hp -= dmg;
             if (owner) this.addHeat(owner, dmg * HEAT.perDamage);
             consumed = true;
-            if (e.hp <= 0) {
-              const isBoss = !!e.boss;
-              const arch = ENEMY_ARCHES[e.kind] ?? ENEMY_ARCHES[0];
-              // A boss reforms slowly (so others can find + fight it); a grunt fast.
-              e.respawnTick = this.tick + ticks(isBoss ? BOSS_RESPAWN_MS : 4000);
-              const killer = owner;
-              if (killer) {
-                if (this.inTutorial()) {
-                  this.tutorialEvent(killer, "kill");
-                  const pid = this.nextPickupId++;
-                  this.pickups.set(pid, {
-                    id: pid,
-                    x: e.x,
-                    y: e.y,
-                    kind: PICKUP_CORE,
-                    dieTick: this.tick + ticks(PICKUP_TTL_MS),
-                    bornTick: this.tick,
-                  });
-                } else {
-                  const mult = isBoss ? 12 : (e.elite?.xpMult ?? 1);
-                  const gained = Math.round(CREDITS_PER_KILL * mult * (1 + (killer.guildBonus || 0)));
-                  killer.credits += gained;
-                  killer.xp += Math.round(XP_PER_KILL * mult);
-                  killer.level = levelForXp(killer.xp);
-                  killer.dirty = true;
-                  this.bumpMeta("f" + killer.faction, isBoss ? 10 : 1);
-                  this.campaignEvent(killer, "kill");
-                  this.sharedKillCredit(killer, e, isBoss);
-                  this.addHeat(killer, HEAT.perKill);
-                  this.bumpStat(killer, "kills", 1);
-                  if (isBoss) this.bumpStat(killer, "bosses", 1);
-                  this.bumpStat(killer, "credits", gained);
-                  this.contractEvent(killer, "kill", 1);
-                  this.bountyEvent(killer, "kill", 1);
-                  if (isBoss) {
-                    this.contractEvent(killer, "boss", 1);
-                    this.bountyEvent(killer, "boss", 1);
-                  }
-                  if (isBoss || e.elite || Math.random() < arch.loot.chance) {
-                    killer.inventory.push(rollItem(killer.level, isBoss ? 2.5 : arch.loot.boost + (e.elite?.lootBonus ?? 0)));
-                    if (killer.inventory.length > INVENTORY_CAP) killer.inventory.shift();
-                    this.sendTo(killer.id, { t: "inv", items: killer.inventory });
-                  }
-                  if (isBoss) {
-                    this.broadcast({ t: "sys", text: `▲ ${killer.name} slew ${e.name} — it will reform soon` });
-                  }
-                }
-              }
-              this.eliteDeath(e);
-              if (owner) this.killNova(owner, e);
-              if (isBoss) {
-                for (const [aid, ae] of this.enemies) if (ae.add) this.enemies.delete(aid);
-                this.hazards = [];
-              }
-              if (!this.inTutorial()) {
-                if (e.elite || Math.random() < LOOT_DROP_CHANCE) {
-                  const kind = Math.random() < 0.25 ? PICKUP_CORE : PICKUP_CREDIT;
-                  const pid = this.nextPickupId++;
-                  this.pickups.set(pid, {
-                    id: pid,
-                    x: e.x,
-                    y: e.y,
-                    kind,
-                    dieTick: this.tick + ticks(PICKUP_TTL_MS),
-                    bornTick: this.tick,
-                  });
-                }
-              }
-            }
+            if (e.hp <= 0) this.onEnemyKilled(e, owner);
             break;
           }
         }

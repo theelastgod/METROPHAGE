@@ -6,6 +6,7 @@ import { iconKey, ensureItemIcons } from "../assets/itemIcons";
 import { dimBackdrop, onlineHudStack, overlayRect, uiDim, uiFont } from "./uiLayout";
 import ContextMenu from "./ContextMenu";
 import { getSettings } from "../systems/Settings";
+import { prefersMobileUx } from "../systems/Mobile";
 
 const SLOT_ICON: Record<Slot, string> = {
   weapon: "WEAPON-MOD",
@@ -43,8 +44,9 @@ export default class OnlineInventory {
   private barZones: Phaser.GameObjects.Zone[] = [];
   private barHint: Phaser.GameObjects.Text;
   private barSlotLabels: Phaser.GameObjects.Text[] = [];
-  private readonly barX = uiDim(16);
-  private readonly barY = onlineHudStack().hotbarY;
+  private readonly barX: number;
+  private readonly barY: number;
+  private readonly mobile: boolean;
 
   private panelObjs: Phaser.GameObjects.GameObject[] = [];
 
@@ -52,13 +54,23 @@ export default class OnlineInventory {
     this.scene = scene;
     this.contextMenu = contextMenu ?? new ContextMenu(scene);
     ensureItemIcons(scene);
+    this.mobile = prefersMobileUx();
+    // Mobile: hotbar sits top-center so the virtual stick owns the bottom-left.
+    if (this.mobile) {
+      const slotsW = HOTBAR_SLOTS * (HB_CELL + HB_GAP);
+      this.barX = Math.max(uiDim(8), (scene.scale.width - slotsW) / 2);
+      this.barY = uiDim(44);
+    } else {
+      this.barX = uiDim(16);
+      this.barY = onlineHudStack(scene.scale.height).hotbarY;
+    }
     this.barG = scene.add.graphics().setScrollFactor(0).setDepth(1500);
     for (let i = 0; i < HOTBAR_SLOTS; i++) {
       const cx = this.barX + i * (HB_CELL + HB_GAP) + HB_CELL / 2;
       this.barIcons.push(
         scene.add
           .image(cx, this.barY + HB_CELL / 2, iconKey("CHIP"))
-          .setDisplaySize(uiDim(34), uiDim(34))
+          .setDisplaySize(uiDim(this.mobile ? 28 : 34), uiDim(this.mobile ? 28 : 34))
           .setScrollFactor(0)
           .setDepth(1501)
           .setVisible(false),
@@ -66,14 +78,20 @@ export default class OnlineInventory {
     }
     // hint rides at the right end of the hotbar row so it never hides under the chat frame
     this.barHint = scene.add
-      .text(this.barX + HOTBAR_SLOTS * (HB_CELL + HB_GAP) + HB_GAP, this.barY + HB_CELL / 2, "I ▸ LOADOUT", {
-        fontFamily: "Courier New, monospace",
-        fontSize: uiFont(11),
-        color: "#6b7184",
-      })
+      .text(
+        this.barX + HOTBAR_SLOTS * (HB_CELL + HB_GAP) + HB_GAP,
+        this.barY + HB_CELL / 2,
+        this.mobile ? "BAG" : "I ▸ LOADOUT",
+        {
+          fontFamily: "Courier New, monospace",
+          fontSize: uiFont(this.mobile ? 9 : 11),
+          color: "#6b7184",
+        },
+      )
       .setOrigin(0, 0.5)
       .setScrollFactor(0)
-      .setDepth(1501);
+      .setDepth(1501)
+      .setVisible(!this.mobile);
     this.drawHotbar();
   }
 
