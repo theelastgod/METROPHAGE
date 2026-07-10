@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { COLORS } from "../config";
 import { DISTRICTS } from "../game/districts";
 import { BRIDGES } from "../game/bridges";
+import { dailyDistrictMod } from "../game/districtMods";
 import { getSettings } from "../systems/Settings";
 import { dimBackdrop, modalRect, uiDim, uiFont } from "./uiLayout";
 import { bodyFont } from "./typography";
@@ -143,8 +144,10 @@ export default class OnlineMap {
     if (zone === "subway") return "The Underline — a combat dungeon beneath the grid.";
     const m = zone.match(/^d(\d+)$/);
     if (m) {
-      const d = DISTRICTS[parseInt(m[1], 10)];
-      return d ? `${d.name} — ${d.subtitle}. Threat ${d.threat}. ⚔ PvP: THE CRUCIBLE in the SE corner.` : label;
+      const di = parseInt(m[1], 10);
+      const d = DISTRICTS[di];
+      const mod = dailyDistrictMod(di);
+      return d ? `${d.name} — ${d.subtitle}. Threat ${d.threat}. Today: ${mod.name} (${mod.blurb}). ⚔ PvP: THE CRUCIBLE in the SE corner.` : label;
     }
     const w = zone.match(/^w(\d+)$/);
     if (w) {

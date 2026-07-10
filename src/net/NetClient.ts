@@ -28,6 +28,7 @@ export interface NetEnemy {
   name?: string;
   tint?: number;
   hpMax?: number;
+  hvt?: boolean; // today's HIGH-VALUE TARGET — gold label + bounty callout
 }
 
 export interface NetShot {
@@ -90,7 +91,7 @@ export default class NetClient {
         furniture: EstateFurniture[];
         guests: { n: string; at: number; s: string }[];
       } = null; // current home (est{K})
-  estatesDir: { i: number; owner: string | null; name: string | null; forSale: boolean; price: number }[] = []; // street-wide ownership (THE ESTATES)
+  estatesDir: { i: number; owner: string | null; name: string | null; forSale: boolean; price: number; furn: number; guests: number }[] = []; // street-wide ownership (THE ESTATES)
   equipped: Item[] = []; // currently equipped items (one per slot), server-authoritative
   maxHp = PLAYER_HP; // derived from equipped +HP mods
   trade: null | {
@@ -520,6 +521,7 @@ export default class NetClient {
         ne.name = e.name;
         ne.tint = e.tint;
         ne.hpMax = e.hpMax;
+        ne.hvt = e.hvt;
         this.enemies.set(e.id, ne);
       }
       for (const id of [...this.enemies.keys()]) if (!liveE.has(id)) this.enemies.delete(id);

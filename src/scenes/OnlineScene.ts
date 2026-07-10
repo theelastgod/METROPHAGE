@@ -493,6 +493,10 @@ export default class OnlineScene extends Phaser.Scene {
   private estatePlateObjs: Phaser.GameObjects.GameObject[] = []; // FOR SALE / owner plates on the street
   // ambient pedestrians strolling the hub streets — pure client-side set dressing
   private wanderers: { spr: Phaser.GameObjects.Sprite; x: number; y: number; tx: number; ty: number; speed: number; pauseUntil: number; bob: number }[] = [];
+  private wandererGrid: TileGrid | null = null; // which grid the wanderers path on (hub or estates)
+  // HOUSING REGISTRY — the estates street's featured-homes board
+  private registryObjs: Phaser.GameObjects.GameObject[] = [];
+  private registryOpen = false;
 
   private isTutorial = false;
   private tutorialPanel!: Phaser.GameObjects.Text;
@@ -579,6 +583,9 @@ export default class OnlineScene extends Phaser.Scene {
     this.homeDraft = [];
     this.estatePlateObjs = [];
     this.wanderers = []; // scene restart destroyed the sprites — drop the stale refs
+    this.wandererGrid = null;
+    this.registryObjs = [];
+    this.registryOpen = false;
     this.districtDoors = [];
     this.doorTransit = false; // scene instances are reused across zone starts — reset triggers
     this.districtIndex = this.isDive
@@ -1464,6 +1471,26 @@ export default class OnlineScene extends Phaser.Scene {
         this.inv.close(); // ESC closes the bag first, before it exits the scene
         return;
       }
+      if (this.registryOpen && e.key === "Escape") {
+        this.toggleRegistry();
+        return;
+      }
+      // home controls run BEFORE the global B=shop / G=guild bindings, or they'd shadow
+      // these inside an est{K} home: (F)urnish, (B)uy, si(G)n the guestbook
+      if ((e.key === "f" || e.key === "F") && this.homeIdx >= 0 && this.net.estate?.mine && !this.homeEditing) {
+        this.startFurnishing();
+        return;
+      }
+      if ((e.key === "b" || e.key === "B") && this.homeIdx >= 0 && !this.homeEditing) {
+        const es = this.net.estate;
+        if (es && (!es.owner || es.forSale) && !es.mine) this.net.estateBuy();
+        return;
+      }
+      if ((e.key === "g" || e.key === "G") && this.homeIdx >= 0 && !this.homeEditing) {
+        const es = this.net.estate;
+        if (es?.owner && !es.mine) this.net.estateSign();
+        return;
+      }
       if (e.key === "b" || e.key === "B") {
         this.shop.toggle();
         if (this.shop.open) this.reportTutorialPanel("vendor");
@@ -1575,21 +1602,6 @@ export default class OnlineScene extends Phaser.Scene {
       }
       if (this.mapPanel.open && e.key === "Escape") {
         this.mapPanel.close();
-        return;
-      }
-      // home controls: (F)urnish your own home, (B)uy an unclaimed/for-sale one
-      if ((e.key === "f" || e.key === "F") && this.homeIdx >= 0 && this.net.estate?.mine && !this.homeEditing) {
-        this.startFurnishing();
-        return;
-      }
-      if ((e.key === "b" || e.key === "B") && this.homeIdx >= 0 && !this.homeEditing) {
-        const es = this.net.estate;
-        if (es && (!es.owner || es.forSale) && !es.mine) this.net.estateBuy();
-        return;
-      }
-      if ((e.key === "g" || e.key === "G") && this.homeIdx >= 0 && !this.homeEditing) {
-        const es = this.net.estate;
-        if (es?.owner && !es.mine) this.net.estateSign();
         return;
       }
       if (e.key === "h" || e.key === "H") {
@@ -1826,6 +1838,9 @@ export default class OnlineScene extends Phaser.Scene {
         break;
       case "stash":
         this.stashPanel.toggle(n.stash, n.inventory);
+        break;
+      case "registry":
+        this.toggleRegistry();
         break;
     }
     const panelKind: Record<string, string> = {
@@ -2364,6 +2379,35 @@ export default class OnlineScene extends Phaser.Scene {
       .text(this.worldW / 2, this.worldH - TILE, "▲ H — return to METRO CITY", displayFont(10, { color: "#39ff88", fontStyle: "bold" }))
       .setOrigin(0.5)
       .setDepth(7);
+
+    // ── HOUSING REGISTRY kiosk — the street's featured-homes board ──
+    const [sx, sy] = ESTATES.spawn;
+    const kx = (sx + 4) * TILE + TILE / 2;
+    const ky = sy * TILE + TILE / 2;
+    const kg = this.add.graphics().setDepth(6);
+    kg.fillStyle(0x0a0e18, 0.95).fillRoundedRect(kx - 30, ky - 26, 60, 34, 4);
+    kg.lineStyle(1.5, 0xffb13c, 0.95).strokeRoundedRect(kx - 30, ky - 26, 60, 34, 4);
+    kg.fillStyle(0xffb13c, 1).fillRect(kx - 2, ky + 8, 4, 12);
+    this.add.image(kx, ky - 9, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(0xffb13c).setDepth(5.9).setScale(0.7).setAlpha(0.3);
+    const kt = this.add.text(kx, ky - 9, "▣ REGISTRY", displayFont(9, { color: "#ffcf8a", fontStyle: "bold" })).setOrigin(0.5).setDepth(7).setInteractive({ useHandCursor: true });
+    kt.on("pointerdown", () => this.toggleRegistry());
+    this.tweens.add({ targets: kt, alpha: 0.6, duration: 1500, yoyo: true, repeat: -1 });
+    this.npcs.push({ kind: "service", svc: "registry", name: "HOUSING REGISTRY · all 12 homes", x: kx, y: ky });
+
+    // ── street lamps along the walk, so the strip reads like a neighbourhood ──
+    for (const lx of [8, 20, 32, 44, 56]) {
+      for (const ly of [10, 15]) {
+        const px = lx * TILE + TILE / 2;
+        const py = ly * TILE + TILE / 2;
+        const lg = this.add.graphics().setDepth(5);
+        lg.fillStyle(0x151b2c, 1).fillRect(px - 1.5, py - 14, 3, 16);
+        lg.fillStyle(0xffe08a, 0.95).fillCircle(px, py - 15, 3);
+        this.add.image(px, py - 6, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(0xffe08a).setDepth(4.9).setScale(0.55).setAlpha(0.22);
+      }
+    }
+
+    // a few neighbours strolling the street
+    this.spawnWanderers(ESTATES.grid, ESTATES.spawn[0], ESTATES.spawn[1], 5);
   }
 
   /** A private home interior (est{K}) — an empty room the owner furnishes. Ownership +
@@ -2430,7 +2474,7 @@ export default class OnlineScene extends Phaser.Scene {
       const plot = ESTATES.plots[entry.i];
       if (!plot) continue;
       const px = plot.door[0] * TILE + TILE / 2;
-      const py = plot.door[1] * TILE - 26;
+      const py = plot.door[1] * TILE - 46; // above the door's own "HOME N" label — no overlap
       const forSale = entry.forSale;
       const label = forSale ? `FOR SALE ₵${entry.price}` : `◈ ${(entry.name ?? "OWNED").toUpperCase()}`;
       const color = forSale ? 0x39ff88 : 0xffb13c;
@@ -2444,11 +2488,83 @@ export default class OnlineScene extends Phaser.Scene {
     }
   }
 
+  /** HOUSING REGISTRY — every home at a glance: owner, price, furnishings, signatures.
+   *  The most-furnished owned home gets a ✦ FEATURED badge; click a row to walk there. */
+  private toggleRegistry() {
+    if (this.registryOpen) {
+      for (const o of this.registryObjs) o.destroy();
+      this.registryObjs = [];
+      this.registryOpen = false;
+      return;
+    }
+    this.registryOpen = true;
+    const push = <T extends Phaser.GameObjects.GameObject>(o: T): T => {
+      this.registryObjs.push(o);
+      return o;
+    };
+    const W = this.scale.width;
+    const pw = Math.min(560, W - 40);
+    const px = (W - pw) / 2;
+    const py = 54;
+    const rowH = 26;
+    const ph = 78 + ESTATES.plots.length * rowH;
+    const g = push(this.add.graphics().setScrollFactor(0).setDepth(1300));
+    g.fillStyle(0x0a0818, 0.96).fillRoundedRect(px, py, pw, ph, 6);
+    g.lineStyle(1.5, 0xffb13c, 0.9).strokeRoundedRect(px, py, pw, ph, 6);
+    push(this.add.text(px + 16, py + 12, "▣ HOUSING REGISTRY", displayFont(15, { color: "#ffcf8a", fontStyle: "bold" })).setScrollFactor(0).setDepth(1301));
+    push(this.add.text(px + pw - 16, py + 14, "click a home to walk there · E/ESC close", bodyFont(9, { color: "#9aa3b2" })).setOrigin(1, 0).setScrollFactor(0).setDepth(1301));
+    const dir = this.net.estatesDir;
+    const featured = dir.filter((d) => d.owner).sort((a, b) => b.furn - a.furn)[0];
+    let ry = py + 44;
+    for (const entry of dir) {
+      const plot = ESTATES.plots[entry.i];
+      if (!plot) continue;
+      const isFeat = featured && entry.i === featured.i && entry.furn > 0;
+      const rowColor = entry.forSale ? 0x39ff88 : 0xffb13c;
+      g.fillStyle(entry.i % 2 ? 0x12102a : 0x0e0c1c, 0.9).fillRect(px + 10, ry, pw - 20, rowH - 3);
+      if (isFeat) g.lineStyle(1.2, 0xf7ff3c, 0.9).strokeRect(px + 10, ry, pw - 20, rowH - 3);
+      push(
+        this.add
+          .text(px + 20, ry + 5, `HOME ${entry.i + 1}${isFeat ? "  ✦ FEATURED" : ""}`, bodyFont(11, { color: isFeat ? "#f7ff3c" : "#cfe8ff", fontStyle: "bold" }))
+          .setScrollFactor(0)
+          .setDepth(1301),
+      );
+      push(
+        this.add
+          .text(px + pw / 2 - 30, ry + 5, entry.forSale ? `FOR SALE ₵${entry.price}` : `◈ ${(entry.name ?? "OWNED").toUpperCase()}`, bodyFont(10, { color: hexColor(rowColor) }))
+          .setScrollFactor(0)
+          .setDepth(1301),
+      );
+      push(
+        this.add
+          .text(px + pw - 20, ry + 5, `★${entry.furn} furn · ✎${entry.guests}`, bodyFont(10, { color: "#9aa3b2" }))
+          .setOrigin(1, 0)
+          .setScrollFactor(0)
+          .setDepth(1301),
+      );
+      const z = push(this.add.zone(px + 10, ry, pw - 20, rowH - 3).setOrigin(0).setScrollFactor(0).setInteractive({ useHandCursor: true }).setDepth(1302));
+      const door = plot.door;
+      z.on("pointerdown", () => {
+        this.toggleRegistry();
+        const wx = door[0] * TILE + TILE / 2;
+        const wy = door[1] * TILE + TILE / 2;
+        this.clickMove.setDestination(wx, wy, this.zoneGrid, this.net.pred.x, this.net.pred.y);
+        this.rsExamine(`Walking to HOME ${entry.i + 1}.`);
+      });
+      ry += rowH;
+    }
+  }
+
   /** Ambient pedestrians for the hub — a dozen strangers strolling the streets so the
    *  compact town reads inhabited even at low player counts. Pure set dressing: seeded
    *  looks, grid-aware wandering, non-interactive (never pushed to this.npcs). */
   private spawnHubWanderers() {
-    let seed = 90210;
+    this.spawnWanderers(ONLINE_CITY.grid, HUB_CX, HUB_CY, 12);
+  }
+
+  private spawnWanderers(grid: TileGrid, cx: number, cy: number, count: number) {
+    this.wandererGrid = grid;
+    let seed = 90210 + cx * 31 + cy;
     const rnd = () => {
       seed = (seed * 16807) % 2147483647;
       return seed / 2147483647;
@@ -2457,17 +2573,16 @@ export default class OnlineScene extends Phaser.Scene {
     const skins = [0xf3d2b8, 0xe6b58c, 0xc98a5e, 0xa9794a, 0x7c4f30, 0x4f3220];
     const hairs = ["short", "long", "buzz", "undercut", "bun", "braids", "dreads", "ponytail"] as const;
     const cloaks = ["coat", "cape", "none", "none"] as const;
-    const grid = ONLINE_CITY.grid;
     const walkable = (tx: number, ty: number) => grid[ty]?.[tx] !== undefined && !isWall(grid[ty][tx]);
-    for (let i = 0; i < 12; i++) {
-      // scatter on walkable street tiles in a ring around the plaza
+    for (let i = 0; i < count; i++) {
+      // scatter on walkable street tiles in a ring around the anchor
       let tx = 0;
       let ty = 0;
       for (let tries = 0; tries < 40; tries++) {
         const ang = rnd() * Math.PI * 2;
-        const r = 9 + rnd() * 17;
-        tx = Math.round(HUB_CX + Math.cos(ang) * r);
-        ty = Math.round(HUB_CY + Math.sin(ang) * r * 0.8);
+        const r = 4 + rnd() * 20;
+        tx = Math.round(cx + Math.cos(ang) * r);
+        ty = Math.round(cy + Math.sin(ang) * r * 0.8);
         if (walkable(tx, ty)) break;
       }
       if (!walkable(tx, ty)) continue;
@@ -2491,8 +2606,8 @@ export default class OnlineScene extends Phaser.Scene {
 
   /** Per-frame stroll: walk 3–8 tiles along a walkable cardinal run, pause, turn. */
   private updateWanderers(dt: number) {
-    if (this.wanderers.length === 0) return;
-    const grid = ONLINE_CITY.grid;
+    if (this.wanderers.length === 0 || !this.wandererGrid) return;
+    const grid = this.wandererGrid;
     const walkable = (tx: number, ty: number) => grid[ty]?.[tx] !== undefined && !isWall(grid[ty][tx]);
     const now = this.time.now;
     for (const wd of this.wanderers) {
@@ -2638,8 +2753,18 @@ export default class OnlineScene extends Phaser.Scene {
     if (e.mine) {
       btn(16, H - 38, "FURNISH (F)", 0xffb13c, () => this.startFurnishing());
       btn(140, H - 38, "LOCKBOX", 0x8dfff0, () => this.openService("stash"));
-      if (e.forSale) btn(250, H - 38, "UNLIST", 0x9aa3b2, () => this.net.estateUnlist());
-      else btn(250, H - 38, "LIST FOR SALE ₵3000", 0x00e5ff, () => this.net.estateList(3000));
+      if (e.forSale) {
+        btn(250, H - 38, `LISTED ₵${e.price} · UNLIST`, 0x9aa3b2, () => this.net.estateUnlist());
+      } else {
+        // asking-price presets scale with the furnishings you've invested
+        const furnValue = (e.furniture ?? []).reduce((s, p) => s + (furnitureKind(p.k)?.price ?? 0), 0);
+        const fair = Math.max(2500, Math.round((2500 + furnValue * 1.5) / 50) * 50);
+        const high = Math.round((fair * 2) / 50) * 50;
+        push(this.add.text(250, H - 58, "LIST FOR SALE:", bodyFont(10, { color: "#9aa3b2" })).setScrollFactor(0).setDepth(1200));
+        btn(250, H - 38, `₵2500`, 0x39ff88, () => this.net.estateList(2500));
+        btn(330, H - 38, `₵${fair} FAIR`, 0x00e5ff, () => this.net.estateList(fair));
+        btn(460, H - 38, `₵${high} HIGH`, 0xff79c6, () => this.net.estateList(high));
+      }
     } else if (!e.owner || e.forSale) {
       btn(16, H - 38, `BUY THIS HOME ₵${e.price} (B)`, 0x39ff88, () => this.net.estateBuy());
       if (e.owner) btn(260, H - 38, "SIGN GUESTBOOK (G)", 0xb06bff, () => this.net.estateSign());
@@ -3085,7 +3210,7 @@ export default class OnlineScene extends Phaser.Scene {
 
   update(_t: number, dt: number) {
     if (!this.net) return;
-    if (this.isCityHub) this.updateWanderers(dt); // ambient pedestrians (hub only)
+    if (this.isCityHub || this.isEstates) this.updateWanderers(dt); // ambient pedestrians
     const k = this.keys;
     const dn = (key?: Phaser.Input.Keyboard.Key) => (!this.chatOpen && key?.isDown ? 1 : 0);
     let mx = Math.sign(dn(k.D) + dn(k.RIGHT) - dn(k.A) - dn(k.LEFT));
@@ -3477,10 +3602,20 @@ export default class OnlineScene extends Phaser.Scene {
             .image(e.x, e.y, GLOW_KEY)
             .setBlendMode(Phaser.BlendModes.ADD)
             .setTint(e.tint)
-            .setScale(0.55, 0.3)
-            .setAlpha(0.3)
+            .setScale(e.hvt ? 0.9 : 0.55, e.hvt ? 0.5 : 0.3)
+            .setAlpha(e.hvt ? 0.42 : 0.3)
             .setDepth(7.6);
           s.setData("aura", aura);
+          if (e.hvt) {
+            // the day's bounty — bigger silhouette + a floating gold name so the hunt reads
+            s.setScale(1.45);
+            const label = this.add
+              .text(e.x, e.y - 30, `◈ ${e.name}`, bodyFont(10, { color: "#ffd24a", fontStyle: "bold" }))
+              .setOrigin(0.5)
+              .setDepth(9.5)
+              .setShadow(0, 0, "#ffd24a", 6, true, true);
+            s.setData("hvtLabel", label);
+          }
         }
       } else if (s.getData("kind") !== e.kind) {
         s.setTint(ENEMY_KIND_TINT[e.kind] ?? COLORS.enemy);
@@ -3493,11 +3628,13 @@ export default class OnlineScene extends Phaser.Scene {
       (s.getData("shadow") as Phaser.GameObjects.Image | undefined)?.setPosition(e.x, e.y + (e.boss ? 26 : 12));
       const aura = s.getData("aura") as Phaser.GameObjects.Image | undefined;
       aura?.setPosition(e.x, e.y + 10).setAlpha(0.24 + Math.sin(this.time.now / 260) * 0.08);
+      (s.getData("hvtLabel") as Phaser.GameObjects.Text | undefined)?.setPosition(e.x, e.y - 30);
     }
     for (const [id, s] of this.enemySprites)
       if (!this.net.enemies.has(id)) {
         (s.getData("shadow") as Phaser.GameObjects.Image | undefined)?.destroy();
         (s.getData("aura") as Phaser.GameObjects.Image | undefined)?.destroy();
+        (s.getData("hvtLabel") as Phaser.GameObjects.Text | undefined)?.destroy();
         s.destroy();
         this.enemySprites.delete(id);
         const o = this.bossOverlays.get(id); // a slain boss leaves the snapshot → drop its overlay

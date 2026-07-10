@@ -182,6 +182,7 @@ export interface EnemySnap {
   name?: string;
   tint?: number; // boss accent colour (corp identity)
   hpMax?: number; // full HP, for the boss health bar
+  hvt?: boolean; // today's HIGH-VALUE TARGET — gold label + hunt callout
 }
 export interface ShotSnap {
   id: number;
@@ -275,7 +276,7 @@ export type ServerMsg =
       guests: { n: string; at: number; s: string }[];
     }
   // player housing — the whole street's ownership at a glance (sent on entering THE ESTATES)
-  | { t: "estates_dir"; list: { i: number; owner: string | null; name: string | null; forSale: boolean; price: number }[] }
+  | { t: "estates_dir"; list: { i: number; owner: string | null; name: string | null; forSale: boolean; price: number; furn: number; guests: number }[] }
   | { t: "equipped"; items: Item[]; maxHp: number } // owning client's equipped gear + derived max HP
   | { t: "achv"; ids: string[] } // full unlocked achievement set (sent on login)
   | { t: "ach"; id: string; name: string; reward: number } // a freshly-unlocked achievement

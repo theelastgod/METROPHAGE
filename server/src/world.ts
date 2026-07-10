@@ -202,6 +202,7 @@ export const parseZone = (z: string | null): number => {
  *  own DO, reuses the safehouse room grid, and runs no enemies/boss/territory/PvP. Shared with
  *  the Worker router so these zone names pass through instead of collapsing to a district. */
 import { getFragment, DIVE_DEFAULT_FRAGMENTS } from "../../src/game/fragments";
+import { dailyDistrictMod, dayIndex, hvtCallsign, HVT_BOUNTY_MULT, HVT_HP_MULT, HVT_TINT } from "../../src/game/districtMods";
 import { WORLD_EVENTS, type WorldEventDef } from "../../src/game/worldEvents";
 import { WORLD_EVENT } from "../../src/config";
 import {
@@ -399,6 +400,8 @@ interface Enemy {
   name?: string;
   tint?: number; // boss accent colour (corp identity), for the client
   elite?: EliteModifier; // rolled-on-spawn affix: hp/speed/status-resist/volatile + payout mult
+  hvt?: boolean; // today's HIGH-VALUE TARGET — named bounty elite, huge payout, once per day
+  speedMult?: number; // district daily-condition speed factor (GHOST GRID etc.)
   add?: boolean; // a boss-summoned add (cleaned up when the boss falls/reforms)
   stunUntilTick?: number; // WINTERMUTE hack cone — frozen mid-thought (no move/fire)
   slowUntilTick?: number; // METROPHAGE contagion bloom — infected servos at half speed
@@ -757,6 +760,7 @@ export class WorldDO {
     this.grid = buildGrid(def);
     this.spawn = spawnPoint(this.grid, def);
     this.spawnEnemies(def);
+    this.applyDistrictMod(); // today's district condition (hp/speed) onto the fresh garrison
     this.nodes = def.nodes.map((n, i) => ({
       id: i,
       x: n.tile[0] * DISTRICT_SCALE * TILE + TILE / 2,
@@ -982,6 +986,45 @@ export class WorldDO {
       { id: "livewire", name: "LIVEWIRE — the garrison is decorated", hpMult: 1.1, speedMult: 1.05, shotSpeedMult: 1, eliteChance: 0.5 },
     ];
     return AFFIXES[WorldDO.weekNow() % AFFIXES.length];
+  }
+
+  /** Today's district condition — hp/speed onto the fresh garrison (credits apply on kill).
+   *  Deterministic per (district, day); the client shows the same condition on the map. */
+  private applyDistrictMod() {
+    if (!/^d\d+$/.test(this.zoneName)) return;
+    const mod = dailyDistrictMod(this.districtIndex);
+    for (const e of this.enemies.values()) {
+      e.hp = Math.round(e.hp * mod.enemyHpMult);
+      e.maxHp = Math.round(e.maxHp * mod.enemyHpMult);
+      if (e.baseMaxHp) e.baseMaxHp = Math.round(e.baseMaxHp * mod.enemyHpMult);
+      if (mod.enemySpeedMult !== 1) e.speedMult = mod.enemySpeedMult;
+    }
+  }
+
+  /** Promote one far-out garrison unit into today's HIGH-VALUE TARGET — a named,
+   *  gold-flagged bounty worth HVT_BOUNTY_MULT× credits. Once per district per day
+   *  (kill day persists in DO storage), and it has to be HUNTED, not doorstepped. */
+  private async maybePromoteHvt(): Promise<void> {
+    if (!/^d\d+$/.test(this.zoneName)) return;
+    for (const e of this.enemies.values()) if (e.hvt && e.hp > 0) return; // already stalking
+    const day = dayIndex();
+    if ((await this.state.storage.get<number>("hvtKilledDay")) === day) return; // claimed today
+    let best: Enemy | null = null;
+    let bd = -1;
+    for (const e of this.enemies.values()) {
+      if (e.boss || e.add || e.elite || e.hp <= 0) continue;
+      const d = Math.hypot(e.x - this.spawn.x, e.y - this.spawn.y);
+      if (d > bd) {
+        bd = d;
+        best = e;
+      }
+    }
+    if (!best) return;
+    best.hvt = true;
+    best.name = `HVT ${hvtCallsign(this.districtIndex, day)}`;
+    best.tint = HVT_TINT;
+    best.maxHp = Math.round(best.maxHp * HVT_HP_MULT);
+    best.hp = best.maxHp;
   }
 
   /** Apply this week's affix to the freshly-seeded PROVING garrison. */
@@ -2256,6 +2299,17 @@ export class WorldDO {
     if (this.zoneName === ESTATES_ZONE) await this.sendEstatesDir(ws); // hydrate the street's FOR SALE / owner plates
     // HOMESTEAD beat — walking into THE ESTATES (or any home there) is the objective
     if (this.zoneName === ESTATES_ZONE || parseEstateInterior(this.zoneName) !== null) this.campaignEvent(p, "visit");
+    // district arrivals: today's condition + the day's bounty, so the hunt is known
+    if (/^d\d+$/.test(this.zoneName)) {
+      const dm = dailyDistrictMod(this.districtIndex);
+      this.send(ws, { t: "sys", text: `◈ district condition — ${dm.name}: ${dm.blurb}` });
+      await this.maybePromoteHvt();
+      for (const e of this.enemies.values())
+        if (e.hvt && e.hp > 0) {
+          this.send(ws, { t: "sys", text: `◈ HIGH-VALUE TARGET active: ${e.name} — ${HVT_BOUNTY_MULT}× bounty. Hunt it down.` });
+          break;
+        }
+    }
     this.sendLoadout(ws, p); // hydrate equipped gear + derived max HP
     this.noteDeepest(p); // arriving in this district may set a "deepest reached" milestone
     this.send(ws, { t: "achv", ids: [...p.achv] }); // hydrate the unlocked achievement set
@@ -3209,9 +3263,17 @@ export class WorldDO {
   /** The whole street's ownership at a glance — lets the ESTATES overworld hang
    *  FOR SALE / owner plates over every door without visiting each home. */
   private async sendEstatesDir(ws: WebSocket): Promise<void> {
-    const { results } = await this.env.DB.prepare("SELECT id, owner, owner_name, price, for_sale FROM estates")
-      .all<{ id: string; owner: string | null; owner_name: string | null; price: number; for_sale: number }>();
+    const { results } = await this.env.DB.prepare("SELECT id, owner, owner_name, price, for_sale, furniture, guestbook FROM estates")
+      .all<{ id: string; owner: string | null; owner_name: string | null; price: number; for_sale: number; furniture: string; guestbook: string }>();
     const byId = new Map(results.map((r) => [r.id, r]));
+    const count = (raw: string | undefined): number => {
+      try {
+        const a = JSON.parse(raw || "[]");
+        return Array.isArray(a) ? a.length : 0;
+      } catch {
+        return 0;
+      }
+    };
     const list = [];
     for (let i = 0; i < ESTATE_COUNT; i++) {
       const r = byId.get(`est${i}`);
@@ -3221,6 +3283,8 @@ export class WorldDO {
         name: r?.owner_name ?? null,
         forSale: r?.owner ? !!r.for_sale : true,
         price: r?.owner ? r.price : ESTATE_BASE_PRICE,
+        furn: count(r?.furniture),
+        guests: count(r?.guestbook),
       });
     }
     this.send(ws, { t: "estates_dir", list });
@@ -3863,8 +3927,10 @@ export class WorldDO {
       this.pickups.set(pid, { id: pid, x: e.x, y: e.y, kind: PICKUP_CORE, dieTick: this.tick + ticks(PICKUP_TTL_MS), bornTick: this.tick });
       return;
     }
-    const mult = isBoss ? 12 : (e.elite?.xpMult ?? 1);
-    const gained = Math.round(CREDITS_PER_KILL * mult * (1 + (killer.guildBonus || 0)));
+    const wasHvt = !!e.hvt;
+    const mult = isBoss ? 12 : wasHvt ? HVT_BOUNTY_MULT : (e.elite?.xpMult ?? 1);
+    const dmod = /^d\d+$/.test(this.zoneName) ? dailyDistrictMod(this.districtIndex) : null;
+    const gained = Math.round(CREDITS_PER_KILL * mult * (dmod?.creditMult ?? 1) * (1 + (killer.guildBonus || 0)));
     killer.credits += gained;
     killer.xp += Math.round(XP_PER_KILL * mult);
     killer.level = levelForXp(killer.xp);
@@ -3884,8 +3950,18 @@ export class WorldDO {
     }
     this.eliteDeath(e);
     this.killNova(killer, e);
-    if (isBoss || e.elite || Math.random() < arch.loot.chance) {
-      killer.inventory.push(rollItem(killer.level, isBoss ? 2.5 : arch.loot.boost + (e.elite?.lootBonus ?? 0)));
+    if (wasHvt) {
+      // the day's bounty is claimed — announce, remember the day, and demote the unit so
+      // its respawn is an ordinary garrison trooper (no farmable 25× loop)
+      this.broadcastSys(`◈ ${killer.name} collected the bounty on ${e.name} — ₵${gained}`);
+      void this.state.storage.put("hvtKilledDay", dayIndex());
+      e.hvt = false;
+      e.name = undefined;
+      e.tint = undefined;
+      e.maxHp = Math.max(1, Math.round(e.maxHp / HVT_HP_MULT));
+    }
+    if (isBoss || e.elite || wasHvt || Math.random() < arch.loot.chance) {
+      killer.inventory.push(rollItem(killer.level, isBoss ? 2.5 : wasHvt ? 2.2 : arch.loot.boost + (e.elite?.lootBonus ?? 0)));
       if (killer.inventory.length > INVENTORY_CAP) killer.inventory.shift();
       this.sendTo(killer.id, { t: "inv", items: killer.inventory });
     }
@@ -4073,6 +4149,7 @@ export class WorldDO {
       }
       // CONTAGION BLOOM infection — chewed servos run at half speed
       if (e.elite) eSpeed *= e.elite.speedMult; // SWIFT runs hot, ARMORED lumbers
+      if (e.speedMult) eSpeed *= e.speedMult; // today's district condition (GHOST GRID etc.)
       if (this.provingVault) eSpeed *= WorldDO.weeklyAffix().speedMult; // OVERCLOCKED weeks
       if (e.slowUntilTick && this.tick < e.slowUntilTick) eSpeed *= 0.5;
       stepMove(e, { mx: mvx, my: mvy }, this.grid, NET_TICK_MS, eSpeed);
@@ -4444,9 +4521,11 @@ export class WorldDO {
           kind: e.kind,
           ...(e.boss
             ? { boss: true, name: e.name, tint: e.tint, hpMax: Math.round(e.maxHp) }
-            : e.elite
-              ? { name: e.name, tint: e.tint } // elite: aura tint + prefix name, no boss chrome
-              : {}),
+            : e.hvt
+              ? { name: e.name, tint: e.tint, hvt: true, hpMax: Math.round(e.maxHp) } // the day's bounty — labelled + health-barred
+              : e.elite
+                ? { name: e.name, tint: e.tint } // elite: aura tint + prefix name, no boss chrome
+                : {}),
         });
     }
     const shots = [];
