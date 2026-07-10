@@ -92,6 +92,8 @@ export default class Prologue extends Phaser.Scene {
 
     this.showBeat();
     this.input.keyboard?.on("keydown-SPACE", () => this.advance());
+    this.input.keyboard?.on("keydown-ENTER", () => this.advance());
+    this.input.keyboard?.on("keydown-ESC", () => this.showActions());
     this.input.on("pointerdown", () => this.advance());
     pinMenuUiLayer(this);
   }

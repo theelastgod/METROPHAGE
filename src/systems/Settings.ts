@@ -7,12 +7,18 @@ const KEY = "metrophage_settings_v1";
 
 export type TutorialModePref = "quick" | "full";
 export type GraphicsQuality = "auto" | "low" | "medium" | "high";
+/** HUD density: new = objective + vitals only; full = every panel. */
+export type UiDensity = "new" | "full";
 
 export interface SettingsData {
   /** RuneScape-style controls: click-to-walk, right-click menu, click-to-attack. */
   rsControls: boolean;
   /** Drill yard depth — quick core loop or full system tour. */
   tutorialMode: TutorialModePref;
+  /** Progressive HUD — "new" hides market/roster chrome until you open them. */
+  uiDensity: UiDensity;
+  /** Show first-session coach strip (local). */
+  firstSessionCoach: boolean;
   /** ⚠ Photosensitivity safety: caps flashing/glitch, softens the meltdown. */
   reduceFlashing: boolean;
   /** Low-FX / device tier: thins particles + skips the costly bloom (low-end/mobile). */
@@ -37,6 +43,8 @@ export interface SettingsData {
 const DEFAULTS: SettingsData = {
   rsControls: true,
   tutorialMode: "quick",
+  uiDensity: "new",
+  firstSessionCoach: true,
   reduceFlashing: false,
   lowFx: false,
   graphicsQuality: "auto",

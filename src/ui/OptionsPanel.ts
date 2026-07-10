@@ -31,7 +31,7 @@ export default class OptionsPanel {
   private rows: Row[] = [];
   private open = false;
 
-  private readonly frame = modalRect(440, 448);
+  private readonly frame = modalRect(440, 520);
   private readonly x = this.frame.x;
   private readonly y = this.frame.y;
   private readonly w = this.frame.w;
@@ -60,6 +60,10 @@ export default class OptionsPanel {
 
     let ry = this.y + uiDim(58);
     this.addRow("rsControls", "RUNESCAPE CONTROLS", true, ry, D, "#f7ff3c");
+    ry += this.rowH;
+    this.addCycleRow("uiDensity", "HUD DENSITY", ["new", "full"] as unknown as GraphicsQuality[], ry, D, "#39ff88");
+    ry += this.rowH;
+    this.addRow("firstSessionCoach", "FIRST-SESSION COACH", true, ry, D, "#b06bff");
     ry += this.rowH;
     this.addRow("reduceFlashing", "REDUCE FLASHING", true, ry, D, "#ff3b6b");
     ry += this.rowH;
@@ -119,9 +123,9 @@ export default class OptionsPanel {
   private onRowClick(row: Row, localX: number) {
     if (!this.open) return;
     if (row.cycle) {
-      const cur = getSettings()[row.key] as GraphicsQuality;
-      const i = row.cycle.indexOf(cur);
-      const next = row.cycle[(i + 1) % row.cycle.length];
+      const cur = String(getSettings()[row.key]);
+      const i = row.cycle.indexOf(cur as GraphicsQuality);
+      const next = row.cycle[(i + 1 + row.cycle.length) % row.cycle.length];
       updateSettings({ [row.key]: next } as Partial<SettingsData>);
     } else if (row.toggle) {
       updateSettings({ [row.key]: !getSettings()[row.key] } as Partial<SettingsData>);
@@ -187,8 +191,15 @@ export default class OptionsPanel {
     const trackH = uiDim(8);
     for (const row of this.rows) {
       if (row.cycle) {
-        const cur = s[row.key] as GraphicsQuality;
-        const eff = row.key === "graphicsQuality" && cur === "auto" ? `AUTO (${effectiveGraphicsQuality()})` : cur.toUpperCase();
+        const cur = String(s[row.key]);
+        const eff =
+          row.key === "graphicsQuality" && cur === "auto"
+            ? `AUTO (${effectiveGraphicsQuality()})`
+            : row.key === "uiDensity"
+              ? cur === "new"
+                ? "SIMPLE"
+                : "FULL"
+              : cur.toUpperCase();
         row.valueText.setText(eff).setColor("#f7ff3c");
       } else if (row.toggle) {
         const on = !!s[row.key];

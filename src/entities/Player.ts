@@ -79,6 +79,9 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     (this.body as Phaser.Physics.Arcade.Body).setCircle(9, 7, 9);
   }
 
+  /** Base display scale — keeps the runner legible against dense neon floors. */
+  private static readonly BASE_SCALE = 1.18;
+
   get invulnerable(): boolean {
     return this.scene.time.now < this.invulnUntil;
   }
@@ -137,13 +140,14 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     // Facing follows the aim; legs/arms cycle while moving (or dashing).
     driveChar(this, Math.cos(aim), Math.sin(aim), moving);
     const s = Math.sin(now * (moving ? 0.02 : 0.006));
-    let sx = 1 - s * (moving ? 0.05 : 0.02);
-    let sy = 1 + s * (moving ? 0.1 : 0.045);
+    const B = Player.BASE_SCALE;
+    let sx = B * (1 - s * (moving ? 0.05 : 0.02));
+    let sy = B * (1 + s * (moving ? 0.1 : 0.045));
     const since = now - this.firedAt;
     if (since < 130) {
       const k = 1 - since / 130;
-      sx -= 0.13 * k;
-      sy += 0.11 * k;
+      sx -= 0.13 * B * k;
+      sy += 0.11 * B * k;
     }
     this.setScale(sx, sy);
   }

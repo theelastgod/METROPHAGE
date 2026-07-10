@@ -75,10 +75,10 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
   panel.innerHTML = `
     <div class="head">
       <h3>◈ $METRO BRIDGE <span class="x" id="m-x">✕</span></h3>
-      <div class="sub">₵ credits are earned in-game · ◈ $METRO is the tradeable token · this bridge converts between them</div>
+      <div class="sub">₵ credits = play currency · ◈ $METRO = on-chain bridge · ${st.mainnetLive ? "MAINNET LIVE" : st.enabled ? "MINT SET — check settlement" : "AWAITING MINT CA"}</div>
     </div>
     <div class="body">
-      <div class="row"><span class="muted">network</span><span class="pill">${st.cluster}${st.mainnetLive ? " · LIVE" : " · rehearsal"}</span></div>
+      <div class="row"><span class="muted">network</span><span class="pill">${st.cluster}${st.mainnetLive ? " · ARMED" : st.mainnetArmed ? " · arm flag only" : " · not armed"}</span></div>
       <div class="row"><span class="muted">cash-out pool</span><span id="m-pool" class="metro-big">—</span></div>
       <div class="row"><span class="muted">rates</span><span class="pill" id="m-rates">—</span></div>
       <div class="strip" id="m-phase">loading pool status…</div>

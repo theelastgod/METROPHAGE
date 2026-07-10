@@ -210,7 +210,7 @@ export default class WalletSignInPanel {
 
     this.add(
       this.scene.add
-        .text(x + panelPad(), y + uiGap("md"), "◢ IDENTITY GATE", displayFont(20, { color: "#00e5ff", fontStyle: "bold" }))
+        .text(x + panelPad(), y + uiGap("md"), "◢ METROPHAGE", displayFont(20, { color: "#00e5ff", fontStyle: "bold" }))
         .setOrigin(0, 0)
         .setShadow(0, 0, "#00e5ff", 4, true, true),
     );

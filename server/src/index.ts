@@ -4,21 +4,57 @@ import { verifyWalletLogin } from "./auth";
 
 export { WorldDO };
 
+/** Mint from either METRO_MINT (preferred) or legacy METRO_DEVNET_MINT. */
+function metroMint(env: Env): string | undefined {
+  const m = (env.METRO_MINT || env.METRO_DEVNET_MINT || "").trim();
+  return m || undefined;
+}
+
+function rpcIsMainnet(rpc: string): boolean {
+  return /mainnet/i.test(rpc);
+}
+
 /**
- * Choose the bridge settlement. With the devnet treasury configured (.dev.vars), use
- * real Solana — dynamically imported so @solana/web3.js never loads on the game's hot
- * path. Otherwise the devnet-sim settlement (the accounting still works end-to-end).
+ * Choose the bridge settlement.
+ * - Real Solana when treasury secret + mint are both set.
+ * - Mainnet RPC additionally requires METRO_MAINNET_ARMED=1 (counsel gate).
+ * - Otherwise sim (ledger math works; deposits would be forgeable — panel must stay off).
  */
 async function pickSettlement(env: Env): Promise<Settlement> {
-  if (env.METRO_TREASURY_SECRET && env.METRO_DEVNET_MINT) {
-    const { makeSolanaSettlement } = await import("./solana");
-    return makeSolanaSettlement({
-      rpc: env.METRO_RPC || "https://api.devnet.solana.com",
-      mint: env.METRO_DEVNET_MINT,
-      treasurySecretB64: env.METRO_TREASURY_SECRET,
-    });
+  const mint = metroMint(env);
+  const secret = env.METRO_TREASURY_SECRET?.trim();
+  if (!mint || !secret) return simSettlement;
+
+  const rpc = (env.METRO_RPC || "https://api.devnet.solana.com").trim();
+  if (rpcIsMainnet(rpc) && env.METRO_MAINNET_ARMED !== "1") {
+    // Refuse real mainnet settlement until armed — stay on sim so a mis-set RPC
+    // cannot move value without the counsel flag.
+    return simSettlement;
   }
-  return simSettlement;
+
+  const { makeSolanaSettlement } = await import("./solana");
+  return makeSolanaSettlement({
+    rpc,
+    mint,
+    treasurySecretB64: secret,
+  });
+}
+
+/** Require a wallet signature that proves `player` is the wallet owner (w:<addr>). */
+function requireWalletPlayer(b: {
+  player?: string;
+  wallet?: string;
+  sig?: string;
+  ts?: number;
+}): { ok: true; player: string; wallet: string } | { ok: false; reason: string } {
+  const wallet = (b.wallet || "").trim();
+  const player = (b.player || "").trim();
+  const id = verifyWalletLogin({ wallet, sig: b.sig ?? "", ts: Number(b.ts) });
+  if (!id) return { ok: false, reason: "wallet sign-in required — bad or stale signature" };
+  if (player && player !== id && player !== wallet && player !== id.slice(2)) {
+    return { ok: false, reason: "player id does not match signed wallet" };
+  }
+  return { ok: true, player: id, wallet };
 }
 
 const json = (body: unknown, status = 200): Response =>
@@ -81,39 +117,127 @@ async function handleLeaderboard(url: URL, env: Env): Promise<Response> {
  */
 async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> {
   const settlement = await pickSettlement(env);
+  const mint = metroMint(env);
+  const hasTreasury = !!(env.METRO_TREASURY_SECRET && env.METRO_TREASURY_SECRET.trim());
+  const rpc = (env.METRO_RPC || "").trim();
+  const armed = env.METRO_MAINNET_ARMED === "1";
   try {
     if (url.pathname === "/metro/account" && req.method === "GET")
       return json(await getAccount(env.DB, url.searchParams.get("player") ?? ""));
     if (url.pathname === "/metro/pool" && req.method === "GET") {
-      const info = await poolInfo(env.DB);
-      // players deposit by sending $METRO to the treasury, so publish its address
-      // (public key only — the secret never leaves the server) + which settlement runs
-      if (env.METRO_TREASURY_SECRET && env.METRO_DEVNET_MINT) {
+      const info = await poolInfo(env.DB) as Record<string, unknown>;
+      // Always publish readiness metadata so ops can see pre-CA state.
+      info.mintConfigured = !!mint;
+      info.treasuryConfigured = hasTreasury;
+      info.mainnetArmed = armed;
+      info.rpc = rpc || null;
+      info.readyForCa = hasTreasury && !mint; // treasury ready, waiting for mint
+      info.liveBridge = hasTreasury && !!mint && settlement !== simSettlement;
+      if (hasTreasury) {
         const { treasuryPubkey } = await import("./solana");
-        info.treasury = treasuryPubkey(env.METRO_TREASURY_SECRET);
+        info.treasury = treasuryPubkey(env.METRO_TREASURY_SECRET!);
+      }
+      if (hasTreasury && mint && settlement !== simSettlement) {
         info.settlement = "solana";
       } else {
         info.settlement = "sim";
+        if (hasTreasury && mint && rpcIsMainnet(rpc) && !armed) {
+          info.reason = "mainnet RPC set but METRO_MAINNET_ARMED is off — settlement stays sim";
+        } else if (!mint) {
+          info.reason = "awaiting mint CA — set METRO_MINT after pump.fun launch";
+        } else if (!hasTreasury) {
+          info.reason = "awaiting METRO_TREASURY_SECRET";
+        }
       }
       return json(info);
+    }
+    if (url.pathname === "/metro/status" && req.method === "GET") {
+      // Ops probe — no secrets, only readiness.
+      return json({
+        ok: true,
+        mintConfigured: !!mint,
+        treasuryConfigured: hasTreasury,
+        mainnetArmed: armed,
+        settlement: hasTreasury && mint && settlement !== simSettlement ? "solana" : "sim",
+        readyForCa: hasTreasury && !mint,
+        clusterHint: rpcIsMainnet(rpc) ? "mainnet-beta" : rpc ? "custom/devnet" : "unset",
+      });
     }
     if (url.pathname === "/metro/quote" && req.method === "GET")
       return json(quote(Number(url.searchParams.get("credits") ?? "0")));
     if (url.pathname === "/metro/withdraw" && req.method === "POST") {
-      const b = (await req.json()) as { player?: string; wallet?: string; credits?: number };
+      const b = (await req.json()) as {
+        player?: string;
+        wallet?: string;
+        credits?: number;
+        sig?: string;
+        ts?: number;
+      };
+      // Wallet proof required for real settlement; sim still accepts player id for smoke tests.
+      if (settlement !== simSettlement) {
+        const auth = requireWalletPlayer(b);
+        if (!auth.ok) return json(auth, 401);
+        return json(
+          await withdraw(env.DB, settlement, {
+            player: auth.player,
+            wallet: auth.wallet,
+            credits: Number(b.credits),
+          }),
+        );
+      }
       return json(await withdraw(env.DB, settlement, { player: b.player ?? "", wallet: b.wallet ?? "", credits: Number(b.credits) }));
     }
-    // finalize a claim after the player submitted it (they paid the network fee)
     if (url.pathname === "/metro/withdraw/confirm" && req.method === "POST") {
-      const b = (await req.json()) as { player?: string; withdrawId?: number; txSig?: string };
+      const b = (await req.json()) as {
+        player?: string;
+        withdrawId?: number;
+        txSig?: string;
+        wallet?: string;
+        sig?: string;
+        ts?: number;
+      };
+      let player = b.player ?? "";
+      if (settlement !== simSettlement) {
+        const auth = requireWalletPlayer(b);
+        if (!auth.ok) return json(auth, 401);
+        player = auth.player;
+      }
       return json(
-        await confirmWithdraw(env.DB, settlement, { player: b.player ?? "", withdrawId: Number(b.withdrawId), txSig: b.txSig ?? "" }),
+        await confirmWithdraw(env.DB, settlement, {
+          player,
+          withdrawId: Number(b.withdrawId),
+          txSig: b.txSig ?? "",
+        }),
       );
     }
     if (url.pathname === "/metro/deposit" && req.method === "POST") {
-      const b = (await req.json()) as { player?: string; wallet?: string; txSig?: string; metro?: number };
+      const b = (await req.json()) as {
+        player?: string;
+        wallet?: string;
+        txSig?: string;
+        metro?: number;
+        sig?: string;
+        ts?: number;
+      };
+      if (settlement !== simSettlement) {
+        const auth = requireWalletPlayer(b);
+        if (!auth.ok) return json(auth, 401);
+        return json(
+          await deposit(env.DB, settlement, {
+            player: auth.player,
+            wallet: auth.wallet,
+            txSig: b.txSig ?? "",
+            metro: Number(b.metro),
+          }),
+        );
+      }
       return json(
-        await deposit(env.DB, settlement, { player: b.player ?? "", wallet: b.wallet ?? "", txSig: b.txSig ?? "", metro: Number(b.metro) }),
+        await deposit(env.DB, settlement, {
+          player: b.player ?? "",
+          wallet: b.wallet ?? "",
+          txSig: b.txSig ?? "",
+          metro: Number(b.metro),
+        }),
       );
     }
     return json({ ok: false, reason: "not found" }, 404);

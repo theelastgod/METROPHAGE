@@ -73,7 +73,7 @@ import Synth from "../audio/Synth";
 import MusicDirector from "../audio/MusicDirector";
 import Pops from "../render/Pops";
 import Particles from "../render/Particles";
-import { juiceShake, juiceFlash, juiceNeonPulse } from "../systems/juice";
+import { juiceShake, juiceFlash, juiceNeonPulse, juiceHitStop, juiceZoomPunch } from "../systems/juice";
 import Hud from "../ui/Hud";
 import Minimap from "../ui/Minimap";
 import DialogueBox, { DialoguePage } from "../ui/DialogueBox";
@@ -2390,12 +2390,18 @@ export default class GameScene
       this.fireQuestTrigger("kill");
       this.synth.kill();
       if (juice) {
-        this.hitStop(60);
-        juiceShake(this, 140, 0.006);
+        juiceHitStop(this, 72);
+        juiceZoomPunch(this, 0.05, 140);
+        juiceShake(this, 160, 0.007);
+        juiceFlash(this, 90, 255, 120, 80);
+        juiceNeonPulse(this, 0.2, 180);
       }
     } else if (juice) {
       this.synth.hit();
-      cop.knock(cop.x - this.player.x, cop.y - this.player.y, 150); // punch
+      juiceHitStop(this, isCrit ? 36 : 16);
+      if (isCrit) juiceZoomPunch(this, 0.03, 90);
+      cop.knock(cop.x - this.player.x, cop.y - this.player.y, 170); // punch
+      this.spark(cop.x, cop.y, isCrit ? 0xffffff : this.classDef.color, isCrit ? 2.2 : 1.6);
     }
   }
 

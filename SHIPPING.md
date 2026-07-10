@@ -122,4 +122,9 @@ Secrets first, CA second, always.
 
 **Mainnet arming (counsel-gated):** real-value mainnet additionally requires
 `VITE_METRO_CLUSTER=mainnet-beta` AND `VITE_METRO_MAINNET_ARMED=1` at client
-build. Both stay off until counsel signs off; nothing arms by accident.
+build, plus server secret `METRO_MAINNET_ARMED=1`. Both stay off until counsel
+signs off; nothing arms by accident.
+
+**Full mainnet runbook (including pre-CA treasury prep):** see `MAINNET_GO_LIVE.md`.
+Pre-CA: `cd server && node scripts/mainnet-prepare.mjs` then put
+`METRO_TREASURY_SECRET`. When you have the mint: `node scripts/mainnet-arm.mjs <CA>`.

@@ -37,10 +37,13 @@ export default class CityNpc {
     bakeRemoteLook(scene, key, def.look); // cached by look — identical NPCs share a texture
     this.shadow = scene.add.image(x, y + 8, GLOW_KEY).setTint(0x05070d).setDepth(7).setScale(0.46, 0.28).setAlpha(0.4); // contact shadow
     this.sprite = scene.add.image(x, y, key, 0).setTint(0xffffff).setDepth(8).setOrigin(0.5, 0.62);
+    this.sprite.setScale(1.12);
+    // Name is proximity-only — permanent floating labels clutter the city.
     this.label = scene.add
       .text(x, y - 22, def.name, { fontFamily: "Courier New, monospace", fontSize: "9px", color: "#bfe6ff" })
       .setOrigin(0.5)
-      .setDepth(9);
+      .setDepth(9)
+      .setVisible(false);
     this.label.setShadow(0, 0, "#0a0e1a", 3, true, true);
     this.prompt = scene.add
       .text(x, y - 34, "E  TALK", { fontFamily: "Courier New, monospace", fontSize: "10px", color: "#9dff3c" })
@@ -51,8 +54,8 @@ export default class CityNpc {
 
     scene.tweens.add({
       targets: this.sprite,
-      scaleY: 1.05,
-      scaleX: 0.98,
+      scaleY: 1.12 * 1.05,
+      scaleX: 1.12 * 0.98,
       duration: 1300,
       yoyo: true,
       repeat: -1,
@@ -64,6 +67,7 @@ export default class CityNpc {
   update(playerDist: number): boolean {
     const near = playerDist <= NPC.interactRange;
     this.prompt.setVisible(near);
+    this.label.setVisible(near);
     return near;
   }
 

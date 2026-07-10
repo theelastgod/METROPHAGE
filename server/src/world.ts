@@ -252,18 +252,24 @@ export const isNamedZone = (z: string | null): boolean =>
 export interface Env {
   WORLD: DurableObjectNamespace;
   DB: D1Database;
-  // $METRO bridge (Phase 5) — present only when the devnet rig is configured via
-  // .dev.vars / wrangler secrets. Absent → the bridge uses the devnet-sim settlement.
+  // $METRO bridge (Phase 5) — wrangler secrets / .dev.vars.
+  // Absent mint or treasury → sim settlement (accounting only, no chain).
   METRO_TREASURY_SECRET?: string;
+  /** Preferred mint env (mainnet or devnet). */
+  METRO_MINT?: string;
+  /** Legacy alias — still accepted if METRO_MINT is unset. */
   METRO_DEVNET_MINT?: string;
   METRO_RPC?: string;
-  // "1" arms the $METRO mainnet bridge (counsel sign-off) — also gates NFT-tier cosmetics.
+  // "1" arms real-value mainnet (counsel) — also gates NFT-tier cosmetics.
+  // Required when METRO_RPC points at mainnet-beta, else settlement stays sim.
   METRO_MAINNET_ARMED?: string;
 }
 
 interface PlayerState {
   id: string;
   name: string;
+  /** Guest-identity device secret (null = unbound legacy / wallet id). Gate, don't stream. */
+  secret: string | null;
   x: number;
   y: number;
   mx: number;
@@ -1387,6 +1393,7 @@ export class WorldDO {
         arrival: msg.arrival,
         from: msg.from,
         classId: msg.classId,
+        secret: msg.secret,
       });
     if (msg.t === "input") return this.onInput(ws, msg);
     if (msg.t === "fire") return this.onFire(ws, msg);
@@ -1536,6 +1543,34 @@ export class WorldDO {
       p.party = pid;
       this.pendingInvites.delete(p.id);
       this.broadcastParty(pid);
+    } else if (msg.action === "revive") {
+      // Stand over a downed party member and revive them at low HP (co-op feel).
+      if (p.party < 0 || p.dead) {
+        this.send(ws, { t: "sys", text: "can't revive right now" });
+        return;
+      }
+      const to = (msg.to || "").toLowerCase();
+      let target: PlayerState | undefined;
+      for (const m of this.parties.get(p.party) ?? []) {
+        const ally = this.players.get(m);
+        if (!ally || ally.id === p.id || !ally.dead) continue;
+        if (to && ally.id !== to && ally.name.toLowerCase() !== to) continue;
+        const d = Math.hypot(ally.x - p.x, ally.y - p.y);
+        if (d < 90) {
+          target = ally;
+          break;
+        }
+      }
+      if (!target) {
+        this.send(ws, { t: "sys", text: "no downed party member nearby — stand closer" });
+        return;
+      }
+      target.dead = false;
+      target.hp = Math.max(20, Math.floor(PLAYER_HP * 0.35));
+      target.respawnTick = 0;
+      this.send(ws, { t: "sys", text: `revived ${target.name}` });
+      this.sendTo(target.id, { t: "sys", text: `${p.name} rebooted you — stay close` });
+      this.broadcastParty(p.party);
     } else {
       this.leaveParty(p);
       this.send(ws, { t: "party", members: [] });
@@ -1798,6 +1833,7 @@ export class WorldDO {
   /** Push the current open listings (newest first) to one viewer. */
   private async sendMarket(ws: WebSocket) {
     try {
+      await this.ensureMarketSeeds();
       const { results } = await this.env.DB.prepare(
         "SELECT id, seller, seller_name, item, price, currency FROM auctions WHERE status='open' ORDER BY created_at DESC LIMIT 60",
       ).all<{ id: number; seller: string; seller_name: string; item: string; price: number; currency: string }>();
@@ -1809,6 +1845,41 @@ export class WorldDO {
       this.send(ws, { t: "market", listings });
     } catch {
       this.send(ws, { t: "market", listings: [] });
+    }
+  }
+
+  /** When the auction house is empty, seed NPC-broker listings so the market never
+   *  reads as a dead feature for the first players in. Seller is `__broker` (reserved). */
+  private marketSeeded = false;
+  private async ensureMarketSeeds() {
+    if (this.marketSeeded) return;
+    this.marketSeeded = true;
+    try {
+      const row = await this.env.DB.prepare(
+        "SELECT COUNT(*) AS n FROM auctions WHERE status='open'",
+      ).first<{ n: number }>();
+      if ((row?.n ?? 0) > 0) return;
+      const { rollItem, makeWeaponItem } = await import("../../src/game/items");
+      const seeds: { item: ReturnType<typeof rollItem>; price: number; name: string }[] = [
+        { item: makeWeaponItem("sting", 1), price: 120, name: "THE BROKER" },
+        { item: makeWeaponItem("needler", 2), price: 280, name: "THE BROKER" },
+        { item: rollItem(2, 0.5, "tuned"), price: 200, name: "FENCE" },
+        { item: rollItem(3, 0.8, "tuned"), price: 340, name: "FENCE" },
+        { item: rollItem(4, 1.2, "blackice"), price: 720, name: "VOID VENDOR" },
+        { item: rollItem(1, 0, "standard"), price: 80, name: "STREET STALL" },
+        { item: rollItem(2, 0.3, "standard"), price: 95, name: "STREET STALL" },
+        { item: makeWeaponItem("breacher", 2), price: 400, name: "THE BROKER" },
+      ];
+      const now = Date.now();
+      for (const s of seeds) {
+        await this.env.DB.prepare(
+          "INSERT INTO auctions (seller, seller_name, item, price, currency, status, created_at) VALUES (?,?,?,?,?,'open',?)",
+        )
+          .bind("__broker", s.name, JSON.stringify(s.item), s.price, "credits", now)
+          .run();
+      }
+    } catch {
+      /* table missing in old DBs — ignore */
     }
   }
 
@@ -2172,9 +2243,42 @@ export class WorldDO {
     rawName: string,
     faction?: number,
     look?: PlayerLook,
-    proof?: { wallet?: string; sig?: string; ts?: number; arrival?: "organic" | "fast"; from?: string; classId?: string },
+    proof?: { wallet?: string; sig?: string; ts?: number; arrival?: "organic" | "fast"; from?: string; classId?: string; secret?: string },
   ) {
     const name = (rawName || "").trim().slice(0, 16) || "blank";
+    const reject = (text: string) => {
+      this.send(ws, { t: "sys", text });
+      try {
+        ws.close(4001, "auth");
+      } catch {
+        /* already closing */
+      }
+    };
+    try {
+      await this.onLoginInner(ws, name, faction, look, proof, reject);
+    } catch (e) {
+      // D1/schema hiccups used to hang the socket with no welcome — client stuck in
+      // offline walk mode, tutorial never advanced. Always surface a close reason.
+      const reason = String((e as Error)?.message ?? e).slice(0, 120);
+      this.send(ws, { t: "sys", text: `login failed — ${reason}` });
+      try {
+        ws.close(1011, "login");
+      } catch {
+        /* already closing */
+      }
+    }
+  }
+
+  private async onLoginInner(
+    ws: WebSocket,
+    name: string,
+    faction: number | undefined,
+    look: PlayerLook | undefined,
+    proof:
+      | { wallet?: string; sig?: string; ts?: number; arrival?: "organic" | "fast"; from?: string; classId?: string; secret?: string }
+      | undefined,
+    reject: (text: string) => void,
+  ) {
     // Identity: a signature-verified Solana wallet is the durable id; otherwise a guest
     // id derived from the callsign (dev / no-wallet play). A claimed-but-unverified
     // wallet is rejected so a stranger can't assume someone else's account.
@@ -2196,9 +2300,57 @@ export class WorldDO {
       id = wid;
     } else {
       id = name.toLowerCase().replace(/[^a-z0-9_-]/g, "") || "blank";
+      // "__" ids are reserved for authored NPCs (estate owners, market sellers) — a live
+      // player must never be able to log in AS one and liquidate its property
+      if (id.startsWith("__")) return reject("that callsign is reserved");
     }
     const fac = Number.isInteger(faction) && faction! >= 0 && faction! < FACTION_COUNT ? faction! : 0;
     const p = this.players.get(id) ?? (await this.loadPlayer(id, name, fac));
+    // Guest identities are device-bound: the first login binds the client-generated
+    // secret to the callsign; every later login must present it. Without this, ANY
+    // visitor could type an existing name and sell that player's house out from under
+    // them. Wallet ids ("w:") skip the gate — the signature is stronger proof.
+    if (!id.startsWith("w:")) {
+      const presented = (proof?.secret ?? "").slice(0, 64) || null;
+      if (p.secret && p.secret !== presented) {
+        return reject("that callsign is already in use on another device — pick a new name, or connect a wallet to keep this one forever");
+      }
+      if (!p.secret && presented) {
+        p.secret = presented; // loadPlayer upserts new rows immediately, so this UPDATE always lands
+        await this.env.DB.prepare("UPDATE players SET secret = ? WHERE id = ?").bind(presented, id).run();
+      }
+    } else {
+      // Wallet login: if this device has a guest secret for the same callsign, merge
+      // guest progress (credits / look / campaign) into the wallet account once.
+      // Lets offline players claim their runner when they link a wallet.
+      const presented = (proof?.secret ?? "").slice(0, 64) || null;
+      if (presented) {
+        const guestId = name.toLowerCase().replace(/[^a-z0-9_-]/g, "") || "";
+        if (guestId && !guestId.startsWith("__") && guestId !== id) {
+          try {
+            const guest = await this.loadPlayer(guestId, name, fac);
+            if (guest.secret && guest.secret === presented) {
+              // only merge into a fresh wallet shell (no look / low credits)
+              const walletFresh = !p.look && (p.credits ?? 0) < 50;
+              if (walletFresh && (guest.look || (guest.credits ?? 0) > (p.credits ?? 0))) {
+                if (guest.look) p.look = guest.look;
+                if ((guest.credits ?? 0) > (p.credits ?? 0)) p.credits = guest.credits;
+                if ((guest.cores ?? 0) > (p.cores ?? 0)) p.cores = guest.cores;
+                if (guest.campaign) p.campaign = guest.campaign;
+                if (guest.classId) p.classId = guest.classId;
+                p.dirty = true;
+                this.send(ws, {
+                  t: "sys",
+                  text: "◈ offline runner claimed onto this wallet — progress merged",
+                });
+              }
+            }
+          } catch {
+            /* guest load failed — ignore */
+          }
+        }
+      }
+    }
     p.faction = fac;
     // warm-path spawn sanitation: an in-memory player can be wall-locked too
     // (loadPlayer's check only covers cold loads)
@@ -2356,8 +2508,9 @@ export class WorldDO {
     let look: PlayerLook | undefined;
     let equipped: Partial<Record<Slot, Item>> = {};
     let fragments: string[] = [];
+    let secret: string | null = null;
     const row = await this.env.DB.prepare(
-      "SELECT x, y, credits, metro, xp, zone, cores, quest_step, campaign, tutorial_done, tutorial_step, tutorial_mode, inventory, look, equipped, fragments, stash FROM players WHERE id = ?",
+      "SELECT x, y, credits, metro, xp, zone, cores, quest_step, campaign, tutorial_done, tutorial_step, tutorial_mode, inventory, look, equipped, fragments, stash, secret FROM players WHERE id = ?",
     )
       .bind(id)
       .first<{
@@ -2378,6 +2531,7 @@ export class WorldDO {
         equipped: string;
         fragments: string | null;
         stash: string | null;
+        secret: string | null;
       }>();
     if (row) {
       credits = row.credits ?? 0;
@@ -2398,6 +2552,7 @@ export class WorldDO {
         fragments = [];
       }
       stash = parseInventory(row.stash ?? "[]"); // same defensive Item[] parse as the bag
+      secret = row.secret ?? null;
       tutorialDone = !!row.tutorial_done;
       tutorialStep = row.tutorial_step ?? 0;
       tutorialMode = row.tutorial_mode === "full" ? "full" : "quick";
@@ -2498,6 +2653,7 @@ export class WorldDO {
     return {
       id,
       name,
+      secret,
       x,
       y,
       mx: 0,
@@ -4076,12 +4232,14 @@ export class WorldDO {
       } else if (p.mx !== 0 || p.my !== 0) {
         stepMove(p, { mx: p.mx, my: p.my }, this.grid, NET_TICK_MS);
         p.dirty = true;
-        if (this.inTutorial() && dist2(p.x, p.y, p.tutorialAnchorX, p.tutorialAnchorY) > 96 * 96) {
+      }
+      // Tutorial move + portal checks run every tick (not only while intent is held) so a
+      // dash-only hop or a pause after walking past the threshold still advances the drill.
+      if (this.inTutorial() && !p.tutorialDone) {
+        if (dist2(p.x, p.y, p.tutorialAnchorX, p.tutorialAnchorY) > 96 * 96) {
           this.tutorialEvent(p, "move");
         }
         if (
-          this.inTutorial() &&
-          !p.tutorialDone &&
           tutorialReadyForPortal(p.tutorialStep, p.tutorialMode ?? "quick") &&
           dist2(p.x, p.y, TUTORIAL_PORTAL.x, TUTORIAL_PORTAL.y) <= TUTORIAL_PORTAL_RADIUS * TUTORIAL_PORTAL_RADIUS
         ) {

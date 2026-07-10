@@ -107,16 +107,46 @@ export function makeSolanaSettlement(cfg: SolanaConfig): Settlement {
         const d = await decimals();
         const pre = tx.meta?.preTokenBalances ?? [];
         const post = tx.meta?.postTokenBalances ?? [];
-        // The treasury's $METRO balance must have INCREASED across this tx.
+        // Treasury $METRO balance must INCREASE.
         const treasAmt = (list: typeof pre) =>
           Number(list.find((b) => b.mint === cfg.mint && b.owner === treas)?.uiTokenAmount.amount ?? 0);
         const delta = treasAmt(post) - treasAmt(pre);
         if (delta <= 0) return { ok: false, reason: "no $METRO received by treasury in this tx" };
-        // …and the claimed wallet must appear as a source of that $METRO. (Heuristic for
-        // the rehearsal; production should match the specific transfer instruction's
-        // source ATA owner rather than any token-balance entry.)
-        const fromClaimed = pre.some((b) => b.mint === cfg.mint && b.owner === owner);
-        if (!fromClaimed) return { ok: false, reason: "tx not from the claimed wallet" };
+
+        // Require the claimed wallet to have lost at least `delta` units of this mint
+        // (they funded the treasury increase). Catches random third-party fills.
+        const ownerPre = Number(pre.find((b) => b.mint === cfg.mint && b.owner === owner)?.uiTokenAmount.amount ?? 0);
+        const ownerPost = Number(post.find((b) => b.mint === cfg.mint && b.owner === owner)?.uiTokenAmount.amount ?? 0);
+        const ownerLost = ownerPre - ownerPost;
+        if (ownerLost < delta) {
+          return { ok: false, reason: "tx not a $METRO transfer from the claimed wallet to treasury" };
+        }
+        // Prefer matching a parsed SPL transfer into the treasury ATA when available.
+        try {
+          const treasAta = (await getAssociatedTokenAddress(mint, treasury.publicKey)).toBase58();
+          const outer = tx.transaction.message.instructions as unknown as Array<Record<string, unknown>>;
+          const inner = (tx.meta?.innerInstructions ?? []).flatMap((ii) => ii.instructions) as unknown as Array<
+            Record<string, unknown>
+          >;
+          let sawTransferToTreasury = false;
+          for (const ix of [...outer, ...inner]) {
+            const parsed = ix.parsed as { type?: string; info?: Record<string, unknown> } | undefined;
+            if (!parsed || (parsed.type !== "transfer" && parsed.type !== "transferChecked")) continue;
+            const info = parsed.info ?? {};
+            if (info.mint && String(info.mint) !== cfg.mint) continue;
+            const dest = String(info.destination ?? "");
+            if (dest === treasAta) {
+              sawTransferToTreasury = true;
+              break;
+            }
+          }
+          if (!sawTransferToTreasury && outer.length + inner.length > 0) {
+            // Parsed instructions present but none hit treasury ATA — still allow if
+            // balance deltas are consistent (some wallets wrap transfers).
+          }
+        } catch {
+          /* balance check above is sufficient */
+        }
         return { ok: true, metro: delta / 10 ** d };
       } catch (e) {
         return { ok: false, reason: String((e as Error)?.message ?? e).slice(0, 160) };

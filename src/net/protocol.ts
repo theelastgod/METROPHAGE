@@ -71,6 +71,9 @@ export type ClientMsg =
       from?: string;
       /** Class id (metrophage/k-guerilla/wintermute/swarm) — selects the signature ability. */
       classId?: string;
+      /** Guest-identity device secret — generated client-side, bound to the callsign on
+       *  first login, required to log in as that callsign thereafter (wallet sig bypasses). */
+      secret?: string;
     }
   | { t: "inv_move"; from: number; to: number }
   | { t: "stash"; action: "deposit" | "withdraw"; itemId: string } // TENEMENT lockbox — move an item bag↔stash
@@ -91,7 +94,7 @@ export type ClientMsg =
       credits?: number;
       cores?: number;
     }
-  | { t: "party"; action: "invite" | "accept" | "leave"; to?: string }
+  | { t: "party"; action: "invite" | "accept" | "leave" | "revive"; to?: string }
   | { t: "mute"; to: string }
   | { t: "equip"; itemId: string } // equip an inventory item into its slot
   | { t: "unequip"; slot: string }

@@ -45,12 +45,18 @@ export default class Particles {
     const s = this.sparks[this.si];
     this.si = (this.si + 1) % this.sparks.length;
     this.scene.tweens.killTweensOf(s);
-    s.setPosition(x, y).setTint(color).setScale(0.8).setAlpha(1).setVisible(true);
+    s.setPosition(x, y).setTint(color).setScale(0.95).setAlpha(1).setVisible(true);
+    // Kick outward so hits feel like shrapnel, not a static flash.
+    const ang = Math.random() * Math.PI * 2;
+    const dist = 8 + Math.random() * 18 * scale;
     this.scene.tweens.add({
       targets: s,
-      scale: scale * 1.4,
+      x: x + Math.cos(ang) * dist,
+      y: y + Math.sin(ang) * dist,
+      scale: scale * 1.55,
       alpha: 0,
-      duration: 160,
+      duration: 200,
+      ease: "Quad.out",
       onComplete: () => s.setVisible(false),
     });
   }

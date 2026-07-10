@@ -31,17 +31,17 @@ export function juiceFlash(
 }
 
 /** Brief time dilation on impactful hits — premium combat punch. */
-export function juiceHitStop(scene: Phaser.Scene, ms = 48): void {
+export function juiceHitStop(scene: Phaser.Scene, ms = 56): void {
   if (getSettings().reduceFlashing) return;
   const prev = scene.time.timeScale;
-  scene.time.timeScale = 0.08;
+  scene.time.timeScale = 0.06;
   scene.time.delayedCall(ms, () => {
     scene.time.timeScale = prev;
   });
 }
 
 /** Micro zoom punch toward the action. */
-export function juiceZoomPunch(scene: Phaser.Scene, amount = 0.04, duration = 120): void {
+export function juiceZoomPunch(scene: Phaser.Scene, amount = 0.055, duration = 140): void {
   const cam = scene.cameras.main;
   const base = cam.zoom;
   scene.tweens.add({
@@ -52,6 +52,14 @@ export function juiceZoomPunch(scene: Phaser.Scene, amount = 0.04, duration = 12
     ease: "Quad.out",
     onComplete: () => cam.setZoom(base),
   });
+}
+
+/** Kill fanfare: hit-stop + zoom + neon pulse in one call. */
+export function juiceKill(scene: Phaser.Scene): void {
+  juiceHitStop(scene, 70);
+  juiceZoomPunch(scene, 0.07, 160);
+  juiceNeonPulse(scene, 0.32, 220);
+  juiceShake(scene, 120, 0.006);
 }
 
 /** Pulse the neon pipeline — heat spike without changing gameplay heat. */

@@ -59,7 +59,8 @@ export default class TuringCop extends Phaser.Physics.Arcade.Sprite {
     scene.physics.add.existing(this);
     this.setCollideWorldBounds(true);
     this.setDepth(8);
-    this.setScale(tier.scale);
+    // Slight base upscale so HSS units read against dense neon floors (tier.scale still applies).
+    this.setScale(tier.scale * 1.12);
     this.applyTierTint();
     const r = tier.bodyRadius;
     (this.body as Phaser.Physics.Arcade.Body).setCircle(r, 16 - r, 18 - r);

@@ -376,22 +376,31 @@ function makePlayer(scene: Phaser.Scene) {
 
 /** Projectile: a hot white bolt with a soft glow (tinted to the class per shot). */
 function makeBullet(scene: Phaser.Scene) {
-  bakeCanvas(scene, BULLET_KEY, 20, 8, (ctx) => {
-    const trail = ctx.createLinearGradient(0, 4, 14, 4);
+  bakeCanvas(scene, BULLET_KEY, 28, 12, (ctx) => {
+    // Wide soft bloom so projectiles read as neon tracers at game scale.
+    const bloom = ctx.createRadialGradient(20, 6, 0.5, 20, 6, 10);
+    bloom.addColorStop(0, "rgba(255,255,255,0.55)");
+    bloom.addColorStop(0.55, "rgba(255,255,255,0.12)");
+    bloom.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = bloom;
+    ctx.fillRect(0, 0, 28, 12);
+    const trail = ctx.createLinearGradient(0, 6, 20, 6);
     trail.addColorStop(0, "rgba(255,255,255,0)");
-    trail.addColorStop(0.35, "rgba(255,255,255,0.35)");
-    trail.addColorStop(0.75, "rgba(255,255,255,0.75)");
+    trail.addColorStop(0.25, "rgba(255,255,255,0.2)");
+    trail.addColorStop(0.65, "rgba(255,255,255,0.7)");
     trail.addColorStop(1, "rgba(255,255,255,1)");
     ctx.fillStyle = trail;
-    ctx.fillRect(0, 2, 16, 4);
-    const head = ctx.createRadialGradient(15, 4, 0.2, 15, 4, 5);
+    ctx.fillRect(0, 3, 22, 6);
+    ctx.fillStyle = "rgba(255,255,255,0.55)";
+    ctx.fillRect(2, 4, 16, 2); // hot core streak
+    const head = ctx.createRadialGradient(22, 6, 0.2, 22, 6, 6);
     head.addColorStop(0, "rgba(255,255,255,1)");
-    head.addColorStop(0.5, "rgba(255,255,255,0.7)");
+    head.addColorStop(0.45, "rgba(255,255,255,0.85)");
     head.addColorStop(1, "rgba(255,255,255,0)");
     ctx.fillStyle = head;
-    ctx.fillRect(8, 0, 12, 8);
+    ctx.fillRect(14, 0, 14, 12);
     ctx.fillStyle = "#ffffff";
-    ctx.fillRect(16, 3, 3, 2);
+    ctx.fillRect(22, 4, 4, 4); // muzzle tip
   });
 }
 

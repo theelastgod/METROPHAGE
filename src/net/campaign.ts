@@ -174,13 +174,14 @@ export function campaignHud(c: Campaign): string {
   const s = c.currentStage;
   if (q && s) {
     const n = s.on.count ?? 1;
-    const prog = s.on.type === "talk" ? "" : `   [${c.progress}/${n}]`;
-    return `◈ ${q.name} — ${s.objective}${prog}`;
+    const prog = s.on.type === "talk" ? "" : `  ${c.progress}/${n}`;
+    // Compact — the old long objective lines dominated the top of the screen.
+    return `◈ ${s.objective}${prog}`;
   }
   const next = c.nextOffer();
-  if (next) return `◈ ${next.name} — talk to THE FIXER`;
-  if (c.done) return "◈ THE AWAKENING — you woke them. the city remembers";
-  return "◈ METROPHAGE — THE FIXER is waiting";
+  if (next) return `◈ talk to THE FIXER — ${next.name}`;
+  if (c.done) return "◈ THE AWAKENING complete";
+  return "◈ THE FIXER is waiting";
 }
 
 export const CAMPAIGN_DONE_TEXT =

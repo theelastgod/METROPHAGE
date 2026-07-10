@@ -53,6 +53,12 @@ export const PROP_PLANTER_KEY = "prop_planter";
 export const PROP_BARRIER_KEY = "prop_barrier";
 export const PROP_TAXI_KEY = "prop_taxi";
 export const PROP_CAR_KEY = "prop_car";
+export const PROP_DUMPSTER_KEY = "prop_dumpster";
+export const PROP_CAR_BLUE_KEY = "prop_car_blue";
+export const PROP_CAR_RED_KEY = "prop_car_red";
+export const PROP_CAR_GREEN_KEY = "prop_car_green";
+export const PROP_PICKUP_KEY = "prop_pickup";
+export const PROP_VAN_KEY = "prop_van";
 // Holographic projectors (Signs & holograms atlas) — standing emitter decals for plazas.
 export const HOLO_KEYS = ["holo_spiral", "holo_cube", "holo_net", "holo_emit"];
 // Real isometric cyberpunk crates/containers (sliced from the asset-drop DECORATIONS
@@ -103,10 +109,11 @@ export const ASSETS: Record<string, AssetEntry[]> = {
     { key: AGENT_KEY, file: null }, // procedural light figure (tinted crowd)
   ],
   objects: [
-    { key: NODE_KEY, file: null }, // code-authored (textures.ts)
-    { key: NODE_INFECTED_KEY, file: null },
-    { key: CRATE_KEY, file: null },
-    { key: STREETLIGHT_KEY, file: null },
+    // Authored neon-noir infection nodes + hazard crate + streetlight (AI/pixel packs).
+    { key: NODE_KEY, file: "assets/objects/node_clean.png" },
+    { key: NODE_INFECTED_KEY, file: "assets/objects/node_infected.png" },
+    { key: CRATE_KEY, file: "assets/objects/crate.png" },
+    { key: STREETLIGHT_KEY, file: "assets/objects/streetlight.png" },
   ],
   fx: [
     { key: GLOW_KEY, file: null }, // code-authored radial glow
@@ -115,8 +122,9 @@ export const ASSETS: Record<string, AssetEntry[]> = {
     { key: FX_IMPACT_KEY, file: "assets/fx/fx_impact.png" }, // real kill explosion (pack)
   ],
   portraits: [
-    { key: PORTRAIT_PLAYER_KEY, file: null }, // code-authored human runner bust
-    { key: PORTRAIT_NPC_KEY, file: null }, // code-authored FIXER bust (frame 0 registered)
+    // Premium dialogue portraits (neon-noir runner + FIXER contact).
+    { key: PORTRAIT_PLAYER_KEY, file: "assets/portraits/portrait_player.png" },
+    { key: PORTRAIT_NPC_KEY, file: "assets/portraits/portrait_npc.png" },
   ],
   ui: [
     { key: UI_FRAME_KEY, file: null }, // code-authored neon terminal/screen frame
@@ -133,7 +141,7 @@ export const ASSETS: Record<string, AssetEntry[]> = {
   ],
   // Real item icons — load before the procedural bake so they win (see ICON_NAMES above).
   icons: ICON_NAMES.map((n) => ({ key: "icon_" + n, file: "assets/icons/" + n + ".png" })),
-  // Real street props (CyberPunk pack) — non-colliding decals placed in the online districts.
+  // Real street props (CyberPunk pack + generated neon props + CC0 city vehicles).
   props: [
     { key: PROP_STREETLIGHT_KEY, file: "assets/objects/prop_streetlight.png" },
     { key: PROP_VENDING_KEY, file: "assets/objects/prop_vending.png" },
@@ -144,6 +152,12 @@ export const ASSETS: Record<string, AssetEntry[]> = {
     { key: PROP_BARRIER_KEY, file: "assets/objects/prop_barrier.png" },
     { key: PROP_TAXI_KEY, file: "assets/objects/prop_taxi.png" },
     { key: PROP_CAR_KEY, file: "assets/objects/prop_car.png" },
+    { key: PROP_DUMPSTER_KEY, file: "assets/objects/prop_dumpster.png" },
+    { key: PROP_CAR_BLUE_KEY, file: "assets/objects/prop_car_blue.png" },
+    { key: PROP_CAR_RED_KEY, file: "assets/objects/prop_car_red.png" },
+    { key: PROP_CAR_GREEN_KEY, file: "assets/objects/prop_car_green.png" },
+    { key: PROP_PICKUP_KEY, file: "assets/objects/prop_pickup.png" },
+    { key: PROP_VAN_KEY, file: "assets/objects/prop_van.png" },
     ...HOLO_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
   ],
   // Real isometric cyberpunk crates/containers — non-colliding cargo decals (asset-drop).

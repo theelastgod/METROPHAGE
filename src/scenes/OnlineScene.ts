@@ -68,6 +68,15 @@ import {
   tpx,
 } from "../game/tutorialLayout";
 import { getSettings, effectiveLowFx } from "../systems/Settings";
+import {
+  firstSessionLine,
+  coreLoopLine,
+  noteTalkedFixer,
+  noteDeployed,
+  noteKill,
+  noteReturnedToHub,
+  getFirstSession,
+} from "../game/firstSession";
 import { fadeInScene, transitionTo } from "../systems/transitions";
 import { juiceShake, juiceFlash, juiceHitStop, juiceZoomPunch, juiceNeonPulse } from "../systems/juice";
 import Particles from "../render/Particles";
@@ -306,15 +315,16 @@ const HUB_DOOR_COLOR: Record<string, number> = {
 };
 
 /** Doors in the hub that open into building interiors (each its own no-combat zone). */
+// Short door labels — long parentheticals used to bury the plaza under UI text.
 const CITY_HUB_DOORS: { dest: string; label: string; tile: [number, number]; color: number }[] = [
   { dest: "clinic", label: "CLINIC", tile: hubT(-4, -6), color: 0x39ff88 },
   { dest: "shop", label: "MARKET", tile: hubT(4, -6), color: 0x00e5ff },
-  { dest: "bar", label: "THE FERAL CAT", tile: hubT(-4, 6), color: 0xff79c6 },
-  { dest: "den", label: "THE DEN", tile: hubT(4, 6), color: 0xff2bd6 },
-  { dest: "subway", label: "▼ THE UNDERLINE", tile: hubT(-12, 0), color: 0xff3b6b },
-  { dest: "vault", label: "◆ THE PROVING (weekly)", tile: hubT(12, 0), color: 0xffb13c },
-  { dest: "estates", label: "▶ THE ESTATES (homes)", tile: hubT(-6, 4), color: 0xffb13c },
-  { dest: "d0", label: "▶ DEPLOY GATE", tile: [HUB_CX, HUB_CY + 7], color: 0x39ff88 }, // south edge of the plaza — steps from spawn, not a 50-tile hike
+  { dest: "bar", label: "BAR", tile: hubT(-4, 6), color: 0xff79c6 },
+  { dest: "den", label: "DEN", tile: hubT(4, 6), color: 0xff2bd6 },
+  { dest: "subway", label: "▼ UNDERLINE", tile: hubT(-12, 0), color: 0xff3b6b },
+  { dest: "vault", label: "◆ PROVING", tile: hubT(12, 0), color: 0xffb13c },
+  { dest: "estates", label: "▶ HOMES", tile: hubT(-6, 4), color: 0xffb13c },
+  { dest: "d0", label: "▶ DEPLOY", tile: [HUB_CX, HUB_CY + 7], color: 0x39ff88 },
 ];
 
 /** East-edge trail guides — forward into the wilderness corridor before the next district. */
@@ -406,6 +416,11 @@ export default class OnlineScene extends Phaser.Scene {
   private deathOverlay!: Phaser.GameObjects.Rectangle;
   private deathStartedAt = 0; // wall-clock start of the current death, for the countdown
   private wasDead = false;
+  private coachText?: Phaser.GameObjects.Text; // first-session + core-loop strip
+  private enemyHpG?: Phaser.GameObjects.Graphics; // floating enemy HP bars
+  private killFeed: string[] = [];
+  private killFeedText?: Phaser.GameObjects.Text;
+  private phantomOnline = 0; // ambient population illusion when solo
   private bossIntroShown = ""; // boss name whose title card already played this visit
   private atmosphere?: Atmosphere; // rich ambient layer, shared with the SP city
   private connectStartedAt = 0; // when this connection attempt began (for the offline timeout)
@@ -782,17 +797,14 @@ export default class OnlineScene extends Phaser.Scene {
     if (this.interior) {
       if (this.isCityHub) {
         this.add
-          .text(this.worldW / 2, 4 * TILE, INTERIOR_TITLES.safe, displayFont(20, { color: "#39ff88", fontStyle: "bold" }))
+          .text(this.worldW / 2, 4 * TILE, INTERIOR_TITLES.safe, displayFont(18, { color: "#39ff88", fontStyle: "bold" }))
           .setOrigin(0.5)
           .setDepth(6)
-          .setShadow(0, 0, "#39ff88", 8, true, true);
+          .setShadow(0, 0, "#39ff88", 8, true, true)
+          .setAlpha(0.85);
+        // One short line — the old multi-clause subtitle competed with every stall/door label.
         this.add
-          .text(
-            this.worldW / 2,
-            4 * TILE + 26,
-            "shared live city — no combat · all runners in one space · operatives on the plaza · H from districts",
-            bodyFont(11, { color: "#9aa3b2" }),
-          )
+          .text(this.worldW / 2, 4 * TILE + 22, "safe zone · talk to THE FIXER · deploy south", bodyFont(10, { color: "#6b7184" }))
           .setOrigin(0.5)
           .setDepth(6);
         for (const hubNpc of CITY_HUB_NPCS) {
@@ -800,11 +812,29 @@ export default class OnlineScene extends Phaser.Scene {
           const py = hubNpc.tile[1] * TILE + TILE / 2;
           const key = lookKey(hubNpc.look);
           bakeRemoteLook(this, key, hubNpc.look);
-          // each operative works a market STALL with an always-visible sign, so a new
-          // runner reads what every stand offers from across the plaza
+          // Stall shows TAG only (FORGE / VENDOR…) — name appears on hover / interact bubble.
           this.drawServiceStall(px, py, hubNpc.name, hubNpc.tag, hubNpc.color);
-          this.add.image(px, py + 6, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(hubNpc.color).setDepth(8).setScale(0.5).setAlpha(0.4);
-          const spr = this.add.sprite(px, py, key, 0).setTint(0xffffff).setDepth(9).setInteractive({ useHandCursor: true });
+          const isFixer = hubNpc.svc === "contracts";
+          // THE FIXER is the first-session north star — brighter beacon than other stalls.
+          const g = this.add
+            .image(px, py + 6, GLOW_KEY)
+            .setBlendMode(Phaser.BlendModes.ADD)
+            .setTint(hubNpc.color)
+            .setDepth(8)
+            .setScale(isFixer ? 0.85 : 0.5)
+            .setAlpha(isFixer ? 0.55 : 0.4);
+          if (isFixer) {
+            this.tweens.add({
+              targets: g,
+              alpha: { from: 0.35, to: 0.7 },
+              scale: { from: 0.75, to: 1.05 },
+              duration: 900,
+              yoyo: true,
+              repeat: -1,
+              ease: "Sine.inOut",
+            });
+          }
+          const spr = this.add.sprite(px, py, key, 0).setTint(0xffffff).setDepth(9).setInteractive({ useHandCursor: true }).setScale(1.12);
           spr.on("pointerdown", () => this.openService(hubNpc.svc));
           this.npcs.push({ kind: "service", svc: hubNpc.svc, name: `${hubNpc.name} · ${hubNpc.tag}`, x: px, y: py });
         }
@@ -817,13 +847,8 @@ export default class OnlineScene extends Phaser.Scene {
           // story allies react to the player's questline act; ambient citizens keep static lines
           const isAlly = (STORY_ALLIES as readonly string[]).includes(c.id);
           const lines = isAlly ? campaignAllyLines(c.id, this.net?.campaignQuest) : cdef.lines;
-          this.makeTalkNpc(cdef.name, cdef.look, lines, px, py, cdef.id);
-          if (isAlly) {
-            this.add
-              .text(px, py - 24, `◈ ${cdef.name}`, bodyFont(8, { color: "#9fe8ff", fontStyle: "bold" }))
-              .setOrigin(0.5)
-              .setDepth(9);
-          }
+          // No permanent floating name tags — hover reveals them (see makeTalkNpc).
+          this.makeTalkNpc(cdef.name, cdef.look, lines, px, py, cdef.id, isAlly);
         }
         // EVERY building on the plaza is enterable — wire each one's door to its own h{K}
         // interior (a distinct resident lives inside). FRLG walk-in + click/E both enter.
@@ -845,6 +870,7 @@ export default class OnlineScene extends Phaser.Scene {
         });
         this.drawHubProps();
         this.spawnHubWanderers();
+        this.spawnTrainingYard(); // clickable drill targets near deploy — first combat without leaving hub
       } else if (this.isEstates) {
         this.buildEstatesZone();
       } else if (parseEstateInterior(this.zone) !== null) {
@@ -1288,9 +1314,8 @@ export default class OnlineScene extends Phaser.Scene {
       .setOrigin(0.5, 1)
       .setScrollFactor(0)
       .setDepth(1000);
-    // the control hint helps a new runner but is clutter once you know the ropes — fade it
-    // down after the first stretch of play (stays faintly legible if you go looking)
-    this.time.delayedCall(40000, () => this.tweens.add({ targets: this.footerHint, alpha: 0.28, duration: 1500 }));
+    // control hint: useful for 12s, then almost gone so the floor stays readable
+    this.time.delayedCall(12000, () => this.tweens.add({ targets: this.footerHint, alpha: 0.18, duration: 1200 }));
     this.options.setOnChange(() => {
       MusicDirector.for(this)?.applyVolumes();
       this.synth?.applyVolumes();
@@ -1339,13 +1364,24 @@ export default class OnlineScene extends Phaser.Scene {
     this.tileCursor.setGrid(this.zoneGrid);
     this.rsSkills = loadRsSkills();
     this.rsSkillsPanel = new RsSkillsPanel(this, this.rsSkills);
-    this.rsActionBar = new RsActionBar(this, [
-      { key: "inv", label: "Bag", sub: "I", color: 0x00e5ff, onClick: () => this.inv?.toggle() },
-      { key: "skills", label: "Skills", sub: "'", color: 0xf7ff3c, onClick: () => this.rsSkillsPanel.toggle() },
-      { key: "map", label: "Map", sub: "M", color: 0x39ff88, onClick: () => this.mapPanel?.toggle(this.net.discovered, this.net.unlocked, this.zone) },
-      { key: "market", label: "Market", sub: "K", color: 0xff2bd6, onClick: () => this.market?.toggle(this.net.marketListings, this.net.inventory, this.net.id, this.net.credits, this.net.metro) },
-      { key: "quests", label: "Quests", sub: "J", color: 0xb06bff, onClick: () => this.refreshQuestLog(true) },
-    ]);
+    const simpleHud = getSettings().uiDensity === "new";
+    // Simple HUD: Bag / Map / Quests only — market & skills open via keys once you need them.
+    this.rsActionBar = new RsActionBar(
+      this,
+      simpleHud
+        ? [
+            { key: "inv", label: "Bag", sub: "I", color: 0x00e5ff, onClick: () => this.inv?.toggle() },
+            { key: "map", label: "Map", sub: "M", color: 0x39ff88, onClick: () => this.mapPanel?.toggle(this.net.discovered, this.net.unlocked, this.zone) },
+            { key: "quests", label: "Quests", sub: "J", color: 0xb06bff, onClick: () => this.refreshQuestLog(true) },
+          ]
+        : [
+            { key: "inv", label: "Bag", sub: "I", color: 0x00e5ff, onClick: () => this.inv?.toggle() },
+            { key: "skills", label: "Skills", sub: "'", color: 0xf7ff3c, onClick: () => this.rsSkillsPanel.toggle() },
+            { key: "map", label: "Map", sub: "M", color: 0x39ff88, onClick: () => this.mapPanel?.toggle(this.net.discovered, this.net.unlocked, this.zone) },
+            { key: "market", label: "Market", sub: "K", color: 0xff2bd6, onClick: () => this.market?.toggle(this.net.marketListings, this.net.inventory, this.net.id, this.net.credits, this.net.metro) },
+            { key: "quests", label: "Quests", sub: "J", color: 0xb06bff, onClick: () => this.refreshQuestLog(true) },
+          ],
+    );
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
       if (this.contextMenu.isOpen()) {
         if (!pointer.rightButtonDown()) this.contextMenu.hide();
@@ -1426,6 +1462,28 @@ export default class OnlineScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(1006)
       .setVisible(false);
+    // First-session coach + core loop — always above the action so "what next" is obvious.
+    this.coachText = this.add
+      .text(this.scale.width / 2, uiDim(44), "", hudFont(11, {
+        color: "#39ff88",
+        fontStyle: "bold",
+        align: "center",
+        backgroundColor: "#05070fe8",
+        padding: { x: uiDim(12), y: uiDim(6) },
+      }))
+      .setOrigin(0.5, 0)
+      .setScrollFactor(0)
+      .setDepth(1001);
+    this.killFeedText = this.add
+      .text(this.scale.width - uiDim(14), this.scale.height * 0.42, "", hudFont(10, {
+        color: "#ff8a9a",
+        align: "right",
+      }))
+      .setOrigin(1, 0)
+      .setScrollFactor(0)
+      .setDepth(1000)
+      .setAlpha(0.9);
+    this.enemyHpG = this.add.graphics().setDepth(9.2);
 
     // Unified keyboard: chat mode captures text; game mode moves / travels / exits.
     this.input.keyboard!.on("keydown", (e: KeyboardEvent) => {
@@ -1757,6 +1815,7 @@ export default class OnlineScene extends Phaser.Scene {
     } else if (s.startsWith("/p ")) this.net.sendChat("party", undefined, s.slice(3));
     else if (s.startsWith("/party ")) this.net.sendParty("invite", s.slice(7).trim());
     else if (s === "/join") this.net.sendParty("accept");
+    else if (s === "/revive" || s.startsWith("/revive ")) this.net.sendParty("revive", s.slice(8).trim() || undefined);
     else if (s === "/leave") this.net.sendParty("leave");
     // ── guild ("Cell") commands ──
     else if (s.startsWith("/g ")) this.net.sendChat("guild", undefined, s.slice(3));
@@ -1825,6 +1884,7 @@ export default class OnlineScene extends Phaser.Scene {
       case "contracts":
         this.contracts.toggle(n.contracts, n.rep);
         this.net.questTalk();
+        noteTalkedFixer();
         break;
       case "board":
         this.board.toggle(n.achievements, n.id);
@@ -2076,18 +2136,40 @@ export default class OnlineScene extends Phaser.Scene {
   }
 
   /** Build an authored, talkable citizen at a world position (baked from its PlayerLook).
-   *  Pass the npc id so quest-givers can offer their bounty on interact. */
-  private makeTalkNpc(name: string, look: PlayerLook, lines: string[], px: number, py: number, npcId?: string) {
+   *  Pass the npc id so quest-givers can offer their bounty on interact.
+   *  Names are hidden until hover so the plaza isn't a cloud of labels. */
+  private makeTalkNpc(
+    name: string,
+    look: PlayerLook,
+    lines: string[],
+    px: number,
+    py: number,
+    npcId?: string,
+    important = false,
+  ) {
     const key = lookKey(look);
     bakeRemoteLook(this, key, look);
     const npc = { kind: "talk" as const, npcId, name, lines, lineIdx: 0, x: px, y: py };
-    const spr = this.add.sprite(px, py, key, 0).setTint(0xffffff).setDepth(9).setInteractive({ useHandCursor: true });
+    const spr = this.add
+      .sprite(px, py, key, 0)
+      .setTint(0xffffff)
+      .setDepth(9)
+      .setScale(1.12)
+      .setInteractive({ useHandCursor: true });
     spr.on("pointerdown", () => this.talkNpc(npc));
     const givesBounty = npcId && bountyForNpc(npcId);
-    this.add
-      .text(px, py - 26, givesBounty ? `${name} ◈` : name, { fontFamily: "Courier New, monospace", fontSize: "10px", color: givesBounty ? "#f7ff3c" : "#9aa3b2" })
+    const label = this.add
+      .text(px, py - 26, givesBounty ? `${name} ◈` : important ? `◈ ${name}` : name, {
+        fontFamily: "Courier New, monospace",
+        fontSize: "10px",
+        color: givesBounty ? "#f7ff3c" : important ? "#9fe8ff" : "#9aa3b2",
+        fontStyle: important || givesBounty ? "bold" : "normal",
+      })
       .setOrigin(0.5)
-      .setDepth(9);
+      .setDepth(9)
+      .setAlpha(important || givesBounty ? 0.55 : 0);
+    spr.on("pointerover", () => label.setAlpha(1));
+    spr.on("pointerout", () => label.setAlpha(important || givesBounty ? 0.55 : 0));
     this.npcs.push(npc);
   }
 
@@ -2201,27 +2283,35 @@ export default class OnlineScene extends Phaser.Scene {
    *  are placed by the caller. */
   private drawServiceStall(px: number, py: number, name: string, tag: string, color: number) {
     const hex = "#" + (color & 0xffffff).toString(16).padStart(6, "0");
-    const W = 84, hw = W / 2;
-    const ay = py - 40; // awning line
+    const W = 72, hw = W / 2;
+    const ay = py - 36; // awning line
     const g = this.add.graphics().setDepth(6);
     // support posts
-    g.fillStyle(0x161c2c, 1).fillRect(px - hw + 1, ay + 10, 3, 46).fillRect(px + hw - 4, ay + 10, 3, 46);
+    g.fillStyle(0x161c2c, 1).fillRect(px - hw + 1, ay + 10, 3, 42).fillRect(px + hw - 4, ay + 10, 3, 42);
     // striped awning
-    g.fillStyle(0x0a0e18, 0.94).fillRect(px - hw, ay, W, 13);
-    for (let i = 0; i < 7; i++) g.fillStyle(i % 2 ? color : 0x141a2a, 0.9).fillRect(px - hw + 2 + i * 11.6, ay + 2, 10, 9);
+    g.fillStyle(0x0a0e18, 0.94).fillRect(px - hw, ay, W, 12);
+    for (let i = 0; i < 6; i++) g.fillStyle(i % 2 ? color : 0x141a2a, 0.9).fillRect(px - hw + 2 + i * 11.2, ay + 2, 9, 8);
     g.fillStyle(color, 0.9).fillRect(px - hw, ay, W, 2);
-    // sign board above the awning — always visible
-    const sy = ay - 17;
-    g.fillStyle(0x05060f, 0.96).fillRect(px - hw, sy, W, 15);
-    g.lineStyle(1.5, color, 0.95).strokeRect(px - hw, sy, W, 15);
-    this.add.image(px, sy + 7, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(color).setDepth(5.8).setScale(0.7, 0.35).setAlpha(0.3);
-    this.add.text(px, sy + 7, tag, displayFont(11, { color: hex, fontStyle: "bold" })).setOrigin(0.5).setDepth(10);
+    // sign board — service TAG only (FORGE / VENDOR); operator name is not permanent world UI
+    const sy = ay - 15;
+    g.fillStyle(0x05060f, 0.96).fillRect(px - hw, sy, W, 14);
+    g.lineStyle(1.5, color, 0.95).strokeRect(px - hw, sy, W, 14);
+    this.add.image(px, sy + 7, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(color).setDepth(5.8).setScale(0.65, 0.32).setAlpha(0.28);
+    this.add.text(px, sy + 7, tag, displayFont(10, { color: hex, fontStyle: "bold" })).setOrigin(0.5).setDepth(10);
     // counter drawn OVER the NPC's feet so they read as standing behind the stand
     const cg = this.add.graphics().setDepth(9.5);
-    cg.fillStyle(0x111730, 0.98).fillRect(px - hw + 4, py + 12, W - 8, 13);
+    cg.fillStyle(0x111730, 0.98).fillRect(px - hw + 4, py + 12, W - 8, 12);
     cg.fillStyle(color, 0.5).fillRect(px - hw + 4, py + 12, W - 8, 2);
-    cg.fillStyle(0x05060f, 0.6).fillRect(px - hw + 4, py + 23, W - 8, 2);
-    this.add.text(px, py + 31, name, bodyFont(9, { color: "#9aa3b2" })).setOrigin(0.5).setDepth(10);
+    cg.fillStyle(0x05060f, 0.6).fillRect(px - hw + 4, py + 22, W - 8, 2);
+    // Name only on hover of the stall zone (pointer on sign area) — keeps plaza readable.
+    const nameLbl = this.add
+      .text(px, py + 30, name, bodyFont(8, { color: "#9aa3b2" }))
+      .setOrigin(0.5)
+      .setDepth(10)
+      .setAlpha(0);
+    const hit = this.add.zone(px - hw, sy, W, py + 24 - sy).setOrigin(0).setInteractive({ useHandCursor: true }).setDepth(10);
+    hit.on("pointerover", () => nameLbl.setAlpha(1));
+    hit.on("pointerout", () => nameLbl.setAlpha(0));
   }
 
   /** Decorative city furniture for the hub plaza — a centre fountain, benches, and a
@@ -2555,11 +2645,77 @@ export default class OnlineScene extends Phaser.Scene {
     }
   }
 
-  /** Ambient pedestrians for the hub — a dozen strangers strolling the streets so the
-   *  compact town reads inhabited even at low player counts. Pure set dressing: seeded
-   *  looks, grid-aware wandering, non-interactive (never pushed to this.npcs). */
+  /** Ambient pedestrians for the hub — dense enough that the city never feels empty
+   *  at low player counts. Pure set dressing: seeded looks, grid-aware wandering. */
   private spawnHubWanderers() {
-    this.spawnWanderers(ONLINE_CITY.grid, HUB_CX, HUB_CY, 12);
+    this.spawnWanderers(ONLINE_CITY.grid, HUB_CX, HUB_CY, 22);
+    // Fake concurrent runners so the "ONLINE (0)" death-spiral never shows raw.
+    this.phantomOnline = 3 + Math.floor(Math.random() * 9);
+  }
+
+  /**
+   * South-plaza training yard — three clickable HSS holograms so a new runner can
+   * get their first "kill" without leaving the safe hub. Pure client set dressing;
+   * grants first-session kill credit + combat XP whisper.
+   */
+  private spawnTrainingYard() {
+    const gate = CITY_HUB_DOORS.find((d) => d.dest === "d0");
+    if (!gate) return;
+    const gx = gate.tile[0] * TILE + TILE / 2;
+    const gy = gate.tile[1] * TILE + TILE / 2;
+    const offsets: [number, number][] = [
+      [-48, -28],
+      [0, -40],
+      [48, -28],
+    ];
+    offsets.forEach(([ox, oy], i) => {
+      const x = gx + ox;
+      const y = gy + oy;
+      const tint = ENEMY_KIND_TINT[i % ENEMY_KIND_TINT.length] ?? 0xff5a6e;
+      const spr = this.add
+        .sprite(x, y, COP_KEY, 0)
+        .setTint(tint)
+        .setAlpha(0.72)
+        .setDepth(8)
+        .setScale(1.1)
+        .setInteractive({ useHandCursor: true });
+      this.add
+        .text(x, y - 28, "DRILL", bodyFont(8, { color: "#ff8a9a", fontStyle: "bold" }))
+        .setOrigin(0.5)
+        .setDepth(9)
+        .setAlpha(0.7);
+      const glow = this.add
+        .image(x, y + 4, GLOW_KEY)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setTint(tint)
+        .setScale(0.55)
+        .setAlpha(0.28)
+        .setDepth(7);
+      let hp = 3;
+      spr.on("pointerdown", () => {
+        hp--;
+        this.particles?.spark(x, y, tint, 1.6);
+        this.pops?.pop(x, y - 18, "-1", "#ff8a9a");
+        this.synth?.hit();
+        juiceShake(this, 40, 0.002);
+        spr.setTint(0xffffff);
+        this.time.delayedCall(50, () => {
+          if (spr.active && hp > 0) spr.setTint(tint);
+        });
+        if (hp <= 0) {
+          noteKill();
+          this.pushKillFeed("drill target purged");
+          this.synth?.kill();
+          this.particles?.burst(x, y, 0.9);
+          this.pops?.popCrit(x, y - 24, "DRILL CLEAR");
+          spr.destroy();
+          glow.destroy();
+          const r = grantSkillXp(this.rsSkills, "combat", 18);
+          this.rsSkillsPanel.setSkills(this.rsSkills);
+          if (r.leveled) this.pops?.popHeal(this.me.x, this.me.y - 36, `Combat ${r.level}!`);
+        }
+      });
+    });
   }
 
   private spawnWanderers(grid: TileGrid, cx: number, cy: number, count: number) {
@@ -2599,7 +2755,7 @@ export default class OnlineScene extends Phaser.Scene {
       bakeRemoteLook(this, key, look);
       const x = tx * TILE + TILE / 2;
       const y = ty * TILE + TILE / 2;
-      const spr = this.add.sprite(x, y, key, 0).setDepth(8.5).setAlpha(0.92);
+      const spr = this.add.sprite(x, y, key, 0).setDepth(8.5).setAlpha(0.92).setScale(1.08);
       this.wanderers.push({ spr, x, y, tx, ty, speed: 34 + rnd() * 26, pauseUntil: this.time.now + rnd() * 3000, bob: rnd() * Math.PI * 2 });
     }
   }
@@ -2830,11 +2986,20 @@ export default class OnlineScene extends Phaser.Scene {
       g.lineStyle(2, door.color, 0.9).strokeRect(px - 18, py - 24, 36, 48);
       this.add.image(px, py, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(door.color).setDepth(8).setScale(0.5).setAlpha(0.4);
     }
-    this.add
-      .text(px, py - (door.flat ? TILE + 12 : 36), door.label, { fontFamily: "Courier New, monospace", fontSize: "10px", color: "#" + (door.color & 0xffffff).toString(16).padStart(6, "0"), fontStyle: "bold" })
+    // Door labels start soft; brighten on hover so the map isn't a wall of text.
+    const lbl = this.add
+      .text(px, py - (door.flat ? TILE + 10 : 36), door.label, {
+        fontFamily: "Courier New, monospace",
+        fontSize: "9px",
+        color: "#" + (door.color & 0xffffff).toString(16).padStart(6, "0"),
+        fontStyle: "bold",
+      })
       .setOrigin(0.5)
-      .setDepth(9);
+      .setDepth(9)
+      .setAlpha(0.42);
     const z = this.add.zone(px - 18, py - 24, 36, 48).setOrigin(0).setInteractive({ useHandCursor: true }).setDepth(9);
+    z.on("pointerover", () => lbl.setAlpha(1));
+    z.on("pointerout", () => lbl.setAlpha(0.42));
     z.on("pointerdown", () => this.enterZone(door.dest));
     this.npcs.push({ kind: "door", dest: door.dest, name: door.label, x: px, y: py });
   }
@@ -2874,12 +3039,16 @@ export default class OnlineScene extends Phaser.Scene {
     this.travelTo(zone, extra);
   }
 
-  /** First deployment into combat — gated on accepting THE WAKE. */
+  /** First deployment into combat — gated on accepting THE WAKE (or first-session FIXER talk). */
   private deployOrganic(zone: string) {
-    if (!this.net.campaignQuest) {
-      this.showBubble(this.me.x, this.me.y, "Visit THE FIXER (J) and accept THE WAKE before deploying.");
+    const fs = getFirstSession();
+    const allowed = !!this.net.campaignQuest || fs.talkedFixer || fs.step !== "meet_fixer";
+    if (!allowed) {
+      this.showBubble(this.me.x, this.me.y, "Visit THE FIXER (green light) first — then deploy south.");
       return;
     }
+    // Soft-unlock: if they talked to FIXER but campaign didn't latch yet, still let them fight.
+    noteDeployed();
     this.travelOrganic(zone, this.zone === "safe" ? { from: this.zone } : undefined);
   }
 
@@ -3126,19 +3295,33 @@ export default class OnlineScene extends Phaser.Scene {
         const crit = dmg >= (e.boss ? 40 : 22);
         if (crit) {
           this.synth?.crit();
-          juiceHitStop(this, e.boss ? 56 : 36);
-          juiceZoomPunch(this, e.boss ? 0.045 : 0.03, 95);
+          juiceHitStop(this, e.boss ? 64 : 44);
+          juiceZoomPunch(this, e.boss ? 0.055 : 0.038, 110);
         } else {
           this.synth?.hit();
+          juiceHitStop(this, e.boss ? 28 : 14);
         }
-        juiceShake(this, e.boss ? 90 : 50, e.boss ? 0.004 : 0.002);
+        juiceShake(this, e.boss ? 110 : 65, e.boss ? 0.0055 : 0.003);
         const tint = ENEMY_KIND_TINT[e.kind] ?? 0xff8a9a;
-        this.particles?.spark(e.x, e.y, tint, e.boss ? 2 : crit ? 1.8 : 1.5);
+        this.particles?.spark(e.x, e.y, tint, e.boss ? 2.4 : crit ? 2.1 : 1.7);
+        this.particles?.flash(e.x, e.y, crit ? 0xffffff : tint, e.boss ? 0.7 : crit ? 0.55 : 0.4);
         const es = this.enemySprites.get(id);
-        if (es) playCombatPose(es, "hit");
+        if (es) {
+          playCombatPose(es, "hit");
+          // Brief white flash so hits read at distance, then restore tier/elite tint.
+          const restore =
+            (es.getData("boss") ? e.tint : null) ??
+            (es.getData("elite") ? e.tint : null) ??
+            ENEMY_KIND_TINT[e.kind] ??
+            COLORS.enemy;
+          es.setTint(0xffffff);
+          this.time.delayedCall(55, () => {
+            if (es.active) es.setTint(restore ?? COLORS.enemy);
+          });
+        }
         this.pops?.pop(e.x, e.y - 24, `-${Math.round(dmg)}`, e.boss ? "#f7ff3c" : crit ? "#ffffff" : "#ff8a9a");
-        if (crit) juiceNeonPulse(this, e.boss ? 0.22 : 0.14, 130);
-        if (e.boss) juiceNeonPulse(this, 0.18, 160);
+        if (crit) juiceNeonPulse(this, e.boss ? 0.28 : 0.18, 150);
+        if (e.boss) juiceNeonPulse(this, 0.22, 180);
       }
       this.prevEnemyHp.set(id, { hp: e.hp, x: e.x, y: e.y, boss: e.boss });
     }
@@ -3146,6 +3329,8 @@ export default class OnlineScene extends Phaser.Scene {
       if (!live.has(id)) {
         this.killStreak++;
         this.killStreakExpiresAt = this.time.now + OnlineScene.KILL_STREAK_MS;
+        noteKill();
+        this.pushKillFeed(prev.boss ? `BOSS DOWN` : `HSS purged`);
         this.synth?.kill();
         juiceShake(this, prev.boss ? 220 : 100, prev.boss ? 0.007 : 0.004);
         this.particles?.burst(prev.x, prev.y, prev.boss ? 1.35 : 0.95);
@@ -3306,6 +3491,8 @@ export default class OnlineScene extends Phaser.Scene {
     this.updateBossLocator();
     this.updateQuestWaypoint();
     this.updateEventBanner();
+    this.drawEnemyHpBars();
+    if (this.isCityHub && getFirstSession().step === "return") noteReturnedToHub();
     if (this.shop.open) this.shop.setCredits(this.net.credits);
     if (this.forge.open) this.forge.setWallet(this.net.credits, this.net.cores);
     if (this.market.open) this.market.refreshBalances(this.net.credits, this.net.metro);
@@ -3325,6 +3512,16 @@ export default class OnlineScene extends Phaser.Scene {
       const moving = mx !== 0 || my !== 0;
       if (moving) this.meDir.set(mx, my);
       driveChar(this.me, this.meDir.x, this.meDir.y, moving);
+      // Local dash afterimages — same language as remote bursts.
+      if (performance.now() < this.net.predDashUntil && !this.net.dead) {
+        const ghost = this.add
+          .sprite(this.me.x, this.me.y, this.me.texture.key, this.me.frame.name)
+          .setAlpha(0.35)
+          .setDepth(8)
+          .setScale(this.me.scaleX, this.me.scaleY)
+          .setTint(0x00e5ff);
+        this.tweens.add({ targets: ghost, alpha: 0, duration: 220, onComplete: () => ghost.destroy() });
+      }
     }
     this.updateEscort("me", this.me.x, this.me.y, this.net.connected && this.net.escortActive && !this.net.dead);
     this.meShadow.setPosition(this.me.x, this.me.y + 12).setVisible(this.me.visible);
@@ -3344,16 +3541,17 @@ export default class OnlineScene extends Phaser.Scene {
     for (const [id, r] of this.net.remotes) {
       let s = this.remoteSprites.get(id);
       if (!s) {
-        s = this.add.sprite(r.x, r.y, PLAYER_KEY, 0).setDepth(9);
+        s = this.add.sprite(r.x, r.y, PLAYER_KEY, 0).setDepth(9).setScale(1.15);
         s.setData("born", this.time.now); // AOI pop-in reads amateur — fade arrivals in
         s.setData("shadow", this.groundShadow(r.x, r.y));
         this.remoteSprites.set(id, s);
         this.remoteLabels.set(
           id,
           this.add
-            .text(r.x, r.y - 22, id, { fontFamily: "Courier New, monospace", fontSize: "10px", color: "#ff79c6" })
+            .text(r.x, r.y - 24, id, { fontFamily: "Courier New, monospace", fontSize: "9px", color: "#ff79c6" })
             .setOrigin(0.5)
-            .setDepth(9),
+            .setDepth(9)
+            .setAlpha(0.75),
         );
       }
       // remote dash — peel one ghost per rendered frame while the snapshot says burst
@@ -3480,22 +3678,33 @@ export default class OnlineScene extends Phaser.Scene {
 
     // tutorial drill — lesson panel, chamber highlight, instructor + portal prompts
     if (this.isTutorial && this.tutorialPanel) {
+      // Prefer local step defs so teach/hint stay in sync even when only snapshots
+      // update tutorialStep (server tutorial messages also fill net.* fields).
       const step = tutorialStepAt(this.net.tutorialStep, this.net.tutorialMode);
       const count = step?.count ?? 1;
       const prog = this.net.tutorialProgress;
       const inst = step ? instructorForStep(step.kind, this.net.tutorialMode) : undefined;
       const chamber = step ? chamberForKind(step.kind) : undefined;
-      const stepLine = step
-        ? `◢ ${step.title}${inst ? `  ·  ${inst.name}` : ""}  (${Math.min(prog, count)}/${count})`
-        : "◢ DRILL COMPLETE";
-      const body = [
-        stepLine,
-        chamber ? `📍 ${chamber.title.replace("◢ ", "")} — ${chamber.subtitle}` : "",
-        this.net.tutorialTeach || "",
-        `▸ ${this.net.tutorialHint || ""}`,
-      ]
-        .filter(Boolean)
-        .join("\n");
+      const teach = this.net.tutorialTeach || step?.teach || "";
+      const hint = this.net.tutorialHint || step?.hint || "";
+      let body: string;
+      if (!this.net.connected) {
+        // Offline walk is preview-only — lessons are server-authoritative and will not
+        // advance until the drill yard socket is up (was the silent "stuck on movement" bug).
+        body = [
+          "◢ DRILL YARD — LINKING…",
+          "You can walk while connecting, but lessons only clear once the server confirms them.",
+          this.connectionState === "reconnecting" ? "▸ reconnecting — hold on" : "▸ connecting to drill server…",
+          "▸ if this hangs, press R to retry or SKIP TUTORIAL (top-right once linked)",
+        ].join("\n");
+      } else {
+        const stepLine = step
+          ? `◢ ${step.title}${inst ? `  ·  ${inst.name}` : ""}  (${Math.min(prog, count)}/${count})`
+          : "◢ DRILL COMPLETE";
+        body = [stepLine, chamber ? `📍 ${chamber.title.replace("◢ ", "")} — ${chamber.subtitle}` : "", teach, hint ? `▸ ${hint}` : ""]
+          .filter(Boolean)
+          .join("\n");
+      }
       this.tutorialPanel.setText(body);
 
       if (this.tutorialChamberG) {
@@ -3580,7 +3789,7 @@ export default class OnlineScene extends Phaser.Scene {
     for (const [id, e] of this.net.enemies) {
       let s = this.enemySprites.get(id);
       if (!s) {
-        s = this.add.sprite(e.x, e.y, COP_KEY, 0).setDepth(8).setAlpha(0);
+        s = this.add.sprite(e.x, e.y, COP_KEY, 0).setDepth(8).setAlpha(0).setScale(1.15);
         this.tweens.add({ targets: s, alpha: 1, duration: 260 }); // AOI arrivals fade in
         s.setData("shadow", this.groundShadow(e.x, e.y, 0.48));
         this.enemySprites.set(id, s);
@@ -3797,10 +4006,9 @@ export default class OnlineScene extends Phaser.Scene {
         ]);
       } else {
         this.hud.setText([
-          "⚠  SERVER OFFLINE",
-          "The online realm isn't reachable right now.",
-          "Press R to retry · ESC for menu",
-          "Start server: cd server && npm run dev",
+          "⚠  LINK LOST",
+          "Can't reach the shared city — preview mode is still walkable.",
+          "R retry · ESC menu · check connection",
         ]);
       }
     } else if (this.isTutorial) {
@@ -3846,14 +4054,33 @@ export default class OnlineScene extends Phaser.Scene {
 
     this.chatPanel.setArea(this.chatAreaLabel());
     this.chatPanel.setMessages(this.net.chatLog);
-    // roster stays a whisper — headcount + a few names, never a column of text
-    this.rosterText.setText([
-      `◢ ONLINE (${this.net.roster.length})`,
-      ...this.net.roster
-        .slice(0, 6)
-        .map((r) => `${this.net.party.includes(r.id) ? "◆" : "·"} ${r.id} L${r.level}`),
-      ...(this.net.roster.length > 6 ? [`  +${this.net.roster.length - 6} more`] : []),
-    ]);
+    // Roster: real players first; when solo, show ambient "runners" so the city feels lived-in.
+    const others = this.net.roster.filter((r) => r.id !== this.net.id);
+    const simple = getSettings().uiDensity === "new";
+    if (simple && others.length === 0) {
+      // Simple HUD: one whisper line, not a column.
+      this.rosterText
+        .setVisible(true)
+        .setText(`◢ ${Math.max(1, this.phantomOnline)} runners in metro (ambient)`);
+    } else if (others.length === 0) {
+      const phantoms = ["VEX", "RIN", "HALO", "DOC", "NYX", "KITE", "ZERO", "ASH"].slice(0, Math.min(5, this.phantomOnline));
+      this.rosterText.setVisible(true).setText([
+        `◢ ONLINE (~${this.phantomOnline + 1})`,
+        ...phantoms.map((n) => `· ${n}  L${3 + (n.charCodeAt(0) % 12)}`),
+        "  (ambient runners)",
+      ]);
+    } else {
+      this.rosterText.setVisible(true).setText([
+        `◢ ONLINE (${this.net.roster.length})`,
+        ...others
+          .slice(0, 5)
+          .map((r) => `${this.net.party.includes(r.id) ? "◆" : "·"} ${r.id} L${r.level}`),
+        ...(others.length > 5 ? [`  +${others.length - 5} more`] : []),
+      ]);
+    }
+
+    // First-session coach + core loop strip
+    this.refreshCoachStrip();
 
     const tr = this.net.trade;
     if (tr) {
@@ -3875,20 +4102,25 @@ export default class OnlineScene extends Phaser.Scene {
         completed: [],
         flags: [],
       });
-      this.questText.setText(campaignHud(camp));
+      const hudLine = campaignHud(camp);
+      const hasActive = !!(camp.active && camp.currentStage);
+      // Always show a compact objective strip in the hub — new runners need the FIXER
+      // pointer. Only hide once the campaign is fully done.
+      const showQuest = this.isCityHub ? !camp.done : hasActive;
+      this.questText.setText(showQuest ? hudLine : "").setVisible(showQuest);
+      // Waypoint always tracks the next physical beat (FIXER / gate / estates).
       this.questTarget = this.resolveQuestTarget(camp);
     }
     if (!this.isTutorial) {
       const active = this.net.contracts.find((c) => !c.done);
+      // Hide "contracts complete" noise — only surface in-progress work.
       if (active) {
-        this.dailyText.setVisible(true).setText(`◇ CONTRACT — ${active.name}  ${Math.min(active.progress, active.count)}/${active.count}`);
-      } else if (this.net.contracts.length > 0) {
-        this.dailyText.setVisible(true).setText("◇ daily contracts complete — see THE FIXER tomorrow");
+        this.dailyText.setVisible(true).setText(`◇ ${active.name}  ${Math.min(active.progress, active.count)}/${active.count}`);
       } else {
         this.dailyText.setVisible(false);
       }
       const bty = this.net.bounty;
-      if (bty) this.bountyText.setVisible(true).setText(`◈ BOUNTY — ${bty.name}  ${Math.min(bty.progress, bty.count)}/${bty.count}`);
+      if (bty) this.bountyText.setVisible(true).setText(`◈ ${bty.name}  ${Math.min(bty.progress, bty.count)}/${bty.count}`);
       else this.bountyText.setVisible(false);
     }
     const story = this.net.story;
@@ -4043,6 +4275,52 @@ export default class OnlineScene extends Phaser.Scene {
     return { ...toWorld(gate.tile), label: "DEPLOY GATE" };
   }
 
+  private refreshCoachStrip() {
+    if (!this.coachText) return;
+    if (!getSettings().firstSessionCoach) {
+      this.coachText.setVisible(false);
+      return;
+    }
+    const coach = firstSessionLine();
+    const simple = getSettings().uiDensity === "new";
+    // New players: coach only. Full mode: coach + core loop.
+    const line = coach ?? (simple ? null : coreLoopLine());
+    if (!line) {
+      this.coachText.setVisible(false);
+      return;
+    }
+    this.coachText.setVisible(true).setText(line).setColor(coach ? "#39ff88" : "#6b7184");
+  }
+
+  private pushKillFeed(line: string) {
+    this.killFeed.unshift(line);
+    if (this.killFeed.length > 4) this.killFeed.length = 4;
+    this.killFeedText?.setText(this.killFeed.join("\n"));
+    this.time.delayedCall(4200, () => {
+      this.killFeed = this.killFeed.filter((l) => l !== line);
+      this.killFeedText?.setText(this.killFeed.join("\n"));
+    });
+  }
+
+  /** Draw compact HP bars over damaged enemies (combat readability). */
+  private drawEnemyHpBars() {
+    const g = this.enemyHpG;
+    if (!g) return;
+    g.clear();
+    for (const [, e] of this.net.enemies) {
+      const max = e.hpMax ?? (e.boss ? 800 : e.hvt ? 220 : 80);
+      if (e.hp >= max * 0.98) continue; // full = no bar clutter
+      const w = e.boss ? 48 : e.hvt ? 36 : 28;
+      const h = e.boss ? 5 : 3;
+      const x = e.x - w / 2;
+      const y = e.y - (e.boss ? 42 : 28);
+      const pct = Math.max(0, Math.min(1, e.hp / max));
+      g.fillStyle(0x05060f, 0.85).fillRect(x - 1, y - 1, w + 2, h + 2);
+      g.fillStyle(0x2a1520, 1).fillRect(x, y, w, h);
+      g.fillStyle(e.boss ? 0xf7ff3c : pct < 0.3 ? 0xff3b6b : 0x39ff88, 1).fillRect(x, y, w * pct, h);
+    }
+  }
+
   /** Campaign objective locator — bobbing marker when the target is on-screen, a
    *  violet screen-edge arrow when it isn't (same math as the boss locator). */
   private updateQuestWaypoint() {
@@ -4057,12 +4335,16 @@ export default class OnlineScene extends Phaser.Scene {
     const zoom = this.cameras.main.zoom || 1;
     const near = Math.hypot(dx, dy) < 90; // at the target — the interact prompt takes over
     const onScreen = Math.abs(dx) < VIEW_W / 2 / zoom - uiDim(36) && Math.abs(dy) < VIEW_H / 2 / zoom - uiDim(36);
+    // FIXER / deploy get warmer colors so the first objective reads as "go here".
+    const isFixer = t.label === "THE FIXER";
+    const col = isFixer ? "#39ff88" : t.label === "DEPLOY GATE" ? "#f7ff3c" : "#b06bff";
     if (onScreen) {
       this.questArrow.setVisible(false);
       this.questMarker
         .setVisible(!near)
-        .setText(`◆ ${t.label}\n▼`)
-        .setPosition(t.x, t.y - 34 + Math.sin(this.time.now / 260) * 3);
+        .setColor(col)
+        .setText(isFixer ? `◆ TALK — ${t.label}\n▼` : `◆ ${t.label}\n▼`)
+        .setPosition(t.x, t.y - 36 + Math.sin(this.time.now / 240) * 4);
       return;
     }
     this.questMarker.setVisible(false);
@@ -4070,7 +4352,7 @@ export default class OnlineScene extends Phaser.Scene {
     const cx = VIEW_W / 2;
     const cy = VIEW_H / 2;
     const d = Math.min((cx - uiDim(56)) / (Math.abs(Math.cos(ang)) || 1e-6), (cy - uiDim(104)) / (Math.abs(Math.sin(ang)) || 1e-6));
-    this.questArrow.setVisible(true).setPosition(cx + Math.cos(ang) * d, cy + Math.sin(ang) * d).setRotation(ang);
+    this.questArrow.setVisible(true).setColor(col).setPosition(cx + Math.cos(ang) * d, cy + Math.sin(ang) * d).setRotation(ang);
   }
 
   /** The class signature's cooldown (client mirror of the server's timers, for the pips). */
@@ -4427,7 +4709,7 @@ export default class OnlineScene extends Phaser.Scene {
     });
   }
 
-  /** Death is a MOMENT: hit-stop + blood-dark wash + SIGNAL LOST + reboot countdown,
+  /** Death is a MOMENT: hit-stop + blood-dark wash + SIGNAL LOST / REPRINT + reboot countdown,
    *  then a white rebirth flash when the server respawns you. */
   private updateDeathSequence() {
     const dead = this.net.dead;
@@ -4439,6 +4721,9 @@ export default class OnlineScene extends Phaser.Scene {
       this.tweens.add({ targets: this.deathOverlay, alpha: 0.62, duration: 420, ease: "Quad.Out" });
       this.deadText.setVisible(true).setText("✖ SIGNAL LOST").setScale(1.6).setAlpha(0);
       this.tweens.add({ targets: this.deadText, scale: 1, alpha: 1, duration: 340, ease: "Back.Out" });
+      this.time.delayedCall(900, () => {
+        if (this.net.dead) this.deadText.setText("◈ REPRINT QUEUED");
+      });
       this.deathSub.setVisible(true);
     } else if (!dead && this.wasDead) {
       this.tweens.add({ targets: this.deathOverlay, alpha: 0, duration: 300 });
@@ -4446,12 +4731,14 @@ export default class OnlineScene extends Phaser.Scene {
       this.deathSub.setVisible(false);
       juiceFlash(this, 260, 220, 240, 255);
       juiceZoomPunch(this, 0.04, 180);
-      this.pops?.popHeal(this.me.x, this.me.y - 28, "SIGNAL RESTORED");
+      this.pops?.popHeal(this.me.x, this.me.y - 28, "REPRINT COMPLETE");
     }
     if (dead) {
       const left = Math.max(0, RESPAWN_MS - (performance.now() - this.deathStartedAt));
       this.deathSub.setText(
-        left > 0 ? `rebooting in ${(left / 1000).toFixed(1)}s — the grid never forgets a Blank` : "rebooting…",
+        left > 0
+          ? `reprinting body in ${(left / 1000).toFixed(1)}s — billed to your ledger`
+          : "printing…",
       );
     }
     this.wasDead = dead;
@@ -4722,9 +5009,10 @@ export default class OnlineScene extends Phaser.Scene {
         .setScale(1.4)
         .setAlpha(0.35);
       this.add
-        .text(px, py - 18, "▣ DATA NODE", bodyFont(8, { color: "#39ff88", fontStyle: "bold" }))
+        .text(px, py - 16, "▣", bodyFont(11, { color: "#39ff88", fontStyle: "bold" }))
         .setOrigin(0.5)
-        .setDepth(8);
+        .setDepth(8)
+        .setAlpha(0.7);
       const z = this.add.zone(px - 16, py - 16, 32, 32).setOrigin(0).setInteractive({ useHandCursor: true }).setDepth(9);
       z.on("pointerdown", () => {
         if (!getSettings().rsControls) return;

@@ -42,14 +42,14 @@ interface Beat {
   stinger?: "shatter" | "infect";
 }
 
+// Tighter holds — keep the hook, get to play faster.
 const BEATS: Beat[] = [
-  { text: "SIGNAL LOST", font: "display", size: 34, color: "#ff3b6b", glow: true, holdMs: 1300 },
-  { text: "REPRINT 47 — COMPLETE", font: "display", size: 24, color: "#9aa3b2", holdMs: 1500, stinger: "shatter" },
-  { text: "They printed you a new body.\nSame debt. Same name on the warrant.", font: "body", size: 16, color: "#eafdff", holdMs: 2800 },
-  { text: "The collection units are already outside.\nThey know exactly where you wake up. They always do.", font: "body", size: 16, color: "#eafdff", holdMs: 2800 },
-  { text: "— There you are. Same eyes. Different body.", font: "body", size: 15, color: "#f7ff3c", holdMs: 2200, stinger: "infect" },
-  { text: "— They bill the reprint to YOUR account, you know.", font: "body", size: 15, color: "#f7ff3c", holdMs: 2200 },
-  { text: "— I'm at the safehouse. Come angry.\nWe're getting it back.", font: "body", size: 15, color: "#f7ff3c", holdMs: 2400 },
+  { text: "SIGNAL LOST", font: "display", size: 34, color: "#ff3b6b", glow: true, holdMs: 900 },
+  { text: "REPRINT 47 — COMPLETE", font: "display", size: 24, color: "#9aa3b2", holdMs: 1000, stinger: "shatter" },
+  { text: "They printed you a new body.\nSame debt. Same warrant.", font: "body", size: 16, color: "#eafdff", holdMs: 1800 },
+  { text: "Collection units are already outside.", font: "body", size: 16, color: "#eafdff", holdMs: 1600 },
+  { text: "— There you are. Same eyes. Different body.", font: "body", size: 15, color: "#f7ff3c", holdMs: 1500, stinger: "infect" },
+  { text: "— Safehouse. Come angry. We're getting it back.", font: "body", size: 15, color: "#f7ff3c", holdMs: 1800 },
 ];
 
 export default class ColdOpenScene extends Phaser.Scene {

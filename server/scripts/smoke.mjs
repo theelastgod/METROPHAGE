@@ -62,7 +62,9 @@ function login(ws, name, faction, look, extra = {}) {
       }
     };
     ws.addEventListener("message", onMsg);
-    ws.send(JSON.stringify({ t: "login", name, faction, ...(look ? { look } : {}), ...extra }));
+    // deterministic per-name device secret — guest identities are device-bound now, and
+    // the harness reuses fixed callsigns (crafter, esthome…) across runs
+    ws.send(JSON.stringify({ t: "login", name, faction, secret: `smk-${name}`, ...(look ? { look } : {}), ...extra }));
   });
 }
 

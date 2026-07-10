@@ -17,7 +17,7 @@ import { loadSave, writeSave } from "../systems/Save";
 import NeonPipeline from "../render/NeonPipeline";
 import { createTerrainLayer } from "../render/terrainLayer";
 import { TILE_VARIANTS } from "../world/district";
-import { juiceShake, juiceFlash } from "../systems/juice";
+import { juiceShake, juiceFlash, juiceKill } from "../systems/juice";
 import Synth from "../audio/Synth";
 import MusicDirector from "../audio/MusicDirector";
 import Particles from "../render/Particles";
@@ -400,8 +400,8 @@ export default class SubwayScene extends Phaser.Scene implements EnemyHost {
   private damageCop(cop: TuringCop, dmg: number, shieldMult = 1) {
     if (!cop.active || cop.isDead) return;
     if (cop.hurt(dmg, shieldMult)) {
-      this.spark(cop.x, cop.y, COLORS.enemy, 2);
-      juiceShake(this, 80, 0.004);
+      this.spark(cop.x, cop.y, COLORS.enemy, 2.4);
+      juiceKill(this);
       this.synth?.kill();
     } else {
       cop.knock(cop.x - this.player.x, cop.y - this.player.y, 140);

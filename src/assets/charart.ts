@@ -121,34 +121,50 @@ export interface CharSpec {
 }
 
 // ── Per-class player specs (ids match game/classes.ts) ──────────────────────
-// Playable runners are humans — skin, hair, eyes, street clothes; jacket colour is baked per class.
+// Playable runners are humans — distinct silhouettes per class so they read at game scale.
 export const PLAYER_SPECS: Record<string, CharSpec> = {
   wintermute: {
-    build: "normal", head: "cap", visor: "band", tones: GRAY, sex: "f", skin: 0xe6b58c, hair: "long", hairColor: 0x1b1820,
-    eyeColor: 0x2a4a8a, beard: "none", cloak: "coat", shoulders: "none", decal: "none",
+    // Hacker — coat, long hair, chrome temple, cold eyes
+    build: "slim", head: "hood", visor: "band", tones: GRAY, sex: "f", skin: 0xe6b58c, hair: "long", hairColor: 0x1b1820,
+    eyeColor: 0x29e7ff, beard: "none", cloak: "coat", shoulders: "none", decal: "ring", faceMark: "chrome",
+    gloves: "wraps", legGear: "boots",
   },
   metrophage: {
+    // Contagion runner — beret, bandolier, scar, infection emblem
     build: "normal", head: "beret", visor: "band", tones: GRAY, sex: "m", skin: 0xc98a5e, hair: "undercut", hairColor: 0x1b1820,
-    beard: "stubble", eyeColor: 0x4a2f1c, cloak: "coat", shoulders: "none", decal: "none", strap: true,
+    beard: "stubble", eyeColor: 0x39ff88, cloak: "coat", shoulders: "pads", decal: "triangle", strap: true,
+    faceMark: "scar", gloves: "knuckles", legGear: "wraps",
   },
   "k-guerilla": {
-    build: "normal", head: "cap", visor: "band", strap: true, tones: GRAY, sex: "m", skin: 0x7c4f30, hair: "short", hairColor: 0x1b1820,
-    eyeColor: 0x1a1020, beard: "none", cloak: "coat", shoulders: "none",
+    // Soldier — heavy pads, strap, boots, short cut
+    build: "bulky", head: "cap", visor: "goggles", strap: true, tones: GRAY, sex: "m", skin: 0x7c4f30, hair: "buzz", hairColor: 0x1b1820,
+    eyeColor: 0xf7ff3c, beard: "none", cloak: "none", shoulders: "heavy", decal: "bars",
+    gloves: "gauntlets", legGear: "greaves",
   },
   swarm: {
-    build: "slim", head: "cap", visor: "band", tones: GRAY, sex: "f", skin: 0xa9794a, hair: "ponytail", hairColor: 0x1b1820,
-    eyeColor: 0x6a5030, beard: "none", cloak: "none", shoulders: "none",
+    // Swarm host — slim, antennae, ponytail, neon wraps
+    build: "slim", head: "drone", visor: "band", tones: GRAY, sex: "f", skin: 0xa9794a, hair: "ponytail", hairColor: 0xb06bff,
+    eyeColor: 0xff2bd6, beard: "none", cloak: "cape", shoulders: "spikes", decal: "star", antennae: true,
+    gloves: "wraps", legGear: "wraps",
   },
 };
 export const PLAYER_IDS = Object.keys(PLAYER_SPECS);
 
-export const COP_SPEC: CharSpec = { build: "bulky", head: "helmet", visor: "wide", tones: GRAY };
+export const COP_SPEC: CharSpec = {
+  build: "bulky", head: "helmet", visor: "wide", tones: GRAY, shoulders: "pads", decal: "cross",
+  gloves: "gauntlets", legGear: "greaves", strap: true,
+};
 export const BOSS_SPEC: CharSpec = {
   build: "huge",
   head: "helmet",
-  visor: "wide",
+  visor: "cross",
   emblem: true,
   tones: GRAY,
+  shoulders: "heavy",
+  decal: "skull",
+  gloves: "gauntlets",
+  legGear: "greaves",
+  cloak: "cape",
 };
 export const NPC_SPEC: CharSpec = {
   build: "normal",
@@ -180,17 +196,19 @@ export function drawAgent(ctx: CanvasRenderingContext2D, step = 0) {
     ctx.fillRect(x, y, w, h);
     ctx.globalAlpha = 1;
   };
-  px(4, 20, 8, 1, 0x000000, 0.18); // faint contact shadow
-  // small adult: 5px head, necked torso, long legs
+  px(3, 20, 10, 2, 0x000000, 0.28); // contact shadow
+  // small adult: 5px head, necked torso, long legs — stronger outline for density
   px(6, 1, 5, 5, t.o);
   px(7, 2, 3, 3, t.c); // head
   px(7, 5, 3, 1, t.b); // jaw
+  px(8, 3, 1, 1, t.d, 0.7); // cheek light
   px(7, 6, 2, 1, t.b); // neck
-  // torso
+  // torso — jacket with a neon zipper so the crowd reads as cyberpunk
   px(5, 7, 7, 1, t.o);
   px(5, 8, 7, 6, t.b);
   px(6, 8, 2, 5, t.c);
   px(10, 9, 1, 5, t.a);
+  px(8, 8, 1, 5, t.e, 0.35); // zipper glint (tints to crowd hue)
   // arms
   px(4, 8 + sw, 1, 5, t.a);
   px(12, 8 - sw, 1, 5, t.a);
@@ -254,8 +272,12 @@ function drawPose(ctx: CanvasRenderingContext2D, facing: Facing, spec: CharSpec,
   const cx = 16;
   const fem = spec.sex === "f";
 
-  // faint contact hint only — the scene draws the real ground shadow
-  px(cx - 5, 29, 10, 1, 0x000000, 0.15);
+  // Stronger contact shadow + rim so characters pop on dense neon floors at game scale.
+  px(cx - 7, 29, 14, 2, 0x000000, 0.35);
+  px(cx - 5, 28, 10, 1, 0x000000, 0.18);
+  // faint emissive rim underfoot (tints to class / gear neon)
+  px(cx - 4, 30, 8, 1, t.e, 0.18);
+  px(cx - 2, 29, 4, 1, t.e, 0.1);
 
   if (facing === "left") {
     ctx.save();
@@ -316,11 +338,17 @@ function drawPose(ctx: CanvasRenderingContext2D, facing: Facing, spec: CharSpec,
   const wtw = tw - 2; // waist taper
   part(cx - Math.floor(wtw / 2), 15, wtw, 5, t.b); // waist → hips
   px(tx + 1, 12, tw - 2, 1, t.c); // shoulder yoke light
+  // neon jacket hem + collar trim (class colour blooms via post-FX)
+  px(tx, 12, tw, 1, acc.e, 0.55);
+  px(tx, 16, 1, 3, acc.e, 0.35);
+  px(tx + tw - 1, 16, 1, 3, acc.e, 0.28);
   if (!back) {
-    px(tx + 1, 13, 1, 3, t.rim, 0.4); // left rim
-    px(tx + 2, 13, 2, 2, t.c, 0.35); // soft chest light
+    px(tx + 1, 13, 1, 3, t.rim, 0.55); // left rim
+    px(tx + 2, 13, 2, 2, t.c, 0.45); // soft chest light
     px(cx, 13, 1, 6, t.a); // zip line
-    px(cx - Math.floor(wtw / 2) + 1, 18, wtw - 2, 1, acc.d, 0.65); // belt
+    px(cx, 13, 1, 6, acc.e, 0.22); // neon zip glint
+    px(cx - Math.floor(wtw / 2) + 1, 18, wtw - 2, 1, acc.d, 0.85); // belt
+    px(cx - Math.floor(wtw / 2) + 2, 18, wtw - 4, 1, acc.e, 0.45); // belt core
     if (fem) {
       px(cx - 3, 14, 2, 1, t.c, 0.75);
       px(cx + 1, 14, 2, 1, t.c, 0.75); // bust light
@@ -329,6 +357,7 @@ function drawPose(ctx: CanvasRenderingContext2D, facing: Facing, spec: CharSpec,
     px(tx + 1, 13, tw - 2, 5, t.a); // back panel
     px(cx, 13, 1, 6, t.o, 0.4); // spine seam
     px(tx + 1, 12, tw - 2, 1, t.c);
+    px(tx + 2, 14, tw - 4, 1, acc.e, 0.3); // rear jacket band
   }
 
   // ── arms: slim sleeves, counter-swing; hands or gloves ──────────

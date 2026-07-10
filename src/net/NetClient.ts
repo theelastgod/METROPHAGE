@@ -2,6 +2,24 @@ import { stepMove, NET_TICK_MS, PLAYER_HP, type MoveState } from "./sim";
 import { PLAYER } from "../config";
 import type { TileGrid } from "../world/district";
 import type { ClientMsg, ServerMsg, InputCmd, PlayerLook, Item, EstateFurniture } from "./protocol";
+import { tutorialStepAt } from "./tutorial";
+
+/** Guest-identity device secret — generated once per callsign on this device and bound
+ *  server-side on first login. Stops anyone else logging in as your name and selling
+ *  your house. Wallet sign-ins don't need it (the signature is the proof). */
+function deviceSecretFor(name: string): string | undefined {
+  try {
+    const key = "mp_secret_" + (name || "").toLowerCase().replace(/[^a-z0-9_-]/g, "");
+    let s = localStorage.getItem(key);
+    if (!s) {
+      s = crypto.randomUUID();
+      localStorage.setItem(key, s);
+    }
+    return s;
+  } catch {
+    return undefined; // storage unavailable (private mode) — plays as an unbound guest
+  }
+}
 
 export interface RemotePlayer {
   id: string;
@@ -277,6 +295,7 @@ export default class NetClient {
           look: this.look,
           arrival: this.arrival,
           classId: this.classId,
+          secret: deviceSecretFor(this.name),
           ...(this.travelFrom ? { from: this.travelFrom } : {}),
           ...(this.auth ?? {}),
         } satisfies ClientMsg),
@@ -483,8 +502,22 @@ export default class NetClient {
           this.campaignStage = sp.campaignStage;
           this.campaignProgress = sp.campaignProgress;
           this.campaignObjective = sp.campaignObjective;
-          this.tutorialStep = sp.tutorialStep;
-          this.tutorialProgress = sp.tutorialProgress;
+          // Snapshots can advance the drill without a dedicated tutorial message —
+          // keep title/teach/hint aligned with the local step table so the UI never
+          // stays stuck on the previous lesson's copy.
+          if (sp.tutorialStep !== this.tutorialStep || sp.tutorialProgress !== this.tutorialProgress) {
+            this.tutorialStep = sp.tutorialStep;
+            this.tutorialProgress = sp.tutorialProgress;
+            const def = tutorialStepAt(this.tutorialStep, this.tutorialMode);
+            if (def) {
+              this.tutorialTitle = def.title;
+              this.tutorialTeach = def.teach;
+              this.tutorialHint = def.hint;
+            }
+          } else {
+            this.tutorialStep = sp.tutorialStep;
+            this.tutorialProgress = sp.tutorialProgress;
+          }
           this.tutorialDone = sp.tutorialDone;
           this.inTutorial = sp.inTutorial;
         } else {
@@ -755,7 +788,7 @@ export default class NetClient {
   sendChat(ch: "zone" | "party" | "whisper" | "guild", to: string | undefined, text: string) {
     this.sendMsg({ t: "chat", ch, to, text });
   }
-  sendParty(action: "invite" | "accept" | "leave", to?: string) {
+  sendParty(action: "invite" | "accept" | "leave" | "revive", to?: string) {
     this.sendMsg({ t: "party", action, to });
   }
   /** Auction house — server escrows the item + settles atomically (cross-zone, D1). */

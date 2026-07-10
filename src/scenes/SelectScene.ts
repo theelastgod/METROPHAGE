@@ -120,7 +120,7 @@ export default class SelectScene extends Phaser.Scene {
     optBtn.on("pointerdown", () => this.options.toggle());
 
     this.add
-      .text(VIEW_W / 2, MENU_FOOTER_Y, "character creation is permanent · bound to your wallet forever", bodyFont(11, { color: "#5a6172" }))
+      .text(VIEW_W / 2, MENU_FOOTER_Y, "play free offline · wallet optional for shared city & save", bodyFont(11, { color: "#5a6172" }))
       .setOrigin(0.5);
 
     this.input.keyboard?.on("keydown", (e: KeyboardEvent) => {
@@ -195,43 +195,48 @@ export default class SelectScene extends Phaser.Scene {
     this.clearActionLayer();
     this.bodyText.setVisible(false);
     const hasWallet = walletAvailable();
+    // PLAY FIRST — wallet is optional upgrade for multiplayer identity / cloud save.
+    // The old gate led with "install Phantom" and lost casual players before any combat.
     this.walletPanel.show({
       step: "connect",
       status: hasWallet ? "ready" : "offline",
-      statusText: hasWallet ? "wallet extension detected" : "no wallet extension",
-      headline: hasWallet ? "Link your wallet" : "Install a Solana wallet",
+      statusText: hasWallet ? "wallet ready · play free either way" : "no wallet needed to start",
+      headline: "Jump in",
       body: hasWallet
-        ? "Your runner is minted once and bound to this address. Approve the connection, then sign a free message to prove ownership."
-        : "METROPHAGE requires Phantom, Backpack, or Solflare. Install one, refresh, and return here.",
+        ? "Play offline now, or connect your wallet to save a runner to this address and join the shared city. Connect is free — no spend, no gas."
+        : "Start offline in seconds — class, combat, city preview. Link Phantom / Backpack / Solflare later for multiplayer identity and cloud save.",
       wallet: null,
-      actions: hasWallet
-        ? this.walletActions([
-            {
-              label: "◈ CONNECT WALLET",
-              sub: "opens your extension — read-only connect, no spend",
-              color: COLORS.neonGreen,
-              fn: () => void this.onConnectWallet(),
-            },
-          ])
-        : this.walletActions([
-            {
-              label: "◢ PLAY OFFLINE",
-              sub: "local drill & city preview · no wallet required",
-              color: COLORS.neonCyan,
-              fn: () => this.enterOfflinePlay(),
-            },
-            {
-              label: "GET PHANTOM",
-              sub: "phantom.app — install, refresh, then connect",
-              color: COLORS.neonGreen,
-              primary: false,
-              fn: () => window.open("https://phantom.app/", "_blank", "noopener"),
-            },
-          ]),
+      actions: this.walletActions([
+        {
+          label: "◢ PLAY NOW",
+          sub: "class select · drill & city · no wallet required",
+          color: COLORS.neonCyan,
+          fn: () => this.enterOfflinePlay(),
+        },
+        ...(hasWallet
+          ? [
+              {
+                label: "◈ CONNECT WALLET",
+                sub: "optional — multiplayer identity · free message sign-in",
+                color: COLORS.neonGreen,
+                primary: false as const,
+                fn: () => void this.onConnectWallet(),
+              },
+            ]
+          : [
+              {
+                label: "GET PHANTOM",
+                sub: "optional later · phantom.app",
+                color: COLORS.neonGreen,
+                primary: false as const,
+                fn: () => window.open("https://phantom.app/", "_blank", "noopener"),
+              },
+            ]),
+      ]),
     });
   }
 
-  /** Skip wallet gate for local playtesting — character stays device-local. */
+  /** Skip wallet gate — character is device-local until they link a wallet later. */
   private enterOfflinePlay() {
     this.registry.set("offlinePlay", true);
     this.registry.remove("walletAddress");
@@ -239,7 +244,10 @@ export default class SelectScene extends Phaser.Scene {
     this.walletPanel.hide();
     this.enterCreate();
     const cardTop = this.cardRects[0]?.y ?? VIEW_H * 0.38;
-    this.bodyText.setVisible(true).setY(cardTop - uiGap("lg")).setText("offline mode · pick a class · wallet optional later");
+    this.bodyText
+      .setVisible(true)
+      .setY(cardTop - uiGap("lg"))
+      .setText("pick a class · you can link a wallet later for multiplayer save");
   }
 
   /** Wallet is connected — prompt for sign-in and load/create branch. */
