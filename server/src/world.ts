@@ -408,6 +408,9 @@ interface Enemy {
   elite?: EliteModifier; // rolled-on-spawn affix: hp/speed/status-resist/volatile + payout mult
   hvt?: boolean; // today's HIGH-VALUE TARGET — named bounty elite, huge payout, once per day
   speedMult?: number; // district daily-condition speed factor (GHOST GRID etc.)
+  altFire?: boolean; // volley alternator (SNIPER/HVT swap shot ↔ targeting hazard)
+  hvtRepositionTick?: number; // last evasive-burst tick (HVT bounty protocol)
+  hvtCalled?: boolean; // HVT called its one-time reinforcements (below half HP)
   add?: boolean; // a boss-summoned add (cleaned up when the boss falls/reforms)
   stunUntilTick?: number; // WINTERMUTE hack cone — frozen mid-thought (no move/fire)
   slowUntilTick?: number; // METROPHAGE contagion bloom — infected servos at half speed
@@ -884,6 +887,36 @@ export class WorldDO {
       const e: Enemy = { id, x, y, ox: x, oy: y, hp: ENEMY_ARCHES[kind].hp, maxHp: ENEMY_ARCHES[kind].hp, respawnTick: 0, lastFireTick: 0, kind };
       this.maybeElite(e, 0.05 + this.districtIndex * 0.02); // deeper districts field more elites
       this.enemies.set(id, e);
+    }
+    // THE CRUCIBLE keeps two sparring drones on staff — a solo runner who walks into the
+    // arena always has SOMETHING to fight (arena kills already pay a 3× bounty). Named +
+    // tinted so they read as fixtures, leashed home by their origin like any garrison unit.
+    {
+      const dims = gridDims(this.grid);
+      const arena = pvpZonesFor(dims.worldW, dims.worldH, this.zoneName)[0];
+      if (arena) {
+        for (const off of [-56, 56]) {
+          const dx2 = arena.x + arena.w / 2 + off;
+          const dy2 = arena.y + arena.h / 2 + (off > 0 ? 44 : -44);
+          if (isWall(this.grid[Math.floor(dy2 / TILE)]?.[Math.floor(dx2 / TILE)])) continue;
+          const did = this.nextEnemyId++;
+          const hp = Math.round(ENEMY_ARCHES[2].hp * 1.4);
+          this.enemies.set(did, {
+            id: did,
+            x: dx2,
+            y: dy2,
+            ox: dx2,
+            oy: dy2,
+            hp,
+            maxHp: hp,
+            respawnTick: 0,
+            lastFireTick: 0,
+            kind: 2,
+            name: "CRUCIBLE DRONE",
+            tint: 0xff3b6b,
+          });
+        }
+      }
     }
     // World boss — a named HSS commander at the post farthest from the player spawn, so it
     // reads as a destination. It reforms on its own timer after a kill (see the kill handler).
@@ -4133,6 +4166,8 @@ export class WorldDO {
       e.name = undefined;
       e.tint = undefined;
       e.maxHp = Math.max(1, Math.round(e.maxHp / HVT_HP_MULT));
+      // its backup leaves with it — adds never respawn as permanent garrison
+      for (const [aid, ae] of this.enemies) if (ae.add && !ae.boss) this.enemies.delete(aid);
     }
     if (isBoss || e.elite || wasHvt || Math.random() < arch.loot.chance) {
       killer.inventory.push(rollItem(killer.level, isBoss ? 2.5 : wasHvt ? 2.2 : arch.loot.boost + (e.elite?.lootBonus ?? 0)));
@@ -4328,22 +4363,77 @@ export class WorldDO {
       if (e.speedMult) eSpeed *= e.speedMult; // today's district condition (GHOST GRID etc.)
       if (this.provingVault) eSpeed *= WorldDO.weeklyAffix().speedMult; // OVERCLOCKED weeks
       if (e.slowUntilTick && this.tick < e.slowUntilTick) eSpeed *= 0.5;
+      // HVT bounty protocol — it FIGHTS, it doesn't just soak: a hard sideways burst
+      // every ~2.6s breaks your aim, and at half HP it calls two patrol reinforcements.
+      if (e.hvt) {
+        if ((this.tick - (e.hvtRepositionTick ?? 0)) * NET_TICK_MS >= 2600) {
+          e.hvtRepositionTick = this.tick;
+          const s = (e.id + Math.floor(this.tick / 100)) % 2 === 0 ? 1 : -1;
+          stepMove(e, { mx: (-dy / d) * s, my: (dx / d) * s }, this.grid, NET_TICK_MS * 6, eSpeed * 2.4);
+        }
+        if (!e.hvtCalled && e.hp < e.maxHp * 0.5) {
+          e.hvtCalled = true;
+          for (const off of [-72, 72]) {
+            const aid = this.nextEnemyId++;
+            const ax = e.x + off;
+            const ay = e.y + (off > 0 ? 40 : -40);
+            this.enemies.set(aid, {
+              id: aid,
+              x: ax,
+              y: ay,
+              ox: ax,
+              oy: ay,
+              hp: ENEMY_ARCHES[0].hp,
+              maxHp: ENEMY_ARCHES[0].hp,
+              respawnTick: 0,
+              lastFireTick: 0,
+              kind: 0,
+              add: true, // despawns with its caller's zone cleanup, never respawns
+            });
+          }
+          this.broadcastSys(`◈ ${e.name} called for backup — reinforcements inbound`);
+        }
+      }
       stepMove(e, { mx: mvx, my: mvy }, this.grid, NET_TICK_MS, eSpeed);
       if (d <= arch.fireRange && (this.tick - e.lastFireTick) * NET_TICK_MS >= eFireMs) {
         e.lastFireTick = this.tick;
         const aim = Math.atan2(target.y - e.y, target.x - e.x);
         const projSpeed = arch.projSpeed * (this.provingVault ? WorldDO.weeklyAffix().shotSpeedMult : 1);
-        this.shots.push({
-          id: this.nextShotId++,
-          x: e.x,
-          y: e.y,
-          vx: Math.cos(aim) * projSpeed,
-          vy: Math.sin(aim) * projSpeed,
-          dieTick: this.tick + ticks(ENEMY_PROJ_TTL_MS),
-          team: 1,
-          owner: String(e.id),
-          dmg: e.boss ? Math.round(arch.dmg * BOSS_DMG_MULT) : arch.dmg,
-        });
+        const dmg = e.boss ? Math.round(arch.dmg * BOSS_DMG_MULT) : arch.dmg;
+        const fire = (a: number) =>
+          this.shots.push({
+            id: this.nextShotId++,
+            x: e.x,
+            y: e.y,
+            vx: Math.cos(a) * projSpeed,
+            vy: Math.sin(a) * projSpeed,
+            dieTick: this.tick + ticks(ENEMY_PROJ_TTL_MS),
+            team: 1,
+            owner: String(e.id),
+            dmg,
+          });
+        // Archetype FIRE patterns — attacks you can read and answer, not just stat spam.
+        if (!e.boss && (e.hvt || e.kind === 5)) {
+          // SNIPER / HVT — every other volley paints a targeting solution at the runner's
+          // feet (existing hazard telegraph pipeline): keep moving or eat it.
+          e.altFire = !e.altFire;
+          if (e.altFire) {
+            this.hazards.push({
+              id: this.nextHazardId++,
+              x: target.x,
+              y: target.y,
+              r: 58,
+              castTick: this.tick,
+              detonateTick: this.tick + ticks(760),
+              dmg: Math.round(dmg * 1.35),
+            });
+          } else fire(aim);
+        } else if (!e.boss && e.kind === 4) {
+          // ENFORCER — a 3-shot fan: readable spread, strafe through the gaps
+          fire(aim - 0.24);
+          fire(aim);
+          fire(aim + 0.24);
+        } else fire(aim);
       }
     }
 
@@ -4699,8 +4789,8 @@ export class WorldDO {
             ? { boss: true, name: e.name, tint: e.tint, hpMax: Math.round(e.maxHp) }
             : e.hvt
               ? { name: e.name, tint: e.tint, hvt: true, hpMax: Math.round(e.maxHp) } // the day's bounty — labelled + health-barred
-              : e.elite
-                ? { name: e.name, tint: e.tint } // elite: aura tint + prefix name, no boss chrome
+              : e.name && e.tint
+                ? { name: e.name, tint: e.tint } // elites + named fixtures (CRUCIBLE DRONE): aura tint + name
                 : {}),
         });
     }
