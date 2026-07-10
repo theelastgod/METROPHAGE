@@ -3347,12 +3347,19 @@ export class WorldDO {
     const p = this.playerFor(ws);
     if (!p) return;
     if (msg.action === "accept") {
+      const b = bountyById(msg.id);
+      if (!b) return;
+      // re-accepting the job you already hold is idempotent — it re-syncs the tracker
+      // instead of dead-ending (a stale active job used to lock the slot forever)
+      if (p.bounty?.id === b.id) {
+        this.send(ws, { t: "sys", text: `already on it: ${b.name}` });
+        this.pushBounty(p);
+        return;
+      }
       if (p.bounty) {
         this.send(ws, { t: "sys", text: "finish your current job first" });
         return;
       }
-      const b = bountyById(msg.id);
-      if (!b) return;
       p.bounty = { id: b.id, progress: 0 };
       this.send(ws, { t: "sys", text: `accepted: ${b.name}` });
       this.pushBounty(p);
@@ -4161,6 +4168,7 @@ export class WorldDO {
       // the day's bounty is claimed — announce, remember the day, and demote the unit so
       // its respawn is an ordinary garrison trooper (no farmable 25× loop)
       this.broadcastSys(`◈ ${killer.name} collected the bounty on ${e.name} — ₵${gained}`);
+      this.bountyEvent(killer, "hvt", 1); // GHOST's kill-sheet job pays on top
       void this.state.storage.put("hvtKilledDay", dayIndex());
       e.hvt = false;
       e.name = undefined;
@@ -4400,7 +4408,7 @@ export class WorldDO {
         const aim = Math.atan2(target.y - e.y, target.x - e.x);
         const projSpeed = arch.projSpeed * (this.provingVault ? WorldDO.weeklyAffix().shotSpeedMult : 1);
         const dmg = e.boss ? Math.round(arch.dmg * BOSS_DMG_MULT) : arch.dmg;
-        const fire = (a: number) =>
+        const fire = (a: number, dmgOverride?: number) =>
           this.shots.push({
             id: this.nextShotId++,
             x: e.x,
@@ -4410,7 +4418,7 @@ export class WorldDO {
             dieTick: this.tick + ticks(ENEMY_PROJ_TTL_MS),
             team: 1,
             owner: String(e.id),
-            dmg,
+            dmg: dmgOverride ?? dmg,
           });
         // Archetype FIRE patterns — attacks you can read and answer, not just stat spam.
         if (!e.boss && (e.hvt || e.kind === 5)) {
@@ -4429,10 +4437,12 @@ export class WorldDO {
             });
           } else fire(aim);
         } else if (!e.boss && e.kind === 4) {
-          // ENFORCER — a 3-shot fan: readable spread, strafe through the gaps
-          fire(aim - 0.24);
-          fire(aim);
-          fire(aim + 0.24);
+          // ENFORCER — a 3-shot fan at half damage per pellet: eating the FULL fan
+          // (1.5×) punishes standing still, strafing through the gaps rewards movement
+          const pellet = Math.max(1, Math.round(dmg * 0.5));
+          fire(aim - 0.24, pellet);
+          fire(aim, pellet);
+          fire(aim + 0.24, pellet);
         } else fire(aim);
       }
     }

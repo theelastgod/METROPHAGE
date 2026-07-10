@@ -107,6 +107,7 @@ import OnlineMinimap from "../ui/OnlineMinimap";
 import RsQuestLog from "../ui/RsQuestLog";
 import { CITY_HUB_SPAWN, ENV_IDENTITY, envAt, ONLINE_CITY } from "../world/city";
 import { ESTATES, ESTATES_ZONE, buildHomeRoom, parseEstateInterior, FURNITURE, furnitureKind, type FurniturePiece } from "../world/estates";
+import { drawFurniture } from "../render/furnitureArt";
 import { paintCityEnvWash, paintCityStorefrontReflections } from "../render/cityTerrainPolish";
 import { paintCityBuildingFacades, buildingExteriorAccent } from "../render/buildingFacades";
 import NetClient, { type NetEnemy } from "../net/NetClient";
@@ -2485,7 +2486,7 @@ export default class OnlineScene extends Phaser.Scene {
     this.npcs.push({ kind: "service", svc: "registry", name: "HOUSING REGISTRY · all 12 homes", x: kx, y: ky });
 
     // ── street lamps along the walk, so the strip reads like a neighbourhood ──
-    for (const lx of [8, 20, 32, 44, 56]) {
+    for (const lx of [8, 20, 32, 44, 56, 68, 80, 94]) {
       for (const ly of [10, 15]) {
         const px = lx * TILE + TILE / 2;
         const py = ly * TILE + TILE / 2;
@@ -2595,9 +2596,9 @@ export default class OnlineScene extends Phaser.Scene {
     const W = this.scale.width;
     const pw = Math.min(560, W - 40);
     const px = (W - pw) / 2;
-    const py = 54;
-    const rowH = 26;
-    const ph = 78 + ESTATES.plots.length * rowH;
+    const py = 40;
+    const rowH = 22; // 20 homes must fit the 540-design-height screen
+    const ph = 66 + ESTATES.plots.length * rowH;
     const g = push(this.add.graphics().setScrollFactor(0).setDepth(1300));
     g.fillStyle(0x0a0818, 0.96).fillRoundedRect(px, py, pw, ph, 6);
     g.lineStyle(1.5, 0xffb13c, 0.9).strokeRoundedRect(px, py, pw, ph, 6);
@@ -2605,7 +2606,7 @@ export default class OnlineScene extends Phaser.Scene {
     push(this.add.text(px + pw - 16, py + 14, "click a home to walk there · E/ESC close", bodyFont(9, { color: "#9aa3b2" })).setOrigin(1, 0).setScrollFactor(0).setDepth(1301));
     const dir = this.net.estatesDir;
     const featured = dir.filter((d) => d.owner).sort((a, b) => b.furn - a.furn)[0];
-    let ry = py + 44;
+    let ry = py + 40;
     for (const entry of dir) {
       const plot = ESTATES.plots[entry.i];
       if (!plot) continue;
@@ -2615,19 +2616,19 @@ export default class OnlineScene extends Phaser.Scene {
       if (isFeat) g.lineStyle(1.2, 0xf7ff3c, 0.9).strokeRect(px + 10, ry, pw - 20, rowH - 3);
       push(
         this.add
-          .text(px + 20, ry + 5, `HOME ${entry.i + 1}${isFeat ? "  ✦ FEATURED" : ""}`, bodyFont(11, { color: isFeat ? "#f7ff3c" : "#cfe8ff", fontStyle: "bold" }))
+          .text(px + 20, ry + 4, `HOME ${entry.i + 1}${isFeat ? " ✦" : ""}`, bodyFont(10, { color: isFeat ? "#f7ff3c" : "#cfe8ff", fontStyle: "bold" }))
           .setScrollFactor(0)
           .setDepth(1301),
       );
       push(
         this.add
-          .text(px + pw / 2 - 30, ry + 5, entry.forSale ? `FOR SALE ₵${entry.price}` : `◈ ${(entry.name ?? "OWNED").toUpperCase()}`, bodyFont(10, { color: hexColor(rowColor) }))
+          .text(px + pw / 2 - 30, ry + 4, entry.forSale ? `FOR SALE ₵${entry.price}` : `◈ ${(entry.name ?? "OWNED").toUpperCase()}`, bodyFont(9, { color: hexColor(rowColor) }))
           .setScrollFactor(0)
           .setDepth(1301),
       );
       push(
         this.add
-          .text(px + pw - 20, ry + 5, `★${entry.furn} furn · ✎${entry.guests}`, bodyFont(10, { color: "#9aa3b2" }))
+          .text(px + pw - 20, ry + 4, `★${entry.furn} furn · ✎${entry.guests}`, bodyFont(9, { color: "#9aa3b2" }))
           .setOrigin(1, 0)
           .setScrollFactor(0)
           .setDepth(1301),
@@ -2832,7 +2833,9 @@ export default class OnlineScene extends Phaser.Scene {
     const e = this.net.estate;
     const pieces = this.homeEditing ? this.homeDraft : e?.furniture ?? [];
     this.homeFurnLayer.removeAll(true);
-    for (const pc of pieces) {
+    // rugs draw first so everything else sits ON them
+    const ordered = [...pieces].sort((a, b) => (a.k === "rug" ? -1 : 0) - (b.k === "rug" ? -1 : 0));
+    for (const pc of ordered) {
       const k = furnitureKind(pc.k);
       if (!k) continue;
       const x = pc.x * TILE;
@@ -2840,11 +2843,14 @@ export default class OnlineScene extends Phaser.Scene {
       const w = k.w * TILE;
       const h = k.h * TILE;
       const g = this.add.graphics();
-      g.fillStyle(k.color, 0.5).fillRoundedRect(x + 2, y + 2, w - 4, h - 4, 4);
-      g.lineStyle(1.5, k.color, 0.95).strokeRoundedRect(x + 2, y + 2, w - 4, h - 4, 4);
-      const t = this.add.text(x + w / 2, y + h / 2, k.glyph, bodyFont(10, { color: hexColor(k.color), fontStyle: "bold" })).setOrigin(0.5);
+      if (!drawFurniture(g, k.id, k.color, x, y, w, h)) {
+        // unknown/future kind — the old glyph card still reads
+        g.fillStyle(k.color, 0.5).fillRoundedRect(x + 2, y + 2, w - 4, h - 4, 4);
+        g.lineStyle(1.5, k.color, 0.95).strokeRoundedRect(x + 2, y + 2, w - 4, h - 4, 4);
+        const t = this.add.text(x + w / 2, y + h / 2, k.glyph, bodyFont(10, { color: hexColor(k.color), fontStyle: "bold" })).setOrigin(0.5);
+        this.homeFurnLayer.add(t);
+      }
       this.homeFurnLayer.add(g);
-      this.homeFurnLayer.add(t);
     }
     this.renderHomeControls();
   }

@@ -17,8 +17,9 @@ import {
 } from "./district";
 import type { Rect } from "../game/districts";
 
-/** How many purchasable homes line the estates street. */
-export const ESTATE_COUNT = 12;
+/** How many purchasable homes line the estates street. Grown by APPENDING blocks east —
+ *  plot ids are persisted in D1 (ownership rows), so existing ids must NEVER renumber. */
+export const ESTATE_COUNT = 20;
 
 export interface EstatePlot {
   id: number;
@@ -26,12 +27,17 @@ export interface EstatePlot {
   door: [number, number]; // walkable doorstep tile (street side) → enters est{id}
 }
 
-const STREET_W = 62;
 const STREET_H = 26;
-const PLOTS_PER_ROW = 6;
 const PLOT_W = 8; // facade width
 const PLOT_GAP = 2;
 const PLOT_X0 = 3;
+/** Street blocks: the legacy block (ids 0-5 top / 6-11 bottom) + the east extension
+ *  (ids 12-15 top / 16-19 bottom). Appending a future block = one more entry here. */
+const BLOCKS = [
+  { x0: PLOT_X0, plots: 6, topIdBase: 0, bottomIdBase: 6 },
+  { x0: PLOT_X0 + 6 * (PLOT_W + PLOT_GAP), plots: 4, topIdBase: 12, bottomIdBase: 16 },
+];
+const STREET_W = BLOCKS[BLOCKS.length - 1].x0 + BLOCKS[BLOCKS.length - 1].plots * (PLOT_W + PLOT_GAP) + 2;
 
 /** The estates overworld — a horizontal street with two rows of home facades facing it. */
 export function buildEstatesStreet(): { grid: TileGrid; w: number; h: number; spawn: [number, number]; plots: EstatePlot[] } {
@@ -56,22 +62,26 @@ export function buildEstatesStreet(): { grid: TileGrid; w: number; h: number; sp
   // top row — facades y2..8, doors face SOUTH into the street
   // bottom row — facades y17..23, doors face NORTH into the street (street band y9..16 walkable)
   const rowDefs = [
-    { y1: 2, y2: 8, doorY: 9, openY: 8 },
-    { y1: 17, y2: 23, doorY: 16, openY: 17 },
+    { y1: 2, y2: 8, doorY: 9, openY: 8, base: "topIdBase" as const },
+    { y1: 17, y2: 23, doorY: 16, openY: 17, base: "bottomIdBase" as const },
   ];
-  rowDefs.forEach((row, ri) => {
-    for (let k = 0; k < PLOTS_PER_ROW; k++) {
-      const x1 = PLOT_X0 + k * (PLOT_W + PLOT_GAP);
-      const x2 = x1 + PLOT_W - 1;
-      const cx = Math.round((x1 + x2) / 2);
-      fill({ x1, y1: row.y1, x2, y2: row.y2 }, TILE_WALL_RES);
-      grid[row.openY][cx] = TILE_FLOOR; // carve the doorway in the facade
-      grid[row.doorY][cx] = TILE_FLOOR; // the street-side doorstep stays walkable
-      plots.push({ id: ri * PLOTS_PER_ROW + k, rect: { x1, y1: row.y1, x2, y2: row.y2 }, door: [cx, row.doorY] });
+  for (const block of BLOCKS) {
+    for (const row of rowDefs) {
+      for (let k = 0; k < block.plots; k++) {
+        const x1 = block.x0 + k * (PLOT_W + PLOT_GAP);
+        const x2 = x1 + PLOT_W - 1;
+        const cx = Math.round((x1 + x2) / 2);
+        fill({ x1, y1: row.y1, x2, y2: row.y2 }, TILE_WALL_RES);
+        grid[row.openY][cx] = TILE_FLOOR; // carve the doorway in the facade
+        grid[row.doorY][cx] = TILE_FLOOR; // the street-side doorstep stays walkable
+        plots.push({ id: block[row.base] + k, rect: { x1, y1: row.y1, x2, y2: row.y2 }, door: [cx, row.doorY] });
+      }
     }
-  });
+  }
+  plots.sort((a, b) => a.id - b.id);
 
-  return { grid, w, h, spawn: [Math.floor(w / 2), 12], plots };
+  // spawn stays at the ORIGINAL street entrance (kiosk + familiar block), not the new centre
+  return { grid, w, h, spawn: [31, 12], plots };
 }
 
 /** Cached deterministic estates layout — client + server agree. */

@@ -1418,15 +1418,22 @@ async function bounty() {
     }
     return b;
   };
-  let seq = 0, maxProg = 0;
+  let seq = 0, maxProg = 0, lastAbility = 0;
   const t0 = Date.now();
-  while (Date.now() - t0 < 65000 && store.bounty) {
+  while (Date.now() - t0 < 100000 && store.bounty) {
     const e = nearest();
     if (e) {
       const dx = e.x - store.x, dy = e.y - store.y, d = Math.hypot(dx, dy) || 1;
       seq++;
-      ws.send(JSON.stringify({ t: "input", seq, mx: d > 110 ? dx / d : 0, my: d > 110 ? dy / d : 0 }));
-      ws.send(JSON.stringify({ t: "fire", seq, aim: Math.atan2(dy, dx) }));
+      // the starter loadout is a MELEE arc-blade — close to swing range and ALSO cycle
+      // the Q ability for ranged coverage, exactly like the (passing) combat-smoke bot
+      const aim = Math.atan2(dy, dx);
+      ws.send(JSON.stringify({ t: "input", seq, mx: d > 40 ? dx / d : 0, my: d > 40 ? dy / d : 0 }));
+      ws.send(JSON.stringify({ t: "fire", seq, aim }));
+      if (Date.now() - lastAbility > 900) {
+        lastAbility = Date.now();
+        ws.send(JSON.stringify({ t: "ability", seq, aim }));
+      }
     }
     if (store.bounty) maxProg = Math.max(maxProg, store.bounty.progress);
     await sleep(45);
