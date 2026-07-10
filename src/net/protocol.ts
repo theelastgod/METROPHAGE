@@ -7,6 +7,13 @@ import type { Item } from "../game/items";
 export { NET_TICK_MS };
 export type { Item };
 
+/**
+ * Wire-format version. Bump when ClientMsg/ServerMsg shapes break backwards
+ * compatibility. Server stamps it on welcome; client warns on mismatch so a
+ * stale Pages cache against a new Worker is obvious (hard refresh), not silent.
+ */
+export const PROTOCOL_VERSION = 3;
+
 /** One buffered local input the client keeps until the server acks its seq. */
 export interface InputCmd {
   seq: number;
@@ -227,6 +234,8 @@ export type ServerMsg =
       tickMs: number;
       world: { w: number; h: number };
       faction: number;
+      /** Server protocol version — client compares to PROTOCOL_VERSION. */
+      protocol?: number;
       look?: PlayerLook;
       lookLocked?: boolean;
       fragments?: string[]; // memory fragments this player has recovered (dive rewards)

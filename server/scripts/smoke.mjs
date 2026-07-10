@@ -1,6 +1,11 @@
 // METROPHAGE smoke suite — proves the authoritative loop + persistence with Node's
 // built-in WebSocket client (no deps). One mode per run: node smoke.mjs <mode>.
 //
+// ★ TRUSTED CI MODES (standalone is truth — battery flakes are usually harness):
+//   move · combat · kit · quest · abuse
+//   From repo root (server must be up): npm run smoke:trusted
+//   A failure mid-battery is NOT a regression until it fails STANDALONE.
+//
 // BATTERY-ORDERING CONSTRAINTS (when running many modes back-to-back):
 //   * `metro` asserts the cash-out pool starts EMPTY — run it BEFORE `market`
 //     (market seeds $METRO via deposits) or re-clear metro_deposits/withdrawals.
@@ -10,6 +15,8 @@
 //     battery failure as a regression.
 //   * `dive` and `quest` may hit an already-cracked v0 core from a prior run — the
 //     late-diver path (claim-once per player) makes both pass regardless.
+//   * Pre-seeds need wrangler STOPPED (live DOs flush over reseeds).
+//   * Fresh bot identities (`"xx" + Date.now()%1e6`) — persisted bots drift.
 //
 // Original two-phase persistence check:
 //   node smoke.mjs move   -> log in, move under server validation, record final pos

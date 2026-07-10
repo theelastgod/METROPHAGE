@@ -2,7 +2,18 @@ import { stepMove, NET_TICK_MS, PLAYER_HP, type MoveState } from "./sim";
 import { PLAYER } from "../config";
 import type { TileGrid } from "../world/district";
 import type { ClientMsg, ServerMsg, InputCmd, PlayerLook, Item, EstateFurniture } from "./protocol";
+import { PROTOCOL_VERSION } from "./protocol";
 import { tutorialStepAt } from "./tutorial";
+
+/** True when the page is on a public host but the WS URL still points at loopback —
+ *  the classic "forgot VITE_SERVER_URL" Pages footgun. */
+export function isServerUrlMisconfigured(wsUrl: string): boolean {
+  if (typeof location === "undefined") return false;
+  const host = location.hostname || "";
+  const localHost = host === "localhost" || host === "127.0.0.1" || host === "";
+  if (localHost) return false;
+  return /\/\/(127\.0\.0\.1|localhost)(:|\/|$)/i.test(wsUrl);
+}
 
 /** Guest-identity device secret — generated once per callsign on this device and bound
  *  server-side on first login. Stops anyone else logging in as your name and selling
@@ -248,7 +259,21 @@ export default class NetClient {
     private url: string,
     private loginFaction = 0,
     private look?: PlayerLook,
-  ) {}
+  ) {
+    // Loud fail on the Pages + localhost-WS footgun — never silent empty city.
+    if (isServerUrlMisconfigured(url)) {
+      console.error(
+        "[METROPHAGE] VITE_SERVER_URL points at localhost while this page is on a public host. Rebuild with VITE_SERVER_URL=wss://…/ws",
+      );
+      this.pushChat({
+        from: "",
+        ch: "sys",
+        text: "⚠ BUILD MISCONFIGURED — this client targets localhost. Hard refresh won't fix it: rebuild with VITE_SERVER_URL set to the live Worker.",
+        faction: -1,
+        sys: true,
+      });
+    }
+  }
 
   /** Optional signed wallet proof; when set, login is a durable wallet identity. */
   private auth?: { wallet: string; sig: string; ts: number };
@@ -472,6 +497,17 @@ export default class NetClient {
       this.pred = { x: msg.x, y: msg.y };
       this.serverPos = { x: msg.x, y: msg.y };
       this.fragments = msg.fragments ?? [];
+      // Protocol handshake — stale client against a new Worker (or reverse) should not
+      // fail silently with half-working panels.
+      if (typeof msg.protocol === "number" && msg.protocol !== PROTOCOL_VERSION) {
+        this.pushChat({
+          from: "",
+          ch: "sys",
+          text: `⚠ CLIENT OUTDATED — hard refresh (server protocol ${msg.protocol}, client ${PROTOCOL_VERSION}). If this persists, redeploy Pages + Worker together.`,
+          faction: -1,
+          sys: true,
+        });
+      }
       this.onWelcome?.(msg.x, msg.y);
       if (this.pendingGraduate) {
         this.pendingGraduate = false;
@@ -650,6 +686,15 @@ export default class NetClient {
         msg.phase === "end"
           ? null
           : { id: msg.id, name: msg.name, tagline: msg.tagline, hex: msg.hex, phase: msg.phase, untilAt: performance.now() + msg.seconds * 1000 };
+      // Always mirror events into sys chat so they aren't missable without the banner.
+      const phaseLabel = msg.phase === "telegraph" ? "incoming" : msg.phase === "active" ? "LIVE" : "ended";
+      this.pushChat({
+        from: "",
+        ch: "sys",
+        text: `◆ WORLD EVENT · ${msg.name} ${phaseLabel}${msg.phase !== "end" ? ` — ${msg.tagline}` : ""}`,
+        faction: -1,
+        sys: true,
+      });
       this.onWorldEvent?.(msg.phase, msg.name);
     } else if (msg.t === "inv") {
       this.inventory = msg.items;

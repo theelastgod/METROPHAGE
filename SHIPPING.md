@@ -128,3 +128,15 @@ signs off; nothing arms by accident.
 **Full mainnet runbook (including pre-CA treasury prep):** see `MAINNET_GO_LIVE.md`.
 Pre-CA: `cd server && node scripts/mainnet-prepare.mjs` then put
 `METRO_TREASURY_SECRET`. When you have the mint: `node scripts/mainnet-arm.mjs <CA>`.
+
+## 6. Ship checklist (every production deploy)
+
+1. **Same commit** on Worker + Pages — geometry/protocol mismatches hurt.
+2. **`VITE_SERVER_URL=wss://…/ws`** on the client build (never forget — silent localhost).
+3. **`npx wrangler pages deploy … --branch=main`** (else you get a preview URL).
+4. Protocol: welcome carries `protocol` (`PROTOCOL_VERSION` in `src/net/protocol.ts`).
+   Stale clients print a hard-refresh sys warning — bump the constant when wire shape breaks.
+5. Smoke (trusted five, standalone): `move combat kit quest abuse` with server up.
+6. `$METRO`: secrets **before** `VITE_METRO_MINT`. Mainnet stays counsel-gated
+   (`METRO_MAINNET_ARMED` off by default). Never arm without counsel sign-off.
+7. Rates 110/125 and player-funded pool are **frozen** — do not redesign mid-launch.

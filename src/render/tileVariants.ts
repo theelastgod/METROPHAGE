@@ -38,11 +38,15 @@ export function jitterTileTint(layer: Phaser.Tilemaps.TilemapLayer): void {
       // clearly distinct from the walkable street (huge top-down navigation + combat win)
       f = 0.42 + ((h >>> 3) % 19) / 100;
     } else {
-      // walkable surfaces are pulled DOWN into a dark-street band so the busy pink floor
-      // panels recede and the neon accents (player, enemies, loot, doors) pop against
-      // them; ~1/8 pushed darker still for grimy unevenness
-      const dark = (h & 7) === 0;
-      f = dark ? 0.42 + ((h >>> 3) % 12) / 100 : 0.56 + ((h >>> 3) % 20) / 100;
+      // walkable surfaces: wider brightness bands so long runs of the same tile don't
+      // read as a flat magenta maze; ~1/6 darker grime patches for unevenness
+      const band = h % 6;
+      if (band === 0) f = 0.40 + ((h >>> 3) % 10) / 100;
+      else if (band === 1) f = 0.50 + ((h >>> 4) % 12) / 100;
+      else if (band === 2) f = 0.58 + ((h >>> 5) % 14) / 100;
+      else if (band === 3) f = 0.64 + ((h >>> 3) % 10) / 100;
+      else if (band === 4) f = 0.52 + ((h >>> 6) % 16) / 100;
+      else f = 0.60 + ((h >>> 2) % 12) / 100;
     }
     const v = Math.max(0, Math.min(255, Math.round(f * 255)));
     tile.tint = (v << 16) | (v << 8) | v;

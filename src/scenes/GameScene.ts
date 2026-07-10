@@ -90,12 +90,10 @@ import { DIALOGUE_TREES } from "../game/dialogue";
 import BossBar from "../ui/BossBar";
 
 /**
- * @legacy Unregistered — superseded by OnlineScene (server-authoritative districts).
- * Kept for reference/porting meltdown/Heat systems only.
+ * @legacy UNREGISTERED — not in main.ts scene list. Superseded by OnlineScene.
+ * Archive only: do not re-wire for play. Port useful systems into OnlineScene instead.
  *
- * GameScene — Phase 0.
- * Step 1: movable, colliding player. Step 2: mouse-aim, dash, projectile weapon.
- * Step 3: Turing Cops with a patrol->chase->attack FSM that take damage and die.
+ * GameScene — Phase 0 single-player vertical slice (historical).
  */
 export default class GameScene
   extends Phaser.Scene

@@ -59,7 +59,7 @@ export default class OptionsPanel {
     this.text(this.x + panelPad(), this.y + uiGap("lg"), "OPTIONS", "#eafdff", 15, D);
 
     let ry = this.y + uiDim(58);
-    this.addRow("rsControls", "RUNESCAPE CONTROLS", true, ry, D, "#f7ff3c");
+    this.addRow("rsControls", "RS CONTROLS (opt-in)", true, ry, D, "#f7ff3c");
     ry += this.rowH;
     this.addCycleRow("uiDensity", "HUD DENSITY", ["new", "full"] as unknown as GraphicsQuality[], ry, D, "#39ff88");
     ry += this.rowH;

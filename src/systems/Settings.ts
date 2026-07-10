@@ -41,14 +41,17 @@ export interface SettingsData {
 }
 
 const DEFAULTS: SettingsData = {
-  rsControls: true,
+  // Action mode is the default (WASD + hold-to-slash). RS click-to-walk is opt-in
+  // in Options — dual schemes confused new runners and the drill yard always uses action.
+  rsControls: false,
   tutorialMode: "quick",
   uiDensity: "new",
   firstSessionCoach: true,
   reduceFlashing: false,
   lowFx: false,
   graphicsQuality: "auto",
-  autoTierCap: "high",
+  // Conservative ceiling until the quality governor measures real FPS (iGPU-friendly).
+  autoTierCap: "medium",
   uiScale: 1,
   highContrast: false,
   gamepadEnabled: true,

@@ -1,12 +1,13 @@
 // METROPHAGE — first-session coach. Pure local progress so the hub always has a
 // "what next" line even before the server campaign loads. Complements campaignHud.
 
-const KEY = "metrophage_first_session_v2";
+const KEY = "metrophage_first_session_v3";
 
 export type FirstStep =
   | "meet_fixer" // talk to THE FIXER / accept THE WAKE
   | "deploy" // leave hub via deploy gate
   | "combat" // kill at least one HSS unit
+  | "heat" // learned HEAT / ultimate once
   | "return" // back to hub (optional)
   | "done";
 
@@ -15,6 +16,7 @@ export interface FirstSessionState {
   kills: number;
   talkedFixer: boolean;
   deployed: boolean;
+  heatCoached: boolean;
   dismissed: boolean; // player hid the coach
 }
 
@@ -23,6 +25,7 @@ const DEFAULT: FirstSessionState = {
   kills: 0,
   talkedFixer: false,
   deployed: false,
+  heatCoached: false,
   dismissed: false,
 };
 
@@ -75,7 +78,18 @@ export function noteDeployed() {
 export function noteKill() {
   state.kills++;
   if (state.step === "combat" || state.step === "deploy") {
-    if (state.kills >= 1) state.step = "return";
+    if (state.kills >= 1) state.step = state.heatCoached ? "return" : "heat";
+  }
+  if (state.kills >= 3 && state.heatCoached) state.step = "done";
+  save();
+}
+
+/** HEAT meter hit the ult threshold once — teach R once, then release the coach. */
+export function noteHeatCoached() {
+  if (state.heatCoached) return;
+  state.heatCoached = true;
+  if (state.step === "heat" || state.step === "combat") {
+    state.step = state.kills >= 1 ? "return" : "combat";
   }
   if (state.kills >= 3) state.step = "done";
   save();
@@ -86,18 +100,28 @@ export function noteReturnedToHub() {
   save();
 }
 
+/**
+ * Secondary city systems (market/forge/guild/…) stay locked until the player has
+ * met THE FIXER — keeps the first ten minutes on FIXER → WAKE → DEPLOY.
+ */
+export function firstHourSystemsLocked(): boolean {
+  return !state.talkedFixer;
+}
+
 /** One-line coach copy for the HUD strip. */
 export function firstSessionLine(): string | null {
   if (state.dismissed || state.step === "done") return null;
   switch (state.step) {
     case "meet_fixer":
-      return "▶ GO TO THE FIXER (green light) — accept THE WAKE";
+      return "▶ GO TO THE FIXER (green light) — accept THE WAKE · then deploy";
     case "deploy":
       return "▶ DEPLOY south through the gate — enter a combat district";
     case "combat":
-      return "▶ FIGHT HSS units — clear the street";
+      return "▶ CLOSE RANGE · hold mouse · click to slash · SPACE dash · drop an HSS unit";
+    case "heat":
+      return "▶ HEAT builds on hits — at orange, press R for your ultimate";
     case "return":
-      return "▶ H or map back to METRO CITY when ready";
+      return "▶ H or map back to METRO CITY when ready · gear up · repeat";
     default:
       return null;
   }

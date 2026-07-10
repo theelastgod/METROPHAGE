@@ -17,6 +17,10 @@ import Synth from "../audio/Synth";
 import MusicDirector from "../audio/MusicDirector";
 import Particles from "../render/Particles";
 
+/**
+ * @legacy UNREGISTERED — ICE dives are OnlineScene zones "v0"–"v7". Do not re-register.
+ * Kept only as a reference for dive layout/combat feel.
+ */
 const TILE_FLOOR = 0;
 const TILE_WALL = 4;
 const AW = 28; // arena width in tiles

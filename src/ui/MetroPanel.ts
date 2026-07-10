@@ -75,7 +75,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
   panel.innerHTML = `
     <div class="head">
       <h3>◈ $METRO BRIDGE <span class="x" id="m-x">✕</span></h3>
-      <div class="sub">₵ credits = play currency · ◈ $METRO = on-chain bridge · ${st.mainnetLive ? "MAINNET LIVE" : st.enabled ? "MINT SET — check settlement" : "AWAITING MINT CA"}</div>
+      <div class="sub">₵ = play currency · ◈ = on-chain bridge · pool is player-funded (may be empty) · mainnet ${st.mainnetLive ? "LIVE" : "OFF until counsel"} · ${st.enabled ? "mint set" : "awaiting CA"}</div>
     </div>
     <div class="body">
       <div class="row"><span class="muted">network</span><span class="pill">${st.cluster}${st.mainnetLive ? " · ARMED" : st.mainnetArmed ? " · arm flag only" : " · not armed"}</span></div>
@@ -134,8 +134,10 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
       $("m-rates").textContent = `in: 1◈ → ${p.depositCreditsPerMetro}₵ · out: ${p.withdrawCreditsPerMetro}₵ → 1◈`;
       $("m-phase").textContent =
         p.phase === "bootstrap"
-          ? "LAUNCH PHASE — the cash-out pool is 100% player-funded and starts empty. Every ◈ deposited opens cash-outs for everyone. Earn ₵ now; withdraw as the pool fills."
-          : "POOL OPEN — withdrawals are paid from the player-funded pool, first come first served.";
+          ? "HONEST LAUNCH — cash-out pool starts EMPTY and is 100% player-funded. Withdrawals refund if the pool can't cover them. Earn ₵ in-game; cash out only as others deposit. Not a faucet."
+          : p.settlement === "sim"
+            ? "REHEARSAL SETTLEMENT — sim mode (not real chain value). Pool still player-funded; withdrawals may fail if empty."
+            : "POOL OPEN — withdrawals from the player-funded pool, first-come. Not guaranteed; empty pool = refund.";
       $("m-treasury").textContent = p.treasury ? short(p.treasury) : "rehearsal — any tx signature is accepted";
       if (p.treasury) $("m-treasury").dataset.full = p.treasury;
     } catch {

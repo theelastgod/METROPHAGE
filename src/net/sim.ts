@@ -107,7 +107,7 @@ export const ENEMY_FIRE_RANGE = 240;
 export const RESPAWN_MS = 2600;
 
 // ── Progression / loot / shared meta (all server-authoritative) ──
-export const XP_PER_KILL = 14;
+export const XP_PER_KILL = 20; // early levels should feel — first-hour progression
 export const levelForXp = (xp: number) => 1 + Math.floor(xp / 100);
 export const xpIntoLevel = (xp: number) => xp % 100; // 0..99 toward the next level
 export const CREDITS_PER_KILL = 18; // +50% over the original 12 — early grind felt slow

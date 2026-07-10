@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "smoke:trusted": "cd server && node scripts/smoke.mjs move && node scripts/smoke.mjs combat && node scripts/smoke.mjs kit && node scripts/smoke.mjs quest && node scripts/smoke.mjs abuse",
     "gen:music": "node tools/gen-music.mjs",
     "gen:music:local": "node tools/gen-music-local.mjs"
   },

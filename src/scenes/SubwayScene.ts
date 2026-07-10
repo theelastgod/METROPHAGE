@@ -40,12 +40,8 @@ const WAVES: Array<Array<[string, number]>> = [
 ];
 
 /**
- * @legacy Unregistered — superseded by OnlineScene zone "subway". Kept for reference only.
- *
- * SubwayScene — THE UNDERLINE: an instanced combat dungeon entered from the city's
- * subway. Fight down through waves of vermin, dogs and mutants, then THE UNDERLINE
- * boss; clearing it yields a unique weapon (the first time) + a payout. Reuses the
- * Player/Bullets/TuringCop/Boss entities. Returns to the City when done.
+ * @legacy UNREGISTERED — subway is OnlineScene zone "subway". Do not re-register.
+ * Archive only for layout/wave reference.
  */
 export default class SubwayScene extends Phaser.Scene implements EnemyHost {
   private classDef!: ClassDef;

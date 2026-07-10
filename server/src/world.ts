@@ -1,6 +1,6 @@
 // Shared game model + sim (single source of truth, imported from the client repo —
 // these modules are Phaser-free and deterministic).
-import { NET_TICK_MS, type ClientMsg, type PlayerLook } from "../../src/net/protocol";
+import { NET_TICK_MS, PROTOCOL_VERSION, type ClientMsg, type PlayerLook } from "../../src/net/protocol";
 import {
   stepMove,
   tileIsWall,
@@ -2432,6 +2432,7 @@ export class WorldDO {
       y: round2(p.y),
       tickMs: NET_TICK_MS,
       world: { w: gridDims(this.grid).worldW, h: gridDims(this.grid).worldH },
+      protocol: PROTOCOL_VERSION,
       look: p.look,
       lookLocked: lookLocked || !!p.look,
       fragments: p.fragments,

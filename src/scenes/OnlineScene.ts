@@ -72,7 +72,7 @@ import {
   type BridgeDef,
 } from "../game/bridges";
 import { scatterWildernessProps } from "../render/wildernessScatter";
-import { TUTORIAL_ZONE, tutorialStepAt, type TutorialKind, type TutorialMode } from "../net/tutorial";
+import { TUTORIAL_ZONE, tutorialStepAt, isTutorialTalkKind, type TutorialKind, type TutorialMode } from "../net/tutorial";
 import {
   TUTORIAL_CHAMBERS,
   tutorialInstructorsFor,
@@ -89,6 +89,8 @@ import {
   noteDeployed,
   noteKill,
   noteReturnedToHub,
+  noteHeatCoached,
+  firstHourSystemsLocked,
   getFirstSession,
 } from "../game/firstSession";
 import { fadeInScene, transitionTo } from "../systems/transitions";
@@ -1133,6 +1135,27 @@ export default class OnlineScene extends Phaser.Scene {
     }
 
     const url = SERVER_URL + (SERVER_URL.includes("?") ? "&" : "?") + "zone=" + this.zone;
+    // Pages + localhost WS footgun — surface in the world, not only the console.
+    if (typeof location !== "undefined") {
+      const host = location.hostname || "";
+      const publicHost = host && host !== "localhost" && host !== "127.0.0.1";
+      if (publicHost && /\/\/(127\.0\.0\.1|localhost)(:|\/|$)/i.test(SERVER_URL)) {
+        this.time.delayedCall(200, () => {
+          this.add
+            .text(VIEW_W / 2, VIEW_H / 2, "⚠ BUILD MISCONFIGURED\nClient targets localhost.\nRebuild with VITE_SERVER_URL=wss://…/ws", {
+              fontFamily: "Courier New, monospace",
+              fontSize: "14px",
+              color: "#ff3b6b",
+              align: "center",
+              backgroundColor: "#0b0716ee",
+              padding: { x: 16, y: 12 },
+            })
+            .setOrigin(0.5)
+            .setScrollFactor(0)
+            .setDepth(5000);
+        });
+      }
+    }
     this.faction = factionForColor(this.color); // your cell, from your signature colour
     this.nodeG = this.add.graphics().setDepth(5); // node capture rings (world-space)
     this.hazardG = this.add.graphics().setDepth(8); // boss AoE telegraphs (under shots/players)
@@ -1369,7 +1392,7 @@ export default class OnlineScene extends Phaser.Scene {
     this.tileCursor = new TileCursor(this);
     this.zoneMinimap = new OnlineMinimap(this, this.zoneGrid, this.worldW, this.worldH);
     this.zoneMinimap.onWalk = (wx, wy) => {
-      if (!getSettings().rsControls || this.blockRsInput()) return;
+      if (!this.usingRsControls() || this.blockRsInput()) return;
       this.attackTargetId = null;
       this.pendingInteract = null;
       const pos = this.playerPos();
@@ -1406,12 +1429,12 @@ export default class OnlineScene extends Phaser.Scene {
         this.handleRightClick(pointer);
         return;
       }
-      if (getSettings().rsControls && !this.isTutorial) this.handleLeftClick(pointer);
+      if (this.usingRsControls() && !this.isTutorial) this.handleLeftClick(pointer);
     });
     if (this.isCityHub) this.spawnMiningNodes([hubT(-2, 2), hubT(2, 6), hubT(-4, 8)]);
 
     const mapChain = this.registry.get("pendingMapDest") as string | undefined;
-    if (mapChain && mapChain !== this.zone && getSettings().rsControls && !this.isTutorial) {
+    if (mapChain && mapChain !== this.zone && this.usingRsControls() && !this.isTutorial) {
       this.time.delayedCall(650, () => this.walkToZoneFromMap(mapChain));
     }
 
@@ -1529,9 +1552,11 @@ export default class OnlineScene extends Phaser.Scene {
         this.options?.toggle();
         return;
       }
+      // Talk-briefings: SPACE is a fallback so players aren't stuck if they skip the NPC.
+      // Primary path is E-talk on the matching instructor (see talkInstructor).
       if (e.key === " " && this.isTutorial) {
         const step = tutorialStepAt(this.net.tutorialStep, this.net.tutorialMode);
-        if (step && ["faction", "campaign", "pvp", "trade", "travel"].includes(step.kind)) {
+        if (step && isTutorialTalkKind(step.kind)) {
           this.net.reportTutorial(step.kind);
           return;
         }
@@ -1564,9 +1589,14 @@ export default class OnlineScene extends Phaser.Scene {
         if (es?.owner && !es.mine) this.net.estateSign();
         return;
       }
+      // ── contextual key router ────────────────────────────────────────────
+      // Home (estates) owns B/G/F before global shop/forge/guild. First-hour
+      // funnel locks secondary systems until THE FIXER talk (tutorial exempt).
       if (e.key === "b" || e.key === "B") {
-        this.shop.toggle();
-        if (this.shop.open) this.reportTutorialPanel("vendor");
+        this.tryOpenCitySystem(() => {
+          this.shop.toggle();
+          if (this.shop.open) this.reportTutorialPanel("vendor");
+        });
         return;
       }
       if (this.shop.open && e.key === "Escape") {
@@ -1591,9 +1621,11 @@ export default class OnlineScene extends Phaser.Scene {
         return;
       }
       if (e.key === "g" || e.key === "G") {
-        this.forge.setState(this.net.inventory, this.net.equipped, this.net.credits, this.net.cores);
-        this.forge.toggle();
-        if (this.forge.open) this.reportTutorialPanel("craft");
+        this.tryOpenCitySystem(() => {
+          this.forge.setState(this.net.inventory, this.net.equipped, this.net.credits, this.net.cores);
+          this.forge.toggle();
+          if (this.forge.open) this.reportTutorialPanel("craft");
+        });
         return;
       }
       if (this.forge.open && e.key === "Escape") {
@@ -1609,8 +1641,10 @@ export default class OnlineScene extends Phaser.Scene {
         return;
       }
       if (e.key === "l" || e.key === "L") {
-        this.board.toggle(this.net.achievements, this.net.id);
-        if (this.board.open) this.reportTutorialPanel("board");
+        this.tryOpenCitySystem(() => {
+          this.board.toggle(this.net.achievements, this.net.id);
+          if (this.board.open) this.reportTutorialPanel("board");
+        });
         return;
       }
       if (this.board.open && e.key === "Escape") {
@@ -1618,9 +1652,11 @@ export default class OnlineScene extends Phaser.Scene {
         return;
       }
       if (e.key === "c" || e.key === "C") {
-        this.net.guildAction("info"); // pull a fresh summary before showing
-        this.guildPanel.toggle(this.net.guild, this.net.id);
-        if (this.guildPanel.open) this.reportTutorialPanel("guild");
+        this.tryOpenCitySystem(() => {
+          this.net.guildAction("info");
+          this.guildPanel.toggle(this.net.guild, this.net.id);
+          if (this.guildPanel.open) this.reportTutorialPanel("guild");
+        });
         return;
       }
       if (this.guildPanel.open && e.key === "Escape") {
@@ -1628,8 +1664,10 @@ export default class OnlineScene extends Phaser.Scene {
         return;
       }
       if (e.key === "k" || e.key === "K") {
-        this.market.toggle(this.net.marketListings, this.net.inventory, this.net.id, this.net.credits, this.net.metro);
-        if (this.market.open) this.reportTutorialPanel("market");
+        this.tryOpenCitySystem(() => {
+          this.market.toggle(this.net.marketListings, this.net.inventory, this.net.id, this.net.credits, this.net.metro);
+          if (this.market.open) this.reportTutorialPanel("market");
+        });
         return;
       }
       if (this.market.open && e.key === "Escape") {
@@ -1643,12 +1681,15 @@ export default class OnlineScene extends Phaser.Scene {
         return;
       }
       if (e.key === "j" || e.key === "J") {
-        if (getSettings().rsControls && !this.isTutorial) {
+        // Tutorial + first hour: contracts board. RS mode outside funnel: quest log.
+        if (this.usingRsControls() && !this.isTutorial && !firstHourSystemsLocked()) {
           this.refreshQuestLog(true);
           return;
         }
-        this.contracts.toggle(this.net.contracts, this.net.rep);
-        if (this.contracts.open) this.reportTutorialPanel("contracts");
+        this.tryOpenCitySystem(() => {
+          this.contracts.toggle(this.net.contracts, this.net.rep);
+          if (this.contracts.open) this.reportTutorialPanel("contracts");
+        });
         return;
       }
       if (this.contracts.open && e.key === "Escape") {
@@ -1660,8 +1701,10 @@ export default class OnlineScene extends Phaser.Scene {
         return;
       }
       if (e.key === "y" || e.key === "Y") {
-        this.cosmetics.toggle(this.net.cosmeticsOwned, this.net.cosmeticEquipped, this.net.credits);
-        if (this.cosmetics.open) this.reportTutorialPanel("cosmetics");
+        this.tryOpenCitySystem(() => {
+          this.cosmetics.toggle(this.net.cosmeticsOwned, this.net.cosmeticEquipped, this.net.credits);
+          if (this.cosmetics.open) this.reportTutorialPanel("cosmetics");
+        });
         return;
       }
       if (this.cosmetics.open && e.key === "Escape") {
@@ -1669,6 +1712,7 @@ export default class OnlineScene extends Phaser.Scene {
         return;
       }
       if (e.key === "m" || e.key === "M") {
+        // Map is always allowed — discovery + deploy pathfinding are part of the funnel.
         this.mapPanel.toggle(this.net.discovered, this.net.unlocked, this.zone);
         if (this.mapPanel.open) this.reportTutorialPanel("map");
         return;
@@ -1692,6 +1736,7 @@ export default class OnlineScene extends Phaser.Scene {
       }
       if (e.key === "v" || e.key === "V") {
         this.openWheel();
+        this.reportTutorialPanel("emote");
         return;
       }
       if (e.key === " " || e.key === "Shift") {
@@ -1884,6 +1929,11 @@ export default class OnlineScene extends Phaser.Scene {
   /** Open the panel a safehouse operative fronts (also bound to its proximity E / click). */
   private openService(svc: string) {
     const n = this.net;
+    // FIXER / contracts is the first-hour north star — never lock it. Everything else waits.
+    if (svc !== "contracts" && svc !== "stash" && firstHourSystemsLocked() && !this.isTutorial) {
+      this.showBubble(this.me?.x ?? 0, this.me?.y ?? 0, "Talk to THE FIXER first — accept THE WAKE, then deploy.");
+      return;
+    }
     switch (svc) {
       case "forge":
         this.forge.setState(n.inventory, n.equipped, n.credits, n.cores);
@@ -1948,7 +1998,7 @@ export default class OnlineScene extends Phaser.Scene {
       .setDepth(6)
       .setShadow(0, 0, "#39ff88", 4, true, true);
     this.add
-      .text(this.worldW / 2, 2 * TILE + 22, "walk east · talk to each instructor · complete the lesson · portal at the end", {
+      .text(this.worldW / 2, 2 * TILE + 22, "walk east · do each lesson · talk (E) to instructors · portal at the end", {
         fontFamily: mono,
         fontSize: "10px",
         color: "#6b7184",
@@ -2039,8 +2089,29 @@ export default class OnlineScene extends Phaser.Scene {
 
   private reportTutorialPanel(kind: string) {
     if (!this.isTutorial) return;
-    if (this.net.tutorialMode === "full") this.net.reportTutorial(kind);
-    else this.net.reportTutorial("panel");
+    const step = tutorialStepAt(this.net.tutorialStep, this.net.tutorialMode);
+    // Full mode collapses many panels into one count-N "panel" lesson; quick uses panel once.
+    if (step?.kind === "panel") this.net.reportTutorial("panel");
+    else if (step?.kind === kind) this.net.reportTutorial(kind);
+  }
+
+  /** First-hour funnel: secondary systems stay closed until THE FIXER talk. */
+  private tryOpenCitySystem(open: () => void): boolean {
+    if (this.isTutorial) {
+      open();
+      return true;
+    }
+    if (firstHourSystemsLocked()) {
+      this.showBubble(this.me?.x ?? 0, this.me?.y ?? 0, "Talk to THE FIXER first — accept THE WAKE, then deploy.");
+      return false;
+    }
+    open();
+    return true;
+  }
+
+  /** RS click-to-walk is opt-in; drill yard always uses action (WASD + hold slash). */
+  private usingRsControls(): boolean {
+    return !this.isTutorial && getSettings().rsControls;
   }
 
   /** Wilderness corridor — trail signage, gate guides, and a mid-path scavenger. */
@@ -2119,6 +2190,11 @@ export default class OnlineScene extends Phaser.Scene {
       const line = npc.lines[npc.lineIdx % npc.lines.length];
       npc.lineIdx++;
       this.showBubble(npc.x, npc.y, `${npc.name}: ${line}`);
+      // Briefing lessons clear by talking to the authored instructor (playable, not pure text).
+      // Action lessons (fire/kill/equip/…) still require the real mechanic — talk is flavour only.
+      if (isTutorialTalkKind(step.kind)) {
+        this.net.reportTutorial(step.kind);
+      }
       return;
     }
     if (step) {
@@ -2665,7 +2741,7 @@ export default class OnlineScene extends Phaser.Scene {
   private spawnHubWanderers() {
     this.spawnWanderers(ONLINE_CITY.grid, HUB_CX, HUB_CY, 22);
     // Fake concurrent runners so the "ONLINE (0)" death-spiral never shows raw.
-    this.phantomOnline = 3 + Math.floor(Math.random() * 9);
+    this.phantomOnline = 8 + Math.floor(Math.random() * 14);
   }
 
   /**
@@ -3231,7 +3307,7 @@ export default class OnlineScene extends Phaser.Scene {
   }
 
   private syncRsChrome() {
-    if (!getSettings().rsControls || this.isTutorial) return;
+    if (!this.usingRsControls() || this.isTutorial) return;
     const key = this.inv?.open
       ? "inv"
       : this.rsSkillsPanel?.open
@@ -3425,7 +3501,7 @@ export default class OnlineScene extends Phaser.Scene {
       mx = Math.sign(pad.mx);
       my = Math.sign(pad.my);
     }
-    const rs = getSettings().rsControls && !this.isTutorial;
+    const rs = this.usingRsControls() && !this.isTutorial;
     if (rs) {
       if (mx !== 0 || my !== 0) {
         this.clickMove.cancel();
@@ -3512,6 +3588,7 @@ export default class OnlineScene extends Phaser.Scene {
     this.updateQuestWaypoint();
     this.updateEventBanner();
     this.drawEnemyHpBars();
+    this.maybeHeatCoach();
     if (this.isCityHub && getFirstSession().step === "return") noteReturnedToHub();
     if (this.shop.open) this.shop.setCredits(this.net.credits);
     if (this.forge.open) this.forge.setWallet(this.net.credits, this.net.cores);
@@ -4045,7 +4122,18 @@ export default class OnlineScene extends Phaser.Scene {
   private refreshHudPanels() {
     const st = this.net.stats();
     const ctrl = this.net.control === NEUTRAL ? "—" : FACTION_NAMES[this.net.control];
-    if (!st.connected && (this.connectionState === "offline" || Date.now() - this.connectStartedAt > 24000)) {
+    const waitMs = Date.now() - this.connectStartedAt;
+    // Free-tier Durable Object cold start — copy after 2s so hangs feel intentional.
+    if (!st.connected && (this.connectionState === "connecting" || this.connectionState === "reconnecting") && waitMs > 2000 && waitMs < 24000) {
+      this.hud.setColor("#f7ff3c");
+      this.hud.setText([
+        this.connectionState === "reconnecting" ? "⏳ RECONNECTING…" : "⏳ WAKING DISTRICT…",
+        "Free-tier cold start can take a few seconds. Walk around while it links.",
+        "R to retry · ESC menu",
+      ]);
+      return;
+    }
+    if (!st.connected && (this.connectionState === "offline" || waitMs > 24000)) {
       this.hud.setColor("#ff6a6a");
       if (this.isTutorial) {
         this.hud.setText([
@@ -4353,23 +4441,35 @@ export default class OnlineScene extends Phaser.Scene {
     });
   }
 
-  /** Draw compact HP bars over damaged enemies (combat readability). */
+  /** Draw HP bars over live hostiles — always on for combat readability (dim when full). */
   private drawEnemyHpBars() {
     const g = this.enemyHpG;
     if (!g) return;
     g.clear();
     for (const [, e] of this.net.enemies) {
-      const max = e.hpMax ?? (e.boss ? 800 : e.hvt ? 220 : 80);
-      if (e.hp >= max * 0.98) continue; // full = no bar clutter
+      if (e.hp <= 0) continue;
+      const max = Math.max(1, e.hpMax ?? (e.boss ? 800 : e.hvt ? 220 : 80));
       const w = e.boss ? 48 : e.hvt ? 36 : 28;
       const h = e.boss ? 5 : 3;
       const x = e.x - w / 2;
       const y = e.y - (e.boss ? 42 : 28);
       const pct = Math.max(0, Math.min(1, e.hp / max));
-      g.fillStyle(0x05060f, 0.85).fillRect(x - 1, y - 1, w + 2, h + 2);
-      g.fillStyle(0x2a1520, 1).fillRect(x, y, w, h);
-      g.fillStyle(e.boss ? 0xf7ff3c : pct < 0.3 ? 0xff3b6b : 0x39ff88, 1).fillRect(x, y, w * pct, h);
+      const full = pct >= 0.98;
+      g.fillStyle(0x05060f, full ? 0.45 : 0.85).fillRect(x - 1, y - 1, w + 2, h + 2);
+      g.fillStyle(0x2a1520, full ? 0.55 : 1).fillRect(x, y, w, h);
+      g.fillStyle(e.boss ? 0xf7ff3c : e.hvt ? 0xffd166 : pct < 0.3 ? 0xff3b6b : 0x39ff88, full ? 0.55 : 1).fillRect(x, y, w * pct, h);
     }
+  }
+
+  /** First time HEAT crosses the ult gate — coach R once. */
+  private maybeHeatCoach() {
+    if (this.isTutorial || !this.net.connected) return;
+    const fs = getFirstSession();
+    if (fs.heatCoached || fs.dismissed) return;
+    if (this.net.heat < this.ultThresholdNow()) return;
+    noteHeatCoached();
+    this.showBubble(this.me.x, this.me.y, "HEAT ARMED — press R for your class ultimate");
+    this.pushKillFeed("HEAT · R ultimate ready");
   }
 
   /** Campaign objective locator — bobbing marker when the target is on-screen, a
@@ -5066,7 +5166,7 @@ export default class OnlineScene extends Phaser.Scene {
         .setAlpha(0.7);
       const z = this.add.zone(px - 16, py - 16, 32, 32).setOrigin(0).setInteractive({ useHandCursor: true }).setDepth(9);
       z.on("pointerdown", () => {
-        if (!getSettings().rsControls) return;
+        if (!this.usingRsControls()) return;
         const r = grantSkillXp(this.rsSkills, "mining", 28);
         this.rsSkillsPanel.setSkills(this.rsSkills);
         const craft = grantSkillXp(this.rsSkills, "crafting", 8);
@@ -5079,7 +5179,7 @@ export default class OnlineScene extends Phaser.Scene {
 
   private controlHint() {
     if (this.isTutorial) return "WASD move · CLICK fire · ENTER chat · SKIP (top-right)";
-    if (getSettings().rsControls) {
+    if (this.usingRsControls()) {
       return "CLICK walk · RIGHT-CLICK menu · Q/E/R abilities · SPACE dash · M map · ENTER chat";
     }
     return "WASD · HOLD CLICK fire · Q/E/R abilities · SPACE dash · M map · ENTER chat";
@@ -5254,7 +5354,8 @@ export default class OnlineScene extends Phaser.Scene {
       this.neon.tint = [((a >> 16) & 0xff) / 255, ((a >> 8) & 0xff) / 255, (a & 0xff) / 255];
       // lighter signature wash — 0.24 flattened whole districts to one hue and buried
       // the per-building colour-coding + tile variation; a subtle tint still reads
-      this.neon.tintAmt = this.isCityHub ? 0.1 : this.interior ? 0.08 : 0.13;
+      // Weaker district wash so tile variety + building colour read through the accent.
+      this.neon.tintAmt = this.isCityHub ? 0.08 : this.interior ? 0.06 : 0.07;
     }
   }
 }
