@@ -1,6 +1,13 @@
-// METROPHAGE — wallet connector for the $METRO bridge.
-// Prefers injected Ethereum (MetaMask / Rabby / Coinbase) for ERC-20 $METRO.
-// Falls back to Solana injected providers for legacy SPL mints.
+// METROPHAGE — wallet connector.
+// Prefers MetaMask on **Robinhood Chain** (ETH L2) for sign-up + $METRO.
+// Falls back to other EVM injectors; Solana providers remain for legacy SPL mints.
+
+import {
+  type RobinhoodCluster,
+  robinhoodNetwork,
+  walletAddEthereumChainParams,
+} from "./robinhoodChain";
+import { metroRobinhoodCluster, METRO_CLUSTER, METRO_MAINNET_ARMED } from "./metro";
 
 interface EvmProvider {
   request(args: { method: string; params?: unknown[] }): Promise<unknown>;
@@ -24,7 +31,6 @@ function getEvm(): EvmProvider | null {
   };
   const eth = w.ethereum;
   if (!eth) return null;
-  // Multi-injected (MetaMask + Phantom): prefer true MetaMask.
   if (Array.isArray(eth.providers) && eth.providers.length) {
     const mm = eth.providers.find((p) => p.isMetaMask);
     if (mm) return mm;
@@ -42,7 +48,6 @@ function getSolana(): SolanaProvider | null {
   return w.phantom?.solana ?? w.solana ?? w.backpack?.solana ?? w.solflare ?? null;
 }
 
-/** Any injected wallet present (ETH preferred). */
 export function walletAvailable(): boolean {
   return !!(getEvm() || getSolana());
 }
@@ -60,10 +65,65 @@ export function connectedChain(): "evm" | "solana" | null {
   return lastChain;
 }
 
+/**
+ * Ensure MetaMask is on Robinhood Chain (add network if missing, then switch).
+ * Uses testnet by default; mainnet only when cluster is robinhood + armed (or explicit).
+ */
+export async function ensureRobinhoodNetwork(
+  cluster?: RobinhoodCluster,
+): Promise<{ ok: boolean; chainId?: number; reason?: string }> {
+  const eth = getEvm();
+  if (!eth) return { ok: false, reason: "no MetaMask / EVM wallet" };
+
+  let target: RobinhoodCluster = cluster ?? metroRobinhoodCluster();
+  // Never auto-switch to mainnet without arm flag when using default path
+  if (target === "robinhood" && !METRO_MAINNET_ARMED && METRO_CLUSTER !== "robinhood") {
+    target = "robinhood-testnet";
+  }
+  const net = robinhoodNetwork(target);
+
+  try {
+    const cur = (await eth.request({ method: "eth_chainId" })) as string;
+    if (cur?.toLowerCase() === net.chainIdHex.toLowerCase()) {
+      return { ok: true, chainId: net.chainId };
+    }
+  } catch {
+    /* continue to switch */
+  }
+
+  try {
+    await eth.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: net.chainIdHex }],
+    });
+    return { ok: true, chainId: net.chainId };
+  } catch (e) {
+    const err = e as { code?: number; message?: string };
+    // 4902 = chain not added
+    if (err?.code === 4902 || /unrecognized chain|not been added/i.test(err?.message ?? "")) {
+      try {
+        await eth.request({
+          method: "wallet_addEthereumChain",
+          params: [walletAddEthereumChainParams(net)],
+        });
+        return { ok: true, chainId: net.chainId };
+      } catch (addErr) {
+        return {
+          ok: false,
+          reason: String((addErr as Error)?.message ?? addErr).slice(0, 120),
+        };
+      }
+    }
+    return { ok: false, reason: String(err?.message ?? e).slice(0, 120) };
+  }
+}
+
 export async function connectWallet(): Promise<string | null> {
   const eth = getEvm();
   if (eth) {
     try {
+      // Put MetaMask on Robinhood Chain before accounts (sign-up + $METRO live there).
+      await ensureRobinhoodNetwork();
       const accounts = (await eth.request({ method: "eth_requestAccounts" })) as string[];
       const addr = accounts?.[0] ?? null;
       if (addr) {
@@ -122,7 +182,7 @@ function base58Encode(bytes: Uint8Array): string {
 
 /**
  * Sign the online-login / bridge-auth message.
- * EVM → personal_sign (hex sig 0x…). Solana → ed25519 base58.
+ * EVM → personal_sign on Robinhood Chain. Solana → ed25519 base58.
  */
 export async function signWalletLogin(
   message: string,
@@ -132,7 +192,7 @@ export async function signWalletLogin(
   const addr = address ?? lastConnectedAddress;
   if (eth && addr && /^0x/i.test(addr)) {
     try {
-      // EIP-191 personal_sign — pass the UTF-8 message (ethers.verifyMessage on server).
+      await ensureRobinhoodNetwork();
       const sig = (await eth.request({
         method: "personal_sign",
         params: [message, addr],

@@ -87,8 +87,15 @@ at all: `node scripts/smoke.mjs metro` (devnet-sim settlement).
 
 ## 5. Entering the $METRO contract address (when the token is live)
 
-Preferred chain: **Ethereum ERC-20** (`0x…` mint). Legacy **Solana SPL** still works
-if the mint is base58.
+Preferred chain: **Robinhood Chain** (ETH L2 / Arbitrum Orbit) ERC-20.
+
+| Network | Chain ID | RPC |
+| --- | --- | --- |
+| Robinhood Chain Testnet (default) | **46630** | `https://rpc.testnet.chain.robinhood.com` |
+| Robinhood Chain Mainnet | **4663** | `https://rpc.mainnet.chain.robinhood.com` |
+
+MetaMask is prompted to add/switch to this network on sign-up. Legacy Solana SPL
+still works if the mint is base58.
 
 Two layers, **in this order**:
 
@@ -96,34 +103,35 @@ Two layers, **in this order**:
 
 ```sh
 cd server
-# Ethereum (preferred)
-npx wrangler secret put METRO_MINT              # ERC-20 address 0x…
+# Robinhood Chain testnet (rehearsal)
+npx wrangler secret put METRO_MINT              # ERC-20 0x… deployed on Robinhood Chain
 npx wrangler secret put METRO_TREASURY_SECRET   # treasury private key 0x… (hex)
-npx wrangler secret put METRO_RPC               # e.g. https://ethereum-sepolia-rpc.publicnode.com
-# optional: npx wrangler secret put METRO_CHAIN_ID  # 11155111 sepolia · 1 mainnet
+npx wrangler secret put METRO_RPC               # https://rpc.testnet.chain.robinhood.com
+npx wrangler secret put METRO_CHAIN_ID          # 46630
 npm run deploy
 ```
 
-Treasury must hold the ERC-20 for cash-outs and a **small ETH balance for gas**
-(EVM payouts are treasury-signed transfers). Deposits: players transfer ERC-20
-to the treasury address published by `/metro/pool`.
+Mainnet (counsel): `METRO_CHAIN_ID=4663`, mainnet RPC, then `METRO_MAINNET_ARMED=1`.
 
-Legacy Solana: mint base58 + treasury secret as base64 64-byte keypair + Solana RPC.
+Treasury needs the ERC-20 + a **small ETH balance on Robinhood Chain** for gas.
+Deposits: players transfer ERC-20 to `/metro/pool` treasury address.
 
 **Layer 2 — client build env (SECOND):**
 
 ```sh
 VITE_SERVER_URL=wss://<worker-url>/ws \
-VITE_METRO_MINT=<0x ERC-20 or Solana mint> \
-VITE_METRO_CLUSTER=sepolia \
-VITE_METRO_RPC=https://ethereum-sepolia-rpc.publicnode.com \
+VITE_METRO_MINT=<0x ERC-20 on Robinhood Chain> \
+VITE_METRO_CLUSTER=robinhood-testnet \
+VITE_METRO_RPC=https://rpc.testnet.chain.robinhood.com \
+VITE_METRO_CHAIN_ID=46630 \
 npm run build
 npx wrangler pages deploy dist --project-name=metrophagev1 --branch=main
 ```
 
+Mainnet client: `VITE_METRO_CLUSTER=robinhood` + `VITE_METRO_MAINNET_ARMED=1` + mainnet RPC/CA.
+
 `VITE_METRO_MINT` is the master switch — set, the ◈ bridge panel appears;
-unset, the game is pure off-chain. Build-time only: entering the CA = rebuild +
-redeploy the client.
+unset, the game is pure off-chain (MetaMask sign-up still uses Robinhood Chain).
 
 **⚠️ Ordering rule:** never ship Layer 2 to real players without Layer 1. With
 the panel live but no server secrets, the bridge runs devnet-sim settlement,

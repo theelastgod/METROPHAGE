@@ -1,12 +1,17 @@
 // METROPHAGE — $METRO on-chain layer gate (Phase 5).
 //
-// SINGLE SOURCE OF TRUTH for whether the on-chain layer is live. Empty by default:
-// the whole game runs on the off-chain, server-authoritative soft currency (`credits`)
-// with NO crypto. Point VITE_METRO_MINT at a real ERC-20 (0x…) or legacy Solana mint
-// and the layer wakes up.
-//
-// Preferred path: Ethereum ERC-20. Solana SPL remains supported for existing mints.
-// Mainnet requires METRO_MAINNET_ARMED (counsel gate).
+// Preferred settlement: **Robinhood Chain** (Ethereum L2, Arbitrum Orbit) ERC-20.
+// - Testnet (46630) default for rehearsal
+// - Mainnet (4663) requires METRO_MAINNET_ARMED (counsel)
+// Legacy: Solana SPL still works if mint is base58.
+// Empty mint → pure off-chain credits.
+
+import {
+  ROBINHOOD_MAINNET,
+  ROBINHOOD_TESTNET,
+  type RobinhoodCluster,
+  robinhoodNetwork,
+} from "./robinhoodChain";
 
 const env: Record<string, string | undefined> =
   (typeof import.meta !== "undefined" &&
@@ -16,15 +21,28 @@ const env: Record<string, string | undefined> =
 /** The $METRO mint / ERC-20 contract (the "CA"). Empty string = layer off. */
 export const METRO_MINT = env.VITE_METRO_MINT ?? "";
 
-export type MetroCluster = "sepolia" | "mainnet" | "devnet" | "mainnet-beta" | "custom";
+export type MetroCluster =
+  | "robinhood"
+  | "robinhood-testnet"
+  | "sepolia"
+  | "mainnet"
+  | "devnet"
+  | "mainnet-beta"
+  | "custom";
 
-/** Target cluster / network. Defaults sepolia for EVM mints, devnet for Solana. */
-export const METRO_CLUSTER: MetroCluster = (() => {
-  const c = (env.VITE_METRO_CLUSTER || "").toLowerCase();
+function parseCluster(): MetroCluster {
+  const c = (env.VITE_METRO_CLUSTER || "").toLowerCase().trim();
+  if (c === "robinhood" || c === "rh" || c === "rh-mainnet") return "robinhood";
+  if (c === "robinhood-testnet" || c === "rh-testnet" || c === "testnet") return "robinhood-testnet";
   if (c === "mainnet" || c === "mainnet-beta") return c === "mainnet-beta" ? "mainnet-beta" : "mainnet";
   if (c === "sepolia" || c === "devnet" || c === "custom") return c as MetroCluster;
-  return isEvmAddress(METRO_MINT) ? "sepolia" : "devnet";
-})();
+  // Default for ERC-20 mints: Robinhood Chain testnet (safe rehearsal).
+  if (isEvmAddress(METRO_MINT)) return "robinhood-testnet";
+  return "devnet";
+}
+
+/** Target network. Defaults Robinhood Chain testnet for EVM mints. */
+export const METRO_CLUSTER: MetroCluster = parseCluster();
 
 export const METRO_MAINNET_ARMED = env.VITE_METRO_MAINNET_ARMED === "1";
 
@@ -33,18 +51,39 @@ export function metroApiBase(): string {
   return ws.replace(/^ws/, "http").replace(/\/ws$/, "");
 }
 
+export function isEvmAddress(s: string): boolean {
+  return /^0x[a-fA-F0-9]{40}$/.test((s || "").trim());
+}
+
+/** Active Robinhood network when cluster is robinhood / robinhood-testnet. */
+export function activeRobinhoodNetwork() {
+  if (METRO_CLUSTER === "robinhood") return ROBINHOOD_MAINNET;
+  if (METRO_CLUSTER === "robinhood-testnet") return ROBINHOOD_TESTNET;
+  return null;
+}
+
+export function metroChainId(): number | null {
+  const rh = activeRobinhoodNetwork();
+  if (rh) return rh.chainId;
+  if (env.VITE_METRO_CHAIN_ID) {
+    const n = parseInt(env.VITE_METRO_CHAIN_ID, 10);
+    return Number.isFinite(n) ? n : null;
+  }
+  if (isEvmAddress(METRO_MINT)) return ROBINHOOD_TESTNET.chainId;
+  return null;
+}
+
 export function metroRpc(): string {
   if (env.VITE_METRO_RPC) return env.VITE_METRO_RPC;
-  if (isEvmAddress(METRO_MINT)) {
-    return METRO_CLUSTER === "mainnet" || METRO_CLUSTER === "mainnet-beta"
-      ? "https://ethereum-rpc.publicnode.com"
-      : "https://ethereum-sepolia-rpc.publicnode.com";
-  }
+  const rh = activeRobinhoodNetwork();
+  if (rh) return rh.rpcUrl;
+  if (isEvmAddress(METRO_MINT)) return ROBINHOOD_TESTNET.rpcUrl;
   return METRO_CLUSTER === "mainnet-beta" ? "https://api.mainnet-beta.solana.com" : "https://api.devnet.solana.com";
 }
 
-export function isEvmAddress(s: string): boolean {
-  return /^0x[a-fA-F0-9]{40}$/.test((s || "").trim());
+/** Default Robinhood cluster string for wallet_switch. */
+export function metroRobinhoodCluster(): RobinhoodCluster {
+  return METRO_CLUSTER === "robinhood" ? "robinhood" : "robinhood-testnet";
 }
 
 const BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
@@ -74,31 +113,43 @@ export function isValidSolanaMint(s: string): boolean {
   return bytes != null && bytes.length === 32;
 }
 
-/** Gate: ERC-20 0x address or Solana mint. */
 export function isValidMetroMint(s: string): boolean {
   return isEvmAddress(s) || isValidSolanaMint(s);
 }
 
 export const metroEnabled = isValidMetroMint(METRO_MINT);
 export const metroIsEvm = isEvmAddress(METRO_MINT);
+export const metroIsRobinhood =
+  METRO_CLUSTER === "robinhood" || METRO_CLUSTER === "robinhood-testnet" || (metroIsEvm && !env.VITE_METRO_CLUSTER);
 
 export interface MetroStatus {
   enabled: boolean;
   cluster: MetroCluster;
   mint: string;
-  chain: "evm" | "solana" | "off";
+  chain: "robinhood" | "evm" | "solana" | "off";
+  chainId: number | null;
+  networkName: string;
   mainnetArmed: boolean;
   mainnetLive: boolean;
 }
 
 export function getMetroStatus(): MetroStatus {
-  const chain = !metroEnabled ? "off" : metroIsEvm ? "evm" : "solana";
-  const mainnetCluster = METRO_CLUSTER === "mainnet" || METRO_CLUSTER === "mainnet-beta";
+  const rh = activeRobinhoodNetwork();
+  const mainnetCluster =
+    METRO_CLUSTER === "robinhood" || METRO_CLUSTER === "mainnet" || METRO_CLUSTER === "mainnet-beta";
+  let chain: MetroStatus["chain"] = "off";
+  if (metroEnabled) {
+    if (rh || metroIsRobinhood) chain = "robinhood";
+    else if (metroIsEvm) chain = "evm";
+    else chain = "solana";
+  }
   return {
     enabled: metroEnabled,
     cluster: METRO_CLUSTER,
     mint: METRO_MINT,
     chain,
+    chainId: metroChainId(),
+    networkName: rh?.name ?? (metroIsEvm ? "EVM" : metroEnabled ? "Solana" : "off"),
     mainnetArmed: METRO_MAINNET_ARMED,
     mainnetLive: metroEnabled && mainnetCluster && METRO_MAINNET_ARMED,
   };
@@ -145,3 +196,6 @@ export const disabledBridge: MetroBridge = {
 export function getMetroBridge(): MetroBridge {
   return disabledBridge;
 }
+
+// re-export for callers that need network add params
+export { robinhoodNetwork, ROBINHOOD_MAINNET, ROBINHOOD_TESTNET };

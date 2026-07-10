@@ -11,43 +11,66 @@ function metroMint(env: Env): string | undefined {
   return m || undefined;
 }
 
-function rpcIsMainnet(rpc: string): boolean {
-  return /mainnet/i.test(rpc) && !/sepolia|goerli|holesky|devnet/i.test(rpc);
+/** True for value-bearing mainnets (Robinhood 4663, Ethereum mainnet, Solana mainnet). */
+function rpcIsMainnet(rpc: string, chainId?: number): boolean {
+  if (chainId === 4663) return true; // Robinhood Chain mainnet
+  if (chainId === 46630) return false; // Robinhood Chain testnet
+  if (/testnet\.chain\.robinhood|rpc\.testnet\.chain\.robinhood/i.test(rpc)) return false;
+  if (/mainnet\.chain\.robinhood/i.test(rpc)) return true;
+  return /mainnet/i.test(rpc) && !/sepolia|goerli|holesky|devnet|testnet/i.test(rpc);
 }
 
 function isEvmMintAddr(mint: string): boolean {
   return /^0x[a-fA-F0-9]{40}$/.test(mint);
 }
 
+/** Preferred EVM defaults: Robinhood Chain testnet (safe); mainnet when chain id 4663. */
+function defaultEvmRpc(chainId?: number): string {
+  if (chainId === 4663) return "https://rpc.mainnet.chain.robinhood.com";
+  return "https://rpc.testnet.chain.robinhood.com"; // 46630 testnet
+}
+
+function defaultEvmChainId(env: Env): number {
+  if (env.METRO_CHAIN_ID) {
+    const n = parseInt(env.METRO_CHAIN_ID, 10);
+    if (Number.isFinite(n)) return n;
+  }
+  // Counsel-armed + mint → mainnet Robinhood; else testnet.
+  if (env.METRO_MAINNET_ARMED === "1") return 4663;
+  return 46630;
+}
+
 export type SettlementKind = "sim" | "evm" | "solana";
 
 /**
  * Choose the bridge settlement.
- * - ERC-20 (0x mint) → EVM settlement when treasury key set
+ * - ERC-20 (0x mint) → Robinhood Chain / EVM when treasury key set
  * - Solana mint (base58) → legacy SPL settlement
- * - Mainnet RPC additionally requires METRO_MAINNET_ARMED=1 (counsel gate)
- * - Otherwise sim (ledger math works; deposits forgeable — panel must stay off)
+ * - Mainnet RPC/chain (incl. Robinhood 4663) requires METRO_MAINNET_ARMED=1
+ * - Otherwise sim
  */
 async function pickSettlement(env: Env): Promise<{ settlement: Settlement; kind: SettlementKind }> {
   const mint = metroMint(env);
   const secret = env.METRO_TREASURY_SECRET?.trim();
   if (!mint || !secret) return { settlement: simSettlement, kind: "sim" };
 
-  const defaultRpc = isEvmMintAddr(mint) ? "https://ethereum-sepolia-rpc.publicnode.com" : "https://api.devnet.solana.com";
-  const rpc = (env.METRO_RPC || defaultRpc).trim();
-  if (rpcIsMainnet(rpc) && env.METRO_MAINNET_ARMED !== "1") {
-    return { settlement: simSettlement, kind: "sim" };
-  }
-
   if (isEvmMintAddr(mint)) {
+    const chainId = defaultEvmChainId(env);
+    const rpc = (env.METRO_RPC || defaultEvmRpc(chainId)).trim();
+    if (rpcIsMainnet(rpc, chainId) && env.METRO_MAINNET_ARMED !== "1") {
+      return { settlement: simSettlement, kind: "sim" };
+    }
     const { makeEvmSettlement } = await import("./evm");
-    const chainId = env.METRO_CHAIN_ID ? parseInt(env.METRO_CHAIN_ID, 10) : undefined;
     return {
       settlement: makeEvmSettlement({ rpc, mint, treasuryPrivateKey: secret, chainId }),
       kind: "evm",
     };
   }
 
+  const rpc = (env.METRO_RPC || "https://api.devnet.solana.com").trim();
+  if (rpcIsMainnet(rpc) && env.METRO_MAINNET_ARMED !== "1") {
+    return { settlement: simSettlement, kind: "sim" };
+  }
   const { makeSolanaSettlement } = await import("./solana");
   return {
     settlement: makeSolanaSettlement({ rpc, mint, treasurySecretB64: secret }),
@@ -161,7 +184,11 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
       info.treasuryConfigured = hasTreasury;
       info.mainnetArmed = armed;
       info.rpc = rpc || null;
-      info.chain = mint && isEvmMintAddr(mint) ? "evm" : mint ? "solana" : null;
+      const cid = mint && isEvmMintAddr(mint) ? defaultEvmChainId(env) : null;
+      info.chain = mint && isEvmMintAddr(mint) ? (cid === 4663 || cid === 46630 ? "robinhood" : "evm") : mint ? "solana" : null;
+      info.chainId = cid;
+      info.networkName =
+        cid === 4663 ? "Robinhood Chain" : cid === 46630 ? "Robinhood Chain Testnet" : info.chain;
       info.readyForCa = hasTreasury && !mint;
       info.liveBridge = live;
       info.settlement = kind;
@@ -196,9 +223,14 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
         treasuryConfigured: hasTreasury,
         mainnetArmed: armed,
         settlement: kind,
-        chain: mint && isEvmMintAddr(mint) ? "evm" : mint ? "solana" : null,
+        chain: mint && isEvmMintAddr(mint) ? (defaultEvmChainId(env) === 4663 || defaultEvmChainId(env) === 46630 ? "robinhood" : "evm") : mint ? "solana" : null,
+        chainId: mint && isEvmMintAddr(mint) ? defaultEvmChainId(env) : null,
         readyForCa: hasTreasury && !mint,
-        clusterHint: rpcIsMainnet(rpc) ? "mainnet" : rpc ? "testnet/custom" : "unset",
+        clusterHint: rpcIsMainnet(rpc, mint && isEvmMintAddr(mint) ? defaultEvmChainId(env) : undefined)
+          ? "mainnet"
+          : rpc
+            ? "testnet/custom"
+            : "unset",
       });
     }
     if (url.pathname === "/metro/quote" && req.method === "GET")

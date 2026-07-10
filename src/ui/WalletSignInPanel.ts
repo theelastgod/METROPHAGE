@@ -383,7 +383,7 @@ export default class WalletSignInPanel {
     // supported wallets + disconnect
     this.add(
       this.scene.add
-        .text(x + panelPad(), y + h - uiDim(38), "METAMASK  ·  RABBY  ·  COINBASE  ·  PHANTOM", bodyFont(10, { color: "#4a5266" }))
+        .text(x + panelPad(), y + h - uiDim(38), "METAMASK · ROBINHOOD CHAIN (ETH L2)", bodyFont(10, { color: "#4a5266" }))
         .setOrigin(0, 0),
     );
 

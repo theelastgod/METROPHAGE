@@ -199,18 +199,18 @@ export default class SelectScene extends Phaser.Scene {
     this.walletPanel.show({
       step: "connect",
       status: hasWallet ? "ready" : "offline",
-      statusText: hasWallet ? "MetaMask ready · free message sign-in" : "install MetaMask or play offline",
+      statusText: hasWallet ? "MetaMask · Robinhood Chain · free sign-in" : "install MetaMask or play offline",
       headline: "Create your runner",
       body: hasWallet
-        ? "Sign up with MetaMask to lock a character to your address and join the shared city. One free message — no gas, no spend. Or play offline without a wallet."
-        : "Install MetaMask to save a multiplayer identity, or jump in offline now — class, combat, city preview. You can link a wallet later.",
+        ? "Sign up with MetaMask on Robinhood Chain (ETH L2). We add the network for you, then one free login message — no gas for sign-up. Or play offline without a wallet."
+        : "Install MetaMask to save a multiplayer identity on Robinhood Chain, or jump in offline now. You can link a wallet later.",
       wallet: null,
       actions: this.walletActions([
         ...(hasWallet
           ? [
               {
                 label: "◈ SIGN UP WITH METAMASK",
-                sub: "connect · free message · create or resume runner",
+                sub: "Robinhood Chain · free message · create or resume",
                 color: COLORS.neonGreen,
                 primary: true as const,
                 fn: () => void this.onMetaMaskSignUp(),
@@ -226,7 +226,7 @@ export default class SelectScene extends Phaser.Scene {
           : [
               {
                 label: "◈ GET METAMASK",
-                sub: "metamask.io · then return here to sign up",
+                sub: "metamask.io · then return to sign up on Robinhood Chain",
                 color: COLORS.neonGreen,
                 primary: true as const,
                 fn: () => window.open("https://metamask.io/download/", "_blank", "noopener"),
@@ -243,14 +243,14 @@ export default class SelectScene extends Phaser.Scene {
     });
   }
 
-  /** One-click MetaMask connect + sign-in (new account create or returning). */
+  /** One-click MetaMask + Robinhood Chain connect + sign-in. */
   private async onMetaMaskSignUp() {
     this.walletPanel.show({
       step: "connect",
       status: "busy",
-      statusText: "awaiting MetaMask",
+      statusText: "awaiting MetaMask · Robinhood Chain",
       headline: "Check MetaMask",
-      body: "Approve the connection in MetaMask. Next you'll sign a free login message — still no gas, no $METRO spend.",
+      body: "Approve connecting MetaMask. We'll switch you to Robinhood Chain (ETH L2) if needed, then you sign a free login message — no gas for sign-up.",
       wallet: connectedWallet(),
       actions: [],
       showDisconnect: true,

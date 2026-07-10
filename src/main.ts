@@ -85,6 +85,10 @@ if (import.meta.env.DEV) {
   // Surface the $METRO gate state so it's obvious whether the on-chain layer is live.
   const m = getMetroStatus();
   console.info(
-    `[$METRO] ${m.enabled ? `ENABLED · ${m.cluster}${m.mainnetLive ? " · MAINNET LIVE" : ""}` : "disabled (off-chain only)"}`,
+    `[$METRO] ${
+      m.enabled
+        ? `ENABLED · ${m.networkName} · ${m.cluster}${m.chainId ? ` · id ${m.chainId}` : ""}${m.mainnetLive ? " · MAINNET LIVE" : ""}`
+        : "disabled (off-chain only) · MetaMask sign-up uses Robinhood Chain"
+    }`,
   );
 }

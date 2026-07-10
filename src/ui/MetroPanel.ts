@@ -76,10 +76,10 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
   panel.innerHTML = `
     <div class="head">
       <h3>◈ $METRO BRIDGE <span class="x" id="m-x">✕</span></h3>
-      <div class="sub">₵ = play · ◈ = on-chain $METRO (${st.chain === "evm" ? "Ethereum ERC-20" : st.chain === "solana" ? "Solana SPL" : "off"}) · pool player-funded · mainnet ${st.mainnetLive ? "LIVE" : "OFF until counsel"}</div>
+      <div class="sub">₵ = play · ◈ = $METRO on ${st.networkName || st.chain}${st.chainId ? ` · chain ${st.chainId}` : ""} · pool player-funded · mainnet ${st.mainnetLive ? "LIVE" : "OFF until counsel"}</div>
     </div>
     <div class="body">
-      <div class="row"><span class="muted">network</span><span class="pill">${st.chain.toUpperCase()} · ${st.cluster}${st.mainnetLive ? " · ARMED" : st.mainnetArmed ? " · arm flag only" : " · not armed"}</span></div>
+      <div class="row"><span class="muted">network</span><span class="pill">${(st.networkName || st.chain).toUpperCase()} · ${st.cluster}${st.mainnetLive ? " · ARMED" : st.mainnetArmed ? " · arm flag only" : " · not armed"}</span></div>
       <div class="row"><span class="muted">cash-out pool</span><span id="m-pool" class="metro-big">—</span></div>
       <div class="row"><span class="muted">rates</span><span class="pill" id="m-rates">—</span></div>
       <div class="strip" id="m-phase">loading pool status…</div>
@@ -133,14 +133,21 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
       pool = p;
       $("m-pool").textContent = `◈ ${fmtMetro(p.poolMetro)}`;
       $("m-rates").textContent = `in: 1◈ → ${p.depositCreditsPerMetro}₵ · out: ${p.withdrawCreditsPerMetro}₵ → 1◈`;
-      const chainLabel = p.settlement === "evm" ? "Ethereum ERC-20" : p.settlement === "solana" ? "Solana SPL" : "sim";
+      const chainLabel =
+        p.chain === "robinhood" || p.networkName
+          ? String(p.networkName || "Robinhood Chain")
+          : p.settlement === "evm"
+            ? "EVM ERC-20"
+            : p.settlement === "solana"
+              ? "Solana SPL"
+              : "sim";
       $("m-phase").textContent =
         p.phase === "bootstrap"
           ? `HONEST LAUNCH (${chainLabel}) — cash-out pool starts EMPTY and is 100% player-funded. Not a faucet.`
           : p.settlement === "sim"
             ? "REHEARSAL SETTLEMENT — sim mode (not real chain value). Pool still player-funded."
             : p.settlement === "evm"
-              ? "POOL OPEN (ETH) — deposit ERC-20 to treasury · cash-out broadcasts a treasury-signed transfer (treasury pays gas)."
+              ? `POOL OPEN (${chainLabel}) — deposit ERC-20 $METRO to treasury · cash-out is a treasury-signed transfer (treasury pays ETH gas on Robinhood Chain).`
               : "POOL OPEN (SOL) — player-funded pool, first-come. Empty pool = refund.";
       $("m-treasury").textContent = p.treasury ? short(p.treasury) : "rehearsal — any tx hash is accepted";
       if (p.treasury) $("m-treasury").dataset.full = p.treasury;
