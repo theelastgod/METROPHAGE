@@ -2301,7 +2301,8 @@ async function metro() {
   // HTTP bridge endpoints (no WebSocket). Harness pre-seeds D1: whale credits=10000,
   // pauper credits=600, and clears the metro ledger so caps/cooldowns start fresh.
   const httpBase = WS_URL.replace(/^ws/, "http").replace(/\/ws$/, "");
-  const WALLET = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"; // valid base58 pubkey (devnet-sim accepts any)
+  // Prefer EVM-shaped wallet for Robinhood-era bridge; sim still accepts any valid shape.
+  const WALLET = "0x1111111111111111111111111111111111111111";
   const get = async (p) => (await fetch(httpBase + p)).json();
   const post = async (p, body) =>
     (await fetch(httpBase + p, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).json();

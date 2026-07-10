@@ -260,11 +260,13 @@ export interface Env {
   /** Legacy alias — still accepted if METRO_MINT is unset. */
   METRO_DEVNET_MINT?: string;
   METRO_RPC?: string;
-  /** Optional EIP-155 chain id for EVM (e.g. 11155111 sepolia, 1 mainnet). */
+  /** Optional EIP-155 chain id for EVM (46630 RH testnet, 4663 RH mainnet). */
   METRO_CHAIN_ID?: string;
   // "1" arms real-value mainnet (counsel) — also gates NFT-tier cosmetics.
   // Required when METRO_RPC points at mainnet, else settlement stays sim.
   METRO_MAINNET_ARMED?: string;
+  /** Harness only: allow deposit/withdraw while settlement is sim with a mint set. */
+  METRO_ALLOW_SIM?: string;
 }
 
 interface PlayerState {

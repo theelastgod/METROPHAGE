@@ -31,25 +31,37 @@ export async function submitClaim(claimTx: string, rpc: string): Promise<ClaimSu
 }
 
 async function broadcastEvmRaw(rawTx: string, rpc: string): Promise<ClaimSubmitResult> {
+  const rpcs = [
+    rpc,
+    "https://rpc.testnet.chain.robinhood.com",
+    "https://rpc.mainnet.chain.robinhood.com",
+  ].filter((u, i, a) => u && a.indexOf(u) === i);
+
   try {
-    // Prefer wallet eth_sendRawTransaction if present; else public RPC.
     const p = getInjectedProvider() as SigningProvider | null;
     if (p?.request && connectedChain() === "evm") {
       try {
         const hash = (await p.request({ method: "eth_sendRawTransaction", params: [rawTx] })) as string;
         if (hash) return { ok: true, sig: hash };
       } catch {
-        /* fall through to public RPC */
+        /* try public RPCs */
       }
     }
-    const res = await fetch(rpc, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_sendRawTransaction", params: [rawTx] }),
-    }).then((r) => r.json() as Promise<{ result?: string; error?: { message?: string } }>);
-    if (res.error) return { ok: false, reason: res.error.message ?? "eth_sendRawTransaction failed" };
-    if (!res.result) return { ok: false, reason: "no tx hash returned" };
-    return { ok: true, sig: res.result };
+    let lastErr = "broadcast failed";
+    for (const url of rpcs) {
+      try {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_sendRawTransaction", params: [rawTx] }),
+        }).then((r) => r.json() as Promise<{ result?: string; error?: { message?: string } }>);
+        if (res.result) return { ok: true, sig: res.result };
+        if (res.error?.message) lastErr = res.error.message;
+      } catch (e) {
+        lastErr = String((e as Error)?.message ?? e);
+      }
+    }
+    return { ok: false, reason: lastErr.slice(0, 160) };
   } catch (e) {
     return { ok: false, reason: String((e as Error)?.message ?? e).slice(0, 160) };
   }

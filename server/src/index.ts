@@ -60,9 +60,15 @@ async function pickSettlement(env: Env): Promise<{ settlement: Settlement; kind:
     if (rpcIsMainnet(rpc, chainId) && env.METRO_MAINNET_ARMED !== "1") {
       return { settlement: simSettlement, kind: "sim" };
     }
-    const { makeEvmSettlement } = await import("./evm");
+    const { makeEvmSettlement, robinhoodRpcs } = await import("./evm");
     return {
-      settlement: makeEvmSettlement({ rpc, mint, treasuryPrivateKey: secret, chainId }),
+      settlement: makeEvmSettlement({
+        rpcs: robinhoodRpcs(chainId, rpc),
+        mint,
+        treasuryPrivateKey: secret,
+        chainId,
+        db: env.DB,
+      }),
       kind: "evm",
     };
   }
@@ -175,6 +181,25 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
   const rpc = (env.METRO_RPC || "").trim();
   const armed = env.METRO_MAINNET_ARMED === "1";
   const live = kind !== "sim";
+  // CRITICAL: mint configured but settlement is sim → never accept deposits/withdraws
+  // (sim trusts amounts). Explicit METRO_ALLOW_SIM=1 required for harness with a mint.
+  const allowSimWithMint = env.METRO_ALLOW_SIM === "1";
+  const dangerousSim = !live && !!mint && !allowSimWithMint;
+
+  const rejectIfDangerousSim = (): Response | null => {
+    if (!dangerousSim) return null;
+    return json(
+      {
+        ok: false,
+        reason:
+          "bridge locked: mint is set but settlement is still sim (arm mainnet, fix secrets, or set METRO_ALLOW_SIM=1 for harness only)",
+        settlement: kind,
+        mintConfigured: true,
+      },
+      503,
+    );
+  };
+
   try {
     if (url.pathname === "/metro/account" && req.method === "GET")
       return json(await getAccount(env.DB, url.searchParams.get("player") ?? ""));
@@ -192,10 +217,32 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
       info.readyForCa = hasTreasury && !mint;
       info.liveBridge = live;
       info.settlement = kind;
+      info.dangerousSim = dangerousSim;
+      info.note =
+        "Robinhood Chain ≠ Robinhood app. Use MetaMask on chain " + (cid ?? "46630") + " to deposit/withdraw.";
+      info.getMetroHint =
+        cid === 4663
+          ? "Trade $METRO on Robinhood Chain DEXes or peer transfers — not the Robinhood stock app."
+          : "Testnet: mint/get test $METRO on RH testnet, then deposit via MetaMask in this panel.";
       if (hasTreasury) {
         if (mint && isEvmMintAddr(mint)) {
-          const { treasuryEvmAddress } = await import("./evm");
+          const { treasuryEvmAddress, treasuryHealth, robinhoodRpcs } = await import("./evm");
           info.treasury = treasuryEvmAddress(env.METRO_TREASURY_SECRET!);
+          if (live) {
+            try {
+              const health = await treasuryHealth({
+                rpcs: robinhoodRpcs(cid ?? 46630, rpc || undefined),
+                mint,
+                treasuryPrivateKey: env.METRO_TREASURY_SECRET!,
+              });
+              info.treasuryEth = health.eth;
+              info.treasuryMetro = health.metro;
+              info.treasuryOk = health.ok;
+              if (health.warn) info.treasuryWarn = health.warn;
+            } catch {
+              /* non-fatal */
+            }
+          }
         } else {
           try {
             const { treasuryPubkey } = await import("./solana");
@@ -206,12 +253,14 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
         }
       }
       if (!live) {
-        if (hasTreasury && mint && rpcIsMainnet(rpc) && !armed) {
+        if (dangerousSim) {
+          info.reason = "LOCKED — mint set but settlement is sim (prevents fake deposits)";
+        } else if (hasTreasury && mint && rpcIsMainnet(rpc, cid ?? undefined) && !armed) {
           info.reason = "mainnet RPC set but METRO_MAINNET_ARMED is off — settlement stays sim";
         } else if (!mint) {
-          info.reason = "awaiting mint CA — set METRO_MINT to an ERC-20 (0x…) or Solana mint";
+          info.reason = "awaiting mint CA — set METRO_MINT to an ERC-20 on Robinhood Chain";
         } else if (!hasTreasury) {
-          info.reason = "awaiting METRO_TREASURY_SECRET (EVM hex key or Solana keypair b64)";
+          info.reason = "awaiting METRO_TREASURY_SECRET (EVM hex key)";
         }
       }
       return json(info);
@@ -236,6 +285,8 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
     if (url.pathname === "/metro/quote" && req.method === "GET")
       return json(quote(Number(url.searchParams.get("credits") ?? "0")));
     if (url.pathname === "/metro/withdraw" && req.method === "POST") {
+      const locked = rejectIfDangerousSim();
+      if (locked) return locked;
       const b = (await req.json()) as {
         player?: string;
         wallet?: string;
@@ -246,6 +297,10 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
       if (live) {
         const auth = await requireWalletPlayer(b, kind);
         if (!auth.ok) return json(auth, 401);
+        // Money wallet must match authenticated identity
+        if (b.wallet && auth.wallet.toLowerCase() !== b.wallet.trim().toLowerCase()) {
+          return json({ ok: false, reason: "wallet must match signed identity" }, 401);
+        }
         return json(
           await withdraw(env.DB, settlement, {
             player: auth.player,
@@ -257,6 +312,8 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
       return json(await withdraw(env.DB, settlement, { player: b.player ?? "", wallet: b.wallet ?? "", credits: Number(b.credits) }));
     }
     if (url.pathname === "/metro/withdraw/confirm" && req.method === "POST") {
+      const locked = rejectIfDangerousSim();
+      if (locked) return locked;
       const b = (await req.json()) as {
         player?: string;
         withdrawId?: number;
@@ -280,6 +337,8 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
       );
     }
     if (url.pathname === "/metro/deposit" && req.method === "POST") {
+      const locked = rejectIfDangerousSim();
+      if (locked) return locked;
       const b = (await req.json()) as {
         player?: string;
         wallet?: string;
@@ -291,12 +350,16 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
       if (live) {
         const auth = await requireWalletPlayer(b, kind);
         if (!auth.ok) return json(auth, 401);
+        if (b.wallet && auth.wallet.toLowerCase() !== b.wallet.trim().toLowerCase()) {
+          return json({ ok: false, reason: "wallet must match signed identity" }, 401);
+        }
+        // On-chain amount only — ignore client metro for trust (settlement re-reads logs)
         return json(
           await deposit(env.DB, settlement, {
             player: auth.player,
             wallet: auth.wallet,
             txSig: b.txSig ?? "",
-            metro: Number(b.metro),
+            metro: Number(b.metro) || 0,
           }),
         );
       }
