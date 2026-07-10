@@ -1,6 +1,7 @@
 import { WorldDO, parseZone, isNamedZone, type Env } from "./world";
 import { getAccount, quote, withdraw, confirmWithdraw, deposit, poolInfo, simSettlement, type Settlement } from "./metro";
 import { verifyWalletLogin } from "./auth";
+import { loginMessage } from "../../src/net/protocol";
 
 export { WorldDO };
 
@@ -11,45 +12,74 @@ function metroMint(env: Env): string | undefined {
 }
 
 function rpcIsMainnet(rpc: string): boolean {
-  return /mainnet/i.test(rpc);
+  return /mainnet/i.test(rpc) && !/sepolia|goerli|holesky|devnet/i.test(rpc);
 }
+
+function isEvmMintAddr(mint: string): boolean {
+  return /^0x[a-fA-F0-9]{40}$/.test(mint);
+}
+
+export type SettlementKind = "sim" | "evm" | "solana";
 
 /**
  * Choose the bridge settlement.
- * - Real Solana when treasury secret + mint are both set.
- * - Mainnet RPC additionally requires METRO_MAINNET_ARMED=1 (counsel gate).
- * - Otherwise sim (ledger math works; deposits would be forgeable — panel must stay off).
+ * - ERC-20 (0x mint) → EVM settlement when treasury key set
+ * - Solana mint (base58) → legacy SPL settlement
+ * - Mainnet RPC additionally requires METRO_MAINNET_ARMED=1 (counsel gate)
+ * - Otherwise sim (ledger math works; deposits forgeable — panel must stay off)
  */
-async function pickSettlement(env: Env): Promise<Settlement> {
+async function pickSettlement(env: Env): Promise<{ settlement: Settlement; kind: SettlementKind }> {
   const mint = metroMint(env);
   const secret = env.METRO_TREASURY_SECRET?.trim();
-  if (!mint || !secret) return simSettlement;
+  if (!mint || !secret) return { settlement: simSettlement, kind: "sim" };
 
-  const rpc = (env.METRO_RPC || "https://api.devnet.solana.com").trim();
+  const defaultRpc = isEvmMintAddr(mint) ? "https://ethereum-sepolia-rpc.publicnode.com" : "https://api.devnet.solana.com";
+  const rpc = (env.METRO_RPC || defaultRpc).trim();
   if (rpcIsMainnet(rpc) && env.METRO_MAINNET_ARMED !== "1") {
-    // Refuse real mainnet settlement until armed — stay on sim so a mis-set RPC
-    // cannot move value without the counsel flag.
-    return simSettlement;
+    return { settlement: simSettlement, kind: "sim" };
+  }
+
+  if (isEvmMintAddr(mint)) {
+    const { makeEvmSettlement } = await import("./evm");
+    const chainId = env.METRO_CHAIN_ID ? parseInt(env.METRO_CHAIN_ID, 10) : undefined;
+    return {
+      settlement: makeEvmSettlement({ rpc, mint, treasuryPrivateKey: secret, chainId }),
+      kind: "evm",
+    };
   }
 
   const { makeSolanaSettlement } = await import("./solana");
-  return makeSolanaSettlement({
-    rpc,
-    mint,
-    treasurySecretB64: secret,
-  });
+  return {
+    settlement: makeSolanaSettlement({ rpc, mint, treasurySecretB64: secret }),
+    kind: "solana",
+  };
 }
 
-/** Require a wallet signature that proves `player` is the wallet owner (w:<addr>). */
-function requireWalletPlayer(b: {
-  player?: string;
-  wallet?: string;
-  sig?: string;
-  ts?: number;
-}): { ok: true; player: string; wallet: string } | { ok: false; reason: string } {
+/** Require a wallet signature that proves `player` is the wallet owner (w:<addr>).
+ *  EVM uses personal_sign; Solana uses ed25519 SIWS. */
+async function requireWalletPlayer(
+  b: { player?: string; wallet?: string; sig?: string; ts?: number },
+  kind: SettlementKind,
+): Promise<{ ok: true; player: string; wallet: string } | { ok: false; reason: string }> {
   const wallet = (b.wallet || "").trim();
   const player = (b.player || "").trim();
-  const id = verifyWalletLogin({ wallet, sig: b.sig ?? "", ts: Number(b.ts) });
+  const ts = Number(b.ts);
+  const sig = b.sig ?? "";
+  if (!wallet || !sig || !Number.isFinite(ts)) {
+    return { ok: false, reason: "wallet sign-in required — missing wallet/sig/ts" };
+  }
+  if (kind === "evm" || /^0x[a-fA-F0-9]{40}$/.test(wallet)) {
+    const { verifyEvmLogin } = await import("./evm");
+    const age = Math.abs(Date.now() - ts);
+    if (age > 10 * 60_000) return { ok: false, reason: "wallet sign-in required — stale timestamp" };
+    const id = verifyEvmLogin(wallet, loginMessage(wallet, ts), sig);
+    if (!id) return { ok: false, reason: "wallet sign-in required — bad EVM signature" };
+    if (player && player !== id && player.toLowerCase() !== wallet.toLowerCase() && player !== id.slice(2)) {
+      return { ok: false, reason: "player id does not match signed wallet" };
+    }
+    return { ok: true, player: id, wallet };
+  }
+  const id = verifyWalletLogin({ wallet, sig, ts });
   if (!id) return { ok: false, reason: "wallet sign-in required — bad or stale signature" };
   if (player && player !== id && player !== wallet && player !== id.slice(2)) {
     return { ok: false, reason: "player id does not match signed wallet" };
@@ -116,51 +146,59 @@ async function handleLeaderboard(url: URL, env: Env): Promise<Response> {
  * is the devnet sim for now (step 2a); step 2b selects a real settlement when armed.
  */
 async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> {
-  const settlement = await pickSettlement(env);
+  const { settlement, kind } = await pickSettlement(env);
   const mint = metroMint(env);
   const hasTreasury = !!(env.METRO_TREASURY_SECRET && env.METRO_TREASURY_SECRET.trim());
   const rpc = (env.METRO_RPC || "").trim();
   const armed = env.METRO_MAINNET_ARMED === "1";
+  const live = kind !== "sim";
   try {
     if (url.pathname === "/metro/account" && req.method === "GET")
       return json(await getAccount(env.DB, url.searchParams.get("player") ?? ""));
     if (url.pathname === "/metro/pool" && req.method === "GET") {
-      const info = await poolInfo(env.DB) as Record<string, unknown>;
-      // Always publish readiness metadata so ops can see pre-CA state.
+      const info = (await poolInfo(env.DB)) as Record<string, unknown>;
       info.mintConfigured = !!mint;
       info.treasuryConfigured = hasTreasury;
       info.mainnetArmed = armed;
       info.rpc = rpc || null;
-      info.readyForCa = hasTreasury && !mint; // treasury ready, waiting for mint
-      info.liveBridge = hasTreasury && !!mint && settlement !== simSettlement;
+      info.chain = mint && isEvmMintAddr(mint) ? "evm" : mint ? "solana" : null;
+      info.readyForCa = hasTreasury && !mint;
+      info.liveBridge = live;
+      info.settlement = kind;
       if (hasTreasury) {
-        const { treasuryPubkey } = await import("./solana");
-        info.treasury = treasuryPubkey(env.METRO_TREASURY_SECRET!);
+        if (mint && isEvmMintAddr(mint)) {
+          const { treasuryEvmAddress } = await import("./evm");
+          info.treasury = treasuryEvmAddress(env.METRO_TREASURY_SECRET!);
+        } else {
+          try {
+            const { treasuryPubkey } = await import("./solana");
+            info.treasury = treasuryPubkey(env.METRO_TREASURY_SECRET!);
+          } catch {
+            info.treasury = null;
+          }
+        }
       }
-      if (hasTreasury && mint && settlement !== simSettlement) {
-        info.settlement = "solana";
-      } else {
-        info.settlement = "sim";
+      if (!live) {
         if (hasTreasury && mint && rpcIsMainnet(rpc) && !armed) {
           info.reason = "mainnet RPC set but METRO_MAINNET_ARMED is off — settlement stays sim";
         } else if (!mint) {
-          info.reason = "awaiting mint CA — set METRO_MINT after pump.fun launch";
+          info.reason = "awaiting mint CA — set METRO_MINT to an ERC-20 (0x…) or Solana mint";
         } else if (!hasTreasury) {
-          info.reason = "awaiting METRO_TREASURY_SECRET";
+          info.reason = "awaiting METRO_TREASURY_SECRET (EVM hex key or Solana keypair b64)";
         }
       }
       return json(info);
     }
     if (url.pathname === "/metro/status" && req.method === "GET") {
-      // Ops probe — no secrets, only readiness.
       return json({
         ok: true,
         mintConfigured: !!mint,
         treasuryConfigured: hasTreasury,
         mainnetArmed: armed,
-        settlement: hasTreasury && mint && settlement !== simSettlement ? "solana" : "sim",
+        settlement: kind,
+        chain: mint && isEvmMintAddr(mint) ? "evm" : mint ? "solana" : null,
         readyForCa: hasTreasury && !mint,
-        clusterHint: rpcIsMainnet(rpc) ? "mainnet-beta" : rpc ? "custom/devnet" : "unset",
+        clusterHint: rpcIsMainnet(rpc) ? "mainnet" : rpc ? "testnet/custom" : "unset",
       });
     }
     if (url.pathname === "/metro/quote" && req.method === "GET")
@@ -173,9 +211,8 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
         sig?: string;
         ts?: number;
       };
-      // Wallet proof required for real settlement; sim still accepts player id for smoke tests.
-      if (settlement !== simSettlement) {
-        const auth = requireWalletPlayer(b);
+      if (live) {
+        const auth = await requireWalletPlayer(b, kind);
         if (!auth.ok) return json(auth, 401);
         return json(
           await withdraw(env.DB, settlement, {
@@ -197,8 +234,8 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
         ts?: number;
       };
       let player = b.player ?? "";
-      if (settlement !== simSettlement) {
-        const auth = requireWalletPlayer(b);
+      if (live) {
+        const auth = await requireWalletPlayer(b, kind);
         if (!auth.ok) return json(auth, 401);
         player = auth.player;
       }
@@ -219,8 +256,8 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
         sig?: string;
         ts?: number;
       };
-      if (settlement !== simSettlement) {
-        const auth = requireWalletPlayer(b);
+      if (live) {
+        const auth = await requireWalletPlayer(b, kind);
         if (!auth.ok) return json(auth, 401);
         return json(
           await deposit(env.DB, settlement, {

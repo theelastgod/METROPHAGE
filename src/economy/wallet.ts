@@ -1,11 +1,13 @@
-// METROPHAGE — minimal Solana wallet connector (Phase 5 · 2c).
-//
-// Uses the injected provider that Phantom / Backpack / Glow expose as `window.solana`
-// (Solflare via `window.solflare`). NO dependencies — the wallet itself signs; heavier
-// on-chain reads / tx-building (balance, deposit transfers) are lazy-loaded later
-// (2c-2, once a devnet mint exists). Keeps @solana/web3.js out of the game bundle.
+// METROPHAGE — wallet connector for the $METRO bridge.
+// Prefers injected Ethereum (MetaMask / Rabby / Coinbase) for ERC-20 $METRO.
+// Falls back to Solana injected providers for legacy SPL mints.
 
-interface InjectedProvider {
+interface EvmProvider {
+  request(args: { method: string; params?: unknown[] }): Promise<unknown>;
+  isMetaMask?: boolean;
+}
+
+interface SolanaProvider {
   publicKey?: { toString(): string } | null;
   isConnected?: boolean;
   connect(opts?: { onlyIfTrusted?: boolean }): Promise<{ publicKey: { toString(): string } }>;
@@ -14,69 +16,80 @@ interface InjectedProvider {
 }
 
 let lastConnectedAddress: string | null = null;
+let lastChain: "evm" | "solana" | null = null;
 
-function getProvider(): InjectedProvider | null {
+function getEvm(): EvmProvider | null {
+  const w = window as unknown as { ethereum?: EvmProvider };
+  return w.ethereum ?? null;
+}
+
+function getSolana(): SolanaProvider | null {
   const w = window as unknown as {
-    solana?: InjectedProvider;
-    phantom?: { solana?: InjectedProvider };
-    backpack?: { solana?: InjectedProvider };
-    solflare?: InjectedProvider;
+    solana?: SolanaProvider;
+    phantom?: { solana?: SolanaProvider };
+    backpack?: { solana?: SolanaProvider };
+    solflare?: SolanaProvider;
   };
-  // Phantom injects window.phantom.solana; Backpack/Solflare vary — try all common paths.
   return w.phantom?.solana ?? w.solana ?? w.backpack?.solana ?? w.solflare ?? null;
 }
 
-/** Is any injected Solana wallet present? */
+/** Any injected wallet present (ETH preferred). */
 export function walletAvailable(): boolean {
-  return !!getProvider();
+  return !!(getEvm() || getSolana());
 }
 
-/** The raw injected provider, loosely typed — for the lazy claim-submission helper
- *  (claim.ts), which needs signAndSendTransaction. Kept opaque here so this file
- *  stays dependency-free. */
 export function getInjectedProvider(): unknown {
-  return getProvider();
+  return getEvm() ?? getSolana();
 }
 
-/** Currently connected address (base58), or null. */
 export function connectedWallet(): string | null {
-  const p = getProvider();
-  const pk = p?.publicKey?.toString();
-  if (pk) {
-    lastConnectedAddress = pk;
-    return pk;
-  }
-  // Some wallets expose publicKey only briefly — keep the last successful connect().
-  if (p?.isConnected && lastConnectedAddress) return lastConnectedAddress;
-  return lastConnectedAddress;
+  if (lastConnectedAddress) return lastConnectedAddress;
+  return null;
 }
 
-/** Prompt the user to connect; resolves to the address or null on cancel/no-wallet. */
+export function connectedChain(): "evm" | "solana" | null {
+  return lastChain;
+}
+
 export async function connectWallet(): Promise<string | null> {
-  const p = getProvider();
-  if (!p) return null;
+  const eth = getEvm();
+  if (eth) {
+    try {
+      const accounts = (await eth.request({ method: "eth_requestAccounts" })) as string[];
+      const addr = accounts?.[0] ?? null;
+      if (addr) {
+        lastConnectedAddress = addr;
+        lastChain = "evm";
+        return addr;
+      }
+    } catch {
+      /* user rejected — try Solana */
+    }
+  }
+  const sol = getSolana();
+  if (!sol) return null;
   try {
-    const res = await p.connect();
+    const res = await sol.connect();
     const addr = res.publicKey.toString();
     lastConnectedAddress = addr;
+    lastChain = "solana";
     return addr;
   } catch {
-    return null; // user rejected
+    return null;
   }
 }
 
 export async function disconnectWallet(): Promise<void> {
   lastConnectedAddress = null;
+  lastChain = null;
   try {
-    await getProvider()?.disconnect();
+    await getSolana()?.disconnect();
   } catch {
     /* ignore */
   }
 }
 
 const B58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-/** Dependency-free base58 (Bitcoin/Solana alphabet) — keeps bs58 out of the game bundle.
- *  Leading zero bytes map to leading '1's; the remaining bytes are a base-256→58 bignum. */
 function base58Encode(bytes: Uint8Array): string {
   let zeros = 0;
   while (zeros < bytes.length && bytes[zeros] === 0) zeros++;
@@ -99,20 +112,32 @@ function base58Encode(bytes: Uint8Array): string {
 }
 
 /**
- * Sign the online-login message with the connected wallet, proving identity. Returns the
- * address (base58) + an ed25519 signature (base58, what the server's bs58.decode expects),
- * or null if there's no signing wallet / the user declines.
+ * Sign the online-login / bridge-auth message.
+ * EVM → personal_sign (hex sig 0x…). Solana → ed25519 base58.
  */
 export async function signWalletLogin(
   message: string,
   address?: string,
 ): Promise<{ address: string; signature: string } | null> {
-  const p = getProvider();
-  const addr = address ?? p?.publicKey?.toString() ?? lastConnectedAddress;
-  if (!p?.signMessage || !addr) return null;
+  const eth = getEvm();
+  const addr = address ?? lastConnectedAddress;
+  if (eth && addr && /^0x/i.test(addr)) {
+    try {
+      // EIP-191 personal_sign — pass the UTF-8 message (ethers.verifyMessage on server).
+      const sig = (await eth.request({
+        method: "personal_sign",
+        params: [message, addr],
+      })) as string;
+      return { address: addr, signature: sig };
+    } catch {
+      return null;
+    }
+  }
+  const p = getSolana();
+  const solAddr = address ?? p?.publicKey?.toString() ?? lastConnectedAddress;
+  if (!p?.signMessage || !solAddr) return null;
   const bytes = new TextEncoder().encode(message);
   try {
-    // Wallet APIs differ: Phantom accepts (bytes, "utf8"); others want bytes only.
     let signature: Uint8Array;
     try {
       const res = await p.signMessage(bytes, "utf8");
@@ -121,27 +146,12 @@ export async function signWalletLogin(
       const res = await p.signMessage(bytes);
       signature = res.signature;
     }
-    return { address: addr, signature: base58Encode(signature) };
-  } catch {
-    return null; // user declined
-  }
-}
-
-/**
- * Sign-In-With-Solana: sign a server nonce to prove wallet ownership. Returned
- * signature is base64. (Server-side verification + binding to the game identity is
- * the auth-hardening step before mainnet — for now this proves the wallet can sign.)
- */
-export async function signOwnership(nonce: string): Promise<{ address: string; signature: string } | null> {
-  const p = getProvider();
-  if (!p?.signMessage || !p.publicKey) return null;
-  try {
-    const msg = new TextEncoder().encode(`METROPHAGE wallet link\nnonce: ${nonce}`);
-    const { signature } = await p.signMessage(msg, "utf8");
-    let bin = "";
-    for (const b of signature) bin += String.fromCharCode(b);
-    return { address: p.publicKey.toString(), signature: btoa(bin) };
+    return { address: solAddr, signature: base58Encode(signature) };
   } catch {
     return null;
   }
+}
+
+export async function signOwnership(nonce: string): Promise<{ address: string; signature: string } | null> {
+  return signWalletLogin(`METROPHAGE wallet link\nnonce: ${nonce}`);
 }

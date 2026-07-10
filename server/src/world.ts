@@ -260,8 +260,10 @@ export interface Env {
   /** Legacy alias — still accepted if METRO_MINT is unset. */
   METRO_DEVNET_MINT?: string;
   METRO_RPC?: string;
+  /** Optional EIP-155 chain id for EVM (e.g. 11155111 sepolia, 1 mainnet). */
+  METRO_CHAIN_ID?: string;
   // "1" arms real-value mainnet (counsel) — also gates NFT-tier cosmetics.
-  // Required when METRO_RPC points at mainnet-beta, else settlement stays sim.
+  // Required when METRO_RPC points at mainnet, else settlement stays sim.
   METRO_MAINNET_ARMED?: string;
 }
 

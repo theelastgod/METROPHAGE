@@ -9,12 +9,10 @@
 // AUTHORITY: the server owns every balance and authorizes every settlement. The client
 // never mints, never reports a balance, and cannot double-spend — withdrawals debit
 // atomically (a conditional UPDATE) and deposits are claim-once (tx_sig is a PRIMARY
-// KEY). The actual Solana settlement is the `Settlement` seam, stubbed as devnet-sim
-// here so the whole ledger is headlessly testable; step 2b swaps in real devnet ops.
+// KEY). Settlement is a pluggable seam: EVM ERC-20 (preferred for ETH $METRO),
+// Solana SPL (legacy), or devnet-sim for headless smoke tests.
 //
-// NOT YET (mainnet blockers, by design): real wallet-ownership auth (Sign-In-With-
-// Solana) bound to an AUTHENTICATED game identity — Phase 4 login is name-only, which
-// is fine for devnet rehearsal but must be hardened before real value moves.
+// Wallet proof required for live settlement (personal_sign / SIWS).
 
 import type { D1Database } from "@cloudflare/workers-types";
 
@@ -29,19 +27,16 @@ export const BRIDGE = {
   // every round trip leaves ~12% of the tokens in the pool. That float is the yield that
   // pays players who only ever earn credits in-game and never deposit.
   //
-  // $0-LAUNCH INVARIANT: the treasury never spends SOL. Withdrawals are CLAIMS — the
-  // server partially signs a payout tx whose FEE PAYER is the player; the player submits
-  // it and pays the network fee + their own token-account rent. Deposits are player-sent
-  // transfers (sender pays). The developer's on-chain cost to run this bridge is zero.
+  // Rates are chain-agnostic (off-chain ledger). On Solana, treasury never spends SOL
+  // (player fee-payer claims). On EVM, treasury signs fully-formed ERC-20 transfers and
+  // needs a small ETH gas float; player still pays gas for deposits.
   depositCreditsPerMetro: 110, // credits granted per 1 $METRO deposited
   withdrawCreditsPerMetro: 125, // credits burned per 1 $METRO withdrawn
   minWithdrawCredits: 500, // withdraw floor
   withdrawCooldownMs: 60_000, // min gap between a player's withdrawals
   dailyCapCredits: 100_000, // max credits withdrawn per player per rolling 24h
-  metroDecimals: 6, // SPL token precision for rounding amounts
-  // A claim the player never submits refunds after this TTL. It must dwarf Solana's
-  // blockhash validity (~90s): once expired+refunded, the old partially-signed tx is
-  // guaranteed dead on-chain, so refund-then-land double-pays cannot happen.
+  metroDecimals: 6, // display/ledger precision (ERC-20 decimals read on-chain)
+  // Abandoned claims refund after this TTL (must exceed typical block/finality windows).
   claimTtlMs: 10 * 60_000,
 } as const;
 
@@ -84,11 +79,13 @@ export async function poolInfo(db: D1Database): Promise<BridgeResponse> {
 }
 
 const BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-/** A Solana address (wallet or mint) is base58 that decodes to exactly 32 bytes. */
+/** EVM address (preferred for ETH $METRO) or legacy Solana base58 pubkey. */
 export function isValidWallet(s: string): boolean {
-  if (!s || s.length < 32 || s.length > 44) return false;
+  const a = (s || "").trim();
+  if (/^0x[a-fA-F0-9]{40}$/.test(a)) return true;
+  if (!a || a.length < 32 || a.length > 44) return false;
   const bytes: number[] = [0];
-  for (const ch of s) {
+  for (const ch of a) {
     const v = BASE58.indexOf(ch);
     if (v < 0) return false;
     let carry = v;
@@ -102,7 +99,7 @@ export function isValidWallet(s: string): boolean {
       carry >>= 8;
     }
   }
-  for (let i = 0; i < s.length && s[i] === "1"; i++) bytes.push(0);
+  for (let i = 0; i < a.length && a[i] === "1"; i++) bytes.push(0);
   return bytes.length === 32;
 }
 
@@ -116,9 +113,9 @@ export interface SettleResult {
 }
 
 export interface Settlement {
-  /** Build the payout claim: a tx paying `metro` $METRO treasury -> `wallet`, with the
-   *  player as FEE PAYER, partially signed by the treasury. The treasury spends no SOL —
-   *  it only signs. The player submits it (and pays the fee + their own ATA rent). */
+  /** Build a payout claim the client can broadcast.
+   *  - EVM: fully signed raw ERC-20 transfer (treasury → wallet); client eth_sendRawTransaction
+   *  - Solana: partially signed transfer (player fee-payer); client wallet signs+sends */
   buildClaim(wallet: string, metro: number): Promise<SettleResult>;
   /** Verify a submitted claim landed on-chain: treasury paid exactly `metro` to `wallet`. */
   verifyClaim(txSig: string, wallet: string, metro: number): Promise<SettleResult>;
@@ -127,8 +124,7 @@ export interface Settlement {
 }
 
 /** Devnet-sim settlement: simulates the chain so the off-chain accounting is fully
- *  testable headlessly. The real Solana settlement (solana.ts) swaps in when the
- *  treasury env is configured. */
+ *  testable headlessly. Real settlement (evm.ts / solana.ts) swaps in when configured. */
 export const simSettlement: Settlement = {
   async buildClaim() {
     return { ok: true, claimTx: "devnet-sim-claim:" + crypto.randomUUID() };

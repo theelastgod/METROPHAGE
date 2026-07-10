@@ -1,19 +1,15 @@
-// METROPHAGE — claim submission for $0-launch withdrawals (Phase 5).
+// METROPHAGE — claim submission for bridge withdrawals.
 //
-// A withdrawal is a CLAIM: the server debits credits, reserves the pool, and returns a
-// payout tx partially signed by the treasury with the PLAYER as fee payer. This module
-// has the player's wallet sign + submit it — the player pays the network fee (~0.000005
-// SOL) and their own token-account rent; the treasury never spends SOL.
-//
-// @solana/web3.js is imported DYNAMICALLY so it lives in its own lazy chunk: the game
-// bundle stays free of Solana weight, and the chunk only ever loads inside the gated
-// bridge panel when a real (non-sim) claim needs submitting.
+// EVM: claimTx is a fully signed raw tx (treasury pays gas). Broadcast via
+// eth_sendRawTransaction — no wallet signature needed.
+// Solana: claimTx is base64 partial-signed; wallet signs + sends (player pays fee).
 
-import { getInjectedProvider } from "./wallet";
+import { getInjectedProvider, connectedChain } from "./wallet";
 
 interface SigningProvider {
   signAndSendTransaction?(tx: unknown): Promise<{ signature: string }>;
   signTransaction?(tx: unknown): Promise<{ serialize(): Uint8Array }>;
+  request?(args: { method: string; params?: unknown[] }): Promise<unknown>;
 }
 
 export interface ClaimSubmitResult {
@@ -22,20 +18,54 @@ export interface ClaimSubmitResult {
   reason?: string;
 }
 
-/** Sign + submit a base64 claim tx with the injected wallet. */
-export async function submitClaim(claimTxB64: string, rpc: string): Promise<ClaimSubmitResult> {
+/** Sign + submit (Solana) or broadcast (EVM raw) a claim. */
+export async function submitClaim(claimTx: string, rpc: string): Promise<ClaimSubmitResult> {
+  // EVM signed raw txs start with 0x; sim claims are tagged.
+  if (claimTx.startsWith("devnet-sim-claim:")) {
+    return { ok: true, sig: `sim:${Date.now()}` };
+  }
+  if (claimTx.startsWith("0x") && claimTx.length > 100) {
+    return broadcastEvmRaw(claimTx, rpc);
+  }
+  return submitSolanaClaim(claimTx, rpc);
+}
+
+async function broadcastEvmRaw(rawTx: string, rpc: string): Promise<ClaimSubmitResult> {
+  try {
+    // Prefer wallet eth_sendRawTransaction if present; else public RPC.
+    const p = getInjectedProvider() as SigningProvider | null;
+    if (p?.request && connectedChain() === "evm") {
+      try {
+        const hash = (await p.request({ method: "eth_sendRawTransaction", params: [rawTx] })) as string;
+        if (hash) return { ok: true, sig: hash };
+      } catch {
+        /* fall through to public RPC */
+      }
+    }
+    const res = await fetch(rpc, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_sendRawTransaction", params: [rawTx] }),
+    }).then((r) => r.json() as Promise<{ result?: string; error?: { message?: string } }>);
+    if (res.error) return { ok: false, reason: res.error.message ?? "eth_sendRawTransaction failed" };
+    if (!res.result) return { ok: false, reason: "no tx hash returned" };
+    return { ok: true, sig: res.result };
+  } catch (e) {
+    return { ok: false, reason: String((e as Error)?.message ?? e).slice(0, 160) };
+  }
+}
+
+async function submitSolanaClaim(claimTxB64: string, rpc: string): Promise<ClaimSubmitResult> {
   const p = getInjectedProvider() as SigningProvider | null;
   if (!p) return { ok: false, reason: "no wallet to sign with" };
   try {
-    const { Transaction, Connection } = await import("@solana/web3.js"); // lazy chunk
+    const { Transaction, Connection } = await import("@solana/web3.js");
     const bytes = Uint8Array.from(atob(claimTxB64), (c) => c.charCodeAt(0));
     const tx = Transaction.from(bytes);
-    // preferred: the wallet signs AND submits (it picks its own RPC)
     if (p.signAndSendTransaction) {
       const { signature } = await p.signAndSendTransaction(tx);
       return { ok: true, sig: signature };
     }
-    // fallback: wallet signs, we submit through the public RPC
     if (p.signTransaction) {
       const signed = await p.signTransaction(tx);
       const conn = new Connection(rpc, "confirmed");

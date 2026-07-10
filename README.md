@@ -43,19 +43,19 @@ Four classes, each with a full server-validated kit:
   per-player progress inside the shared world, journal + waypoints.
 - **Seasonal meltdown** — the save-wide Singularity tips into a new era.
 
-## The $METRO economy (pump.fun launch reality)
+## The $METRO economy
 
-$METRO is a fixed-supply token — **the developer cannot seed the treasury**.
-The bridge encodes that honestly:
+$METRO is a tradeable on-chain token bridged to server-authoritative `credits`.
+**Preferred settlement: Ethereum ERC-20** (MetaMask). Solana SPL remains supported.
 
-- In-game currency is off-chain, server-authoritative `credits`.
+- In-game currency is off-chain `credits`.
 - The **cash-out pool is 100% player-funded**: deposits fill it, withdrawals
-  drain it, and it starts at ZERO. Withdrawals reserve atomically and refund
-  when the pool can't cover them.
-- The **rate spread** funds the game: deposit 1 ◈ → 110 ₵, withdraw 125 ₵ → 1 ◈.
-  ~12% of every round trip stays in the pool and pays players who only earn.
-- Mainnet-value settlement stays disarmed (`METRO_MAINNET_ARMED`) until counsel
-  signs off. Devnet rehearsal first. See `SHIPPING.md`.
+  drain it, and it starts at ZERO.
+- **Rate spread**: deposit 1 ◈ → 110 ₵, withdraw 125 ₵ → 1 ◈.
+- EVM: treasury signs ERC-20 payouts (needs a little ETH for gas); players pay
+  gas on deposits. Solana legacy: player fee-payer claims.
+- Mainnet stays disarmed (`METRO_MAINNET_ARMED`) until counsel signs off.
+  See `SHIPPING.md` §5.
 
 ## Develop
 

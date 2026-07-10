@@ -87,28 +87,38 @@ at all: `node scripts/smoke.mjs metro` (devnet-sim settlement).
 
 ## 5. Entering the $METRO contract address (when the token is live)
 
+Preferred chain: **Ethereum ERC-20** (`0x…` mint). Legacy **Solana SPL** still works
+if the mint is base58.
+
 Two layers, **in this order**:
 
 **Layer 1 — server secrets (FIRST):**
 
 ```sh
 cd server
-npx wrangler secret put METRO_DEVNET_MINT      # paste the CA
-npx wrangler secret put METRO_TREASURY_SECRET  # base64 64-byte treasury keypair
-npx wrangler secret put METRO_RPC              # RPC for the token's cluster
-npm run deploy                                 # redeploy so secrets take effect
+# Ethereum (preferred)
+npx wrangler secret put METRO_MINT              # ERC-20 address 0x…
+npx wrangler secret put METRO_TREASURY_SECRET   # treasury private key 0x… (hex)
+npx wrangler secret put METRO_RPC               # e.g. https://ethereum-sepolia-rpc.publicnode.com
+# optional: npx wrangler secret put METRO_CHAIN_ID  # 11155111 sepolia · 1 mainnet
+npm run deploy
 ```
 
-The treasury keypair receives deposits + signs claims (it never needs SOL).
-Devnet rehearsal: `node scripts/devnet-setup.mjs` generates one and prints the
-env lines. Real launch: generate a FRESH keypair, never reuse devnet's — it
-custodies every player deposit. `/metro/pool` publishes its public address.
+Treasury must hold the ERC-20 for cash-outs and a **small ETH balance for gas**
+(EVM payouts are treasury-signed transfers). Deposits: players transfer ERC-20
+to the treasury address published by `/metro/pool`.
+
+Legacy Solana: mint base58 + treasury secret as base64 64-byte keypair + Solana RPC.
 
 **Layer 2 — client build env (SECOND):**
 
 ```sh
-VITE_SERVER_URL=wss://<worker-url>/ws VITE_METRO_MINT=<the CA> npm run build
-npx wrangler pages deploy dist
+VITE_SERVER_URL=wss://<worker-url>/ws \
+VITE_METRO_MINT=<0x ERC-20 or Solana mint> \
+VITE_METRO_CLUSTER=sepolia \
+VITE_METRO_RPC=https://ethereum-sepolia-rpc.publicnode.com \
+npm run build
+npx wrangler pages deploy dist --project-name=metrophagev1 --branch=main
 ```
 
 `VITE_METRO_MINT` is the master switch — set, the ◈ bridge panel appears;

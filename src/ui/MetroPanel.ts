@@ -7,9 +7,10 @@
 // finalizes. Against the devnet-sim settlement the claim auto-confirms, so the whole
 // flow works with no chain at all.
 
-import { metroEnabled, getMetroStatus, metroApiBase, metroRpc, fmtMetro } from "../economy/metro";
-import { walletAvailable, connectWallet, disconnectWallet, connectedWallet } from "../economy/wallet";
+import { metroEnabled, getMetroStatus, metroApiBase, metroRpc, fmtMetro, metroIsEvm } from "../economy/metro";
+import { walletAvailable, connectWallet, disconnectWallet, connectedWallet, signWalletLogin } from "../economy/wallet";
 import { submitClaim } from "../economy/claim";
+import { loginMessage } from "../net/protocol";
 
 const short = (a: string) => (a.length > 10 ? `${a.slice(0, 4)}…${a.slice(-4)}` : a);
 
@@ -75,10 +76,10 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
   panel.innerHTML = `
     <div class="head">
       <h3>◈ $METRO BRIDGE <span class="x" id="m-x">✕</span></h3>
-      <div class="sub">₵ = play currency · ◈ = on-chain bridge · pool is player-funded (may be empty) · mainnet ${st.mainnetLive ? "LIVE" : "OFF until counsel"} · ${st.enabled ? "mint set" : "awaiting CA"}</div>
+      <div class="sub">₵ = play · ◈ = on-chain $METRO (${st.chain === "evm" ? "Ethereum ERC-20" : st.chain === "solana" ? "Solana SPL" : "off"}) · pool player-funded · mainnet ${st.mainnetLive ? "LIVE" : "OFF until counsel"}</div>
     </div>
     <div class="body">
-      <div class="row"><span class="muted">network</span><span class="pill">${st.cluster}${st.mainnetLive ? " · ARMED" : st.mainnetArmed ? " · arm flag only" : " · not armed"}</span></div>
+      <div class="row"><span class="muted">network</span><span class="pill">${st.chain.toUpperCase()} · ${st.cluster}${st.mainnetLive ? " · ARMED" : st.mainnetArmed ? " · arm flag only" : " · not armed"}</span></div>
       <div class="row"><span class="muted">cash-out pool</span><span id="m-pool" class="metro-big">—</span></div>
       <div class="row"><span class="muted">rates</span><span class="pill" id="m-rates">—</span></div>
       <div class="strip" id="m-phase">loading pool status…</div>
@@ -132,13 +133,16 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
       pool = p;
       $("m-pool").textContent = `◈ ${fmtMetro(p.poolMetro)}`;
       $("m-rates").textContent = `in: 1◈ → ${p.depositCreditsPerMetro}₵ · out: ${p.withdrawCreditsPerMetro}₵ → 1◈`;
+      const chainLabel = p.settlement === "evm" ? "Ethereum ERC-20" : p.settlement === "solana" ? "Solana SPL" : "sim";
       $("m-phase").textContent =
         p.phase === "bootstrap"
-          ? "HONEST LAUNCH — cash-out pool starts EMPTY and is 100% player-funded. Withdrawals refund if the pool can't cover them. Earn ₵ in-game; cash out only as others deposit. Not a faucet."
+          ? `HONEST LAUNCH (${chainLabel}) — cash-out pool starts EMPTY and is 100% player-funded. Not a faucet.`
           : p.settlement === "sim"
-            ? "REHEARSAL SETTLEMENT — sim mode (not real chain value). Pool still player-funded; withdrawals may fail if empty."
-            : "POOL OPEN — withdrawals from the player-funded pool, first-come. Not guaranteed; empty pool = refund.";
-      $("m-treasury").textContent = p.treasury ? short(p.treasury) : "rehearsal — any tx signature is accepted";
+            ? "REHEARSAL SETTLEMENT — sim mode (not real chain value). Pool still player-funded."
+            : p.settlement === "evm"
+              ? "POOL OPEN (ETH) — deposit ERC-20 to treasury · cash-out broadcasts a treasury-signed transfer (treasury pays gas)."
+              : "POOL OPEN (SOL) — player-funded pool, first-come. Empty pool = refund.";
+      $("m-treasury").textContent = p.treasury ? short(p.treasury) : "rehearsal — any tx hash is accepted";
       if (p.treasury) $("m-treasury").dataset.full = p.treasury;
     } catch {
       /* pool row keeps its last value; account fetch reports reachability */
@@ -223,6 +227,15 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
     ($("m-amt") as HTMLInputElement).value = String(max);
   };
 
+  /** Optional wallet proof for live settlement (EVM personal_sign / Solana SIWS). */
+  async function walletAuth(wallet: string): Promise<{ sig?: string; ts?: number }> {
+    if (pool?.settlement === "sim" || !pool?.settlement) return {};
+    const ts = Date.now();
+    const signed = await signWalletLogin(loginMessage(wallet, ts), wallet);
+    if (!signed) return {};
+    return { sig: signed.signature, ts };
+  }
+
   $("m-deposit").onclick = async () => {
     const player = getPlayerId();
     const wallet = currentWallet();
@@ -230,14 +243,15 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
     const metro = Number(($("m-dep-amt") as HTMLInputElement).value);
     if (!player) return status("log in online first");
     if (!wallet) return status("connect or paste a wallet address");
-    if (!txSig) return status("paste the tx signature of your $METRO transfer");
+    if (!txSig) return status(metroIsEvm ? "paste the ERC-20 transfer tx hash (0x…)" : "paste the tx signature of your $METRO transfer");
     if (!(metro > 0)) return status("enter how much $METRO you sent");
     status("verifying deposit on-chain…");
     try {
+      const auth = await walletAuth(wallet);
       const r = await fetch(`${metroApiBase()}/metro/deposit`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ player, wallet, txSig, metro }),
+        body: JSON.stringify({ player, wallet, txSig, metro, ...auth }),
       }).then((x) => x.json());
       status(r.ok ? `✓ deposited ◈ ${fmtMetro(r.metro)} → +${r.credits}₵ (pool grew for everyone)` : `✗ ${r.reason}`);
       void refresh();
@@ -262,8 +276,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
     return last;
   };
 
-  // $0-LAUNCH WITHDRAW: the server returns a CLAIM — a payout tx the player signs and
-  // pays the (tiny) network fee on. The treasury only ever signs; it never spends SOL.
+  // Withdraw: server returns a claim — EVM fully-signed raw tx (broadcast) or Solana partial.
   $("m-withdraw").onclick = async () => {
     const player = getPlayerId();
     const wallet = currentWallet();
@@ -273,25 +286,32 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
     if (!(credits > 0)) return status("enter a credit amount");
     status("requesting cash-out claim…");
     try {
+      const auth = await walletAuth(wallet);
       const r = await fetch(`${metroApiBase()}/metro/withdraw`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ player, wallet, credits }),
+        body: JSON.stringify({ player, wallet, credits, ...auth }),
       }).then((x) => x.json());
       if (!r.ok) {
         status(`✗ ${r.reason}`);
         void refresh();
         return;
       }
-      // rehearsal settlement — no chain, confirm straight through
-      if (pool?.settlement !== "solana" || String(r.claimTx).startsWith("devnet-sim-claim:")) {
+      const sim =
+        !pool?.settlement ||
+        pool.settlement === "sim" ||
+        String(r.claimTx).startsWith("devnet-sim-claim:");
+      if (sim) {
         const c = await confirmClaim(player, r.withdrawId, `sim:${r.withdrawId}:${Date.now()}`);
         status(c.ok ? `✓ cashed out ${r.credits}₵ → ◈ ${fmtMetro(r.metro)} (rehearsal settlement)` : `✗ ${c.reason}`);
         void refresh();
         return;
       }
-      // real chain: the wallet signs + submits; the player pays the network fee
-      status("sign the payout in your wallet — you pay the network fee (≈0.000005 SOL)…");
+      status(
+        pool?.settlement === "evm"
+          ? "broadcasting treasury-signed ERC-20 payout…"
+          : "sign the payout in your wallet — you pay the network fee…",
+      );
       const sub = await submitClaim(r.claimTx, metroRpc());
       if (!sub.ok || !sub.sig) {
         status(`✗ ${sub.reason ?? "claim not submitted"} — unclaimed credits auto-refund in ~10 min`);
