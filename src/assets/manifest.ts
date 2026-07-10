@@ -39,6 +39,12 @@ export const SPARK_KEY = "spark";
 // Real combat FX sliced from the "Comprehensive" Special-effects atlas.
 export const FX_MUZZLE_KEY = "fx_muzzle";
 export const FX_IMPACT_KEY = "fx_impact";
+// Real loot pickups + projectiles + ICE-dive guardian (Resources character-art pack).
+export const PICKUP_COIN_KEY = "pickup_coin";
+export const PICKUP_CORE_KEY = "pickup_core";
+export const BULLET_PLAYER_KEY = "bullet_player";
+export const BULLET_ENEMY_KEY = "bullet_enemy";
+export const GUARDIAN_WRAITH_KEY = "guardian_wraith";
 
 // Real top-down street props (sliced from the CyberPunk environment pack) — scattered as
 // non-colliding decals in the online districts (see OnlineScene).
@@ -105,8 +111,10 @@ export const ASSETS: Record<string, AssetEntry[]> = {
     { key: COP_KEY, file: null, ...CHAR },
     { key: BOSS_KEY, file: null, ...CHAR }, // code-authored hulking sentinel
     { key: NPC_KEY, file: null, ...CHAR }, // code-authored (see COP_KEY note)
-    { key: BULLET_KEY, file: null }, // procedural (no bullet art in pack)
+    { key: BULLET_KEY, file: null }, // procedural (fallback; real art via BULLET_PLAYER/ENEMY_KEY)
     { key: AGENT_KEY, file: null }, // procedural light figure (tinted crowd)
+    // Real floating ICE-dive guardian wraith (Resources pack) — 64px frames, frame-driven.
+    { key: GUARDIAN_WRAITH_KEY, file: "assets/sprites/guardian_wraith.png", frameWidth: 64, frameHeight: 64 },
   ],
   objects: [
     // Authored neon-noir infection nodes + hazard crate + streetlight (AI/pixel packs).
@@ -114,12 +122,17 @@ export const ASSETS: Record<string, AssetEntry[]> = {
     { key: NODE_INFECTED_KEY, file: "assets/objects/node_infected.png" },
     { key: CRATE_KEY, file: "assets/objects/crate.png" },
     { key: STREETLIGHT_KEY, file: "assets/objects/streetlight.png" },
+    // Real animated loot pickups (Resources pack) — 16px frames, frame-driven in-scene.
+    { key: PICKUP_COIN_KEY, file: "assets/objects/pickup_coin.png", frameWidth: 16, frameHeight: 16 },
+    { key: PICKUP_CORE_KEY, file: "assets/objects/pickup_core.png", frameWidth: 16, frameHeight: 16 },
   ],
   fx: [
     { key: GLOW_KEY, file: null }, // code-authored radial glow
     { key: SPARK_KEY, file: null }, // code-authored hit star
     { key: FX_MUZZLE_KEY, file: "assets/fx/fx_muzzle.png" }, // real muzzle flash (pack)
     { key: FX_IMPACT_KEY, file: "assets/fx/fx_impact.png" }, // real kill explosion (pack)
+    { key: BULLET_PLAYER_KEY, file: "assets/fx/bullet_player.png" }, // real player round (pack)
+    { key: BULLET_ENEMY_KEY, file: "assets/fx/bullet_enemy.png" }, // real HSS energy bolt (pack)
   ],
   portraits: [
     // Premium dialogue portraits (neon-noir runner + FIXER contact).

@@ -18,7 +18,21 @@ import OnlineContracts from "../ui/OnlineContracts";
 import OnlineChatPanel from "../ui/OnlineChatPanel";
 import { COLORS, TILE, VIEW_W, VIEW_H, NPC, PLAYER, HEAT, uiDim, uiFont, DISTRICT_GRID_W, DISTRICT_GRID_H, DISTRICT_SCALE } from "../config";
 import { effectiveMods } from "../game/items";
-import { PLAYER_KEY, COP_KEY, BULLET_KEY, GLOW_KEY, NODE_KEY, PROP_STREETLIGHT_KEY, PROP_VENDING_KEY, PROP_AC_KEY } from "../assets/manifest";
+import {
+  PLAYER_KEY,
+  COP_KEY,
+  BULLET_KEY,
+  GLOW_KEY,
+  NODE_KEY,
+  PROP_STREETLIGHT_KEY,
+  PROP_VENDING_KEY,
+  PROP_AC_KEY,
+  PICKUP_COIN_KEY,
+  PICKUP_CORE_KEY,
+  BULLET_PLAYER_KEY,
+  BULLET_ENEMY_KEY,
+  GUARDIAN_WRAITH_KEY,
+} from "../assets/manifest";
 import { driveChar } from "../assets/anim";
 import {
   PLAYER_HP,
@@ -402,7 +416,7 @@ export default class OnlineScene extends Phaser.Scene {
   private eventOverlay!: Phaser.GameObjects.Rectangle; // full-screen ambience wash per event
   private eventOverlayAlpha = 0; // eased toward the active event's target each frame
   private shotSprites = new Map<number, Phaser.GameObjects.Image>();
-  private pickupSprites = new Map<number, Phaser.GameObjects.Image>();
+  private pickupSprites = new Map<number, Phaser.GameObjects.Image | Phaser.GameObjects.Sprite>();
   private nodeSprites = new Map<number, Phaser.GameObjects.Sprite>();
   private nodeG!: Phaser.GameObjects.Graphics;
   private hazardG!: Phaser.GameObjects.Graphics; // telegraphed boss AoE rings (raid mechanics)
@@ -3795,7 +3809,11 @@ export default class OnlineScene extends Phaser.Scene {
     for (const [id, e] of this.net.enemies) {
       let s = this.enemySprites.get(id);
       if (!s) {
-        s = this.add.sprite(e.x, e.y, COP_KEY, 0).setDepth(8).setAlpha(0).setScale(1.15);
+        // ICE-dive guardians render as the floating wraith (Resources pack) — a frozen-mind
+        // spectre, not an HSS trooper. Non-boss dive enemies only; falls back to COP_KEY.
+        const wraith = this.isDive && !e.boss && this.textures.exists(GUARDIAN_WRAITH_KEY);
+        s = this.add.sprite(e.x, e.y, wraith ? GUARDIAN_WRAITH_KEY : COP_KEY, 0).setDepth(8).setAlpha(0).setScale(wraith ? 0.95 : 1.15);
+        if (wraith) s.setData("wraith", this.textures.get(GUARDIAN_WRAITH_KEY).frameTotal - 1);
         this.tweens.add({ targets: s, alpha: 1, duration: 260 }); // AOI arrivals fade in
         s.setData("shadow", this.groundShadow(e.x, e.y, 0.48));
         this.enemySprites.set(id, s);
@@ -3838,8 +3856,16 @@ export default class OnlineScene extends Phaser.Scene {
       }
       const edx = e.tx - e.x;
       const edy = e.ty - e.y;
-      driveChar(s, edx, edy, edx * edx + edy * edy > 0.4); // walk from their heading
-      s.setPosition(e.x, e.y);
+      const wraithFrames = s.getData("wraith") as number | undefined;
+      if (wraithFrames) {
+        // wraiths float in place (frame cycle) + bob + face travel; no walk anim
+        s.setFrame(Math.floor(this.time.now / 160 + id) % wraithFrames);
+        s.setFlipX(edx < -0.1);
+        s.setPosition(e.x, e.y + Math.sin(this.time.now * 0.004 + id) * 3);
+      } else {
+        driveChar(s, edx, edy, edx * edx + edy * edy > 0.4); // walk from their heading
+        s.setPosition(e.x, e.y);
+      }
       (s.getData("shadow") as Phaser.GameObjects.Image | undefined)?.setPosition(e.x, e.y + (e.boss ? 26 : 12));
       const aura = s.getData("aura") as Phaser.GameObjects.Image | undefined;
       aura?.setPosition(e.x, e.y + 10).setAlpha(0.24 + Math.sin(this.time.now / 260) * 0.08);
@@ -3876,10 +3902,14 @@ export default class OnlineScene extends Phaser.Scene {
     for (const [id, sh] of this.net.shots) {
       let s = this.shotSprites.get(id);
       if (!s) {
-        s = this.add
-          .image(sh.x, sh.y, BULLET_KEY)
-          .setDepth(9)
-          .setTint(sh.team === 0 ? COLORS.bullet : COLORS.enemy);
+        // real pre-coloured projectile art (Resources pack): player round vs HSS bolt,
+        // no tint. Falls back to the tinted procedural bullet when the art isn't loaded.
+        const artKey = sh.team === 0 ? BULLET_PLAYER_KEY : BULLET_ENEMY_KEY;
+        if (this.textures.exists(artKey)) {
+          s = this.add.image(sh.x, sh.y, artKey).setDepth(9).setRotation(Math.atan2(sh.ty - sh.y, sh.tx - sh.x));
+        } else {
+          s = this.add.image(sh.x, sh.y, BULLET_KEY).setDepth(9).setTint(sh.team === 0 ? COLORS.bullet : COLORS.enemy);
+        }
         this.shotSprites.set(id, s);
       }
       s.setPosition(sh.x, sh.y);
@@ -3900,11 +3930,17 @@ export default class OnlineScene extends Phaser.Scene {
       let s = this.pickupSprites.get(id);
       if (!s) {
         const col = pu.kind === PICKUP_CORE ? COLORS.neonCyan : COLORS.neonYellow;
-        s = this.add
-          .image(pu.x, pu.y, GLOW_KEY)
-          .setBlendMode(Phaser.BlendModes.ADD)
-          .setTint(col)
-          .setDepth(7);
+        // real animated loot art (Resources pack) with a neon halo behind; falls back to
+        // the tinted glow blob if the texture is missing (procedural / load failure)
+        const artKey = pu.kind === PICKUP_CORE ? PICKUP_CORE_KEY : PICKUP_COIN_KEY;
+        if (this.textures.exists(artKey)) {
+          const halo = this.add.image(pu.x, pu.y, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(col).setDepth(6.9).setScale(0.42).setAlpha(0.5);
+          s = this.add.sprite(pu.x, pu.y, artKey, 0).setDepth(7).setScale(1.6);
+          s.setData("halo", halo);
+          s.setData("frames", this.textures.get(artKey).frameTotal - 1); // frameTotal includes __BASE
+        } else {
+          s = this.add.image(pu.x, pu.y, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(col).setDepth(7);
+        }
         s.setData("kind", pu.kind);
         this.pickupSprites.set(id, s);
       }
@@ -3918,8 +3954,16 @@ export default class OnlineScene extends Phaser.Scene {
         vx = pu.x + dx * pull * 0.58;
         vy = pu.y + dy * pull * 0.58;
       }
+      const frames = s.getData("frames") as number | undefined;
+      if (frames && frames > 0 && (s as Phaser.GameObjects.Sprite).setFrame) {
+        (s as Phaser.GameObjects.Sprite).setFrame(Math.floor(this.time.now / 90 + id) % frames);
+        s.setScale(1.5 + 0.12 * Math.sin(this.time.now * 0.006 + id));
+        const halo = s.getData("halo") as Phaser.GameObjects.Image | undefined;
+        halo?.setPosition(vx, vy).setAlpha(0.4 + 0.12 * Math.sin(this.time.now * 0.006 + id));
+      } else {
+        s.setScale(0.5 + 0.08 * Math.sin(this.time.now * 0.006 + id));
+      }
       s.setPosition(vx, vy);
-      s.setScale(0.5 + 0.08 * Math.sin(this.time.now * 0.006 + id));
     }
     for (const [id, s] of this.pickupSprites)
       if (!this.net.pickups.has(id)) {
@@ -3933,6 +3977,7 @@ export default class OnlineScene extends Phaser.Scene {
           this.particles?.spark(sx, sy, col, 1.35);
           juiceShake(this, 38, 0.0016);
         }
+        (s.getData("halo") as Phaser.GameObjects.Image | undefined)?.destroy();
         s.destroy();
         this.pickupSprites.delete(id);
       }
