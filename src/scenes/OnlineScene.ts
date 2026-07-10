@@ -1793,11 +1793,21 @@ export default class OnlineScene extends Phaser.Scene {
    *  connected wallet signs the login message → a durable wallet account; otherwise,
    *  or if the user declines the signature, we connect as a guest keyed by callsign. */
   private async signInThenConnect() {
-    const addr = connectedWallet();
+    const addr = connectedWallet() || (this.registry.get("walletAddress") as string | undefined);
     if (addr) {
-      const ts = Date.now();
-      const signed = await signWalletLogin(loginMessage(addr, ts));
-      if (signed) this.net.setAuth({ wallet: addr, sig: signed.signature, ts });
+      // Reuse a fresh title-screen MetaMask proof when still inside the ±2 min window.
+      const cached = this.registry.get("walletProof") as { wallet: string; sig: string; ts: number } | undefined;
+      if (cached?.wallet && cached.sig && Math.abs(Date.now() - cached.ts) < 90_000) {
+        this.net.setAuth({ wallet: cached.wallet, sig: cached.sig, ts: cached.ts });
+      } else {
+        const ts = Date.now();
+        const signed = await signWalletLogin(loginMessage(addr, ts), addr);
+        if (signed) {
+          const proof = { wallet: signed.address, sig: signed.signature, ts };
+          this.net.setAuth(proof);
+          this.registry.set("walletProof", proof);
+        }
+      }
     }
     this.net.connect();
   }

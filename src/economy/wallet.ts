@@ -19,8 +19,17 @@ let lastConnectedAddress: string | null = null;
 let lastChain: "evm" | "solana" | null = null;
 
 function getEvm(): EvmProvider | null {
-  const w = window as unknown as { ethereum?: EvmProvider };
-  return w.ethereum ?? null;
+  const w = window as unknown as {
+    ethereum?: EvmProvider & { providers?: EvmProvider[]; isMetaMask?: boolean };
+  };
+  const eth = w.ethereum;
+  if (!eth) return null;
+  // Multi-injected (MetaMask + Phantom): prefer true MetaMask.
+  if (Array.isArray(eth.providers) && eth.providers.length) {
+    const mm = eth.providers.find((p) => p.isMetaMask);
+    if (mm) return mm;
+  }
+  return eth;
 }
 
 function getSolana(): SolanaProvider | null {

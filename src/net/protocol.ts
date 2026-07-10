@@ -52,9 +52,8 @@ export interface PlayerLook {
 }
 
 /**
- * The exact message a client signs with its Solana wallet to prove identity at login.
- * Shared by the client (signs) and the server (verifies) so the bytes always match.
- * The timestamp bounds replay; the server additionally checks freshness.
+ * The exact message a client signs with MetaMask (personal_sign) or a Solana wallet
+ * at login / identity. Client and server must use the same string; server checks ts freshness.
  */
 export function loginMessage(wallet: string, ts: number): string {
   return `METROPHAGE login\nwallet: ${wallet}\nts: ${ts}`;

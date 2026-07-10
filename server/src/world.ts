@@ -2314,9 +2314,8 @@ export class WorldDO {
       | undefined,
     reject: (text: string) => void,
   ) {
-    // Identity: a signature-verified Solana wallet is the durable id; otherwise a guest
-    // id derived from the callsign (dev / no-wallet play). A claimed-but-unverified
-    // wallet is rejected so a stranger can't assume someone else's account.
+    // Identity: a signature-verified wallet (MetaMask EVM or Solana) is the durable id;
+    // otherwise a guest id derived from the callsign. Unverified claimed wallets rejected.
     let id: string;
     if (proof?.wallet || proof?.sig) {
       const wid =

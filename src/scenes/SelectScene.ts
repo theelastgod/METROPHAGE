@@ -120,7 +120,7 @@ export default class SelectScene extends Phaser.Scene {
     optBtn.on("pointerdown", () => this.options.toggle());
 
     this.add
-      .text(VIEW_W / 2, MENU_FOOTER_Y, "play free offline · wallet optional for shared city & save", bodyFont(11, { color: "#5a6172" }))
+      .text(VIEW_W / 2, MENU_FOOTER_Y, "play free offline · MetaMask sign-up for multiplayer save", bodyFont(11, { color: "#5a6172" }))
       .setOrigin(0.5);
 
     this.input.keyboard?.on("keydown", (e: KeyboardEvent) => {
@@ -195,45 +195,76 @@ export default class SelectScene extends Phaser.Scene {
     this.clearActionLayer();
     this.bodyText.setVisible(false);
     const hasWallet = walletAvailable();
-    // PLAY FIRST — wallet is optional upgrade for multiplayer identity / cloud save.
-    // The old gate led with "install Phantom" and lost casual players before any combat.
+    // MetaMask-first sign-up for durable multiplayer identity; offline still available.
     this.walletPanel.show({
       step: "connect",
       status: hasWallet ? "ready" : "offline",
-      statusText: hasWallet ? "wallet ready · play free either way" : "no wallet needed to start",
-      headline: "Jump in",
+      statusText: hasWallet ? "MetaMask ready · free message sign-in" : "install MetaMask or play offline",
+      headline: "Create your runner",
       body: hasWallet
-        ? "Play offline now, or connect your wallet to save a runner to this address and join the shared city. Connect is free — no spend, no gas."
-        : "Start offline in seconds — class, combat, city preview. Link Phantom / Backpack / Solflare later for multiplayer identity and cloud save.",
+        ? "Sign up with MetaMask to lock a character to your address and join the shared city. One free message — no gas, no spend. Or play offline without a wallet."
+        : "Install MetaMask to save a multiplayer identity, or jump in offline now — class, combat, city preview. You can link a wallet later.",
       wallet: null,
       actions: this.walletActions([
-        {
-          label: "◢ PLAY NOW",
-          sub: "class select · drill & city · no wallet required",
-          color: COLORS.neonCyan,
-          fn: () => this.enterOfflinePlay(),
-        },
         ...(hasWallet
           ? [
               {
-                label: "◈ CONNECT WALLET",
-                sub: "optional — multiplayer identity · free message sign-in",
+                label: "◈ SIGN UP WITH METAMASK",
+                sub: "connect · free message · create or resume runner",
                 color: COLORS.neonGreen,
+                primary: true as const,
+                fn: () => void this.onMetaMaskSignUp(),
+              },
+              {
+                label: "◢ PLAY OFFLINE",
+                sub: "no wallet · device-local until you link later",
+                color: COLORS.neonCyan,
                 primary: false as const,
-                fn: () => void this.onConnectWallet(),
+                fn: () => this.enterOfflinePlay(),
               },
             ]
           : [
               {
-                label: "GET PHANTOM",
-                sub: "optional later · phantom.app",
+                label: "◈ GET METAMASK",
+                sub: "metamask.io · then return here to sign up",
                 color: COLORS.neonGreen,
+                primary: true as const,
+                fn: () => window.open("https://metamask.io/download/", "_blank", "noopener"),
+              },
+              {
+                label: "◢ PLAY OFFLINE",
+                sub: "class select · no wallet required",
+                color: COLORS.neonCyan,
                 primary: false as const,
-                fn: () => window.open("https://phantom.app/", "_blank", "noopener"),
+                fn: () => this.enterOfflinePlay(),
               },
             ]),
       ]),
     });
+  }
+
+  /** One-click MetaMask connect + sign-in (new account create or returning). */
+  private async onMetaMaskSignUp() {
+    this.walletPanel.show({
+      step: "connect",
+      status: "busy",
+      statusText: "awaiting MetaMask",
+      headline: "Check MetaMask",
+      body: "Approve the connection in MetaMask. Next you'll sign a free login message — still no gas, no $METRO spend.",
+      wallet: connectedWallet(),
+      actions: [],
+      showDisconnect: true,
+      onDisconnect: () => void this.onDisconnect(),
+    });
+    const addr = await ensureWalletConnected();
+    if (!addr) {
+      this.enterWalletDisconnected();
+      return;
+    }
+    this.registry.set("walletAddress", addr);
+    this.registry.set("offlinePlay", false);
+    // Auto-advance to sign — full sign-up without a second button press when possible.
+    await this.verifyAndAdvance(addr);
   }
 
   /** Skip wallet gate — character is device-local until they link a wallet later. */
@@ -277,58 +308,35 @@ export default class SelectScene extends Phaser.Scene {
     });
   }
 
-  private async onConnectWallet() {
-    this.walletPanel.show({
-      step: "connect",
-      status: "busy",
-      statusText: "awaiting approval",
-      headline: "Check your wallet",
-      body: "Approve the connection request in Phantom, Backpack, or Solflare. This only links your address — no funds move.",
-      wallet: connectedWallet(),
-      actions: [],
-      showDisconnect: true,
-      onDisconnect: () => void this.onDisconnect(),
-    });
-    const addr = await ensureWalletConnected();
-    if (!addr) {
-      this.enterWalletDisconnected();
-      return;
-    }
-    this.registry.set("walletAddress", addr);
-    this.showConnectedPending(addr, "Wallet linked. Sign one message next — still free, still no on-chain transaction.", [
-      {
-        label: "◈ SIGN IN",
-        sub: "proves you control this address before we load your character",
-        color: COLORS.neonGreen,
-        fn: () => void this.verifyAndAdvance(addr),
-      },
-    ]);
-  }
-
   private async verifyAndAdvance(addr: string) {
-    this.showConnectedPending(addr, "Approve the sign-in message in your wallet popup. We never request a transaction or spend $METRO here.", [], {
-      status: "busy",
-      statusText: "awaiting signature",
-      headline: "Sign to continue",
-    });
+    this.showConnectedPending(
+      addr,
+      "Approve the login message in MetaMask. This is a free signature — not a transaction. No gas, no $METRO.",
+      [],
+      {
+        status: "busy",
+        statusText: "awaiting MetaMask signature",
+        headline: "Sign to create / resume",
+      },
+    );
     const proof = await signIdentityProof(addr);
     if (!proof) {
       this.showConnectedPending(
         addr,
-        "The signature was cancelled or your wallet cannot sign messages. Retry, or continue offline if the game server is down.",
+        "Signature cancelled or MetaMask could not sign. Retry, or play offline without multiplayer save.",
         [
           {
-            label: "◈ RETRY SIGN IN",
-            sub: "open the wallet popup again",
+            label: "◈ RETRY SIGN UP",
+            sub: "open MetaMask again",
             color: COLORS.neonGreen,
             fn: () => void this.verifyAndAdvance(addr),
           },
           {
-            label: "◢ CONTINUE WITHOUT SERVER",
-            sub: "local character only until npm run dev:online is running",
+            label: "◢ PLAY OFFLINE",
+            sub: "local character — link MetaMask later",
             color: COLORS.neonYellow,
             primary: false,
-            fn: () => this.enterCreate(),
+            fn: () => this.enterOfflinePlay(),
           },
         ],
         { status: "error", statusText: "sign-in failed" },
@@ -336,7 +344,11 @@ export default class SelectScene extends Phaser.Scene {
       return;
     }
 
-    this.showConnectedPending(addr, "Looking up your wallet on the identity service…", [], {
+    // Keep a fresh proof for OnlineScene WS login (must re-sign if stale; store for session).
+    this.registry.set("walletProof", proof);
+    this.registry.set("walletAddress", proof.wallet);
+
+    this.showConnectedPending(addr, "Verifying MetaMask identity with the game server…", [], {
       status: "busy",
       statusText: "verifying identity",
       headline: "One moment",
@@ -344,17 +356,43 @@ export default class SelectScene extends Phaser.Scene {
     const result = await fetchWalletIdentity(proof);
     if (result.identity) {
       this.identity = result.identity;
+      this.registry.set("walletAddress", result.identity.wallet);
       if (result.identity.locked && result.identity.look) {
         this.enterReturning();
         return;
       }
+      // New MetaMask account — class + customize, then durable save on first online login.
       this.enterCreate();
+      return;
+    }
+
+    if (result.error === "auth_failed") {
+      this.showConnectedPending(
+        addr,
+        "Server rejected the signature. Use MetaMask on the same address, or update the client/server if you're on an old build.",
+        [
+          {
+            label: "◈ RETRY SIGN UP",
+            sub: "sign a fresh login message",
+            color: COLORS.neonGreen,
+            fn: () => void this.verifyAndAdvance(addr),
+          },
+          {
+            label: "◢ PLAY OFFLINE",
+            sub: "skip multiplayer identity for now",
+            color: COLORS.neonYellow,
+            primary: false,
+            fn: () => this.enterOfflinePlay(),
+          },
+        ],
+        { status: "error", statusText: "auth failed" },
+      );
       return;
     }
 
     const serverHint =
       result.error === "server_unreachable"
-        ? "Game server is offline. Run npm run dev:online from the project root, or create a character locally for now."
+        ? "Game server is offline. Run npm run dev:online, or create offline and link MetaMask when the server is up."
         : (result.detail ?? "Could not reach the identity service.");
     this.showConnectedPending(
       addr,
@@ -362,13 +400,13 @@ export default class SelectScene extends Phaser.Scene {
       [
         {
           label: "◈ RETRY",
-          sub: "attempt server identity check again",
+          sub: "attempt MetaMask identity check again",
           color: COLORS.neonGreen,
           fn: () => void this.verifyAndAdvance(addr),
         },
         {
           label: "◢ CREATE CHARACTER",
-          sub: "class select — saves when the server is online",
+          sub: "class select — wallet address kept for when server is online",
           color: COLORS.neonCyan,
           primary: false,
           fn: () => this.enterCreate(),

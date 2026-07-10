@@ -77,12 +77,25 @@ export async function fetchWalletIdentity(proof: {
   }
 }
 
-/** Connect wallet (if needed) — does not sign or hit the server. */
+/** Connect wallet (if needed) — does not sign or hit the server. Prefers MetaMask. */
 export async function ensureWalletConnected(): Promise<string | null> {
   const existing = connectedWallet();
   if (existing) return existing;
   if (!walletAvailable()) return null;
   return connectWallet();
+}
+
+/** Full MetaMask sign-up: connect + sign login message (proof for /identity and WS). */
+export async function metaMaskSignUp(): Promise<
+  | { ok: true; proof: { wallet: string; sig: string; ts: number } }
+  | { ok: false; error: IdentityError; detail?: string }
+> {
+  if (!walletAvailable()) return { ok: false, error: "no_wallet", detail: "Install MetaMask" };
+  const addr = await ensureWalletConnected();
+  if (!addr) return { ok: false, error: "connect_failed", detail: "MetaMask connection cancelled" };
+  const proof = await signIdentityProof(addr);
+  if (!proof) return { ok: false, error: "sign_failed", detail: "MetaMask signature cancelled" };
+  return { ok: true, proof };
 }
 
 export function hasWalletProvider(): boolean {
