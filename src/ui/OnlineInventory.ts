@@ -59,7 +59,7 @@ export default class OnlineInventory {
     if (this.mobile) {
       const slotsW = HOTBAR_SLOTS * (HB_CELL + HB_GAP);
       this.barX = Math.max(uiDim(8), (scene.scale.width - slotsW) / 2);
-      this.barY = uiDim(44);
+      this.barY = uiDim(38); // clean gap above the Bag/Map/Quests/Chat bar at 94
     } else {
       this.barX = uiDim(16);
       this.barY = onlineHudStack(scene.scale.height).hotbarY;

@@ -1074,8 +1074,23 @@ export default class OnlineScene extends Phaser.Scene {
       .setOrigin(0.5, 1)
       .setDepth(12)
       .setVisible(false);
+    // Mobile gets a bigger, pill-backed prompt — it doubles as the tap target for
+    // doors/NPCs, so it has to read (and press) like a button under a thumb.
     this.interactPrompt = this.add
-      .text(this.scale.width / 2, onlineHudStack(this.scale.height).interactY, "", displayFont(14, { color: "#39ff88", fontStyle: "bold", align: "center" }))
+      .text(
+        this.scale.width / 2,
+        onlineHudStack(this.scale.height).interactY,
+        "",
+        this.mobileUx()
+          ? displayFont(16, {
+              color: "#39ff88",
+              fontStyle: "bold",
+              align: "center",
+              backgroundColor: "#07130add",
+              padding: { x: uiDim(18), y: uiDim(12) },
+            })
+          : displayFont(14, { color: "#39ff88", fontStyle: "bold", align: "center" }),
+      )
       .setOrigin(0.5)
       .setScrollFactor(0)
       .setDepth(1200)
@@ -1086,17 +1101,18 @@ export default class OnlineScene extends Phaser.Scene {
       ptr.event?.stopPropagation?.();
       this.doInteract();
     });
-    // Mobile landscape: D-pad + action cluster + surface exit.
+    // Mobile landscape: floating stick + action arc + surface exit.
     if (this.mobileUx()) {
       if (this.isSubway || this.isDive || (this.interior && !this.isCityHub)) {
+        // Top-right: the old top-centre slot is the phone hotbar band.
         const surface = this.add
-          .text(this.scale.width / 2, uiDim(36), "▲ SURFACE", displayFont(14, {
+          .text(this.scale.width - uiDim(12), uiDim(8), "▲ SURFACE", displayFont(14, {
             color: "#eafdff",
             fontStyle: "bold",
             backgroundColor: "#0b0716dd",
             padding: { x: uiDim(16), y: uiDim(10) },
           }))
-          .setOrigin(0.5, 0)
+          .setOrigin(1, 0)
           .setScrollFactor(0)
           .setDepth(1200)
           .setInteractive({ useHandCursor: true });
@@ -4741,7 +4757,7 @@ export default class OnlineScene extends Phaser.Scene {
     // top-center objective tracker: stack visible rows, one shared frame behind them.
     // Mobile moves the hotbar + action bar into the top-center band (y≈44..140), so
     // the tracker drops below them there — it was rendering across the hotbar icons.
-    const trackerTop = this.mobileUx() ? uiDim(146) : uiDim(12);
+    const trackerTop = this.mobileUx() ? uiDim(152) : uiDim(12);
     const cx = this.scale.width / 2;
     const rows = [this.questText, this.dailyText, this.bountyText].filter(
       (t) => t.visible && t.text.length > 0,
@@ -5641,11 +5657,11 @@ export default class OnlineScene extends Phaser.Scene {
   private controlHint() {
     if (this.isTutorial) {
       return prefersMobileUx() || this.mobileUx()
-        ? "STICK move · hold ATK fire · Q/E/R/⇢ · ◆ use · SKIP TO CITY"
+        ? "touch LEFT to move · hold ATK to fire · Q/E/R/⇢ · ◆ use · SKIP TO CITY"
         : "WASD · CLICK fire · SKIP TO CITY (top-right, works while loading)";
     }
     if (prefersMobileUx() || (this.usingRsControls() && this.mobileUx())) {
-      return "STICK move · TAP path/enemy · hold ATK · Q/E/R/⇢ · ◆ use · Bag/Map/Chat";
+      return "touch LEFT to move · TAP to walk/attack · hold ATK · Q/E/R/⇢ · ◆ use";
     }
     if (this.usingRsControls()) {
       return "CLICK walk · RIGHT-CLICK menu · Q/E/R abilities · SPACE dash · M map · ENTER chat";

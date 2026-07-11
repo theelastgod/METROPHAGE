@@ -29,16 +29,17 @@ export default class RsActionBar {
   constructor(scene: Phaser.Scene, slots: ActionBarSlot[]) {
     this.scene = scene;
     this.slots = slots;
-    // Slightly taller/wider slots when many (mobile adds Chat).
-    this.slotW = uiDim(slots.length >= 4 ? 50 : 54);
-    this.h = uiDim(slots.length >= 4 ? 44 : 40);
+    // Phones get taller, wider slots — these are thumb targets, not cursor targets.
+    const mobile = prefersMobileUx();
+    this.slotW = uiDim(mobile ? 58 : slots.length >= 4 ? 50 : 54);
+    this.h = uiDim(mobile ? 52 : slots.length >= 4 ? 44 : 40);
     const gap = uiGap("sm");
     this.w = slots.length * this.slotW + (slots.length - 1) * gap + uiGap("lg");
     const stack = onlineHudStack(scene.scale.height);
-    if (prefersMobileUx()) {
-      // Centered under the top chrome — free of stick (BL) and actions (BR).
+    if (mobile) {
+      // Centered under the hotbar band — free of stick (BL) and action arc (BR).
       this.x = Math.max(uiDim(8), (scene.scale.width - this.w) / 2);
-      this.y = uiDim(92);
+      this.y = uiDim(94);
     } else {
       // right-anchored so the left-anchored equip hotbar never collides with it
       this.x = scene.scale.width - this.w - uiDim(12);
