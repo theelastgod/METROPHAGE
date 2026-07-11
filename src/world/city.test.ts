@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ONLINE_CITY } from "./city";
+import { ESTATES } from "./estates";
 import { isWall } from "./district";
 
 describe("city hub collision (shared client/server grid)", () => {
@@ -14,6 +15,19 @@ describe("city hub collision (shared client/server grid)", () => {
             isWall(grid[y][x]),
             `${b.id} (${b.kind}) walkable roof tile at ${x},${y}`,
           ).toBe(true);
+        }
+      }
+    }
+  });
+
+  it("estate house plots are solid except their carved doorway", () => {
+    const { grid, plots } = ESTATES;
+    for (const p of plots) {
+      const cx = p.door[0];
+      for (let y = p.rect.y1; y <= p.rect.y2; y++) {
+        for (let x = p.rect.x1; x <= p.rect.x2; x++) {
+          if (x === cx && !isWall(grid[y][x])) continue; // the doorway column carve
+          expect(isWall(grid[y][x]), `plot ${p.id} walkable roof at ${x},${y}`).toBe(true);
         }
       }
     }

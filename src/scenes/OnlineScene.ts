@@ -832,6 +832,7 @@ export default class OnlineScene extends Phaser.Scene {
         // FRLG walk-in: pressing up while on the doorstep enters (E/click still works)
         this.districtDoors.push({ tx, ty: doorstep, dest: `d${this.districtIndex}i${i}` });
       });
+      this.dressDistrictWeather();
     }
     if (this.isTutorial) this.buildTutorialZone();
     if (this.interior) {
@@ -990,6 +991,8 @@ export default class OnlineScene extends Phaser.Scene {
             .setOrigin(0.5)
             .setDepth(2.6);
           this.dressVenueRoom(kind, accent);
+        } else {
+          this.dressServiceRoom(kind, accent);
         }
       }
     } else if (this.isBridge && bridgeDef) {
@@ -1029,6 +1032,7 @@ export default class OnlineScene extends Phaser.Scene {
         })
         .setOrigin(0.5)
         .setDepth(6);
+      this.dressSubwayLife();
     } else {
       // district ambient life — a few authored citizens near the entrance so the world
       // outside the hub feels inhabited (cosmetic fixtures; HSS + player shots ignore them).
@@ -2796,6 +2800,58 @@ export default class OnlineScene extends Phaser.Scene {
   /** Furnish an FRLG venue room so it reads as a lived-in place, not an empty box:
    *  a counter surface, a rug, warm light, and a couple of kind-specific set pieces.
    *  Tiles avoid the NPC seats (7,2)/(4,5)/(10,5)/(11,7) and the mat column. */
+  /** The hub's named service rooms share one safehouse floor plan — give each a
+   *  DISTINCT dressing so a clinic doesn't feel like the den: beds + cross, bottle
+   *  shelf, contraband crates, stock shelves, or blinking cred-vault racks. Pure
+   *  graphics anchored to the fixed plan — zero collision risk. */
+  private dressServiceRoom(kind: string, accent: number) {
+    const g = this.add.graphics().setDepth(2.4);
+    const t = (n: number) => n * TILE;
+    if (kind === "clinic") {
+      for (const bx of [14, 17]) {
+        g.fillStyle(0x2a3244, 1).fillRect(t(bx), t(10) + 6, TILE + 10, TILE + 16); // bed frame
+        g.fillStyle(0xd8e4ec, 0.95).fillRect(t(bx) + 3, t(10) + 9, TILE + 4, TILE - 2); // sheet
+        g.fillStyle(0x9fe8ff, 0.9).fillRect(t(bx) + 3, t(10) + 9, TILE + 4, 7); // pillow
+      }
+      g.fillStyle(0xff3b6b, 0.9).fillRect(t(21) + 10, t(9) - 12, 14, 4).fillRect(t(21) + 15, t(9) - 17, 4, 14); // wall cross
+      this.add.image(t(16), t(11), GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(0x9fe8ff).setDepth(2.5).setScale(0.8).setAlpha(0.1);
+    } else if (kind === "bar") {
+      for (let i = 0; i < 7; i++) {
+        const bx = t(14) + i * 12;
+        g.fillStyle([0x39ff88, 0xff2bd6, 0xf7ff3c, 0x00e5ff][i % 4], 0.85).fillRect(bx, t(9) - 14, 5, 12); // backbar bottles
+      }
+      g.fillStyle(0x120a1e, 0.85).fillRect(t(14) - 4, t(9) - 2, 100, 4); // shelf
+      g.fillStyle(accent, 0.08).fillRect(t(15), t(13), t(4), t(2)); // dance-rug wash
+      this.add.image(t(17), t(11), GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(0xff2bd6).setDepth(2.5).setScale(1).setAlpha(0.12);
+    } else if (kind === "den") {
+      const crate = (cx: number, cy: number) => {
+        g.fillStyle(0x2a1a2e, 0.95).fillRect(t(cx) + 4, t(cy) + 6, 22, 18);
+        g.lineStyle(1, 0x6a3a5e, 0.8).strokeRect(t(cx) + 4, t(cy) + 6, 22, 18);
+      };
+      crate(13, 10);
+      crate(13, 11);
+      crate(14, 10);
+      crate(26, 16);
+      const lamp = this.add.image(t(20), t(10), GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(0xff3b6b).setDepth(2.5).setScale(0.6).setAlpha(0.25);
+      this.tweens.add({ targets: lamp, alpha: { from: 0.16, to: 0.3 }, duration: 1400, yoyo: true, repeat: -1, ease: "Sine.inOut" });
+    } else if (kind === "shop") {
+      for (const sy of [10, 13]) {
+        g.fillStyle(0x1a2234, 0.95).fillRect(t(14), t(sy) + 8, t(5), 10); // stock shelf
+        for (let i = 0; i < 8; i++) {
+          g.fillStyle([0x00e5ff, 0xf7ff3c, 0x39ff88][i % 3], 0.8).fillRect(t(14) + 5 + i * 18, t(sy) + 1, 8, 8); // goods
+        }
+      }
+    } else if (kind === "vault") {
+      for (let i = 0; i < 3; i++) {
+        const rx = t(14 + i * 4);
+        g.fillStyle(0x0e1626, 1).fillRect(rx, t(10) - 8, 26, 42); // rack
+        g.lineStyle(1, 0x29e7ff, 0.5).strokeRect(rx, t(10) - 8, 26, 42);
+        const led = this.add.image(rx + 13, t(10) + 4 + i * 6, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(i % 2 ? 0x39ff88 : 0x29e7ff).setDepth(2.6).setScale(0.14).setAlpha(0.5);
+        this.tweens.add({ targets: led, alpha: { from: 0.2, to: 0.6 }, duration: 380 + i * 170, yoyo: true, repeat: -1 });
+      }
+    }
+  }
+
   private dressVenueRoom(kind: string, accent: number) {
     const g = this.add.graphics().setDepth(2.4);
     const t = (n: number) => n * TILE;
@@ -2906,6 +2962,80 @@ export default class OnlineScene extends Phaser.Scene {
    *  streetlights, planters, ramen carts, arcade cabinets, holo-boards, benches and a
    *  wayfinding post. All decorative (no collision) — the interactables are placed
    *  elsewhere; these fill the space between them so the safe zone reads as a real city. */
+  /** Screen-space weather per district biome — rain over downtown, smog over the
+   *  yards, cold drizzle + a scan band under the spire, embers rising in the core.
+   *  All scrollFactor-0 sprites on looping tweens: the UI camera draws them over
+   *  the world (under the HUD) at zero per-frame logic cost. */
+  private dressDistrictWeather() {
+    const env = MusicDirector.districtEnv(DISTRICTS[this.districtIndex]?.id ?? "downtown");
+    const W = this.scale.width;
+    const H = this.scale.height;
+    const seeded = (i: number, m: number) => (i * 73 + 29) % m;
+    const mk = (tint: number, alpha: number, sx: number, sy: number, depth = 900) =>
+      this.add.image(0, 0, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(tint).setAlpha(alpha).setScale(sx, sy).setScrollFactor(0).setDepth(depth);
+    if (env === "district_downtown") {
+      // neon rain — thin streaks angling down-left
+      for (let i = 0; i < 26; i++) {
+        const s = mk(0xbfe8ff, 0.13 + (i % 3) * 0.03, 0.035, 0.5 + (i % 4) * 0.12);
+        const x0 = (seeded(i, 97) / 97) * W;
+        s.setPosition(x0, -40 - seeded(i, 41) * 8);
+        this.tweens.add({ targets: s, y: H + 60, x: x0 - uiDim(30), duration: 620 + seeded(i, 7) * 60, repeat: -1, delay: seeded(i, 13) * 90, ease: "Linear" });
+      }
+    } else if (env === "district_stacks") {
+      // industrial smog wisps crawling across the screen
+      for (let i = 0; i < 7; i++) {
+        const s = mk(0xa8a06a, 0.05, 2.6 + (i % 3) * 0.7, 1.1);
+        s.setPosition(-240, (seeded(i, 89) / 89) * H);
+        this.tweens.add({ targets: s, x: W + 260, duration: 26000 + seeded(i, 9) * 3000, repeat: -1, delay: seeded(i, 11) * 1800, ease: "Sine.inOut" });
+      }
+    } else if (env === "district_spire") {
+      // cold drizzle + a slow surveillance scan band sweeping the screen
+      for (let i = 0; i < 14; i++) {
+        const s = mk(0x9fe8ff, 0.09, 0.03, 0.4);
+        const x0 = (seeded(i, 83) / 83) * W;
+        s.setPosition(x0, -30);
+        this.tweens.add({ targets: s, y: H + 40, duration: 900 + seeded(i, 7) * 90, repeat: -1, delay: seeded(i, 17) * 130, ease: "Linear" });
+      }
+      const band = mk(0x29e7ff, 0.045, W / 128, 0.5, 899);
+      band.setPosition(W / 2, -20);
+      this.tweens.add({ targets: band, y: H + 20, duration: 7000, repeat: -1, repeatDelay: 5200, ease: "Sine.inOut" });
+    } else if (env === "district_core") {
+      // embers rising off the meltdown floor
+      for (let i = 0; i < 16; i++) {
+        const s = mk(i % 3 ? 0xff8a1f : 0xff3b6b, 0.16, 0.07 + (i % 3) * 0.02, 0.07 + (i % 3) * 0.02);
+        const x0 = (seeded(i, 79) / 79) * W;
+        s.setPosition(x0, H + 20 + seeded(i, 31) * 4);
+        this.tweens.add({ targets: s, y: -30, x: x0 + (i % 2 ? 40 : -40), alpha: { from: 0.2, to: 0.04 }, duration: 5200 + seeded(i, 13) * 400, repeat: -1, delay: seeded(i, 19) * 300, ease: "Sine.in" });
+      }
+    }
+  }
+
+  /** THE UNDERLINE: an express train screams down a random platform row every so
+   *  often — a light streak + head lamp + a kiss of camera shake as it passes. */
+  private dressSubwayLife() {
+    const rows = [7.5, 15.5, 23.5]; // centres of the carved platform row pairs
+    const run = () => {
+      if (!this.scene.isActive()) return;
+      const y = rows[(Math.random() * rows.length) | 0] * TILE;
+      const ltr = Math.random() < 0.5;
+      const body = this.add.image(ltr ? -140 : this.worldW + 140, y, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(0x8dfff0).setDepth(2.5).setScale(3.2, 0.35).setAlpha(0.3);
+      const lamp = this.add.image(body.x + (ltr ? 90 : -90), y, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(0xffffff).setDepth(2.6).setScale(0.5).setAlpha(0.5);
+      this.tweens.add({
+        targets: [body, lamp],
+        x: `+=${(ltr ? 1 : -1) * (this.worldW + 280)}`,
+        duration: 1400,
+        ease: "Cubic.in",
+        onComplete: () => {
+          body.destroy();
+          lamp.destroy();
+        },
+      });
+      juiceShake(this, 240, 0.0022);
+      this.time.delayedCall(7000 + Math.random() * 6000, run);
+    };
+    this.time.delayedCall(2500, run);
+  }
+
   /** Faint aircar silhouettes drifting high over the plaza — four sprites on slow
    *  looping tweens. Vibrancy that lives ABOVE the play space: zero ground clutter,
    *  zero per-frame draw cost. */
