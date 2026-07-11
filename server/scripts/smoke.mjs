@@ -1135,14 +1135,28 @@ async function daily() {
     return b;
   };
   let seq = 0;
+  let lastAbility = 0;
   const t0 = Date.now();
   while (Date.now() - t0 < 90000 && !(store.contracts[0] && store.contracts[0].done)) {
     const e = nearest();
     if (e) {
       const dx = e.x - store.x, dy = e.y - store.y, d = Math.hypot(dx, dy) || 1;
       seq++;
-      ws.send(JSON.stringify({ t: "input", seq, mx: d > 110 ? dx / d : 0, my: d > 110 ? dy / d : 0 }));
-      ws.send(JSON.stringify({ t: "fire", seq, aim: Math.atan2(dy, dx) }));
+      // fresh players carry a MELEE arc-blade — close to swing range (stopping at
+      // 110px fired melee into empty air = 0 kills) and cycle Q for ranged coverage,
+      // exactly like the passing combat/bounty bots
+      const aim = Math.atan2(dy, dx);
+      ws.send(JSON.stringify({ t: "input", seq, mx: d > 40 ? dx / d : 0, my: d > 40 ? dy / d : 0 }));
+      ws.send(JSON.stringify({ t: "fire", seq, aim }));
+      if (Date.now() - lastAbility > 900) {
+        lastAbility = Date.now();
+        ws.send(JSON.stringify({ t: "ability", seq, aim }));
+      }
+    } else {
+      // empty AOI at spawn — sweep outward so the bot FINDS the garrison instead of idling
+      seq++;
+      const swp = (Date.now() - t0) / 1000;
+      ws.send(JSON.stringify({ t: "input", seq, mx: Math.cos(swp * 0.9), my: Math.sin(swp * 0.9) }));
     }
     await sleep(45);
   }

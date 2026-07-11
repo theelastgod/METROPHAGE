@@ -27,6 +27,7 @@ import {
   PROP_STREETLIGHT_KEY,
   PROP_VENDING_KEY,
   PROP_AC_KEY,
+  PROP_CAR_KEY,
   PICKUP_COIN_KEY,
   PICKUP_CORE_KEY,
   BULLET_PLAYER_KEY,
@@ -791,11 +792,13 @@ export default class OnlineScene extends Phaser.Scene {
         zoneAccent,
       );
     }
-    this.cameras.main.setBounds(0, 0, this.worldW, this.worldH);
-    // Interiors play zoomed-in (FRLG readability): rooms larger than the zoomed view
-    // pan with the runner via the follow camera + bounds clamp; small rooms stay
-    // centred. Streets/combat zones keep the full field of view.
+    // Interiors play zoomed-in (FRLG readability). Zoomed rooms get an UNBOUNDED
+    // follow camera so the runner — including the arrival spawn on the south mat —
+    // sits dead-centre on screen; bounds clamping was pinning arrivals to the room
+    // edge. The void past the walls reads like a GBA interior. Streets/combat zones
+    // keep bounds + the full field of view.
     const interiorZoom = this.interior && !this.isCityHub && !this.isEstates ? 2 : 1;
+    if (interiorZoom === 1) this.cameras.main.setBounds(0, 0, this.worldW, this.worldH);
     installUiCamera(this, interiorZoom);
     this.applyNeon();
     fadeInScene(this, zoneAccent);
@@ -906,6 +909,7 @@ export default class OnlineScene extends Phaser.Scene {
           this.districtDoors.push({ tx: dtx, ty: dty, dest });
         });
         this.drawHubProps();
+        this.spawnSkyTraffic();
         this.spawnHubWanderers();
         this.spawnTrainingYard(); // clickable drill targets near deploy — first combat without leaving hub
       } else if (this.isEstates) {
@@ -2532,6 +2536,99 @@ export default class OnlineScene extends Phaser.Scene {
     const gpx = gx * TILE + TILE / 2;
     const gpy = gy * TILE + TILE / 2;
     this.makeTalkNpc("TRAIL SCRAPPER", hubLook({ color: b.accent, head: "beret", skin: 0xa9794a, hair: "braids", cloak: "coat" }), b.guideLines, gpx, gpy);
+    this.dressBridgeWilds(b);
+  }
+
+  /** The wilds between districts get LIVED-IN: a wayfarer camp with a fire, seated
+   *  travellers, trail wanderers, scattered rocks/wrecks, and drifting motes. All
+   *  client-side dressing, deterministically placed on walkable trail tiles. */
+  private dressBridgeWilds(b: BridgeDef) {
+    // collect walkable tiles once; deterministic picks via a stride over the list
+    const floors: Array<[number, number]> = [];
+    for (let ty = 1; ty < this.zoneGrid.length - 1; ty++) {
+      for (let tx = 3; tx < (this.zoneGrid[ty]?.length ?? 0) - 3; tx++) {
+        if (!isWall(this.zoneGrid[ty][tx])) floors.push([tx, ty]);
+      }
+    }
+    if (floors.length < 24) return;
+    const pick = (i: number) => floors[(i * 97 + b.fromDistrict * 31) % floors.length];
+    const px = (t: [number, number]) => ({ x: t[0] * TILE + TILE / 2, y: t[1] * TILE + TILE / 2 });
+
+    // ── wayfarer camp: fire + log seats + two travellers with trail gossip ──
+    const camp = px(pick(3));
+    const cg = this.add.graphics().setDepth(3);
+    cg.fillStyle(0x241408, 1).fillEllipse(camp.x, camp.y + 6, 34, 14); // scorched ground
+    cg.fillStyle(0x4a2c12, 1).fillRect(camp.x - 12, camp.y - 2, 24, 5); // crossed logs
+    cg.fillStyle(0x3a2410, 1).fillRect(camp.x - 3, camp.y - 9, 6, 14);
+    const flame = this.add.image(camp.x, camp.y - 4, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(0xff8a1f).setDepth(3.2).setScale(0.5).setAlpha(0.5);
+    this.tweens.add({ targets: flame, alpha: { from: 0.35, to: 0.6 }, scale: { from: 0.42, to: 0.58 }, duration: 340, yoyo: true, repeat: -1, ease: "Sine.inOut" });
+    const seatA = { x: camp.x - 34, y: camp.y + 10 };
+    const seatB = { x: camp.x + 34, y: camp.y + 6 };
+    this.makeTalkNpc(
+      "WAYFARER SOL",
+      hubLook({ color: 0xffb13c, head: "hood", skin: 0x7c4f30, cloak: "cape" }),
+      [`Fire's warm, ${b.name} isn't. Patrols run heavier past the midpoint.`, "Sit a minute. Nobody crosses the wilds in a straight line."],
+      seatA.x,
+      seatA.y,
+    );
+    this.makeTalkNpc(
+      "WAYFARER JUNE",
+      hubLook({ color: 0x9dff3c, sex: "f", hair: "braids", skin: 0xe6b58c, cloak: "coat" }),
+      ["Counted the pylons on the way in. Two are dark. That's new.", "The scrapper knows the safe cuts — worth the toll."],
+      seatB.x,
+      seatB.y,
+    );
+
+    // ── scattered rocks + a burnt-out wreck: the trail reads travelled, not empty ──
+    const rg = this.add.graphics().setDepth(2.8);
+    for (let i = 0; i < 9; i++) {
+      const t = px(pick(11 + i * 5));
+      const s = 4 + ((i * 7) % 6);
+      rg.fillStyle(0x1c2230, 1).fillEllipse(t.x + 4, t.y + 3, s * 2.2, s * 1.1); // shadow
+      rg.fillStyle(0x39445c, 1).fillCircle(t.x, t.y, s);
+      rg.fillStyle(0x556488, 0.8).fillCircle(t.x - s * 0.3, t.y - s * 0.35, s * 0.45);
+    }
+    const wreckT = px(pick(29));
+    if (this.textures.exists(PROP_CAR_KEY)) {
+      this.add.image(wreckT.x, wreckT.y, PROP_CAR_KEY).setDepth(3).setScale(0.9).setTint(0x556070).setAngle(8);
+      this.add.image(wreckT.x - 6, wreckT.y - 4, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(0xff3b6b).setDepth(3.1).setScale(0.25).setAlpha(0.2);
+    }
+
+    // ── two trail wanderers pacing the corridor ──
+    for (let i = 0; i < 2; i++) {
+      const t = px(pick(41 + i * 13));
+      const look = hubLook({ color: i ? 0x8dfff0 : 0xff2bd6, head: i ? "cap" : "none", skin: i ? 0xc98a5e : 0xa9794a, cloak: "coat" });
+      const key = lookKey(look);
+      bakeRemoteLook(this, key, look);
+      const spr = this.add.sprite(t.x, t.y, key, 0).setDepth(9).setAlpha(0.95);
+      const span = TILE * (3 + i * 2);
+      this.tweens.add({
+        targets: spr,
+        x: { from: t.x - span / 2, to: t.x + span / 2 },
+        duration: 5200 + i * 1700,
+        yoyo: true,
+        repeat: -1,
+        ease: "Sine.inOut",
+        onYoyo: () => spr.setFlipX(true),
+        onRepeat: () => spr.setFlipX(false),
+      });
+    }
+
+    // ── drifting motes: dust/fireflies in the corridor air ──
+    for (let i = 0; i < 6; i++) {
+      const t = px(pick(61 + i * 7));
+      const mote = this.add.image(t.x, t.y - 10, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(i % 2 ? 0x9dff3c : b.accent).setDepth(7).setScale(0.08 + (i % 3) * 0.03).setAlpha(0.14);
+      this.tweens.add({
+        targets: mote,
+        y: t.y - 26 - (i % 4) * 6,
+        x: t.x + ((i % 2) * 2 - 1) * 14,
+        alpha: { from: 0.08, to: 0.2 },
+        duration: 2600 + i * 700,
+        yoyo: true,
+        repeat: -1,
+        ease: "Sine.inOut",
+      });
+    }
   }
 
   /** Place one authored drill instructor in their chamber. */
@@ -2809,6 +2906,46 @@ export default class OnlineScene extends Phaser.Scene {
    *  streetlights, planters, ramen carts, arcade cabinets, holo-boards, benches and a
    *  wayfinding post. All decorative (no collision) — the interactables are placed
    *  elsewhere; these fill the space between them so the safe zone reads as a real city. */
+  /** Faint aircar silhouettes drifting high over the plaza — four sprites on slow
+   *  looping tweens. Vibrancy that lives ABOVE the play space: zero ground clutter,
+   *  zero per-frame draw cost. */
+  private spawnSkyTraffic() {
+    const lanes = [0.18, 0.34, 0.55, 0.74];
+    const tints = [0x00e5ff, 0xff2bd6, 0xf7ff3c, 0x9dff3c];
+    lanes.forEach((laneN, i) => {
+      const y = this.worldH * laneN;
+      const leftward = i % 2 === 1;
+      const car = this.add
+        .image(leftward ? this.worldW + 80 : -80, y, GLOW_KEY)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setTint(tints[i])
+        .setDepth(30) // above roofs, below HUD
+        .setScale(1.7, 0.16)
+        .setAlpha(0.16);
+      const trail = this.add
+        .image(car.x, y, GLOW_KEY)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setTint(0xffffff)
+        .setDepth(30)
+        .setScale(0.5, 0.08)
+        .setAlpha(0.1);
+      const dur = 26000 + i * 7000;
+      this.tweens.add({
+        targets: [car, trail],
+        x: leftward ? -120 : this.worldW + 120,
+        y: y + (i % 2 ? -1 : 1) * this.worldH * 0.06,
+        duration: dur,
+        delay: i * 4200,
+        repeat: -1,
+        onRepeat: () => {
+          const ny = this.worldH * lanes[(i + ((Math.random() * 3) | 0)) % lanes.length];
+          car.setPosition(leftward ? this.worldW + 80 : -80, ny);
+          trail.setPosition(car.x + (leftward ? 26 : -26), ny);
+        },
+      });
+    });
+  }
+
   private drawHubProps() {
     const ADD = Phaser.BlendModes.ADD;
     const w = (dx: number, dy: number): [number, number] => [(HUB_CX + dx) * TILE + TILE / 2, (HUB_CY + dy) * TILE + TILE / 2];
@@ -4621,6 +4758,8 @@ export default class OnlineScene extends Phaser.Scene {
         drawPremiumBar(this.hpBar, k.x + quarterW + gap, k.y, quarterW, k.h, abN, abN >= 1 ? this.color : 0x4a4460);
         drawPremiumBar(this.hpBar, k.x + (quarterW + gap) * 2, k.y, quarterW, k.h, ab2N, ab2N >= 1 ? 0xf7ff3c : 0x5a5440);
         drawPremiumBar(this.hpBar, k.x + (quarterW + gap) * 3, k.y, quarterW, k.h, heatN, ultReady ? 0xff8a1f : 0x6a4020);
+        // same readiness, mirrored onto the on-screen ability buttons (phones)
+        this.mobilePad?.setReadiness({ dash: dashN, q: abN, e: ab2N, r: heatN, ultArmed: ultReady });
       }
     }
     this.updateDeathSequence();

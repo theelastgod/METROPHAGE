@@ -65,6 +65,30 @@ export default class MobileControls {
     return { mx: this.mx, my: this.my, active: this.mx !== 0 || this.my !== 0 };
   }
 
+  /** Per-button readiness repainters, registered by build() — see setReadiness. */
+  private readiness: Partial<Record<"dash" | "q" | "e" | "r", (n: number, armed: boolean) => void>> = {};
+  private lastReadiness: Record<string, number> = {};
+
+  /**
+   * Cooldown/charge feedback on the arc buttons: 0..1 fill per ability (1 = ready),
+   * `ultArmed` lights R. Cheap — a button repaints only when its value moves >3%.
+   */
+  setReadiness(v: { dash: number; q: number; e: number; r: number; ultArmed: boolean }) {
+    if (!this.root.visible) return;
+    const entries: Array<["dash" | "q" | "e" | "r", number, boolean]> = [
+      ["dash", v.dash, v.dash >= 1],
+      ["q", v.q, v.q >= 1],
+      ["e", v.e, v.e >= 1],
+      ["r", v.r, v.ultArmed],
+    ];
+    for (const [key, n, armed] of entries) {
+      const stamp = Math.round(n * 33) + (armed ? 100 : 0);
+      if (this.lastReadiness[key] === stamp) continue;
+      this.lastReadiness[key] = stamp;
+      this.readiness[key]?.(n, armed);
+    }
+  }
+
   isFireHeld(): boolean {
     return this.fireHeld;
   }
@@ -163,7 +187,7 @@ export default class MobileControls {
       label: string,
       color: number,
       onTap: () => void,
-      opts: { holdFire?: boolean; fontPx?: number } = {},
+      opts: { holdFire?: boolean; fontPx?: number; track?: "dash" | "q" | "e" | "r" } = {},
     ) => {
       const hex = "#" + color.toString(16).padStart(6, "0");
       const g = this.scene.add.graphics().setScrollFactor(0).setDepth(1301);
@@ -173,20 +197,41 @@ export default class MobileControls {
         .setScrollFactor(0)
         .setDepth(1302)
         .setShadow(0, 0, hex, 5, true, true);
+      let cdN = 1; // 0..1 readiness — cooling buttons dim + show a sweep arc
+      let armed = !opts.track || opts.track !== "r"; // R arms via HEAT, others via cooldown
       const paint = (down: boolean) => {
         g.clear();
-        g.fillStyle(down ? color : 0x0b1220, down ? 0.92 : 0.78);
+        const ready = cdN >= 1 && armed;
+        g.fillStyle(down ? color : 0x0b1220, down ? 0.92 : ready ? 0.78 : 0.5);
         g.fillCircle(x, y, r);
-        g.lineStyle(uiDim(2), color, down ? 1 : 0.8);
+        g.lineStyle(uiDim(2), color, down ? 1 : ready ? 0.8 : 0.3);
         g.strokeCircle(x, y, r);
+        if (cdN < 1 || (opts.track === "r" && !armed)) {
+          // readiness sweep — fills clockwise from 12 o'clock as the cooldown/HEAT refills
+          g.lineStyle(uiDim(3), color, 0.85);
+          g.beginPath();
+          g.arc(x, y, r - uiDim(4), -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.min(1, cdN), false);
+          g.strokePath();
+        }
+        if (opts.track === "r" && armed && !down) {
+          g.lineStyle(uiDim(2), 0xffffff, 0.65); // HEAT armed — the ult reads HOT
+          g.strokeCircle(x, y, r - uiDim(4));
+        }
         if (opts.holdFire && !down) {
           // idle ATK reads as the primary pad — soft inner glow ring
           g.lineStyle(uiDim(1), color, 0.35);
           g.strokeCircle(x, y, r * 0.66);
         }
-        t.setColor(down ? "#041018" : hex);
+        t.setColor(down ? "#041018" : ready ? hex : "#5a6172");
       };
       paint(false);
+      if (opts.track) {
+        this.readiness[opts.track] = (n, isArmed) => {
+          cdN = n;
+          armed = opts.track === "r" ? isArmed : n >= 1;
+          paint(false);
+        };
+      }
       const hitR = r + uiDim(9);
       const z = this.scene.add
         .zone(x - hitR, y - hitR, hitR * 2, hitR * 2)
@@ -226,16 +271,16 @@ export default class MobileControls {
     mkBtn(ax, ay, atkR, "ATK", 0xff3b6b, () => {}, { holdFire: true, fontPx: 17 });
     // Inner ring: mobility + interact — one thumb-roll away from ATK.
     const dash = at(180, atkR + uiDim(38));
-    mkBtn(dash.x, dash.y, uiDim(26), "⇢", 0x00e5ff, h.onDash, { fontPx: 18 });
+    mkBtn(dash.x, dash.y, uiDim(26), "⇢", 0x00e5ff, h.onDash, { fontPx: 18, track: "dash" });
     const use = at(90, atkR + uiDim(38));
     mkBtn(use.x, use.y, uiDim(26), "◆", 0x39ff88, h.onInteract, { fontPx: 16 });
     // Outer arc: abilities — Q closest to the thumb, R (ult) a deliberate reach.
     const q = at(135, atkR + uiDim(88));
-    mkBtn(q.x, q.y, uiDim(26), "Q", 0xff2bd6, h.onAbility);
+    mkBtn(q.x, q.y, uiDim(26), "Q", 0xff2bd6, h.onAbility, { track: "q" });
     const e = at(171, atkR + uiDim(94));
-    mkBtn(e.x, e.y, uiDim(24), "E", 0xf7ff3c, h.onAbility2);
+    mkBtn(e.x, e.y, uiDim(24), "E", 0xf7ff3c, h.onAbility2, { track: "e" });
     const r = at(99, atkR + uiDim(94));
-    mkBtn(r.x, r.y, uiDim(24), "R", 0xff8a1f, h.onUlt);
+    mkBtn(r.x, r.y, uiDim(24), "R", 0xff8a1f, h.onUlt, { track: "r" });
   }
 
   private wireGlobalPointers() {
