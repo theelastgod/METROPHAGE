@@ -150,7 +150,11 @@ export const ASSETS: Record<string, AssetEntry[]> = {
   // to the procedural Synth. See tools/gen-vo.sh, tools/gen-music.mjs + ART_NOTES.md.
   audio: [
     { key: VO_MELTDOWN_KEY, file: "assets/audio/meltdown_vo.mp3" },
-    ...MUSIC_TRACKS.filter((t) => t.url).map((t) => ({ key: t.key, file: t.url! })),
+    // Only the MENU bed ships in the boot payload; the other nine (~4.9MB) stream
+    // in lazily on first entry to their environment (MusicDirector.lazyLoad — the
+    // procedural Synth covers the gap). Cuts time-to-first-play sharply on phones
+    // and keeps boot from gating on a big batch of audio decodes.
+    ...MUSIC_TRACKS.filter((t) => t.url && t.env === "menu").map((t) => ({ key: t.key, file: t.url! })),
   ],
   // Real item icons — load before the procedural bake so they win (see ICON_NAMES above).
   icons: ICON_NAMES.map((n) => ({ key: "icon_" + n, file: "assets/icons/" + n + ".png" })),

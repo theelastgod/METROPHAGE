@@ -62,10 +62,33 @@ export default class MusicDirector {
     if (!this.hasTrack(scene, env)) {
       this.fadeOutCurrent();
       synth?.setMusicEnabled(true); // procedural fallback covers this environment
+      this.lazyLoad(env, scene); // …while the real bed streams in (menu ships in boot)
       return;
     }
     synth?.setMusicEnabled(false); // a real bed is taking over — mute procedural music
     this.startTrack(env);
+  }
+
+  /** Beds ship OUTSIDE the boot payload (menu excepted) to keep time-to-first-play
+   *  short. First entry to an environment fetches its bed in the background; the
+   *  procedural Synth covers the gap, then the real bed fades in when it lands. */
+  private lazyLoading = new Set<MusicEnv>();
+
+  private lazyLoad(env: MusicEnv, scene: Phaser.Scene) {
+    const t = MUSIC_BY_ENV[env];
+    if (!t?.url || this.lazyLoading.has(env) || scene.cache.audio.exists(t.key)) return;
+    this.lazyLoading.add(env);
+    scene.load.once(`filecomplete-audio-${t.key}`, () => {
+      this.lazyLoading.delete(env);
+      if (this.currentEnv === env && scene.cache.audio.exists(t.key)) {
+        (scene.registry.get("synth") as Synth | undefined)?.setMusicEnabled(false);
+        this.startTrack(env);
+      }
+    });
+    // A zone change can shut the scene down mid-download — let the next scene retry.
+    scene.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.lazyLoading.delete(env));
+    scene.load.audio(t.key, t.url);
+    scene.load.start();
   }
 
   /** Live-apply the master/music sliders to the playing bed (options menu). */

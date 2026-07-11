@@ -1493,12 +1493,16 @@ export default class OnlineScene extends Phaser.Scene {
     const chatH = uiDim(mobileHud ? 88 : 176);
     const chatW = uiDim(mobileHud ? 280 : 380);
     const chatX = mobileHud ? this.scale.width / 2 - chatW / 2 : uiDim(12);
-    // Mobile: top strip under Bag/Map bar; avoid covering the drill lesson card.
+    // Mobile: below the full top-center band (hotbar 44..92 · action bar 92..~140 ·
+    // objective tracker + coach 146..~224).
     const chatY = mobileHud
-      ? uiDim(this.isTutorial ? 200 : 140)
+      ? uiDim(230)
       : onlineHudStack(this.scale.height).hotbarY - uiGap("sm") - chatH;
     this.chatPanel = new OnlineChatPanel(this, chatX, chatY, chatW, chatH, 1000);
     this.chatPanel.setArea(this.chatAreaLabel());
+    // Drill yard on a phone: the lesson card owns the centre — the passive chat feed
+    // just collides with it (the Chat button / overlay still works).
+    if (mobileHud && this.isTutorial) this.chatPanel.setVisible(false);
     // online roster — right edge, tucked under the area map
     this.rosterText = this.add
       .text(this.scale.width - uiDim(14), uiDim(206), "", hudFont(9, { color: "#9aa3b2", align: "right" }))
@@ -1537,7 +1541,9 @@ export default class OnlineScene extends Phaser.Scene {
     // Story beats read as a top banner, NOT a modal over the play area — the old
     // dead-centre box blanketed the whole screen and made the game feel dialog-heavy.
     this.storyPanel = this.add
-      .text(this.scale.width / 2, this.scale.height * 0.16, "", hudFont(12, {
+      // Mobile: the 0.16 band belongs to the hotbar/actions/tracker stack — beats
+      // read lower, still above the interact prompt.
+      .text(this.scale.width / 2, this.scale.height * (this.mobileUx() ? 0.34 : 0.16), "", hudFont(12, {
         color: "#eafdff",
         align: "center",
         backgroundColor: "#0b0716e0",
@@ -1873,6 +1879,17 @@ export default class OnlineScene extends Phaser.Scene {
         await this.applyWalletAuth(a, /* allowPrompt */ true);
         this.net.retryConnect();
       })();
+    };
+    // Guest login rejected outright (name on another device / no device key / reserved):
+    // retrying is hopeless — bounce to the title screen with the server's reason so the
+    // player can pick a new callsign or link a wallet. (Was an infinite reject loop.)
+    this.net.onGuestAuthFailed = (reason) => {
+      this.registry.set("guestAuthError", reason);
+      this.hud?.setColor("#ff3b6b");
+      this.hud?.setText(["⚠ SIGN-IN REJECTED", reason, "returning to title…"]);
+      this.time.delayedCall(1400, () => {
+        transitionTo(this, "Select", undefined, { style: "glitch", accent: 0xff3b6b });
+      });
     };
     this.net.connect();
   }
@@ -2272,8 +2289,10 @@ export default class OnlineScene extends Phaser.Scene {
   private buildTutorialSkipCta() {
     const btnW = uiDim(this.mobileUx() ? 168 : 200);
     const btnH = uiDim(this.mobileUx() ? 44 : 52);
-    // Mobile: top-left — top-right is crowded with options + status on phones.
-    const bx = this.mobileUx() ? uiDim(12) : this.scale.width - uiDim(16) - btnW;
+    // Top-right on every device: the top-left corner belongs to the drill status
+    // panel (they were overlapping on phones), and the minimap doesn't start until
+    // y≈96 so even the mobile button clears it.
+    const bx = this.scale.width - uiDim(this.mobileUx() ? 12 : 16) - btnW;
     const by = uiDim(this.mobileUx() ? 8 : 12);
 
     const bg = this.add.graphics().setScrollFactor(0).setDepth(1006);
@@ -4714,21 +4733,26 @@ export default class OnlineScene extends Phaser.Scene {
       ? { x: px + pad, y: py + pad + this.hud.height + barGap + barH + uiGap("xs"), w: innerW, h: pipH }
       : { x: 0, y: 0, w: 0, h: 0 };
     // the tutorial lesson card is wide + centered — keep it clear of the status panel
+    // (and, on phones, of the relocated hotbar/action-bar/coach band up top)
     if (this.isTutorial && this.tutorialPanel) {
-      this.tutorialPanel.setY(Math.max(uiDim(76), py + innerH + pad * 2 + uiGap("sm")));
+      this.tutorialPanel.setY(Math.max(uiDim(this.mobileUx() ? 206 : 76), py + innerH + pad * 2 + uiGap("sm")));
     }
 
-    // top-center objective tracker: stack visible rows, one shared frame behind them
+    // top-center objective tracker: stack visible rows, one shared frame behind them.
+    // Mobile moves the hotbar + action bar into the top-center band (y≈44..140), so
+    // the tracker drops below them there — it was rendering across the hotbar icons.
+    const trackerTop = this.mobileUx() ? uiDim(146) : uiDim(12);
     const cx = this.scale.width / 2;
     const rows = [this.questText, this.dailyText, this.bountyText].filter(
       (t) => t.visible && t.text.length > 0,
     );
     this.trackerG.clear();
     if (rows.length === 0) {
-      this.trackerBottomY = uiDim(12);
+      this.trackerBottomY = trackerTop;
+      this.positionCoach();
       return;
     }
-    let y = uiDim(12) + pad;
+    let y = trackerTop + pad;
     let maxW = 0;
     for (const row of rows) {
       row.setPosition(cx, y);
@@ -4736,12 +4760,20 @@ export default class OnlineScene extends Phaser.Scene {
       maxW = Math.max(maxW, row.width);
     }
     const frameW = maxW + pad * 2;
-    const frameH = y - uiGap("xs") + pad - uiDim(12);
+    const frameH = y - uiGap("xs") + pad - trackerTop;
     // never let the tracker frame lap the status panel — slide right until clear
     const tcx = Math.max(cx, px + innerW + pad * 2 + uiGap("md") + frameW / 2);
     for (const row of rows) row.setX(tcx);
-    drawHudPanel(this.trackerG, tcx - frameW / 2, uiDim(12), frameW, frameH, 0xb06bff);
-    this.trackerBottomY = uiDim(12) + frameH;
+    drawHudPanel(this.trackerG, tcx - frameW / 2, trackerTop, frameW, frameH, 0xb06bff);
+    this.trackerBottomY = trackerTop + frameH;
+    this.positionCoach();
+  }
+
+  /** Mobile: the coach line rides directly under the objective tracker — its authored
+   *  y=44 slot is the phone hotbar band. Desktop keeps the authored spot. */
+  private positionCoach() {
+    if (!this.mobileUx() || !this.coachText) return;
+    this.coachText.setY(this.trackerBottomY + uiGap("sm"));
   }
 
   /** Floating HSS deploy bark above a newly-seen online enemy (throttled), tinted to

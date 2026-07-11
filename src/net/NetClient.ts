@@ -252,6 +252,10 @@ export default class NetClient {
   onConnectionState?: (state: "connecting" | "connected" | "reconnecting" | "offline") => void;
   /** Fired once when the server rejects wallet auth (stale sig / missing session). */
   onAuthRequired?: () => void;
+  /** Fired when a GUEST login is rejected outright (4001 with no wallet in play) —
+   *  callsign bound to another device, missing device key, or reserved name. */
+  onGuestAuthFailed?: (reason: string) => void;
+  private lastSysText = "";
 
   private ws?: WebSocket;
   private manualClose = false;
@@ -359,6 +363,14 @@ export default class NetClient {
       if (ev.code === 4001 && this.auth?.wallet && !this.authRetryUsed) {
         this.authRetryUsed = true;
         this.onAuthRequired?.();
+        return;
+      }
+      // 4001 without a wallet = GUEST login rejected (callsign saved on another
+      // device / no device key / reserved name). Reconnecting would be rejected
+      // identically forever — stop and surface the reason instead.
+      if (ev.code === 4001 && !this.auth?.wallet) {
+        this.manualClose = true;
+        this.onGuestAuthFailed?.(this.lastSysText || "sign-in rejected");
         return;
       }
       if (!this.manualClose) this.scheduleReconnect();
@@ -672,6 +684,7 @@ export default class NetClient {
         y: msg.y,
       });
     } else if (msg.t === "sys") {
+      this.lastSysText = msg.text; // a 4001 close right after carries this as its reason
       this.pushChat({ from: "", ch: "sys", text: msg.text, faction: -1, sys: true });
     } else if (msg.t === "emote") {
       this.emotes.push({ from: msg.from, kind: msg.kind, ping: msg.ping, x: msg.x, y: msg.y, at: performance.now() });

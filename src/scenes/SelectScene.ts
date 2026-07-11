@@ -164,6 +164,14 @@ export default class SelectScene extends Phaser.Scene {
 
   /** Restore MetaMask silently if present, else guest multiplayer continue / create. */
   private async bootWalletGate() {
+    // Bounced back because the server rejected the guest login (callsign bound to
+    // another device / missing device key / reserved) — recovery menu, not a loop.
+    const guestErr = this.registry.get("guestAuthError") as string | undefined;
+    if (guestErr) {
+      this.registry.remove("guestAuthError");
+      this.showGuestAuthError(guestErr);
+      return;
+    }
     await restoreWalletSession();
     if (connectedWallet()) {
       await this.refreshWalletState();
@@ -176,6 +184,58 @@ export default class SelectScene extends Phaser.Scene {
     } else {
       await this.refreshWalletState();
     }
+  }
+
+  /** Server refused the guest identity — explain and offer ways forward. */
+  private showGuestAuthError(reason: string) {
+    this.phase = "wallet";
+    this.syncWalletLabel(null);
+    this.classLayer.setVisible(false);
+    this.clearActionLayer();
+    this.bodyText.setVisible(false);
+    this.preview?.destroy();
+    this.preview = undefined;
+    const hasWallet = walletAvailable();
+    this.walletPanel.show({
+      step: "connect",
+      status: "error",
+      statusText: "sign-in rejected",
+      headline: "That callsign is locked",
+      body:
+        reason +
+        (/[.!?]$/.test(reason.trim()) ? " " : ". ") +
+        (hasWallet
+          ? "Start a new runner on this device, or link MetaMask for a permanent identity that works everywhere."
+          : "Start a new runner to keep playing on this device."),
+      wallet: null,
+      actions: this.walletActions([
+        {
+          label: "◌ NEW RUNNER",
+          sub: "new callsign · fresh multiplayer save on this device",
+          color: COLORS.neonCyan,
+          primary: true,
+          fn: () => this.startNewGuestRunner(),
+        },
+        ...(hasWallet
+          ? [
+              {
+                label: "◈ SIGN IN WITH METAMASK",
+                sub: "permanent wallet identity · works on every device",
+                color: COLORS.neonGreen,
+                primary: false as const,
+                fn: () => void this.onMetaMaskSignUp(),
+              },
+            ]
+          : []),
+        {
+          label: "▸ RETRY",
+          sub: "try the same callsign again",
+          color: 0x9aa3b2,
+          primary: false,
+          fn: () => this.enterGuestReturning(),
+        },
+      ]),
+    });
   }
 
   private shortWallet(addr: string) {
