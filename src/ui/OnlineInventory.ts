@@ -55,11 +55,12 @@ export default class OnlineInventory {
     this.contextMenu = contextMenu ?? new ContextMenu(scene);
     ensureItemIcons(scene);
     this.mobile = prefersMobileUx();
-    // Mobile: hotbar sits top-center so the virtual stick owns the bottom-left.
+    // Mobile: items/weapons ride the BOTTOM edge, centred between the floating
+    // stick (left) and the action arc (right) — closest row to the thumbs.
     if (this.mobile) {
       const slotsW = HOTBAR_SLOTS * (HB_CELL + HB_GAP);
       this.barX = Math.max(uiDim(8), (scene.scale.width - slotsW) / 2);
-      this.barY = uiDim(38); // clean gap above the Bag/Map/Quests/Chat bar at 94
+      this.barY = scene.scale.height - uiDim(58);
     } else {
       this.barX = uiDim(16);
       this.barY = onlineHudStack(scene.scale.height).hotbarY;

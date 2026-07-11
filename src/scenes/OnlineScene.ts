@@ -51,7 +51,8 @@ import {
   buildVenueRoom,
   districtBuildings,
   VENUE_MAT_TILE,
-  VENUE_SPAWN,
+  venueLayoutFor,
+  venueSpawnFor,
   buildSubway,
   buildDive,
   parseDiveZone,
@@ -375,7 +376,7 @@ const DISTRICT_TRANSIT_BACK: Array<{ district: number; dest: string; label: stri
 /** Central tiles to seat a building interior's occupants. */
 const INTERIOR_NPC_TILES: [number, number][] = [[20, 12], [15, 15], [25, 15], [20, 18]];
 /** Seats inside the FRLG-scale venue room — keeper behind the counter, services on the floor. */
-const VENUE_NPC_TILES: [number, number][] = [[7, 2], [4, 5], [10, 5], [11, 7]];
+// (venue seat tiles now come from venueLayoutFor(zone).seats — one set per floor plan)
 
 /** HSS archetype tints (index = enemy kind), matching the singleplayer reads. */
 // 0 patrol · 1 wasp · 2 lancer · 3 hound · 4 enforcer · 5 sniper · 6 wraith
@@ -684,7 +685,7 @@ export default class OnlineScene extends Phaser.Scene {
                 : parseEstateInterior(this.zone) !== null
                   ? buildHomeRoom()
                   : parseBuildingInterior(this.zone) || parseHubInterior(this.zone) !== null
-                    ? buildVenueRoom()
+                    ? buildVenueRoom(this.zone)
                     : buildSafehouse()
               : this.isBridge
                 ? buildBridgeGrid(bridgeDef!)
@@ -791,7 +792,11 @@ export default class OnlineScene extends Phaser.Scene {
       );
     }
     this.cameras.main.setBounds(0, 0, this.worldW, this.worldH);
-    installUiCamera(this, 1);
+    // Interiors play zoomed-in (FRLG readability): rooms larger than the zoomed view
+    // pan with the runner via the follow camera + bounds clamp; small rooms stay
+    // centred. Streets/combat zones keep the full field of view.
+    const interiorZoom = this.interior && !this.isCityHub && !this.isEstates ? 2 : 1;
+    installUiCamera(this, interiorZoom);
     this.applyNeon();
     fadeInScene(this, zoneAccent);
     if (!this.interior && !this.isSubway && !this.isDive && !this.isTutorial && !this.isCityHub) this.drawPvpZones();
@@ -938,7 +943,7 @@ export default class OnlineScene extends Phaser.Scene {
           : hb !== null
             ? [hubResident(hb)]
             : [keeperFor(kind), ...residents.map((id) => npcDef(id)).filter((d): d is NonNullable<typeof d> => !!d)];
-        const seats = isBldg ? VENUE_NPC_TILES : INTERIOR_NPC_TILES;
+        const seats = isBldg ? venueLayoutFor(this.zone).seats : INTERIOR_NPC_TILES;
         occupants.forEach((o, i) => {
           const [tx, ty] = seats[i % seats.length];
           this.makeTalkNpc(o.name, o.look, o.lines, tx * TILE + TILE / 2, ty * TILE + TILE / 2, o.id);
@@ -969,8 +974,9 @@ export default class OnlineScene extends Phaser.Scene {
             this.npcs.push({ kind: "service", svc: s.svc, name: `${s.name} · ${s.tag}`, x: px, y: py });
           });
           // the exit — an FRLG door mat against the south wall; stepping on it walks out
-          const matX = VENUE_MAT_TILE[0] * TILE;
-          const matY = VENUE_MAT_TILE[1] * TILE;
+          const [matTx, matTy] = venueLayoutFor(this.zone).mat;
+          const matX = matTx * TILE;
+          const matY = matTy * TILE;
           const mg = this.add.graphics().setDepth(2.5);
           mg.fillStyle(0x0a0e18, 0.9).fillRect(matX + 3, matY + 2, TILE - 6, TILE - 4);
           mg.lineStyle(2, accent, 0.85).strokeRect(matX + 3, matY + 2, TILE - 6, TILE - 4);
@@ -1075,11 +1081,12 @@ export default class OnlineScene extends Phaser.Scene {
       .setDepth(12)
       .setVisible(false);
     // Mobile gets a bigger, pill-backed prompt — it doubles as the tap target for
-    // doors/NPCs, so it has to read (and press) like a button under a thumb.
+    // doors/NPCs, so it has to read (and press) like a button under a thumb. It sits
+    // above the bottom hotbar + menu rows there.
     this.interactPrompt = this.add
       .text(
         this.scale.width / 2,
-        onlineHudStack(this.scale.height).interactY,
+        this.mobileUx() ? this.scale.height - uiDim(176) : onlineHudStack(this.scale.height).interactY,
         "",
         this.mobileUx()
           ? displayFont(16, {
@@ -1371,11 +1378,14 @@ export default class OnlineScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(1000);
     if (getSettings().highContrast) this.hud.setStroke("#02030a", uiDim(3));
+    // Mobile: the bottom edge belongs to the hotbar + menu rows, and every control is
+    // labelled on-screen anyway (MOVE ghost, ATK/Q/E/R, Bag/Map…) — drop the hint line.
     this.footerHint = this.add
       .text(this.scale.width / 2, hudStack.footerHintY, this.controlHint(), bodyFont(10, { color: "#6b7184", align: "center" }))
       .setOrigin(0.5, 1)
       .setScrollFactor(0)
-      .setDepth(1000);
+      .setDepth(1000)
+      .setVisible(!this.mobileUx());
     // control hint: useful for 12s, then almost gone so the floor stays readable
     this.time.delayedCall(12000, () => this.tweens.add({ targets: this.footerHint, alpha: 0.18, duration: 1200 }));
     this.options.setOnChange(() => {
@@ -1509,10 +1519,10 @@ export default class OnlineScene extends Phaser.Scene {
     const chatH = uiDim(mobileHud ? 88 : 176);
     const chatW = uiDim(mobileHud ? 280 : 380);
     const chatX = mobileHud ? this.scale.width / 2 - chatW / 2 : uiDim(12);
-    // Mobile: below the full top-center band (hotbar 44..92 · action bar 92..~140 ·
-    // objective tracker + coach 146..~224).
+    // Mobile: top-center under the tracker + coach band (44..~180) — the bottom edge
+    // belongs to the hotbar + menu rows now.
     const chatY = mobileHud
-      ? uiDim(230)
+      ? uiDim(190)
       : onlineHudStack(this.scale.height).hotbarY - uiGap("sm") - chatH;
     this.chatPanel = new OnlineChatPanel(this, chatX, chatY, chatW, chatH, 1000);
     this.chatPanel.setArea(this.chatAreaLabel());
@@ -1943,7 +1953,7 @@ export default class OnlineScene extends Phaser.Scene {
     if (this.isCityHub) return CITY_HUB_SPAWN;
     // Compact FRLG rooms (district buildings, hub facades, estate homes) — mat entry tile.
     // SAFEHOUSE_SPAWN is centre of the large safehouse plan and sits OUTSIDE 15×11 walls.
-    if (isVenueSizedZone(this.zone)) return VENUE_SPAWN;
+    if (isVenueSizedZone(this.zone)) return venueSpawnFor(this.zone);
     if (isSafehouseSizedInterior(this.zone)) return SAFEHOUSE_SPAWN;
     if (this.interior && !this.isSubway) return SAFEHOUSE_SPAWN;
     return null;
@@ -2692,18 +2702,29 @@ export default class OnlineScene extends Phaser.Scene {
   private dressVenueRoom(kind: string, accent: number) {
     const g = this.add.graphics().setDepth(2.4);
     const t = (n: number) => n * TILE;
-    // counter surface — the wall row at y=3 (x4..10, gap at 7) reads as furniture
-    for (let x = 4; x <= 10; x++) {
-      if (x === 7) continue;
-      g.fillStyle(0x1a2234, 0.9).fillRect(t(x) + 1, t(3) + TILE - 9, TILE - 2, 8);
-      g.fillStyle(accent, 0.5).fillRect(t(x) + 1, t(3) + TILE - 10, TILE - 2, 2);
+    const L = venueLayoutFor(this.zone);
+    // counter surface — the plan's counter wall run reads as furniture
+    for (let x = L.counter.x0; x <= L.counter.x1; x++) {
+      if (x === L.counter.gap) continue;
+      g.fillStyle(0x1a2234, 0.9).fillRect(t(x) + 1, t(L.counter.y) + TILE - 9, TILE - 2, 8);
+      g.fillStyle(accent, 0.5).fillRect(t(x) + 1, t(L.counter.y) + TILE - 10, TILE - 2, 2);
     }
-    // rug — centre of the floor, under the service seats
-    g.fillStyle(accent, 0.1).fillRect(t(5) + 6, t(5) + 4, t(4) - 12, t(2) + TILE - 8);
-    g.lineStyle(1, accent, 0.3).strokeRect(t(5) + 6, t(5) + 4, t(4) - 12, t(2) + TILE - 8);
+    // interior wall blocks (pillars / partitions / islands) get a top surface too
+    for (const [bx0, by0, bx1] of L.blocks ?? []) {
+      for (let x = bx0; x <= bx1; x++) {
+        g.fillStyle(0x141c2c, 0.9).fillRect(t(x) + 1, t(by0) + TILE - 8, TILE - 2, 7);
+        g.fillStyle(accent, 0.3).fillRect(t(x) + 1, t(by0) + TILE - 9, TILE - 2, 2);
+      }
+    }
+    // rug — centre of the floor, sized to the room
+    const rugW = t(Math.min(4, L.w - 8)) - 12;
+    const rugX = t(Math.floor(L.w / 2) - 2) + 6;
+    const rugY = t(Math.floor(L.h / 2) - 1) + 4;
+    g.fillStyle(accent, 0.1).fillRect(rugX, rugY, rugW, t(2) + TILE - 8);
+    g.lineStyle(1, accent, 0.3).strokeRect(rugX, rugY, rugW, t(2) + TILE - 8);
     // warm light pooling at the counter gap + room centre
-    this.add.image(t(7) + TILE / 2, t(3) + TILE, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(0xffb86a).setDepth(2.5).setScale(0.9).setAlpha(0.14);
-    this.add.image(t(7) + TILE / 2, t(6), GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(accent).setDepth(2.5).setScale(1.3).setAlpha(0.08);
+    this.add.image(t(L.counter.gap) + TILE / 2, t(L.counter.y) + TILE, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(0xffb86a).setDepth(2.5).setScale(0.9).setAlpha(0.14);
+    this.add.image(t(Math.floor(L.w / 2)) + TILE / 2, t(Math.floor(L.h / 2)), GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(accent).setDepth(2.5).setScale(1.3).setAlpha(0.08);
 
     const crate = (cx: number, cy: number, c = 0x3a3020) => {
       g.fillStyle(c, 0.95).fillRect(t(cx) + 5, t(cy) + 8, 20, 16);
@@ -3939,7 +3960,8 @@ export default class OnlineScene extends Phaser.Scene {
         }
       } else if (this.interior && (parseBuildingInterior(this.zone) || parseHubInterior(this.zone) !== null || parseEstateInterior(this.zone) !== null)) {
         const p = this.net.pred;
-        if (Math.floor(p.x / TILE) === VENUE_MAT_TILE[0] && Math.floor(p.y / TILE) === VENUE_MAT_TILE[1]) {
+        const [matTx, matTy] = venueLayoutFor(this.zone).mat; // est homes resolve to the classic [7,9]
+        if (Math.floor(p.x / TILE) === matTx && Math.floor(p.y / TILE) === matTy) {
           this.doorTransit = true;
           this.travelOrganic(this.fromZone, { from: this.zone });
         }
@@ -4749,15 +4771,15 @@ export default class OnlineScene extends Phaser.Scene {
       ? { x: px + pad, y: py + pad + this.hud.height + barGap + barH + uiGap("xs"), w: innerW, h: pipH }
       : { x: 0, y: 0, w: 0, h: 0 };
     // the tutorial lesson card is wide + centered — keep it clear of the status panel
-    // (and, on phones, of the relocated hotbar/action-bar/coach band up top)
+    // (and, on phones, of the tracker + coach band up top)
     if (this.isTutorial && this.tutorialPanel) {
-      this.tutorialPanel.setY(Math.max(uiDim(this.mobileUx() ? 206 : 76), py + innerH + pad * 2 + uiGap("sm")));
+      this.tutorialPanel.setY(Math.max(uiDim(this.mobileUx() ? 150 : 76), py + innerH + pad * 2 + uiGap("sm")));
     }
 
     // top-center objective tracker: stack visible rows, one shared frame behind them.
-    // Mobile moves the hotbar + action bar into the top-center band (y≈44..140), so
-    // the tracker drops below them there — it was rendering across the hotbar icons.
-    const trackerTop = this.mobileUx() ? uiDim(152) : uiDim(12);
+    // Mobile: the hotbar + menu bar live at the BOTTOM edge now, so the tracker owns
+    // the top-center band (under the status panel line).
+    const trackerTop = this.mobileUx() ? uiDim(44) : uiDim(12);
     const cx = this.scale.width / 2;
     const rows = [this.questText, this.dailyText, this.bountyText].filter(
       (t) => t.visible && t.text.length > 0,

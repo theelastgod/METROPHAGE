@@ -37,9 +37,9 @@ export default class RsActionBar {
     this.w = slots.length * this.slotW + (slots.length - 1) * gap + uiGap("lg");
     const stack = onlineHudStack(scene.scale.height);
     if (mobile) {
-      // Centered under the hotbar band — free of stick (BL) and action arc (BR).
+      // Bottom-centre, directly above the hotbar row — menu taps live with the thumbs.
       this.x = Math.max(uiDim(8), (scene.scale.width - this.w) / 2);
-      this.y = uiDim(94);
+      this.y = scene.scale.height - uiDim(118);
     } else {
       // right-anchored so the left-anchored equip hotbar never collides with it
       this.x = scene.scale.width - this.w - uiDim(12);
