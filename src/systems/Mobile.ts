@@ -4,8 +4,8 @@ import { hasSavedSettings, updateSettings, getSettings } from "./Settings";
  * Mobile / touch UX helpers.
  *
  * Phones and tablets get tap-to-walk, larger chrome, and conservative graphics
- * by default. Desktop hybrid laptops with a touchscreen keep normal defaults
- * unless the primary pointer is coarse (phone-like).
+ * by default. Desktop browsers keep normal defaults even when touch hardware
+ * reports coarse/no-hover pointer media quirks.
  */
 
 let cached: boolean | null = null;
@@ -30,11 +30,29 @@ export function prefersMobileUx(): boolean {
       return false;
     }
     const ua = navigator.userAgent || "";
+    const nav = navigator as Navigator & {
+      userAgentData?: {
+        mobile?: boolean;
+        platform?: string;
+      };
+    };
     const mobileUa = /Android|iPhone|iPod|Mobile|webOS|BlackBerry|IEMobile|Opera Mini/i.test(ua);
     // iPadOS 13+ reports as MacIntel but has multi-touch.
     const iPadOs =
       /iPad/i.test(ua) ||
       (navigator.platform === "MacIntel" && (navigator.maxTouchPoints ?? 0) > 1);
+    const uaDataPlatform = nav.userAgentData?.platform ?? "";
+    const chromiumDesktop =
+      nav.userAgentData?.mobile === false &&
+      /Windows|macOS|Chrome OS|Linux/i.test(uaDataPlatform);
+    const desktopUa =
+      !mobileUa &&
+      !iPadOs &&
+      /Windows NT|Win(?:32|64)|Macintosh|X11|CrOS|Linux (?:x86_64|i[3-6]86)/i.test(ua);
+    if (chromiumDesktop || desktopUa) {
+      cached = false;
+      return false;
+    }
     const coarse =
       typeof window.matchMedia === "function" &&
       window.matchMedia("(pointer: coarse)").matches;
@@ -94,6 +112,18 @@ export function isPortrait(): boolean {
 /** Mobile + portrait — block play until the phone is turned sideways. */
 export function needsLandscape(): boolean {
   return prefersMobileUx() && isPortrait();
+}
+
+/** Bottom-left thumb region for the floating movement stick. */
+export function mobileStickSafeRegion(width: number, height: number) {
+  const shortSide = Math.min(width, height);
+  const widthCap = Math.max(154, shortSide * 0.42);
+  return {
+    x: 0,
+    y: Math.max(height * 0.48, height - shortSide * 0.48),
+    w: Math.min(width * 0.28, widthCap),
+    h: Math.max(shortSide * 0.42, height * 0.46),
+  };
 }
 
 /**

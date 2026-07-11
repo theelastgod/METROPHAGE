@@ -175,7 +175,12 @@ const PVP_FREE_ZONES = new Set(["safe", "tutorial", "subway"]);
 export function pvpEnabledForZone(zone: string): boolean {
   if (PVP_FREE_ZONES.has(zone)) return false;
   if (zone.startsWith("int_")) return false;
+  if (isVenueSizedZoneName(zone)) return false;
   return /^d\d+$/.test(zone);
+}
+
+function isVenueSizedZoneName(zone: string): boolean {
+  return /^d\d+i\d+$/.test(zone) || /^h\d+$/.test(zone) || /^est\d+$/.test(zone);
 }
 
 /** PvP arenas scaled to the zone's world size — tucked in the southeast, away from the

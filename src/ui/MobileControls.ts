@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { uiDim } from "../config";
 import { UI_BTN_RING_KEY } from "../assets/manifest";
 import { displayFont, bodyFont } from "./typography";
+import { mobileStickSafeRegion } from "../systems/Mobile";
 
 export interface MobileControlHandlers {
   onDash: () => void;
@@ -141,9 +142,9 @@ export default class MobileControls {
     this.homeCy = H - uiDim(26) - this.stickR;
     this.stickCx = this.homeCx;
     this.stickCy = this.homeCy;
-    // Lower-left quadrant captures the thumb; upper bound clears the status panel
-    // and mid-screen taps (which stay tap-to-walk).
-    this.region = { x: 0, y: H * 0.44, w: W * 0.4, h: H * 0.56 };
+    // Lower-left thumb lane captures movement without sitting under the centered
+    // hotbar/action menu. Mid-screen taps stay tap-to-walk.
+    this.region = mobileStickSafeRegion(W, H);
 
     this.root.add(
       this.scene.add
@@ -172,7 +173,8 @@ export default class MobileControls {
     this.root.add(regionZone);
 
     // ── Action arc (right thumb) — big ATK pad in the corner, everything fans out ──
-    const atkR = uiDim(36);
+    const compact = W < uiDim(900);
+    const atkR = uiDim(compact ? 32 : 36);
     const ax = W - uiDim(18) - atkR;
     const ay = H - uiDim(18) - atkR;
     /** Point at `deg`° (90 = straight up, 180 = straight left) `dist` from ATK. */
@@ -308,17 +310,18 @@ export default class MobileControls {
     // Primary pad — hold to fire (auto-aims nearest hostile).
     mkBtn(ax, ay, atkR, "ATK", 0xff3b6b, () => {}, { holdFire: true, fontPx: 17, iconKey: "ability_rail" });
     // Inner ring: mobility + interact — one thumb-roll away from ATK.
-    const dash = at(180, atkR + uiDim(38));
-    mkBtn(dash.x, dash.y, uiDim(26), "⇢", 0x00e5ff, h.onDash, { fontPx: 14, track: "dash", iconKey: "ability_dash" });
-    const use = at(90, atkR + uiDim(38));
-    mkBtn(use.x, use.y, uiDim(26), "◆", 0x39ff88, h.onInteract, { fontPx: 14, iconKey: "ability_radar" });
+    const innerDist = atkR + uiDim(compact ? 30 : 38);
+    const dash = at(180, innerDist);
+    mkBtn(dash.x, dash.y, uiDim(compact ? 24 : 26), "⇢", 0x00e5ff, h.onDash, { fontPx: 14, track: "dash", iconKey: "ability_dash" });
+    const use = at(90, innerDist);
+    mkBtn(use.x, use.y, uiDim(compact ? 24 : 26), "◆", 0x39ff88, h.onInteract, { fontPx: 14, iconKey: "ability_radar" });
     // Outer arc: abilities — Q closest to the thumb, R (ult) a deliberate reach.
-    const q = at(135, atkR + uiDim(88));
-    mkBtn(q.x, q.y, uiDim(26), "Q", 0xff2bd6, h.onAbility, { track: "q", iconKey: "ability_virus", fontPx: 11 });
-    const e = at(171, atkR + uiDim(94));
-    mkBtn(e.x, e.y, uiDim(24), "E", 0xf7ff3c, h.onAbility2, { track: "e", iconKey: "ability_shield", fontPx: 11 });
-    const r = at(99, atkR + uiDim(94));
-    mkBtn(r.x, r.y, uiDim(24), "R", 0xff8a1f, h.onUlt, { track: "r", iconKey: "ability_overdrive", fontPx: 11 });
+    const q = at(135, atkR + uiDim(compact ? 70 : 88));
+    mkBtn(q.x, q.y, uiDim(compact ? 24 : 26), "Q", 0xff2bd6, h.onAbility, { track: "q", iconKey: "ability_virus", fontPx: 11 });
+    const e = at(171, atkR + uiDim(compact ? 72 : 94));
+    mkBtn(e.x, e.y, uiDim(compact ? 22 : 24), "E", 0xf7ff3c, h.onAbility2, { track: "e", iconKey: "ability_shield", fontPx: 11 });
+    const r = at(99, atkR + uiDim(compact ? 72 : 94));
+    mkBtn(r.x, r.y, uiDim(compact ? 22 : 24), "R", 0xff8a1f, h.onUlt, { track: "r", iconKey: "ability_overdrive", fontPx: 11 });
   }
 
   private wireGlobalPointers() {

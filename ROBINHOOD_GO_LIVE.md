@@ -14,12 +14,29 @@
 
 | Step | Owner |
 |------|--------|
+| Create/reuse EVM treasury | You (`mainnet-prepare.mjs`) |
 | Deploy ERC-20 on RH | You (`deploy-metro-erc20.mjs` or forge) |
 | Fund treasury with **ETH** (gas) + optional $METRO | You |
 | Set Worker secrets | You |
 | Rebuild client with `VITE_METRO_MINT` | You |
 | Counsel → arm mainnet | Counsel + you |
 | Robinhood **app** listing | Robinhood / legal — not this repo |
+
+## Pre-CA mainnet readiness
+
+```sh
+cd server
+node scripts/mainnet-prepare.mjs
+
+# install treasury secret before the CA exists
+node -e "process.stdout.write(JSON.parse(require('fs').readFileSync('.mainnet-treasury.json','utf8')).treasurySecret)" \
+  | npx wrangler secret put METRO_TREASURY_SECRET
+npx wrangler deploy
+```
+
+The treasury file must contain `treasuryAddress` and an EVM `0x...` private key.
+If the script detects an old Solana treasury, it refuses to replace it unless run
+with `--replace-legacy`.
 
 ## Testnet dry run (≈ $0)
 
@@ -64,11 +81,12 @@ npx wrangler pages deploy dist --project-name=metrophagev1 --branch=main
 
 ## Mainnet (counsel)
 
-1. Deploy mint on chain **4663**.  
-2. Secrets + RPC mainnet + `METRO_CHAIN_ID=4663`.  
-3. Small real ETH on treasury.  
-4. `METRO_MAINNET_ARMED=1` + client `VITE_METRO_MAINNET_ARMED=1` + `VITE_METRO_CLUSTER=robinhood`.  
-5. Server secrets **before** client mint env (never reverse).
+1. Deploy mint on chain **4663**.
+2. Run `cd server && node scripts/mainnet-arm.mjs <0x_CA>`.
+3. Follow the printed server commands first: treasury secret, `METRO_MINT`, RPC, chain ID, remote migrations, Worker deploy.
+4. Follow the printed client commands second: `VITE_METRO_MINT`, `VITE_METRO_CLUSTER=robinhood`, Pages deploy to `main`.
+5. Fund treasury with small real ETH on Robinhood Chain for cash-out gas.
+6. Counsel only: set `METRO_MAINNET_ARMED=1` and rebuild with `VITE_METRO_MAINNET_ARMED=1`.
 
 ## Harness
 

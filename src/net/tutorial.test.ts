@@ -21,11 +21,13 @@ describe("tutorial curricula", () => {
   it("full training has unique steps, core lessons, and a short systems tour", () => {
     const kinds = TUTORIAL_STEPS_FULL.map((s) => s.kind);
     expect(new Set(kinds).size).toBe(kinds.length); // no duplicates (was broken: double capture)
-    for (const need of ["move", "fire", "kit", "kill", "pickup", "capture", "equip", "chat", "panel", "portal"] as const) {
+    for (const need of ["move", "fire", "kit", "kill", "pickup", "capture", "equip", "chat", "panel", "metro", "portal"] as const) {
       expect(kinds).toContain(need);
     }
     expect(kinds.indexOf("kit")).toBeLessThan(kinds.indexOf("kill"));
     expect(kinds.indexOf("chat")).toBeLessThan(kinds.indexOf("faction"));
+    expect(kinds.indexOf("trade")).toBeLessThan(kinds.indexOf("metro"));
+    expect(kinds.indexOf("metro")).toBeLessThan(kinds.indexOf("travel"));
     expect(kinds[kinds.length - 1]).toBe("portal");
     // Playable length — not 23 one-panel stops
     expect(TUTORIAL_STEPS_FULL.length).toBeLessThanOrEqual(16);
@@ -41,6 +43,7 @@ describe("tutorial curricula", () => {
   it("instructor talk clears main-path lessons so runners never soft-lock between trainers", () => {
     expect(isTutorialTalkKind("faction")).toBe(true);
     expect(isTutorialTalkKind("campaign")).toBe(true);
+    expect(isTutorialTalkKind("metro")).toBe(true);
     expect(isTutorialTalkKind("move")).toBe(true);
     expect(isTutorialTalkKind("kill")).toBe(true);
     expect(isTutorialTalkKind("chat")).toBe(true);

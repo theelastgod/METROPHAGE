@@ -1,104 +1,170 @@
-// METROPHAGE — pre-CA mainnet preparation.
+// METROPHAGE — pre-CA Robinhood Chain preparation.
 //
-// Generates a FRESH mainnet treasury keypair (the custodian that will hold player
-// $METRO deposits). Does NOT need a mint/CA. Does NOT arm mainnet. Does NOT fund
-// anything on-chain (treasury holds $METRO only after players deposit).
+// Generates a FRESH EVM treasury key (the account that receives ERC-20 deposits
+// and signs ERC-20 cash-out transfers). Does NOT need a mint/CA. Does NOT arm
+// mainnet.
 //
 // Writes (gitignored):
 //   server/.mainnet-treasury.json
 //
 // Usage:
 //   node scripts/mainnet-prepare.mjs
-//   node scripts/mainnet-prepare.mjs --print-secret   # also print base64 for wrangler
+//   node scripts/mainnet-prepare.mjs --print-secret
+//   node scripts/mainnet-prepare.mjs --replace-legacy
 //
-// After pump.fun gives you a CA, run:
-//   node scripts/mainnet-arm.mjs <MINT_CA>
+// After Robinhood Chain gives you a CA, run:
+//   node scripts/mainnet-arm.mjs <0x_CA>
 
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { Keypair } from "@solana/web3.js";
+import { Wallet } from "ethers";
 
 const __dir = path.dirname(fileURLToPath(import.meta.url));
 const OUT = path.join(__dir, "../.mainnet-treasury.json");
+const BACKUP_DIR = path.join(__dir, "../.wrangler/secret-backups");
 const printSecret = process.argv.includes("--print-secret");
+const replaceLegacy = process.argv.includes("--replace-legacy");
 
-function b64(kp) {
-  return Buffer.from(kp.secretKey).toString("base64");
+function chmod600(file) {
+  try {
+    fs.chmodSync(file, 0o600);
+  } catch {
+    /* best effort */
+  }
 }
 
-function main() {
-  let existing = null;
+function readExisting() {
   try {
-    existing = JSON.parse(fs.readFileSync(OUT, "utf8"));
+    return JSON.parse(fs.readFileSync(OUT, "utf8"));
   } catch {
-    /* none */
+    return null;
   }
+}
 
-  if (existing?.treasurySecret && existing?.treasuryPubkey) {
-    console.log("Reusing existing mainnet treasury (already prepared):\n");
-    console.log(`  public:  ${existing.treasuryPubkey}`);
-    console.log(`  file:    ${OUT}`);
-    console.log(`  created: ${existing.createdAt ?? "?"}`);
-    if (printSecret) {
-      console.log(`\n  METRO_TREASURY_SECRET=${existing.treasurySecret}`);
-    } else {
-      console.log("\n  (re-run with --print-secret to show the base64 secret)");
-    }
-    printNextSteps(existing.treasuryPubkey);
-    return;
+function secretKind(secret) {
+  const v = String(secret || "").trim();
+  if (!v) return "missing";
+  if (/^0x[0-9a-fA-F]{64}$/.test(v) || /^[0-9a-fA-F]{64}$/.test(v)) return "evm";
+  try {
+    const bytes = Buffer.from(v, "base64").length;
+    if (bytes === 32) return "evm-base64";
+    if (bytes === 64) return "legacy-solana";
+    return `unknown-base64-${bytes}`;
+  } catch {
+    return "unknown";
   }
+}
 
-  const treasury = Keypair.generate();
-  const record = {
-    cluster: "mainnet-beta",
-    treasuryPubkey: treasury.publicKey.toBase58(),
-    treasurySecret: b64(treasury),
+function normalizeEvmSecret(secret) {
+  const v = String(secret || "").trim();
+  if (/^0x[0-9a-fA-F]{64}$/.test(v)) return v;
+  if (/^[0-9a-fA-F]{64}$/.test(v)) return "0x" + v;
+  const raw = Buffer.from(v, "base64");
+  if (raw.length === 32) return "0x" + raw.toString("hex");
+  return null;
+}
+
+function writeRecord(record) {
+  fs.writeFileSync(OUT, JSON.stringify(record, null, 2), { mode: 0o600 });
+  chmod600(OUT);
+}
+
+function backupLegacy(existing) {
+  fs.mkdirSync(BACKUP_DIR, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const backup = path.join(BACKUP_DIR, `mainnet-treasury-legacy-${stamp}.json`);
+  fs.writeFileSync(backup, JSON.stringify(existing, null, 2), { mode: 0o600 });
+  chmod600(backup);
+  return backup;
+}
+
+function makeRecord(wallet) {
+  return {
+    chain: "robinhood",
+    cluster: "robinhood",
+    treasuryAddress: wallet.address,
+    treasurySecret: wallet.privateKey,
     createdAt: new Date().toISOString(),
     note:
-      "FRESH mainnet treasury for $METRO bridge. NEVER reuse a devnet key. " +
-      "Never commit this file. Fund nothing with SOL — treasury only signs claims. " +
-      "Players deposit $METRO here after the CA is live.",
-    mint: null, // filled later by mainnet-arm.mjs
+      "FRESH Robinhood/EVM treasury for $METRO bridge. Never commit this file. " +
+      "Treasury receives player ERC-20 deposits and signs ERC-20 cash-outs; keep " +
+      "a small ETH balance on Robinhood Chain for gas.",
+    mint: null,
     mainnetArmed: false,
   };
-  fs.writeFileSync(OUT, JSON.stringify(record, null, 2), { mode: 0o600 });
-  try {
-    fs.chmodSync(OUT, 0o600);
-  } catch {
-    /* windows */
-  }
-
-  console.log("Generated FRESH mainnet treasury keypair.\n");
-  console.log(`  public:  ${record.treasuryPubkey}`);
-  console.log(`  file:    ${OUT}  (gitignored, mode 600)`);
-  if (printSecret) {
-    console.log(`\n  METRO_TREASURY_SECRET=${record.treasurySecret}`);
-  } else {
-    console.log("\n  Secret written to file only. Use --print-secret if you need the base64.");
-  }
-  printNextSteps(record.treasuryPubkey);
 }
 
-function printNextSteps(pubkey) {
+function printNextSteps(record) {
   console.log(`
-── Install treasury secret on Cloudflare (no mint required yet) ──────────
+── Install treasury secret on Cloudflare (no CA required yet) ────────────
   cd server
   node -e "process.stdout.write(JSON.parse(require('fs').readFileSync('.mainnet-treasury.json','utf8')).treasurySecret)" \\
     | npx wrangler secret put METRO_TREASURY_SECRET
   npx wrangler deploy
 
-── When pump.fun gives you the CA ────────────────────────────────────────
+── When you have the Robinhood Chain CA ──────────────────────────────────
   cd server
-  node scripts/mainnet-arm.mjs <MINT_ADDRESS>
+  node scripts/mainnet-arm.mjs <0x_CA>
 
 ── Until then ────────────────────────────────────────────────────────────
-  • METRO_MAINNET_ARMED stays OFF
+  • Do NOT set METRO_MINT on the Worker
   • Do NOT set VITE_METRO_MINT on the client
-  • Pool stays empty; deposits impossible without a mint
-  • Treasury pubkey (deposit address once mint exists):
-      ${pubkey}
-`);
+  • METRO_MAINNET_ARMED stays OFF until counsel
+  • Treasury needs a small ETH balance on Robinhood Chain before cash-outs
+
+Treasury:
+  address: ${record.treasuryAddress}
+  file:    ${OUT}`);
+  if (printSecret) console.log(`  METRO_TREASURY_SECRET=${record.treasurySecret}`);
+  else console.log("  (re-run with --print-secret to show the 0x private key)");
+}
+
+function main() {
+  const existing = readExisting();
+  const kind = secretKind(existing?.treasurySecret);
+
+  if (kind === "evm" || kind === "evm-base64") {
+    const key = normalizeEvmSecret(existing.treasurySecret);
+    const wallet = new Wallet(key);
+    const record = {
+      ...existing,
+      chain: existing.chain || "robinhood",
+      cluster: existing.cluster || "robinhood",
+      treasuryAddress: existing.treasuryAddress || wallet.address,
+      treasurySecret: key,
+      mainnetArmed: existing.mainnetArmed === true,
+    };
+    writeRecord(record);
+    console.log("Reusing existing Robinhood/EVM treasury.\n");
+    console.log(`  address: ${record.treasuryAddress}`);
+    console.log(`  file:    ${OUT}`);
+    console.log(`  created: ${record.createdAt ?? "?"}`);
+    printNextSteps(record);
+    return;
+  }
+
+  if (existing && !replaceLegacy) {
+    console.error("Existing treasury file is not a Robinhood/EVM private key.");
+    console.error(`  file: ${OUT}`);
+    console.error(`  detected: ${kind}`);
+    console.error("\nRun this only if you are ready to create a fresh Robinhood treasury:");
+    console.error("  node scripts/mainnet-prepare.mjs --replace-legacy");
+    process.exit(1);
+  }
+
+  if (existing) {
+    const backup = backupLegacy(existing);
+    console.log("Backed up legacy treasury file:");
+    console.log(`  ${backup}\n`);
+  }
+
+  const record = makeRecord(Wallet.createRandom());
+  writeRecord(record);
+  console.log("Generated FRESH Robinhood/EVM treasury.\n");
+  console.log(`  address: ${record.treasuryAddress}`);
+  console.log(`  file:    ${OUT}  (gitignored, mode 600)`);
+  printNextSteps(record);
 }
 
 main();

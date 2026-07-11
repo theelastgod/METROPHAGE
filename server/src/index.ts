@@ -24,6 +24,16 @@ function isEvmMintAddr(mint: string): boolean {
   return /^0x[a-fA-F0-9]{40}$/.test(mint);
 }
 
+function isEvmTreasurySecret(secret: string | undefined): boolean {
+  const s = (secret || "").trim();
+  if (/^0x[0-9a-fA-F]{64}$/.test(s) || /^[0-9a-fA-F]{64}$/.test(s)) return true;
+  try {
+    return atob(s).length === 32;
+  } catch {
+    return false;
+  }
+}
+
 /** Preferred EVM defaults: Robinhood Chain testnet (safe); mainnet when chain id 4663. */
 function defaultEvmRpc(chainId?: number): string {
   if (chainId === 4663) return "https://rpc.mainnet.chain.robinhood.com";
@@ -225,10 +235,12 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
           ? "Trade $METRO on Robinhood Chain DEXes or peer transfers — not the Robinhood stock app."
           : "Testnet: mint/get test $METRO on RH testnet, then deposit via MetaMask in this panel.";
       if (hasTreasury) {
-        if (mint && isEvmMintAddr(mint)) {
+        const treasuryIsEvm = (mint && isEvmMintAddr(mint)) || (!mint && isEvmTreasurySecret(env.METRO_TREASURY_SECRET));
+        if (treasuryIsEvm) {
           const { treasuryEvmAddress, treasuryHealth, robinhoodRpcs } = await import("./evm");
           info.treasury = treasuryEvmAddress(env.METRO_TREASURY_SECRET!);
-          if (live) {
+          info.treasuryChain = "evm";
+          if (live && mint) {
             try {
               const health = await treasuryHealth({
                 rpcs: robinhoodRpcs(cid ?? 46630, rpc || undefined),
@@ -247,6 +259,7 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
           try {
             const { treasuryPubkey } = await import("./solana");
             info.treasury = treasuryPubkey(env.METRO_TREASURY_SECRET!);
+            info.treasuryChain = "solana";
           } catch {
             info.treasury = null;
           }
@@ -266,7 +279,7 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
       return json(info);
     }
     if (url.pathname === "/metro/status" && req.method === "GET") {
-      return json({
+      const status: Record<string, unknown> = {
         ok: true,
         mintConfigured: !!mint,
         treasuryConfigured: hasTreasury,
@@ -280,7 +293,13 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
           : rpc
             ? "testnet/custom"
             : "unset",
-      });
+      };
+      if (hasTreasury && isEvmTreasurySecret(env.METRO_TREASURY_SECRET)) {
+        const { treasuryEvmAddress } = await import("./evm");
+        status.treasury = treasuryEvmAddress(env.METRO_TREASURY_SECRET!);
+        status.treasuryChain = "evm";
+      }
+      return json(status);
     }
     if (url.pathname === "/metro/quote" && req.method === "GET")
       return json(quote(Number(url.searchParams.get("credits") ?? "0")));

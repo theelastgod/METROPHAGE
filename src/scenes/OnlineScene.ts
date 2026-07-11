@@ -1330,6 +1330,7 @@ export default class OnlineScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(1002)
       .setVisible(false);
+    this.bossBanner.setWordWrapWidth(Math.min(this.scale.width - uiDim(32), uiDim(720)));
     this.bossBanner.setShadow(0, 0, "#02030a", 4, true, true);
     this.bossArrow = this.add
       .text(0, 0, "➤", { fontFamily: "Arial, sans-serif", fontSize: uiFont(24), color: "#39ff88", fontStyle: "bold" })
@@ -1361,6 +1362,7 @@ export default class OnlineScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(1002)
       .setVisible(false);
+    this.eventBanner.setWordWrapWidth(Math.min(this.scale.width - uiDim(32), uiDim(720)));
     this.eventBanner.setShadow(0, 0, "#02030a", 4, true, true);
     // full-screen ambience wash — each event owns the district's light while it runs
     // (below the HUD chrome at depth 999+, above the world; UI camera, so no post-FX)
@@ -1610,6 +1612,7 @@ export default class OnlineScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(1006)
       .setVisible(false);
+    this.storyPanel.setWordWrapWidth(Math.min(this.scale.width - uiDim(64), uiDim(560)));
     // First-session coach + core loop — always above the action so "what next" is obvious.
     this.coachText = this.add
       .text(this.scale.width / 2, uiDim(44), "", hudFont(11, {
@@ -1622,6 +1625,7 @@ export default class OnlineScene extends Phaser.Scene {
       .setOrigin(0.5, 0)
       .setScrollFactor(0)
       .setDepth(1001);
+    this.coachText.setWordWrapWidth(Math.min(this.scale.width - uiDim(48), uiDim(640)));
     this.killFeedText = this.add
       .text(this.scale.width - uiDim(14), this.scale.height * 0.42, "", hudFont(10, {
         color: "#ff8a9a",
@@ -1906,7 +1910,17 @@ export default class OnlineScene extends Phaser.Scene {
    * Keep a device-local runner profile so CONTINUE works without MetaMask.
    * Guest server progress still keys off callsign + device secret on login.
    */
+  private isGuestRun(): boolean {
+    const wallet = this.registry.get("walletAddress") as string | undefined;
+    const guest =
+      !wallet &&
+      (!!this.registry.get("guestPlay") ||
+        !!this.registry.get("offlinePlay"));
+    return guest;
+  }
+
   private persistLocalRunnerSnapshot() {
+    if (!this.isGuestRun()) return;
     const cust = this.registry.get("customization") as Customization | undefined;
     if (!cust?.callsign) return;
     const classId = (this.registry.get("classId") as string) || "metrophage";
@@ -1929,21 +1943,24 @@ export default class OnlineScene extends Phaser.Scene {
    *  3) only then prompt MetaMask (first connect / session never bound)
    */
   private async signInThenConnect() {
-    let addr =
-      connectedWallet() || (this.registry.get("walletAddress") as string | undefined) || undefined;
-    if (!addr) {
+    const guest = this.isGuestRun();
+    let addr = guest
+      ? undefined
+      : (this.registry.get("walletAddress") as string | undefined) || connectedWallet() || undefined;
+    if (!guest && !addr) {
       // Silent restore after page reload (eth_accounts — no popup).
       addr = (await restoreWalletSession()) ?? undefined;
       if (addr) this.registry.set("walletAddress", addr);
     }
-    if (addr) {
+    if (!guest && addr) {
       await this.applyWalletAuth(addr, /* allowPrompt */ false);
     }
     // If session resume fails (never bound / new device), re-sign once silently-as-possible.
     this.net.onAuthRequired = () => {
       void (async () => {
+        if (this.isGuestRun()) return;
         const a =
-          connectedWallet() || (this.registry.get("walletAddress") as string | undefined);
+          (this.registry.get("walletAddress") as string | undefined) || connectedWallet();
         if (!a) return;
         await this.applyWalletAuth(a, /* allowPrompt */ true);
         this.net.retryConnect();
@@ -4045,7 +4062,19 @@ export default class OnlineScene extends Phaser.Scene {
   private travelTo(zone: string, extra?: { from?: string; tutorialMode?: TutorialMode }) {
     const destBridge = parseBridgeZone(zone);
     const bldgInt = parseBuildingInterior(zone);
-    const destNamed = !!INTERIOR_TITLES[zone] || zone === "subway" || zone === TUTORIAL_ZONE || destBridge >= 0 || !!bldgInt;
+    const hubInt = parseHubInterior(zone);
+    const estateInt = parseEstateInterior(zone);
+    const destDive = parseDiveZone(zone);
+    const destNamed =
+      !!INTERIOR_TITLES[zone] ||
+      zone === "subway" ||
+      zone === TUTORIAL_ZONE ||
+      zone === ESTATES_ZONE ||
+      destBridge >= 0 ||
+      destDive >= 0 ||
+      !!bldgInt ||
+      hubInt !== null ||
+      estateInt !== null;
     const di = bldgInt ? bldgInt.district : destNamed && destBridge < 0 ? 0 : destBridge >= 0 ? destBridge : this.parseZone(zone);
     const accent =
       zone === TUTORIAL_ZONE
@@ -4057,7 +4086,7 @@ export default class OnlineScene extends Phaser.Scene {
             : destBridge >= 0
               ? getBridge(destBridge).accent
               : (DISTRICTS[di]?.accent ?? 0x29e7ff);
-    const style = zone === "safe" || this.interior || bldgInt ? "fade" : "deploy";
+    const style = zone === "safe" || this.interior || bldgInt || hubInt !== null || estateInt !== null ? "fade" : "deploy";
     transitionTo(this, "Online", { zone, ...extra }, { style, accent, onMid: () => this.net?.disconnect() });
   }
 
@@ -5289,13 +5318,24 @@ export default class OnlineScene extends Phaser.Scene {
     }
 
     // top-center objective tracker: stack visible rows, one shared frame behind them.
-    // Mobile: the hotbar + menu bar live at the BOTTOM edge now, so the tracker owns
-    // the top-center band (under the status panel line).
-    const trackerTop = this.mobileUx() ? uiDim(44) : uiDim(12);
+    // On narrow/mobile layouts it drops below the status panel instead of trying to
+    // share the top row and printing through it.
+    const mobile = this.mobileUx();
+    const screenPad = uiDim(12);
+    const statusRight = px + panelW;
+    const statusBottom = py + panelH;
+    let trackerTop = mobile ? Math.max(uiDim(44), statusBottom + uiGap("sm")) : uiDim(12);
     const cx = this.scale.width / 2;
+    const rightLaneW = Math.max(0, this.scale.width - statusRight - uiGap("md") - screenPad);
+    const centeredFrameMaxW = this.scale.width - screenPad * 2;
+    const textMaxW = Math.max(
+      uiDim(180),
+      Math.min(uiDim(mobile ? 520 : 640), (mobile ? centeredFrameMaxW : Math.max(rightLaneW, centeredFrameMaxW * 0.52)) - pad * 2),
+    );
     const rows = [this.questText, this.dailyText, this.bountyText].filter(
       (t) => t.visible && t.text.length > 0,
     );
+    for (const row of rows) row.setWordWrapWidth(textMaxW);
     this.trackerG.clear();
     if (rows.length === 0) {
       if (this.trackerPanelImg) this.trackerPanelImg.setVisible(false);
@@ -5310,15 +5350,32 @@ export default class OnlineScene extends Phaser.Scene {
       y += row.height + uiGap("xs");
       maxW = Math.max(maxW, row.width);
     }
-    const frameW = maxW + pad * 2;
+    const frameW = Math.min(maxW + pad * 2, textMaxW + pad * 2, centeredFrameMaxW);
     const frameH = y - uiGap("xs") + pad - trackerTop;
-    // never let the tracker frame lap the status panel — slide right until clear
-    const tcx = Math.max(cx, px + innerW + pad * 2 + uiGap("md") + frameW / 2);
+    // Never let the tracker frame lap the status panel. Desktop uses the right lane
+    // when it fits; otherwise the tracker moves underneath the status stack.
+    let left = cx - frameW / 2;
+    const overlapsStatusBand = trackerTop < statusBottom + uiGap("sm");
+    if (!mobile && overlapsStatusBand) {
+      const rightLaneLeft = statusRight + uiGap("md");
+      if (rightLaneW >= frameW) {
+        left = Math.max(left, rightLaneLeft);
+      } else {
+        const nextTop = statusBottom + uiGap("sm");
+        const dy = nextTop - trackerTop;
+        trackerTop = nextTop;
+        y += dy;
+        for (const row of rows) row.setY(row.y + dy);
+      }
+    }
+    const maxLeft = Math.max(screenPad, this.scale.width - screenPad - frameW);
+    left = Phaser.Math.Clamp(left, screenPad, maxLeft);
+    const tcx = left + frameW / 2;
     for (const row of rows) row.setX(tcx);
     this.trackerPanelImg = ensureHudPanelImage(
       this,
       this.trackerPanelImg,
-      tcx - frameW / 2,
+      left,
       trackerTop,
       frameW,
       frameH,
@@ -5326,9 +5383,9 @@ export default class OnlineScene extends Phaser.Scene {
       0xd0a0ff,
     );
     if (!this.trackerPanelImg) {
-      drawHudPanel(this.trackerG, tcx - frameW / 2, trackerTop, frameW, frameH, 0xb06bff);
+      drawHudPanel(this.trackerG, left, trackerTop, frameW, frameH, 0xb06bff);
     } else {
-      this.trackerG.fillStyle(0x0a0618, 0.3).fillRect(tcx - frameW / 2 + uiDim(6), trackerTop + uiDim(6), frameW - uiDim(12), frameH - uiDim(12));
+      this.trackerG.fillStyle(0x0a0618, 0.3).fillRect(left + uiDim(6), trackerTop + uiDim(6), frameW - uiDim(12), frameH - uiDim(12));
     }
     this.trackerBottomY = trackerTop + frameH;
     this.positionCoach();
@@ -5339,6 +5396,7 @@ export default class OnlineScene extends Phaser.Scene {
    *  desktop ("GO TO THE FIXER" printed through "THE GUTTER KING — ALIVE"). */
   private positionCoach() {
     if (!this.coachText) return;
+    this.coachText.setWordWrapWidth(Math.min(this.scale.width - uiDim(48), uiDim(this.mobileUx() ? 560 : 640)));
     let y = this.trackerBottomY + uiGap("sm");
     if (this.bossBanner?.visible) y = Math.max(y, this.bossBanner.y + this.bossBanner.height + uiGap("xs"));
     if (this.eventBanner?.visible) y = Math.max(y, this.eventBanner.y + this.eventBanner.height + uiGap("xs"));
@@ -5384,8 +5442,10 @@ export default class OnlineScene extends Phaser.Scene {
       this.bossArrow.setVisible(false);
       return;
     }
-    this.bossBanner.setVisible(true).setY(this.trackerBottomY + uiGap("xs"));
-    this.positionCoach();
+    this.bossBanner
+      .setVisible(true)
+      .setY(this.trackerBottomY + uiGap("xs"))
+      .setWordWrapWidth(Math.min(this.scale.width - uiDim(32), uiDim(720)));
     // first time you close with a living boss this visit: the title card plays
     if (b.alive && this.bossIntroShown !== b.name && this.me && Math.hypot(b.x - this.me.x, b.y - this.me.y) < 640) {
       this.bossIntroShown = b.name;
@@ -5394,11 +5454,13 @@ export default class OnlineScene extends Phaser.Scene {
     if (!b.alive) {
       this.bossBanner.setText(`◆ ${b.name} — reforms in ${b.respawnSec}s`).setColor("#9aa3b2");
       this.bossArrow.setVisible(false);
+      this.positionCoach();
       return;
     }
     const dx = b.x - this.me.x;
     const dy = b.y - this.me.y;
     this.bossBanner.setText(`◆ ${b.name} — ALIVE · ${Math.round(Math.hypot(dx, dy) / 8)}m`).setColor("#39ff88");
+    this.positionCoach();
     const zoom = this.cameras.main.zoom || 1;
     if (Math.abs(dx) < VIEW_W / 2 / zoom - uiDim(36) && Math.abs(dy) < VIEW_H / 2 / zoom - uiDim(36)) {
       this.bossArrow.setVisible(false); // on-screen — the boss + its overlay are already visible
@@ -5937,9 +5999,14 @@ export default class OnlineScene extends Phaser.Scene {
     }
     const secs = Math.max(0, Math.ceil((ev.untilAt - performance.now()) / 1000));
     const pulse = ev.phase === "telegraph" && Math.floor(this.time.now / 300) % 2 === 0;
+    const y = Math.max(
+      this.trackerBottomY + uiGap("xl"),
+      this.bossBanner?.visible ? this.bossBanner.y + this.bossBanner.height + uiGap("xs") : 0,
+    );
     this.eventBanner
       .setVisible(true)
-      .setY(this.trackerBottomY + uiGap("xl"))
+      .setY(y)
+      .setWordWrapWidth(Math.min(this.scale.width - uiDim(32), uiDim(720)))
       .setColor(pulse ? "#ffffff" : ev.hex)
       .setText(
         ev.phase === "telegraph" ? `⚠ ${ev.name} in ${secs}s — ${ev.tagline}` : `◆ ${ev.name} — ${ev.tagline} · ${secs}s`,

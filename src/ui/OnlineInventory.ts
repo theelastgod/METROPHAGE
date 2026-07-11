@@ -7,7 +7,7 @@ import { UI_FRAME_KEY, UI_GUN_KEY } from "../assets/manifest";
 import { dimBackdrop, onlineHudStack, overlayRect, uiDim, uiFont } from "./uiLayout";
 import ContextMenu from "./ContextMenu";
 import { getSettings } from "../systems/Settings";
-import { prefersMobileUx } from "../systems/Mobile";
+import { mobileStickSafeRegion, prefersMobileUx } from "../systems/Mobile";
 
 const SLOT_ICON: Record<Slot, string> = {
   weapon: "WEAPON-MOD",
@@ -24,8 +24,6 @@ function itemIcon(it: Item): { key: string; tint: number } {
 
 const HOTBAR_SLOTS = 8;
 const CAP = 24;
-const HB_CELL = uiDim(48);
-const HB_GAP = uiDim(6);
 const LOADOUT_SLOTS: Slot[] = ["weapon", "armor", "implant", "chip"];
 
 export default class OnlineInventory {
@@ -50,6 +48,8 @@ export default class OnlineInventory {
   private barSlotLabels: Phaser.GameObjects.Text[] = [];
   private readonly barX: number;
   private readonly barY: number;
+  private readonly hbCell: number;
+  private readonly hbGap: number;
   private readonly mobile: boolean;
 
   private panelObjs: Phaser.GameObjects.GameObject[] = [];
@@ -59,11 +59,32 @@ export default class OnlineInventory {
     this.contextMenu = contextMenu ?? new ContextMenu(scene);
     ensureItemIcons(scene);
     this.mobile = prefersMobileUx();
+    const baseCell = uiDim(this.mobile ? 48 : 48);
+    const baseGap = uiDim(6);
+    if (this.mobile) {
+      const stickSafe = mobileStickSafeRegion(scene.scale.width, scene.scale.height);
+      const leftSafe = stickSafe.x + stickSafe.w + uiDim(20);
+      const rightSafe = uiDim(234);
+      const safeLaneW = Math.max(uiDim(292), scene.scale.width - leftSafe - rightSafe);
+      this.hbGap = baseGap;
+      this.hbCell = Math.max(uiDim(36), Math.min(baseCell, Math.floor((safeLaneW - (HOTBAR_SLOTS - 1) * this.hbGap) / HOTBAR_SLOTS)));
+    } else {
+      this.hbCell = baseCell;
+      this.hbGap = baseGap;
+    }
     // Mobile: items/weapons ride the BOTTOM edge, centred between the floating
     // stick (left) and the action arc (right) — closest row to the thumbs.
     if (this.mobile) {
-      const slotsW = HOTBAR_SLOTS * (HB_CELL + HB_GAP);
-      this.barX = Math.max(uiDim(8), (scene.scale.width - slotsW) / 2);
+      const slotsW = HOTBAR_SLOTS * this.hbCell + (HOTBAR_SLOTS - 1) * this.hbGap;
+      const stickSafe = mobileStickSafeRegion(scene.scale.width, scene.scale.height);
+      const leftSafe = stickSafe.x + stickSafe.w + uiDim(20);
+      const rightSafeX = scene.scale.width - uiDim(214);
+      const laneW = rightSafeX - leftSafe;
+      const centered = (scene.scale.width - slotsW) / 2;
+      this.barX =
+        slotsW <= laneW
+          ? leftSafe + (laneW - slotsW) / 2
+          : Phaser.Math.Clamp(centered, uiDim(8), Math.max(uiDim(8), scene.scale.width - slotsW - uiDim(8)));
       this.barY = scene.scale.height - uiDim(58);
     } else {
       this.barX = uiDim(16);
@@ -72,13 +93,13 @@ export default class OnlineInventory {
     this.barG = scene.add.graphics().setScrollFactor(0).setDepth(1500);
     const hasFrame = scene.textures.exists(UI_FRAME_KEY);
     for (let i = 0; i < HOTBAR_SLOTS; i++) {
-      const cx = this.barX + i * (HB_CELL + HB_GAP) + HB_CELL / 2;
-      const cy = this.barY + HB_CELL / 2;
+      const cx = this.barX + i * (this.hbCell + this.hbGap) + this.hbCell / 2;
+      const cy = this.barY + this.hbCell / 2;
       if (hasFrame) {
         this.barFrames.push(
           scene.add
             .image(cx, cy, UI_FRAME_KEY)
-            .setDisplaySize(HB_CELL + uiDim(4), HB_CELL + uiDim(4))
+            .setDisplaySize(this.hbCell + uiDim(4), this.hbCell + uiDim(4))
             .setScrollFactor(0)
             .setDepth(1500)
             .setAlpha(i === 0 ? 0.95 : 0.72)
@@ -88,7 +109,7 @@ export default class OnlineInventory {
       this.barIcons.push(
         scene.add
           .image(cx, cy, i === 0 && scene.textures.exists(UI_GUN_KEY) ? UI_GUN_KEY : iconKey("CHIP"))
-          .setDisplaySize(uiDim(this.mobile ? 28 : 34), uiDim(this.mobile ? 28 : 34))
+          .setDisplaySize(Math.min(uiDim(this.mobile ? 28 : 34), this.hbCell - uiDim(12)), Math.min(uiDim(this.mobile ? 28 : 34), this.hbCell - uiDim(12)))
           .setScrollFactor(0)
           .setDepth(1501)
           .setVisible(i === 0 && scene.textures.exists(UI_GUN_KEY)),
@@ -97,8 +118,8 @@ export default class OnlineInventory {
     // hint rides at the right end of the hotbar row so it never hides under the chat frame
     this.barHint = scene.add
       .text(
-        this.barX + HOTBAR_SLOTS * (HB_CELL + HB_GAP) + HB_GAP,
-        this.barY + HB_CELL / 2,
+        this.barX + HOTBAR_SLOTS * this.hbCell + (HOTBAR_SLOTS - 1) * this.hbGap + this.hbGap,
+        this.barY + this.hbCell / 2,
         this.mobile ? "BAG" : "I ▸ LOADOUT",
         {
           fontFamily: "Courier New, monospace",
@@ -184,17 +205,17 @@ export default class OnlineInventory {
     g.clear();
     const framed = this.barFrames.length > 0;
     for (let i = 0; i < HOTBAR_SLOTS; i++) {
-      const x = this.barX + i * (HB_CELL + HB_GAP);
+      const x = this.barX + i * (this.hbCell + this.hbGap);
       const weaponSlot = i === 0;
       const it = weaponSlot ? eq.weapon : this.items[i - 1];
       const col = weaponSlot ? 0x29e7ff : it ? RARITIES[it.rarity].color : 0x2a2440;
       // When skill_frame art is present, keep a light fill under it; otherwise full rect chrome.
       if (framed) {
-        g.fillStyle(weaponSlot ? 0x0c1428 : 0x07061a, 0.55).fillRect(x + 2, this.barY + 2, HB_CELL - 4, HB_CELL - 4);
+        g.fillStyle(weaponSlot ? 0x0c1428 : 0x07061a, 0.55).fillRect(x + 2, this.barY + 2, this.hbCell - 4, this.hbCell - 4);
         this.barFrames[i]?.setTint(col).setAlpha(it || weaponSlot ? 0.95 : 0.55);
       } else {
-        g.fillStyle(weaponSlot ? 0x0c1428 : 0x07061a, 0.78).fillRect(x, this.barY, HB_CELL, HB_CELL);
-        g.lineStyle(uiDim(weaponSlot ? 2.5 : 2), col, it || weaponSlot ? 1 : 0.5).strokeRect(x, this.barY, HB_CELL, HB_CELL);
+        g.fillStyle(weaponSlot ? 0x0c1428 : 0x07061a, 0.78).fillRect(x, this.barY, this.hbCell, this.hbCell);
+        g.lineStyle(uiDim(weaponSlot ? 2.5 : 2), col, it || weaponSlot ? 1 : 0.5).strokeRect(x, this.barY, this.hbCell, this.hbCell);
       }
       const icon = this.barIcons[i];
       if (it) {
@@ -217,9 +238,9 @@ export default class OnlineInventory {
       const weaponSlot = i === 0;
       const it = weaponSlot ? eq.weapon : this.items[i - 1];
       if (it) continue;
-      const x = this.barX + i * (HB_CELL + HB_GAP);
+      const x = this.barX + i * (this.hbCell + this.hbGap);
       const lbl = this.scene.add
-        .text(x + HB_CELL / 2, this.barY + HB_CELL / 2, weaponSlot ? "—" : `${i}`, {
+        .text(x + this.hbCell / 2, this.barY + this.hbCell / 2, weaponSlot ? "—" : `${i}`, {
           fontFamily: "Courier New, monospace",
           fontSize: uiFont(weaponSlot ? 16 : 10),
           color: "#3a3350",
@@ -233,11 +254,11 @@ export default class OnlineInventory {
     for (const z of this.barZones) z.destroy();
     this.barZones = [];
     for (let i = 0; i < HOTBAR_SLOTS; i++) {
-      const x = this.barX + i * (HB_CELL + HB_GAP);
+      const x = this.barX + i * (this.hbCell + this.hbGap);
       const weaponSlot = i === 0;
       const it = weaponSlot ? eq.weapon : this.items[i - 1];
       const z = this.scene.add
-        .zone(x, this.barY, HB_CELL, HB_CELL)
+        .zone(x, this.barY, this.hbCell, this.hbCell)
         .setOrigin(0)
         .setScrollFactor(0)
         .setDepth(1502)

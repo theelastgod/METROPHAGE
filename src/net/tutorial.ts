@@ -26,6 +26,7 @@ export type TutorialKind =
   | "campaign"
   | "pvp"
   | "trade"
+  | "metro"
   | "travel"
   | "panel"
   | "kit"
@@ -62,6 +63,7 @@ export const TUTORIAL_TALK_KINDS: readonly TutorialKind[] = [
   "campaign",
   "pvp",
   "trade",
+  "metro",
   "travel",
 ] as const;
 
@@ -153,8 +155,9 @@ const CHAT: TutorialStepDef = {
 const PANEL: TutorialStepDef = {
   id: "panel",
   title: "SYSTEMS",
-  teach: "The safehouse operatives front every system: J contracts · G forge · B vendor · K market · Y wardrobe.",
-  hint: "Open any system panel once (J, G, B, …)",
+  teach:
+    "The safehouse operatives front every system: J contracts · G forge · B vendor · K market · Y wardrobe. The floating ◈ $METRO button opens the bridge when a contract address is live.",
+  hint: "Open any system panel once (J, G, B, …) · ◈ is the bridge",
   kind: "panel",
   count: 1,
 };
@@ -208,6 +211,16 @@ const TRADE: TutorialStepDef = {
   count: 1,
 };
 
+const METRO_BRIDGE: TutorialStepDef = {
+  id: "metro",
+  title: "$METRO BRIDGE",
+  teach:
+    "The ◈ $METRO bridge is a player-funded cash-out rail on Robinhood Chain. Deposits add to the pool; withdrawals only pay while the pool and treasury gas can cover them.",
+  hint: "Talk to BRIDGE BROKER (E) · or SPACE",
+  kind: "metro",
+  count: 1,
+};
+
 const TRAVEL: TutorialStepDef = {
   id: "travel",
   title: "TRAVEL",
@@ -248,7 +261,7 @@ const SYSTEMS_TASTE: TutorialStepDef = {
 };
 
 /**
- * Full training, playable length (~15 lessons). Composed by named refs.
+ * Full training, playable length (~16 lessons). Composed by named refs.
  * Panels collapse into one count-3 systems taste instead of ten open-once stops.
  */
 export const TUTORIAL_STEPS_FULL: TutorialStepDef[] = [
@@ -269,6 +282,7 @@ export const TUTORIAL_STEPS_FULL: TutorialStepDef[] = [
   CAMPAIGN,
   PVP,
   TRADE,
+  METRO_BRIDGE,
   TRAVEL,
   // Always last
   PORTAL,

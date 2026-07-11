@@ -27,46 +27,88 @@ const short = (a: string) => (a.length > 10 ? `${a.slice(0, 4)}…${a.slice(-4)}
 
 const STYLE = `
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&family=Orbitron:wght@500;700;900&display=swap');
-#metro-fab{position:fixed;right:18px;bottom:150px;z-index:9999;font-family:'Orbitron',monospace;font-weight:700;
-  background:linear-gradient(180deg,#120a24 0%,#07061a 100%);color:#ff2bd6;border:1px solid #ff2bd6;
-  border-radius:6px;padding:10px 14px;cursor:pointer;letter-spacing:.14em;font-size:11px;text-transform:uppercase;
-  box-shadow:0 0 16px rgba(255,43,214,.35),inset 0 0 12px rgba(255,43,214,.08);transition:box-shadow .2s,transform .15s}
-#metro-fab:hover{box-shadow:0 0 24px rgba(255,43,214,.55);transform:translateY(-1px)}
-#metro-fab.warn{border-color:#f7ff3c;color:#f7ff3c}
-#metro-panel{position:fixed;right:18px;bottom:196px;z-index:9999;width:340px;display:none;
-  font-family:'IBM Plex Mono',monospace;background:rgba(7,6,26,.97);color:#eafdff;
-  border:2px solid #00e5ff;border-radius:4px;padding:0;overflow:hidden;max-height:min(90vh,640px);overflow-y:auto;
-  box-shadow:0 0 32px rgba(0,229,255,.22),0 0 48px rgba(255,43,214,.12),inset 0 0 40px rgba(0,229,255,.04)}
-#metro-panel.open{display:block;animation:metroIn .28s ease-out}
-@keyframes metroIn{from{opacity:0;transform:translateY(8px) scale(.98)}to{opacity:1;transform:none}}
-#metro-panel .head{background:linear-gradient(90deg,rgba(18,10,36,.95),rgba(10,24,48,.85));padding:14px 16px 12px;
-  border-bottom:1px solid rgba(0,229,255,.35)}
-#metro-panel h3{margin:0;color:#00e5ff;font-family:'Orbitron',monospace;font-size:12px;letter-spacing:.16em;
-  display:flex;justify-content:space-between;align-items:center;text-transform:uppercase;font-weight:700}
-#metro-panel .sub{margin:6px 0 0;font-size:10px;color:#5a6172;letter-spacing:.06em;line-height:1.45}
-#metro-panel .body{padding:12px 16px 14px}
-#metro-panel .x{cursor:pointer;color:#6b7184;font-size:14px}
-#metro-panel .x:hover{color:#ff3b6b}
-#metro-panel .row{display:flex;justify-content:space-between;align-items:center;margin:8px 0;font-size:11px;gap:8px}
-#metro-panel .muted{color:#6b7184;letter-spacing:.04em;text-transform:uppercase;font-size:10px}
-#metro-panel .big{color:#39ff88;font-size:14px;font-weight:600}
-#metro-panel .metro-big{color:#ff2bd6;font-size:14px;font-weight:600}
-#metro-panel input{background:#05030d;border:1px solid #2a2440;color:#eafdff;border-radius:4px;padding:7px 9px;
-  font-family:inherit;font-size:11px;width:100%;box-sizing:border-box}
-#metro-panel input:focus{outline:none;border-color:#00e5ff}
-#metro-panel button{background:#0e0c1c;border:1px solid #00e5ff;color:#eafdff;border-radius:4px;padding:7px 12px;
-  cursor:pointer;font-family:'Orbitron',monospace;font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase}
-#metro-panel button:hover:not(:disabled){box-shadow:0 0 12px rgba(0,229,255,.45)}
-#metro-panel button.accent{border-color:#ff2bd6;color:#ff2bd6}
+#metro-fab{position:fixed;right:18px;bottom:150px;z-index:9999;min-height:42px;min-width:118px;
+  font-family:'Orbitron',monospace;font-weight:700;background:linear-gradient(180deg,#15102a 0%,#060514 100%);
+  color:#ff2bd6;border:1px solid #ff2bd6;border-radius:8px;padding:10px 14px;cursor:pointer;
+  letter-spacing:.12em;font-size:11px;text-transform:uppercase;box-shadow:0 0 18px rgba(255,43,214,.34),inset 0 0 14px rgba(255,43,214,.08);
+  transition:box-shadow .2s,transform .15s;touch-action:manipulation}
+#metro-fab:hover{box-shadow:0 0 25px rgba(255,43,214,.55);transform:translateY(-1px)}
+#metro-fab.warn{border-color:#f7ff3c;color:#f7ff3c;box-shadow:0 0 20px rgba(247,255,60,.28)}
+#metro-panel{position:fixed;right:18px;bottom:198px;z-index:9999;width:min(440px,calc(100vw - 36px));display:none;
+  font-family:'IBM Plex Mono',monospace;background:rgba(6,6,18,.98);color:#eafdff;border:1px solid rgba(0,229,255,.92);
+  border-radius:8px;overflow:hidden;max-height:min(86dvh,720px);overflow-y:auto;overscroll-behavior:contain;
+  box-shadow:0 0 34px rgba(0,229,255,.24),0 0 58px rgba(255,43,214,.13),inset 0 0 42px rgba(0,229,255,.04)}
+#metro-panel *{box-sizing:border-box}
+#metro-panel.open{display:block;animation:metroIn .24s ease-out}
+@keyframes metroIn{from{opacity:0;transform:translateY(10px) scale(.985)}to{opacity:1;transform:none}}
+#metro-panel .head{position:sticky;top:0;z-index:2;background:linear-gradient(95deg,rgba(18,10,36,.98),rgba(5,20,32,.96));
+  padding:15px 16px 13px;border-bottom:1px solid rgba(0,229,255,.35)}
+#metro-panel .titlebar{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+#metro-panel .eyebrow{font-size:9px;color:#9aa3b2;letter-spacing:.1em;text-transform:uppercase}
+#metro-panel h3{margin:2px 0 0;color:#00e5ff;font-family:'Orbitron',monospace;font-size:18px;letter-spacing:.08em;text-transform:uppercase;font-weight:800}
+#metro-panel .sub{margin:7px 0 0;font-size:10px;color:#8b94a8;letter-spacing:.03em;line-height:1.45}
+#metro-panel .body{padding:14px 16px 16px}
+#metro-panel .x{width:34px;height:34px;display:grid;place-items:center;background:#090818;border:1px solid rgba(255,59,107,.5);
+  color:#ff8a9a;border-radius:8px;font-size:15px;padding:0;line-height:1}
+#metro-panel .x:hover{color:#ffffff;box-shadow:0 0 12px rgba(255,59,107,.36)}
+#metro-panel .pool-band{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;margin:0 0 10px;
+  padding:13px 14px;border:1px solid rgba(0,229,255,.28);border-radius:8px;background:linear-gradient(135deg,rgba(0,229,255,.08),rgba(255,43,214,.055))}
+#metro-panel .pool-band>*{min-width:0}
+#metro-panel .pool-value{margin-top:3px;color:#ff2bd6;font-size:26px;font-weight:700;letter-spacing:.02em;overflow-wrap:anywhere}
+#metro-panel .chip-stack{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
+#metro-panel .row{display:flex;justify-content:space-between;align-items:center;margin:8px 0;font-size:11px;gap:9px}
+#metro-panel .row>*{min-width:0}
+#metro-panel .row>*:last-child{text-align:right}
+#metro-panel .muted{color:#7d879b;letter-spacing:.06em;text-transform:uppercase;font-size:10px}
+#metro-panel .big{color:#39ff88;font-size:14px;font-weight:700}
+#metro-panel .mono-value{color:#eafdff;font-size:11px;font-weight:600;word-break:break-word;overflow-wrap:anywhere}
+#metro-panel .chip{font-size:9px;color:#b8c3d4;border:1px solid #2a3450;background:rgba(8,12,28,.82);border-radius:999px;padding:4px 9px;white-space:nowrap}
+#metro-panel .chip.warn{border-color:rgba(247,255,60,.55);color:#f7ff3c}
+#metro-panel .chip.ok{border-color:rgba(57,255,136,.5);color:#9dffc0}
+#metro-panel .notice{margin:9px 0 0;padding:9px 10px;background:rgba(10,16,34,.72);border:1px solid rgba(0,229,255,.2);
+  border-radius:8px;font-size:10px;color:#9aa3b2;letter-spacing:.02em;line-height:1.45}
+#metro-panel .notice.warn{border-color:rgba(255,59,107,.48);color:#ff9aaa;background:rgba(50,8,22,.34)}
+#metro-panel .notice.ok{border-color:rgba(57,255,136,.38);color:#9dffc0;background:rgba(8,34,22,.3)}
+#metro-panel .metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:10px 0 2px}
+#metro-panel .metric{padding:9px 8px;border-top:1px solid rgba(0,229,255,.24);border-bottom:1px solid rgba(255,43,214,.16);background:rgba(4,7,18,.55)}
+#metro-panel .metric span{display:block;color:#7d879b;font-size:9px;text-transform:uppercase;letter-spacing:.06em}
+#metro-panel .metric b{display:block;margin-top:4px;color:#eafdff;font-size:11px;line-height:1.25}
+#metro-panel .section{margin-top:14px;padding-top:13px;border-top:1px solid rgba(42,52,80,.78)}
+#metro-panel .section-title{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;color:#00e5ff;
+  font-family:'Orbitron',monospace;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+#metro-panel .section-title .hint{font-family:'IBM Plex Mono',monospace;font-size:9px;color:#7d879b;letter-spacing:.03em;text-transform:none;text-align:right}
+#metro-panel .field-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;margin-top:8px}
+#metro-panel .field-row.two{grid-template-columns:minmax(0,1fr) minmax(132px,auto)}
+#metro-panel .action-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+#metro-panel input{min-height:36px;background:#050713;border:1px solid #28314d;color:#eafdff;border-radius:8px;padding:8px 10px;
+  font-family:inherit;font-size:12px;width:100%;min-width:0;box-sizing:border-box;letter-spacing:0}
+#metro-panel input:focus{outline:none;border-color:#00e5ff;box-shadow:0 0 0 2px rgba(0,229,255,.12)}
+#metro-panel button{min-height:36px;background:#0d1022;border:1px solid #00e5ff;color:#eafdff;border-radius:8px;padding:8px 12px;
+  cursor:pointer;font-family:'Orbitron',monospace;font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;touch-action:manipulation;line-height:1.2;white-space:normal;overflow-wrap:anywhere}
+#metro-panel button:hover:not(:disabled){box-shadow:0 0 12px rgba(0,229,255,.42)}
+#metro-panel button.accent{border-color:#ff2bd6;color:#ff2bd6;background:rgba(255,43,214,.055)}
+#metro-panel button.secondary{border-color:#394461;color:#c9d6e8}
+#metro-panel button.copy{min-width:72px}
 #metro-panel button:disabled{opacity:.35;cursor:not-allowed}
-#metro-panel .sep{border-top:1px solid rgba(42,36,64,.8);margin:12px 0}
-#metro-panel .status{min-height:16px;font-size:10px;color:#f7ff3c;margin-top:10px;word-break:break-word;line-height:1.4}
-#metro-panel .pill{font-size:9px;color:#9aa3b2;border:1px solid #2a2440;border-radius:12px;padding:2px 8px}
-#metro-panel .strip{margin-top:8px;padding:8px 10px;background:rgba(14,24,48,.5);border:1px solid rgba(0,229,255,.2);
-  font-size:9px;color:#4a5266;text-align:center;letter-spacing:.04em;line-height:1.45;text-transform:none}
-#metro-panel .strip.warn{border-color:rgba(255,59,107,.45);color:#ff8a9a}
-#metro-panel .strip.ok{border-color:rgba(57,255,136,.35);color:#9dffc0}
-#metro-panel a.link{color:#00e5ff;font-size:10px}
+#metro-panel .status{position:sticky;bottom:0;margin:13px -16px -16px;padding:11px 16px;min-height:18px;font-size:10px;color:#f7ff3c;
+  word-break:break-word;line-height:1.45;background:linear-gradient(180deg,rgba(6,6,18,.84),rgba(6,6,18,.98));border-top:1px solid rgba(247,255,60,.2)}
+#metro-panel a.link{color:#00e5ff;font-size:10px;text-decoration:none}
+#metro-panel a.link:hover{text-decoration:underline}
+@media (max-width:700px){
+  #metro-fab{right:12px;bottom:calc(env(safe-area-inset-bottom,0px) + 18px);min-width:112px}
+  #metro-panel{left:10px;right:10px;bottom:calc(env(safe-area-inset-bottom,0px) + 70px);width:auto;max-height:calc(100dvh - 92px);border-radius:8px}
+  #metro-panel .head{padding:13px 14px 11px}
+  #metro-panel h3{font-size:16px}
+  #metro-panel .body{padding:12px 12px 14px}
+  #metro-panel .pool-band{grid-template-columns:1fr;gap:8px;padding:12px}
+  #metro-panel .chip-stack{flex-direction:row;align-items:flex-start;justify-content:space-between}
+  #metro-panel .pool-value{font-size:24px}
+  #metro-panel .metrics{grid-template-columns:1fr}
+  #metro-panel .field-row,#metro-panel .field-row.two,#metro-panel .action-row{grid-template-columns:1fr}
+  #metro-panel .section-title{align-items:flex-start;flex-direction:column;gap:3px}
+  #metro-panel .section-title .hint{text-align:left}
+  #metro-panel .status{margin-left:-12px;margin-right:-12px;margin-bottom:-14px}
+}
 `;
 
 export function mountMetroPanel(getPlayerId: () => string | null): void {
@@ -89,37 +131,69 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
   panel.id = "metro-panel";
   panel.innerHTML = `
     <div class="head">
-      <h3>◈ $METRO BRIDGE <span class="x" id="m-x">✕</span></h3>
-      <div class="sub">Robinhood <b>Chain</b> (ETH L2) — not the Robinhood stock app.
-        ${st.networkName}${st.chainId ? ` · id ${st.chainId}` : ""} · pool player-funded · mainnet ${st.mainnetLive ? "LIVE" : "OFF until counsel"}</div>
+      <div class="titlebar">
+        <div>
+          <div class="eyebrow">Robinhood Chain bridge</div>
+          <h3>◈ $METRO</h3>
+        </div>
+        <button class="x" id="m-x" aria-label="Close">×</button>
+      </div>
+      <div class="sub">${st.networkName}${st.chainId ? ` · id ${st.chainId}` : ""} · player-funded pool · mainnet ${st.mainnetLive ? "LIVE" : "OFF until counsel"}</div>
     </div>
     <div class="body">
-      <div class="row"><span class="muted">network</span><span class="pill" id="m-net">${(st.networkName || st.chain).toUpperCase()}</span></div>
-      <div class="row"><span class="muted">cash-out pool</span><span id="m-pool" class="metro-big">—</span></div>
-      <div class="row"><span class="muted">rates</span><span class="pill" id="m-rates">—</span></div>
-      <div class="strip" id="m-phase">loading pool status…</div>
-      <div class="strip" id="m-treasury-health" style="display:none"></div>
-      <div class="sep"></div>
-      <div class="row"><span class="muted">how to get ◈</span>
-        <a class="link" id="m-get" href="${explorer}" target="_blank" rel="noopener">explorer ↗</a></div>
-      <div class="strip" id="m-get-hint">Earn ₵ in-game. Cash-out needs pool $METRO from player deposits. Buy/transfer $METRO on Robinhood Chain (MetaMask), not the Robinhood brokerage app.</div>
-      <div class="sep"></div>
-      <div class="row"><span class="muted">wallet</span><span id="m-wallet">—</span></div>
-      <div class="row"><button id="m-connect">Connect MetaMask</button><input id="m-addr" placeholder="or paste 0x address" style="display:none"/></div>
-      <div class="row"><span class="muted">player</span><span id="m-player">—</span></div>
-      <div class="row"><span class="muted">credits</span><span id="m-credits" class="big">—</span></div>
-      <div class="row"><span class="muted">≈ cash-out value</span><span id="m-value">—</span></div>
-      <div class="sep"></div>
-      <div class="row"><span class="muted">deposit $METRO → ₵</span></div>
-      <div class="row"><span class="muted">treasury</span><span id="m-treasury" class="pill" style="cursor:pointer" title="copy">—</span></div>
-      <div class="row"><input id="m-dep-amt" type="number" min="0" step="any" placeholder="$METRO amount" style="width:48%"/>
-        <button id="m-send" class="accent">Send via MetaMask</button></div>
-      <div class="row"><input id="m-txsig" placeholder="tx hash (auto-filled after send)"/></div>
-      <div class="row"><button id="m-deposit">Claim deposit → ₵</button></div>
-      <div class="sep"></div>
-      <div class="row"><span class="muted">withdraw ₵ → $METRO</span></div>
-      <div class="row"><input id="m-amt" type="number" min="0" placeholder="credits to cash out" style="width:58%"/><button id="m-max">MAX</button></div>
-      <div class="row"><button id="m-withdraw" class="accent">Withdraw</button><button id="m-refresh">Refresh</button></div>
+      <div class="pool-band">
+        <div>
+          <div class="muted">cash-out pool</div>
+          <div class="pool-value" id="m-pool">—</div>
+        </div>
+        <div class="chip-stack">
+          <span class="chip" id="m-net">${(st.networkName || st.chain || "Robinhood").toUpperCase()}</span>
+          <span class="chip" id="m-phase-pill">PRE-CA</span>
+        </div>
+      </div>
+      <div class="notice" id="m-phase">Loading pool status…</div>
+      <div class="notice" id="m-treasury-health" style="display:none"></div>
+
+      <div class="metrics">
+        <div class="metric"><span>Deposit</span><b id="m-rate-in">—</b></div>
+        <div class="metric"><span>Withdraw</span><b id="m-rate-out">—</b></div>
+        <div class="metric"><span>Minimum</span><b id="m-rate-min">—</b></div>
+      </div>
+
+      <div class="section">
+        <div class="section-title"><span>Chain Details</span><a class="link" id="m-get" href="${explorer}" target="_blank" rel="noopener">Explorer ↗</a></div>
+        <div class="field-row">
+          <div>
+            <div class="muted">treasury</div>
+            <div id="m-treasury" class="mono-value" title="copy">—</div>
+          </div>
+          <button id="m-copy-treasury" class="secondary copy">Copy</button>
+        </div>
+        <div class="notice" id="m-get-hint">Earn ₵ in-game. Cash-outs use the player-funded $METRO pool on Robinhood Chain.</div>
+      </div>
+
+      <div class="section">
+        <div class="section-title"><span>Wallet</span><span class="hint">MetaMask on Robinhood Chain</span></div>
+        <div class="row"><span class="muted">wallet</span><span id="m-wallet" class="mono-value">—</span></div>
+        <div class="field-row two"><button id="m-connect">Connect MetaMask</button><input id="m-addr" placeholder="or paste 0x address" style="display:none"/></div>
+        <div class="row"><span class="muted">player</span><span id="m-player" class="mono-value">—</span></div>
+        <div class="row"><span class="muted">credits</span><span id="m-credits" class="big">—</span></div>
+        <div class="row"><span class="muted">cash-out value</span><span id="m-value" class="mono-value">—</span></div>
+      </div>
+
+      <div class="section">
+        <div class="section-title"><span>Deposit</span><span class="hint">$METRO → ₵</span></div>
+        <div class="field-row two"><input id="m-dep-amt" type="number" min="0" step="any" placeholder="$METRO amount"/>
+          <button id="m-send" class="accent">Send via MetaMask</button></div>
+        <div class="field-row"><input id="m-txsig" placeholder="tx hash (auto-filled after send)"/></div>
+        <div class="action-row"><button id="m-deposit">Claim deposit</button><button id="m-refresh" class="secondary">Refresh</button></div>
+      </div>
+
+      <div class="section">
+        <div class="section-title"><span>Withdraw</span><span class="hint">₵ → $METRO</span></div>
+        <div class="field-row two"><input id="m-amt" type="number" min="0" placeholder="credits to cash out"/><button id="m-max" class="secondary">MAX</button></div>
+        <div class="action-row"><button id="m-withdraw" class="accent">Withdraw</button><button id="m-refresh-bottom" class="secondary">Refresh</button></div>
+      </div>
       <div class="status" id="m-status"></div>
     </div>
   `;
@@ -167,23 +241,36 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
       }
       pool = p;
       $("m-pool").textContent = `◈ ${fmtMetro(p.poolMetro ?? 0)}`;
-      $("m-rates").textContent = `in: 1◈ → ${p.depositCreditsPerMetro}₵ · out: ${p.withdrawCreditsPerMetro}₵ → 1◈ · min ${p.minWithdrawCredits ?? 250}₵`;
+      $("m-net").textContent = String(p.networkName || p.chain || st.networkName || st.chain || "ROBINHOOD").toUpperCase();
+      $("m-rate-in").textContent = `1◈ → ${p.depositCreditsPerMetro}₵`;
+      $("m-rate-out").textContent = `${p.withdrawCreditsPerMetro}₵ → 1◈`;
+      $("m-rate-min").textContent = `${p.minWithdrawCredits ?? 250}₵`;
 
       const phaseEl = $("m-phase");
+      const phasePill = $("m-phase-pill");
       phaseEl.classList.remove("warn", "ok");
+      phasePill.classList.remove("warn", "ok");
+      fab.classList.remove("warn");
       if (p.dangerousSim) {
         phaseEl.classList.add("warn");
+        phasePill.classList.add("warn");
+        phasePill.textContent = "LOCKED";
         phaseEl.textContent =
           "⚠ BRIDGE LOCKED — mint configured but settlement is still SIM. Deposits rejected (no fake credits). Fix server secrets / arm, or unset client mint.";
         fab.classList.add("warn");
       } else if (p.phase === "bootstrap" || (p.poolMetro ?? 0) <= 0) {
         phaseEl.classList.add("warn");
+        phasePill.classList.add("warn");
+        phasePill.textContent = "POOL EMPTY";
         phaseEl.textContent =
           "Pool EMPTY — cash-outs closed until someone deposits $METRO on Robinhood Chain. Earn ₵ now; withdraw when the pool fills. Not a faucet.";
       } else if (p.settlement === "sim") {
+        phasePill.textContent = "SIM";
         phaseEl.textContent = "REHEARSAL (sim) — not real chain value. OK for local smoke only.";
       } else {
         phaseEl.classList.add("ok");
+        phasePill.classList.add("ok");
+        phasePill.textContent = "OPEN";
         phaseEl.textContent = `POOL OPEN on ${p.networkName || "Robinhood Chain"} — deposit via MetaMask · cash-out is treasury-signed (treasury pays ETH gas).`;
       }
 
@@ -240,6 +327,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
   };
   $("m-x").onclick = () => panel.classList.remove("open");
   $("m-refresh").onclick = () => void refresh();
+  $("m-refresh-bottom").onclick = () => void refresh();
 
   $("m-connect").onclick = async () => {
     if (!walletAvailable()) {
@@ -263,12 +351,14 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
     } else status("connect cancelled");
   };
 
-  $("m-treasury").onclick = () => {
+  const copyTreasury = () => {
     const full = $("m-treasury").dataset.full;
     if (!full) return;
     void navigator.clipboard?.writeText(full);
     status("treasury copied — use Send via MetaMask or transfer $METRO there");
   };
+  $("m-treasury").onclick = copyTreasury;
+  $("m-copy-treasury").onclick = copyTreasury;
 
   $("m-max").onclick = () => {
     if (!acct || !pool) return status("refresh first");

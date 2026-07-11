@@ -234,7 +234,7 @@ export const TUTORIAL_INSTRUCTORS: TutorialInstructor[] = [
     lines: [
       "The live city runs on panels: J contracts · G forge · B vendor · K market · Y wardrobe.",
       "Open any one panel once — that's your systems taste.",
-      "When every lesson is green, the deploy gate opens east. One way only.",
+      "The floating ◈ $METRO button is the bridge when a contract address is live. When every lesson is green, the deploy gate opens east.",
     ],
   },
 ];
@@ -410,7 +410,23 @@ export const TUTORIAL_INSTRUCTORS_FULL: TutorialInstructor[] = [
     lines: [
       "/trade <name> · /offer · /confirm on both sides. /tcancel to abort.",
       "Face-to-face secure trades — never hand items in open chat.",
-      "Lesson logged. Gate officer covers travel next.",
+      "Lesson logged. Bridge broker covers $METRO before you travel.",
+    ],
+  },
+  {
+    id: "metro",
+    name: "BRIDGE BROKER",
+    tag: "$METRO",
+    chamber: "systems",
+    kind: "metro",
+    tile: [33, 19],
+    color: 0xff2bd6,
+    fullOnly: true,
+    look: look({ color: 0xff2bd6, head: "hood", cloak: "coat", gloves: "wraps", skin: 0xa9794a, hair: "undercut", hairColor: 0x0f1020, visor: "mono", accentColor: 0x00e5ff }),
+    lines: [
+      "The ◈ $METRO button opens the bridge panel when the contract address is live.",
+      "Deposits fill the player-funded pool. Cash-outs only open when the pool and treasury gas can cover them.",
+      "Server secrets go live before the client ever shows the CA — that lock keeps fake deposits out. Gate officer covers travel next.",
     ],
   },
   {

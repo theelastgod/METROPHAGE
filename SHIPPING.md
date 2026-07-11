@@ -67,23 +67,24 @@ withdrawals are pool-capped, atomic, and refunded when uncovered. Mainnet-value
 settlement additionally requires the `METRO_MAINNET_ARMED` switch — leave it off
 until counsel signs off.
 
-## 4. The $0 crypto launch
+## 4. The low-cost Robinhood crypto launch
 
-The developer's on-chain cost to run this economy is **zero**, by construction:
+The bridge is still player-funded for $METRO liquidity, but Robinhood/EVM cash-outs
+require a small treasury ETH balance for gas:
 
 | Cost                           | Who pays                                                            |
 | ------------------------------ | ------------------------------------------------------------------- |
-| Token creation                 | pump.fun launch — no LP seeding; the bonding curve IS the liquidity |
+| Token creation                 | ERC-20 deployer on Robinhood Chain                                  |
 | Treasury wallet                | a keypair — generating one is free                                  |
 | Treasury token balance         | player deposits only (fixed supply, mint revoked — dev *can't* seed it) |
-| Deposit network fees           | the depositing player's wallet (a plain transfer; the first send also creates the treasury's token account) |
-| Withdrawal network fees + rent | the withdrawing player — withdrawals are **claims**: the server partially signs a payout tx whose fee payer is the player; the player's wallet submits it (≈0.000005 SOL + their own token-account rent) |
-| Hosting                        | Cloudflare Workers/D1/DO **free tier** (SQLite-backed DO); public Solana RPC |
+| Deposit network fees           | the depositing player's wallet                                      |
+| Withdrawal gas                 | treasury ETH float on Robinhood Chain                               |
+| Hosting                        | Cloudflare Workers/D1/DO **free tier** (SQLite-backed DO); public Robinhood RPC |
 
-The treasury **never holds or spends SOL** — it only signs. Claims a player never
-submits auto-refund after 10 minutes (far beyond blockhash validity, so an expired
-claim can never land later and double-pay). The whole flow verifies with no chain
-at all: `node scripts/smoke.mjs metro` (devnet-sim settlement).
+The treasury never holds or spends SOL on the Robinhood path. It does need a
+small ETH gas float before cash-outs can succeed. Pending claims auto-refund
+after 10 minutes; the whole accounting flow still verifies with no chain at all:
+`node scripts/smoke.mjs metro` (sim settlement).
 
 ## 5. Entering the $METRO contract address (when the token is live)
 
@@ -138,10 +139,10 @@ the panel live but no server secrets, the bridge runs devnet-sim settlement,
 which TRUSTS claimed deposit amounts — a player could fabricate deposits.
 Secrets first, CA second, always.
 
-**Mainnet arming (counsel-gated):** real-value mainnet additionally requires
-`VITE_METRO_CLUSTER=mainnet-beta` AND `VITE_METRO_MAINNET_ARMED=1` at client
-build, plus server secret `METRO_MAINNET_ARMED=1`. Both stay off until counsel
-signs off; nothing arms by accident.
+**Mainnet arming (counsel-gated):** real-value Robinhood mainnet additionally
+requires `VITE_METRO_CLUSTER=robinhood` AND `VITE_METRO_MAINNET_ARMED=1` at
+client build, plus server secret `METRO_MAINNET_ARMED=1`. Both stay off until
+counsel signs off; nothing arms by accident.
 
 **Full mainnet runbook (including pre-CA treasury prep):** see `MAINNET_GO_LIVE.md`.
 Pre-CA: `cd server && node scripts/mainnet-prepare.mjs` then put

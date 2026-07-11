@@ -2635,16 +2635,19 @@ export class WorldDO {
    * after a storage wipe (new browser / cleared cookies / non-persistent webview) instead of
    * being locked out forever — the exact wall a no-wallet newcomer hits at the tutorial door.
    *
-   * Signals are progression state, NOT balances: every new guest is handed a starter kit
-   * (~100₵, a few cores, two starter items), so credits/cores/inventory counts can't tell a
-   * newcomer from an investor. What can: finishing the tutorial (you must graduate the drill
-   * yard to reach the city where estates + wealth live), leveling up, banking real credits, or
-   * owning a home. Only consulted on a secret mismatch, so the estates lookup is off the hot path.
+   * Signals are progression state, NOT the starter grant: every new guest is handed
+   * ~100₵, a few cores, and two starter items, and may reach the city before storage
+   * is durable. A callsign should only hard-lock once there is actual progress/value
+   * to protect: quest state, levels, banked credits, fragments, weekly flags, stash,
+   * or property. Only consulted on a secret mismatch, so the D1 lookups are off the
+   * hot path.
    */
   private async guestSaveHasAssets(p: PlayerState): Promise<boolean> {
-    if (p.tutorialDone) return true; // left the drill yard — a committed runner in the live city
     if ((p.level ?? 1) >= 2) return true; // real grind, not a first-kill fluke
     if ((p.credits ?? 0) >= 1000) return true; // banked wealth well beyond the ~100₵ starter grant
+    if (p.stash.length > 0) return true; // anything moved to a lockbox is intentional value
+    if (p.fragments.length > 0) return true; // recovered story memory / dive reward
+    if (p.campaign.activeId || p.campaign.completed.length > 0 || p.campaign.flags.size > 0) return true;
     try {
       const est = await this.env.DB.prepare("SELECT 1 FROM estates WHERE owner = ? LIMIT 1").bind(p.id).first();
       if (est) return true; // owns a home — the exact thing the lock protects

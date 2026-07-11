@@ -1,36 +1,37 @@
 # $METRO Mainnet Go-Live
 
-Everything that can be done **without a contract address (CA)** is in §1–2.
-When pump.fun (or similar) gives you the mint CA, follow §3–5 **in order**.
+Current launch path: **Robinhood Chain mainnet** (`chainId=4663`) with an
+ERC-20 `0x...` contract address.
 
-## Design invariants (do not break)
+## Invariants
 
 | Rule | Why |
 |------|-----|
-| Cash-out pool starts empty | Fixed-supply token — dev cannot mint into treasury |
-| Deposit 1 ◈ → 100 ₵ · withdraw 125 ₵ → 1 ◈ | RH launch spread funds the pool |
-| Treasury never spends SOL | Withdrawals are player-fee **claims** |
-| Secrets before client mint | Live panel + sim settlement = fabricatable deposits |
-| `METRO_MAINNET_ARMED` counsel-gated | Mainnet never arms by accident |
+| Server secrets before client CA | A live panel without real settlement must never trust client amounts |
+| `METRO_MAINNET_ARMED` is counsel-gated | Real-value mainnet cannot arm by accident |
+| Treasury is EVM `0x...` | Robinhood Chain settlement uses ERC-20 transfers |
+| Treasury needs ETH for gas | EVM cash-outs are treasury-signed ERC-20 transfers |
+| Pool is player-funded | Deposits fill the pool; withdrawals cannot exceed it |
+| Rates stay 100 in / 125 out | Launch economics: min `250 ₵`, daily cap `50k ₵` |
 
----
-
-## 1. Pre-CA (do this now)
-
-### 1a. Generate mainnet treasury
+## 1. Pre-CA Readiness
 
 ```sh
 cd server
 node scripts/mainnet-prepare.mjs
-# optional: node scripts/mainnet-prepare.mjs --print-secret
 ```
 
-Creates **gitignored** `server/.mainnet-treasury.json` (mode 600):
+This creates or reuses gitignored `server/.mainnet-treasury.json`:
 
-- `treasuryPubkey` — public deposit address once mint exists  
-- `treasurySecret` — base64 64-byte secret (never commit, never reuse from devnet)
+- `treasuryAddress` — public Robinhood Chain deposit / payout address
+- `treasurySecret` — private EVM key for Cloudflare secret storage
+- `mint: null` — filled later by `mainnet-arm.mjs`
+- `mainnetArmed: false` — remains false until counsel sign-off
 
-### 1b. Install treasury secret on Cloudflare
+If an old Solana treasury file is present, the script refuses to overwrite it
+unless run with `--replace-legacy`.
+
+Install the treasury secret on Cloudflare before the CA exists:
 
 ```sh
 cd server
@@ -39,77 +40,29 @@ node -e "process.stdout.write(JSON.parse(require('fs').readFileSync('.mainnet-tr
 npx wrangler deploy
 ```
 
-**Do not** set `METRO_MINT` / `METRO_DEVNET_MINT` yet.  
-**Do not** set `METRO_MAINNET_ARMED`.  
-**Do not** set `VITE_METRO_MINT` on the client.
+Do **not** set `METRO_MINT`, `VITE_METRO_MINT`, or either mainnet arm flag yet.
 
-### 1c. Verify readiness
-
-```sh
-curl -s https://metrophage-server.wendellphillips.workers.dev/metro/status
-curl -s https://metrophage-server.wendellphillips.workers.dev/metro/pool
-```
-
-Expect something like:
-
-```json
-{
-  "ok": true,
-  "treasuryConfigured": true,
-  "mintConfigured": false,
-  "mainnetArmed": false,
-  "settlement": "sim",
-  "readyForCa": true,
-  "treasury": "<your pubkey>"
-}
-```
-
----
-
-## 2. Code / product already ready without CA
-
-- Settlement seam (`sim` vs real Solana)  
-- Claim withdraw (player fee payer) + deposit verify  
-- Pool accounting (player-funded)  
-- Client bridge panel gated on `VITE_METRO_MINT`  
-- Mainnet arm flags (client + server)  
-- Wallet signature required on deposit/withdraw when settlement is real Solana  
-- Mainnet RPC refused unless `METRO_MAINNET_ARMED=1`  
-
----
-
-## 3. When you have the CA (mint address)
+## 2. When You Have The CA
 
 ```sh
 cd server
-node scripts/mainnet-arm.mjs <MINT_CA>
-# follow printed commands exactly
+node scripts/mainnet-arm.mjs <0x_CA>
 ```
 
-### 3a. Server secrets (FIRST)
+The helper records the CA locally and prints the exact Cloudflare + client build
+commands. It uses:
 
-```sh
-cd server
-echo -n '<MINT_CA>' | npx wrangler secret put METRO_MINT
-echo -n '<MINT_CA>' | npx wrangler secret put METRO_DEVNET_MINT   # legacy alias
-echo -n 'https://api.mainnet-beta.solana.com' | npx wrangler secret put METRO_RPC
-# treasury already set in §1b
-npx wrangler deploy
-```
+- `METRO_MINT=<0x_CA>`
+- `METRO_RPC=https://rpc.mainnet.chain.robinhood.com`
+- `METRO_CHAIN_ID=4663`
+- `VITE_METRO_CLUSTER=robinhood`
 
-### 3b. Client build (SECOND — only after 3a)
+Run the printed **server** commands first, including the remote D1 migrations and
+Worker deploy. Only then run the printed **client** build and Pages deploy.
 
-```sh
-# repo root — WITHOUT arm flag until counsel OK (panel can still show for devnet-style tests)
-VITE_SERVER_URL=wss://metrophage-server.wendellphillips.workers.dev/ws \
-VITE_METRO_MINT=<MINT_CA> \
-VITE_METRO_CLUSTER=mainnet-beta \
-VITE_METRO_RPC=https://api.mainnet-beta.solana.com \
-npm run build
-npx wrangler pages deploy dist --project-name=metrophagev1 --branch=main --commit-dirty=true
-```
+## 3. Counsel Arm
 
-### 3c. Counsel arm (real value)
+Only after legal sign-off:
 
 ```sh
 cd server
@@ -117,52 +70,43 @@ echo -n '1' | npx wrangler secret put METRO_MAINNET_ARMED
 npx wrangler deploy
 ```
 
-Client rebuild with:
+Then rebuild the client with all CA flags plus:
 
 ```sh
 VITE_METRO_MAINNET_ARMED=1
-# …plus all flags from 3b
 ```
 
-Without both server + client arm flags, mainnet-value path stays off.
+Without both server and client arm flags, mainnet-value settlement stays locked.
 
----
+## 4. Verify
 
-## 4. Post-launch player flow
+```sh
+curl -s https://metrophage-server.wendellphillips.workers.dev/metro/status
+curl -s https://metrophage-server.wendellphillips.workers.dev/metro/pool
+```
 
-1. Earn **credits** in-game  
-2. Open **◈ $METRO** panel (mint must be in client build)  
-3. **Deposit:** send $METRO to published `treasury` → claim with tx sig  
-4. **Withdraw:** burn credits → receive claim tx → wallet signs + pays fee → confirm  
+Expected after CA + server deploy:
 
-Pool phase:
+- `mintConfigured: true`
+- `treasuryConfigured: true`
+- `chain: "robinhood"`
+- `chainId: 4663`
+- `settlement: "evm"` after `METRO_MAINNET_ARMED=1`
+- no `dangerousSim`
 
-- `bootstrap` — pool &lt; min withdraw coverage  
-- `open` — pool can cover at least one min withdraw  
+Before cash-outs, fund the treasury address with a small ETH balance on
+Robinhood Chain for gas. The $METRO pool itself fills from player deposits.
 
----
+## 5. Player Flow
 
-## 5. Checklist
+1. Connect MetaMask on Robinhood Chain.
+2. Deposit $METRO ERC-20 to the treasury through the in-game panel.
+3. Claim the deposit; server verifies on-chain logs and grants credits.
+4. Withdraw credits; server signs an ERC-20 payout and verifies the transaction.
 
-| Step | Status without CA |
-|------|-------------------|
-| Treasury keypair generated | §1a |
-| Treasury secret on Worker | §1b |
-| Mint CA | **blocked — need pump.fun** |
-| Server `METRO_MINT` | after CA |
-| Server `METRO_RPC` mainnet | after CA |
-| Server `METRO_MAINNET_ARMED` | counsel |
-| Client `VITE_METRO_MINT` | after server secrets |
-| Client `VITE_METRO_CLUSTER=mainnet-beta` | after CA |
-| Client `VITE_METRO_MAINNET_ARMED=1` | counsel |
-| Smoke deposit/withdraw on mainnet | after arm |
+## Safety Reminders
 
----
-
-## 6. Safety reminders
-
-- Never reuse **devnet** treasury on mainnet.  
-- Never ship client mint before server secrets.  
-- Never arm mainnet without counsel.  
-- `.mainnet-treasury.json` is gitignored — back it up offline securely.  
-- If the file is lost and secret was never put on Cloudflare, generate a new treasury (old deposits to old address are unrecoverable without the key).  
+- Never ship `VITE_METRO_MINT` before Worker secrets are deployed.
+- Never set `METRO_ALLOW_SIM=1` in production.
+- Never arm mainnet without counsel sign-off.
+- Keep `server/.mainnet-treasury.json` backed up offline and never commit it.

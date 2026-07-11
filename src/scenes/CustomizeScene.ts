@@ -509,6 +509,17 @@ export default class CustomizeScene extends Phaser.Scene {
     this.rowScroll = Phaser.Math.Clamp(this.rowScroll, 0, this.maxRowScroll());
   }
 
+  private fitLine(text: Phaser.GameObjects.Text, value: string, maxW: number) {
+    text.setText(value);
+    if (text.width <= maxW) return;
+    const clean = value.trim();
+    for (let n = clean.length - 1; n >= 2; n--) {
+      text.setText(`${clean.slice(0, n).trimEnd()}…`);
+      if (text.width <= maxW) return;
+    }
+    text.setText("…");
+  }
+
   private rowY(index: number) {
     return this.listTop + (index - this.rowScroll) * this.rowH + this.rowH / 2;
   }
@@ -602,13 +613,16 @@ export default class CustomizeScene extends Phaser.Scene {
   private layoutRows() {
     const leftX = this.panelX + uiDim(this.mobile ? 200 : 180);
     const rightX = VIEW_W - MENU_PAD - uiDim(this.mobile ? 14 : 8);
+    const labelX = this.panelX + uiDim(16);
+    const labelMaxW = Math.max(uiDim(86), leftX - labelX - uiDim(this.mobile ? 30 : 24));
     this.rows.forEach((_row, i) => {
       const visible = i >= this.rowScroll && i < this.rowScroll + this.visibleRows;
       const y = this.rowY(i);
       this.rowTexts[i].setVisible(visible);
       this.rowValTexts[i].setVisible(visible);
       if (visible) {
-        this.rowTexts[i].setY(y);
+        this.rowTexts[i].setPosition(labelX, y);
+        this.fitLine(this.rowTexts[i], this.rows[i].label, labelMaxW);
         this.rowValTexts[i].setY(y);
       }
       this.rowLeftBtns[i].setVisible(visible);
@@ -644,6 +658,9 @@ export default class CustomizeScene extends Phaser.Scene {
       if (i < this.rowScroll || i >= this.rowScroll + this.visibleRows) return;
       const y = this.rowY(i);
       const selected = i === this.rowIndex;
+      const leftBtnX = this.rowLeftBtns[i].x;
+      const valueRightX = row.swatch ? VIEW_W - MENU_PAD - uiDim(52) : VIEW_W - MENU_PAD - uiDim(28);
+      const valueMaxW = Math.max(uiDim(76), valueRightX - leftBtnX - uiDim(this.mobile ? 32 : 26));
       if (selected) {
         this.rowG.fillStyle(this.classDef.color, 0.18).fillRect(this.panelX + uiDim(8), y - this.rowH / 2 + uiDim(3), this.panelW - uiDim(16), this.rowH - uiDim(6));
         this.rowG.lineStyle(uiDim(2), this.classDef.color, 0.9).strokeRect(this.panelX + uiDim(8), y - this.rowH / 2 + uiDim(3), this.panelW - uiDim(16), this.rowH - uiDim(6));
@@ -652,10 +669,12 @@ export default class CustomizeScene extends Phaser.Scene {
       const sw = this.rowSwatches[i];
       if (row.swatch) {
         sw.setVisible(true).setFillStyle(row.swatch());
-        this.rowValTexts[i].setText(row.value()).setX(VIEW_W - MENU_PAD - uiDim(52));
+        this.rowValTexts[i].setX(valueRightX);
+        this.fitLine(this.rowValTexts[i], row.value(), valueMaxW);
       } else {
         sw.setVisible(false);
-        this.rowValTexts[i].setText(row.value()).setX(VIEW_W - MENU_PAD - uiDim(28));
+        this.rowValTexts[i].setX(valueRightX);
+        this.fitLine(this.rowValTexts[i], row.value(), valueMaxW);
       }
     });
   }
@@ -780,20 +799,29 @@ export default class CustomizeScene extends Phaser.Scene {
 
   private confirm() {
     if (!this.cust.callsign) this.cust.callsign = randomCallsign();
+    const wallet = this.registry.get("walletAddress") as string | undefined;
+    const guest =
+      !wallet &&
+      (!!this.registry.get("guestPlay") ||
+        !!this.registry.get("offlinePlay"));
     this.registry.set("classId", this.classDef.id);
     this.registry.set("customization", this.cust);
     this.registry.set("resume", false);
     this.registry.set("characterLocked", true);
-    this.registry.set("guestPlay", true);
-    // Mint guest device secret now so the first multiplayer login binds this runner.
-    // Persist it on the local profile so CONTINUE never regenerates a mismatched key.
-    const deviceSecret = ensureGuestDeviceSecret(this.cust.callsign);
-    writeLocalRunner({
-      callsign: this.cust.callsign,
-      classId: this.classDef.id,
-      customization: this.cust,
-      deviceSecret,
-    });
+    this.registry.set("guestPlay", guest);
+    if (guest) {
+      // Mint guest device secret now so the first multiplayer login binds this runner.
+      // Persist it on the local profile so CONTINUE never regenerates a mismatched key.
+      const deviceSecret = ensureGuestDeviceSecret(this.cust.callsign);
+      writeLocalRunner({
+        callsign: this.cust.callsign,
+        classId: this.classDef.id,
+        customization: this.cust,
+        deviceSecret,
+      });
+    } else {
+      this.registry.remove("offlinePlay");
+    }
     transitionTo(this, "Prologue", undefined, { style: "deploy", accent: this.classDef.color });
   }
 }

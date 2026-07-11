@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { stepMove, collides, NET_TICK_MS, PLAYER_RADIUS, type MoveState } from "./sim";
+import { stepMove, collides, pvpZonesFor, NET_TICK_MS, PLAYER_RADIUS, type MoveState } from "./sim";
 import { buildGrid, isWall } from "../world/district";
 import { DISTRICTS } from "../game/districts";
 import { TILE } from "../config";
@@ -48,5 +48,14 @@ describe("net/sim stepMove", () => {
     const { worldW, worldH } = { worldW: grid[0].length * 32, worldH: grid.length * 32 };
     expect(collides(-PLAYER_RADIUS, worldH / 2, grid)).toBe(true);
     expect(collides(worldW + PLAYER_RADIUS, worldH / 2, grid)).toBe(true);
+  });
+});
+
+describe("net/sim PvP zones", () => {
+  it("only enables outdoor district arenas", () => {
+    expect(pvpZonesFor(3840, 2880, "d0")).toHaveLength(1);
+    expect(pvpZonesFor(480, 352, "h0")).toHaveLength(0);
+    expect(pvpZonesFor(480, 352, "d0i0")).toHaveLength(0);
+    expect(pvpZonesFor(480, 352, "est0")).toHaveLength(0);
   });
 });

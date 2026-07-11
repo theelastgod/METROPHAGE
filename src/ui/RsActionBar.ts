@@ -2,7 +2,7 @@ import Phaser from "phaser";
 import { drawHudPanel, ensureHudPanelImage } from "./panelChrome";
 import { bodyFont, displayFont } from "./typography";
 import { onlineHudStack, uiDim, uiGap } from "./uiLayout";
-import { prefersMobileUx } from "../systems/Mobile";
+import { mobileStickSafeRegion, prefersMobileUx } from "../systems/Mobile";
 
 export interface ActionBarSlot {
   key: string;
@@ -32,14 +32,32 @@ export default class RsActionBar {
     this.slots = slots;
     // Phones get taller, wider slots — these are thumb targets, not cursor targets.
     const mobile = prefersMobileUx();
-    this.slotW = uiDim(mobile ? 58 : slots.length >= 4 ? 50 : 54);
-    this.h = uiDim(mobile ? 52 : slots.length >= 4 ? 44 : 40);
     const gap = uiGap("sm");
+    if (mobile) {
+      const stickSafe = mobileStickSafeRegion(scene.scale.width, scene.scale.height);
+      const leftSafe = stickSafe.x + stickSafe.w + uiDim(20);
+      const rightSafe = uiDim(214);
+      const laneW = Math.max(uiDim(240), scene.scale.width - leftSafe - rightSafe);
+      this.slotW = Math.max(
+        uiDim(42),
+        Math.min(uiDim(58), Math.floor((laneW - (slots.length - 1) * gap - uiGap("lg")) / Math.max(1, slots.length))),
+      );
+    } else {
+      this.slotW = uiDim(slots.length >= 4 ? 50 : 54);
+    }
+    this.h = uiDim(mobile ? 52 : slots.length >= 4 ? 44 : 40);
     this.w = slots.length * this.slotW + (slots.length - 1) * gap + uiGap("lg");
     const stack = onlineHudStack(scene.scale.height);
     if (mobile) {
       // Bottom-centre, directly above the hotbar row — menu taps live with the thumbs.
-      this.x = Math.max(uiDim(8), (scene.scale.width - this.w) / 2);
+      const stickSafe = mobileStickSafeRegion(scene.scale.width, scene.scale.height);
+      const leftSafe = stickSafe.x + stickSafe.w + uiDim(20);
+      const rightSafe = uiDim(214);
+      const laneW = scene.scale.width - leftSafe - rightSafe;
+      this.x =
+        this.w <= laneW
+          ? leftSafe + (laneW - this.w) / 2
+          : Phaser.Math.Clamp((scene.scale.width - this.w) / 2, uiDim(8), Math.max(uiDim(8), scene.scale.width - this.w - uiDim(8)));
       this.y = scene.scale.height - uiDim(118);
     } else {
       // right-anchored so the left-anchored equip hotbar never collides with it
