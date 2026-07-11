@@ -14,6 +14,7 @@ import {
   PROP_CAR_GREEN_KEY,
   PROP_PICKUP_KEY,
   PROP_VAN_KEY,
+  HF_PROP_KEYS,
   GLOW_KEY,
 } from "../assets/manifest";
 import { isWall, type TileGrid } from "../world/district";
@@ -48,6 +49,17 @@ const PROPS: PropSpec[] = [
   { key: PROP_CAR_GREEN_KEY, originY: 0.7, scale: 0.72, yOff: 0, weight: 1 },
   { key: PROP_PICKUP_KEY, originY: 0.7, scale: 0.68, yOff: 0, weight: 1 },
   { key: PROP_VAN_KEY, originY: 0.7, scale: 0.68, yOff: 0, weight: 1 },
+  // Higgsfield top-down props (streetlight / vending / crate / taxi / terminal / …).
+  { key: HF_PROP_KEYS[0], originY: 0.88, scale: 0.7, yOff: 2, glow: true, weight: 2 },
+  { key: HF_PROP_KEYS[1], originY: 0.85, scale: 0.62, yOff: 2, weight: 2, glow: true },
+  { key: HF_PROP_KEYS[2], originY: 0.88, scale: 0.6, yOff: 2, weight: 1 },
+  { key: HF_PROP_KEYS[3], originY: 0.9, scale: 0.58, yOff: 3, weight: 1 },
+  { key: HF_PROP_KEYS[4], originY: 0.85, scale: 0.62, yOff: 2, weight: 2 },
+  { key: HF_PROP_KEYS[5], originY: 0.88, scale: 0.64, yOff: 2, weight: 1 },
+  { key: HF_PROP_KEYS[6], originY: 0.72, scale: 0.55, yOff: 0, weight: 1 },
+  { key: HF_PROP_KEYS[7], originY: 0.72, scale: 0.55, yOff: 0, weight: 1 },
+  { key: HF_PROP_KEYS[9], originY: 0.82, scale: 0.55, yOff: 2, glow: true, weight: 1 },
+  { key: HF_PROP_KEYS[10], originY: 0.85, scale: 0.58, yOff: 2, weight: 1 },
 ];
 
 const POOL = PROPS.flatMap((p) => Array.from({ length: p.weight }, () => p));
@@ -69,6 +81,9 @@ export function scatterWorldProps(scene: Phaser.Scene, grid: TileGrid, depth = 5
   const H = grid.length;
   const W = grid[0]?.length ?? 0;
   const container = scene.add.container(0, 0).setDepth(depth);
+  // Only scatter props whose textures actually loaded (missing HF props skip silently).
+  const livePool = POOL.filter((p) => scene.textures.exists(p.key));
+  if (livePool.length === 0) return;
 
   for (let ty = 2; ty < H - 2; ty++) {
     const row = grid[ty];
@@ -85,8 +100,7 @@ export function scatterWorldProps(scene: Phaser.Scene, grid: TileGrid, depth = 5
       if (isWall(row[tx + 1])) walls++;
       if (walls >= 3) continue;
 
-      const spec = POOL[h % POOL.length];
-      if (!scene.textures.exists(spec.key)) continue;
+      const spec = livePool[h % livePool.length];
 
       const x = tx * TILE + TILE / 2 + ((h % 7) - 3);
       const y = ty * TILE + TILE / 2 + (((h >> 4) % 7) - 3) + spec.yOff;

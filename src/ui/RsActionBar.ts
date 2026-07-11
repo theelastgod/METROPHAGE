@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { drawHudPanel } from "./panelChrome";
+import { drawHudPanel, ensureHudPanelImage } from "./panelChrome";
 import { bodyFont, displayFont } from "./typography";
 import { onlineHudStack, uiDim, uiGap } from "./uiLayout";
 import { prefersMobileUx } from "../systems/Mobile";
@@ -16,6 +16,7 @@ export interface ActionBarSlot {
 export default class RsActionBar {
   private scene: Phaser.Scene;
   private g: Phaser.GameObjects.Graphics;
+  private panelImg: Phaser.GameObjects.NineSlice | Phaser.GameObjects.Image | null = null;
   private zones: Phaser.GameObjects.Zone[] = [];
   private texts: Phaser.GameObjects.Text[] = [];
   private readonly slots: ActionBarSlot[];
@@ -63,7 +64,9 @@ export default class RsActionBar {
     for (const z of this.zones) z.destroy();
     this.zones = [];
 
-    drawHudPanel(g, this.x, this.y, this.w, this.h);
+    this.panelImg = ensureHudPanelImage(this.scene, this.panelImg, this.x, this.y, this.w, this.h, 1049, 0xffffff);
+    if (!this.panelImg) drawHudPanel(g, this.x, this.y, this.w, this.h);
+    else g.fillStyle(0x05040e, 0.28).fillRect(this.x + uiDim(6), this.y + uiDim(4), this.w - uiDim(12), this.h - uiDim(8));
     const slotW = this.slotW;
     const gap = uiDim(6);
     let sx = this.x + uiDim(8);

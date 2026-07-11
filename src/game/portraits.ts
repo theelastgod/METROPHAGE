@@ -45,6 +45,27 @@ const KEEPERS: Record<string, number> = {
   porter: 11,
 };
 
+/**
+ * Hub service operatives (and common display names) → painted face.
+ * Keys are lowercased name tokens from OnlineScene CITY_HUB_NPCS / venue services.
+ */
+const SERVICE_FACES: Record<string, PortraitRef> = {
+  fixer: { key: PORTRAIT_CAST_KEY, frame: 0 },
+  "the fixer": { key: PORTRAIT_CAST_KEY, frame: 0 },
+  armorer: { key: PORTRAIT_KEEPERS_KEY, frame: 3 },
+  archivist: { key: PORTRAIT_KEEPERS_KEY, frame: 1 },
+  quartermaster: { key: PORTRAIT_KEEPERS_KEY, frame: 1 },
+  "the tailor": { key: PORTRAIT_KEEPERS_KEY, frame: 7 },
+  tailor: { key: PORTRAIT_KEEPERS_KEY, frame: 7 },
+  "the broker": { key: PORTRAIT_KEEPERS_KEY, frame: 4 },
+  broker: { key: PORTRAIT_KEEPERS_KEY, frame: 4 },
+  organizer: { key: PORTRAIT_KEEPERS_KEY, frame: 3 },
+  clerk: { key: PORTRAIT_KEEPERS_KEY, frame: 1 },
+  custodian: { key: PORTRAIT_KEEPERS_KEY, frame: 5 },
+  registrar: { key: PORTRAIT_KEEPERS_KEY, frame: 3 },
+  fence: { key: PORTRAIT_KEEPERS_KEY, frame: 4 },
+};
+
 /** Street residents drawn 1:1 — residents_sheet.jpg frame order. */
 const RESIDENTS: Record<string, number> = {
   res_nix: 0,
@@ -82,7 +103,24 @@ export function portraitFor(id: string, sex?: string): PortraitRef {
   if (id.startsWith("keep_")) {
     return { key: PORTRAIT_KEEPERS_KEY, frame: hash(id) % 11 };
   }
+  const svc = SERVICE_FACES[id.toLowerCase()];
+  if (svc) return svc;
   const pool = sex === "f" ? RES_F : sex === "m" ? RES_M : undefined;
   if (pool) return { key: PORTRAIT_RESIDENTS_KEY, frame: pool[hash(id) % pool.length] };
   return { key: PORTRAIT_RESIDENTS_KEY, frame: hash(id) % 12 };
+}
+
+/** Resolve a painted face from a freeform NPC display name (hub services, instructors). */
+export function portraitForName(name: string): PortraitRef | undefined {
+  const raw = name.trim().toLowerCase();
+  if (!raw) return undefined;
+  // "ARMORER · FORGE" → try full then first token
+  const head = raw.split("·")[0]?.trim() ?? raw;
+  if (SERVICE_FACES[raw]) return SERVICE_FACES[raw];
+  if (SERVICE_FACES[head]) return SERVICE_FACES[head];
+  // Match cast by first word ("rin", "doc halo" → doc)
+  const first = head.split(/\s+/)[0] ?? head;
+  if (CAST[first] !== undefined) return { key: PORTRAIT_CAST_KEY, frame: CAST[first] };
+  if (SERVICE_FACES[first]) return SERVICE_FACES[first];
+  return undefined;
 }

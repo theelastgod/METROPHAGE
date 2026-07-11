@@ -3,6 +3,7 @@ import { COLORS } from "../config";
 import { Item, Slot, SLOTS, RARITIES, SLOT_NAMES, itemStatLines } from "../game/items";
 import { getWeapon } from "../game/weapons";
 import { iconKey, ensureItemIcons } from "../assets/itemIcons";
+import { UI_FRAME_KEY, UI_GUN_KEY } from "../assets/manifest";
 import { dimBackdrop, onlineHudStack, overlayRect, uiDim, uiFont } from "./uiLayout";
 import ContextMenu from "./ContextMenu";
 import { getSettings } from "../systems/Settings";
@@ -41,6 +42,8 @@ export default class OnlineInventory {
 
   private barG: Phaser.GameObjects.Graphics;
   private barIcons: Phaser.GameObjects.Image[] = [];
+  /** Neon skill-frame chrome behind each hotbar cell (Higgsfield / pack). */
+  private barFrames: Phaser.GameObjects.Image[] = [];
   private barZones: Phaser.GameObjects.Zone[] = [];
   private barHint: Phaser.GameObjects.Text;
   private barSlotLabels: Phaser.GameObjects.Text[] = [];
@@ -66,15 +69,28 @@ export default class OnlineInventory {
       this.barY = onlineHudStack(scene.scale.height).hotbarY;
     }
     this.barG = scene.add.graphics().setScrollFactor(0).setDepth(1500);
+    const hasFrame = scene.textures.exists(UI_FRAME_KEY);
     for (let i = 0; i < HOTBAR_SLOTS; i++) {
       const cx = this.barX + i * (HB_CELL + HB_GAP) + HB_CELL / 2;
+      const cy = this.barY + HB_CELL / 2;
+      if (hasFrame) {
+        this.barFrames.push(
+          scene.add
+            .image(cx, cy, UI_FRAME_KEY)
+            .setDisplaySize(HB_CELL + uiDim(4), HB_CELL + uiDim(4))
+            .setScrollFactor(0)
+            .setDepth(1500)
+            .setAlpha(i === 0 ? 0.95 : 0.72)
+            .setTint(i === 0 ? 0x29e7ff : 0xa8b0c8),
+        );
+      }
       this.barIcons.push(
         scene.add
-          .image(cx, this.barY + HB_CELL / 2, iconKey("CHIP"))
+          .image(cx, cy, i === 0 && scene.textures.exists(UI_GUN_KEY) ? UI_GUN_KEY : iconKey("CHIP"))
           .setDisplaySize(uiDim(this.mobile ? 28 : 34), uiDim(this.mobile ? 28 : 34))
           .setScrollFactor(0)
           .setDepth(1501)
-          .setVisible(false),
+          .setVisible(i === 0 && scene.textures.exists(UI_GUN_KEY)),
       );
     }
     // hint rides at the right end of the hotbar row so it never hides under the chat frame
@@ -164,19 +180,31 @@ export default class OnlineInventory {
     const g = this.barG;
     const eq = this.eqBySlot();
     g.clear();
+    const framed = this.barFrames.length > 0;
     for (let i = 0; i < HOTBAR_SLOTS; i++) {
       const x = this.barX + i * (HB_CELL + HB_GAP);
       const weaponSlot = i === 0;
       const it = weaponSlot ? eq.weapon : this.items[i - 1];
       const col = weaponSlot ? 0x29e7ff : it ? RARITIES[it.rarity].color : 0x2a2440;
-      g.fillStyle(weaponSlot ? 0x0c1428 : 0x07061a, 0.78).fillRect(x, this.barY, HB_CELL, HB_CELL);
-      g.lineStyle(uiDim(weaponSlot ? 2.5 : 2), col, it || weaponSlot ? 1 : 0.5).strokeRect(x, this.barY, HB_CELL, HB_CELL);
+      // When skill_frame art is present, keep a light fill under it; otherwise full rect chrome.
+      if (framed) {
+        g.fillStyle(weaponSlot ? 0x0c1428 : 0x07061a, 0.55).fillRect(x + 2, this.barY + 2, HB_CELL - 4, HB_CELL - 4);
+        this.barFrames[i]?.setTint(col).setAlpha(it || weaponSlot ? 0.95 : 0.55);
+      } else {
+        g.fillStyle(weaponSlot ? 0x0c1428 : 0x07061a, 0.78).fillRect(x, this.barY, HB_CELL, HB_CELL);
+        g.lineStyle(uiDim(weaponSlot ? 2.5 : 2), col, it || weaponSlot ? 1 : 0.5).strokeRect(x, this.barY, HB_CELL, HB_CELL);
+      }
       const icon = this.barIcons[i];
       if (it) {
         const ic = itemIcon(it);
         icon.setVisible(true).setTexture(ic.key).setTint(ic.tint);
       } else if (weaponSlot) {
-        icon.setVisible(true).setTexture(iconKey("BLADE")).setTint(0x3a3350);
+        // Prefer painted gun art; fall back to blade silhouette.
+        if (this.scene.textures.exists(UI_GUN_KEY)) {
+          icon.setVisible(true).setTexture(UI_GUN_KEY).setTint(0xffffff);
+        } else {
+          icon.setVisible(true).setTexture(iconKey("BLADE")).setTint(0x3a3350);
+        }
       } else {
         icon.setVisible(false);
       }

@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import { uiDim } from "../config";
+import { UI_BTN_RING_KEY } from "../assets/manifest";
 import { displayFont, bodyFont } from "./typography";
 
 export interface MobileControlHandlers {
@@ -187,25 +188,59 @@ export default class MobileControls {
       label: string,
       color: number,
       onTap: () => void,
-      opts: { holdFire?: boolean; fontPx?: number; track?: "dash" | "q" | "e" | "r" } = {},
+      opts: {
+        holdFire?: boolean;
+        fontPx?: number;
+        track?: "dash" | "q" | "e" | "r";
+        /** Optional Higgsfield ability icon texture key. */
+        iconKey?: string;
+      } = {},
     ) => {
       const hex = "#" + color.toString(16).padStart(6, "0");
       const g = this.scene.add.graphics().setScrollFactor(0).setDepth(1301);
+      // Painted neon ring behind ability pads (Higgsfield) — falls back to drawn circle.
+      let ring: Phaser.GameObjects.Image | null = null;
+      if (this.scene.textures.exists(UI_BTN_RING_KEY) && !opts.holdFire) {
+        ring = this.scene.add
+          .image(x, y, UI_BTN_RING_KEY)
+          .setDisplaySize(r * 2.15, r * 2.15)
+          .setScrollFactor(0)
+          .setDepth(1300)
+          .setTint(color)
+          .setAlpha(0.9);
+      }
+      let icon: Phaser.GameObjects.Image | null = null;
+      if (opts.iconKey && this.scene.textures.exists(opts.iconKey)) {
+        icon = this.scene.add
+          .image(x, y - (label ? uiDim(2) : 0), opts.iconKey)
+          .setDisplaySize(r * 1.15, r * 1.15)
+          .setScrollFactor(0)
+          .setDepth(1302)
+          .setAlpha(0.95);
+      }
       const t = this.scene.add
-        .text(x, y, label, displayFont(opts.fontPx ?? 15, { color: hex, fontStyle: "bold" }))
+        .text(x, icon ? y + r * 0.55 : y, label, displayFont(opts.fontPx ?? (icon ? 10 : 15), { color: hex, fontStyle: "bold" }))
         .setOrigin(0.5)
         .setScrollFactor(0)
-        .setDepth(1302)
+        .setDepth(1303)
         .setShadow(0, 0, hex, 5, true, true);
+      if (icon && !label) t.setVisible(false);
       let cdN = 1; // 0..1 readiness — cooling buttons dim + show a sweep arc
       let armed = !opts.track || opts.track !== "r"; // R arms via HEAT, others via cooldown
       const paint = (down: boolean) => {
         g.clear();
         const ready = cdN >= 1 && armed;
-        g.fillStyle(down ? color : 0x0b1220, down ? 0.92 : ready ? 0.78 : 0.5);
-        g.fillCircle(x, y, r);
-        g.lineStyle(uiDim(2), color, down ? 1 : ready ? 0.8 : 0.3);
-        g.strokeCircle(x, y, r);
+        // When a painted ring is present, keep the fill subtle so the art reads.
+        if (ring) {
+          ring.setAlpha(down ? 1 : ready ? 0.95 : 0.45);
+          ring.setTint(down ? 0xffffff : color);
+        } else {
+          g.fillStyle(down ? color : 0x0b1220, down ? 0.92 : ready ? 0.78 : 0.5);
+          g.fillCircle(x, y, r);
+          g.lineStyle(uiDim(2), color, down ? 1 : ready ? 0.8 : 0.3);
+          g.strokeCircle(x, y, r);
+        }
+        if (icon) icon.setAlpha(down ? 1 : ready ? 0.95 : 0.4);
         if (cdN < 1 || (opts.track === "r" && !armed)) {
           // readiness sweep — fills clockwise from 12 o'clock as the cooldown/HEAT refills
           g.lineStyle(uiDim(3), color, 0.85);
@@ -237,7 +272,7 @@ export default class MobileControls {
         .zone(x - hitR, y - hitR, hitR * 2, hitR * 2)
         .setOrigin(0)
         .setScrollFactor(0)
-        .setDepth(1303)
+        .setDepth(1304)
         .setInteractive(new Phaser.Geom.Circle(hitR, hitR, hitR), Phaser.Geom.Circle.Contains);
       z.on("pointerdown", (ptr: Phaser.Input.Pointer) => {
         ptr.event?.stopPropagation?.();
@@ -263,24 +298,27 @@ export default class MobileControls {
         release(ptr);
       });
       z.on("pointerupoutside", (ptr: Phaser.Input.Pointer) => release(ptr));
-      this.root.add([g, t, z]);
+      const parts: Phaser.GameObjects.GameObject[] = [g, t, z];
+      if (ring) parts.unshift(ring);
+      if (icon) parts.push(icon);
+      this.root.add(parts);
       this.deadZones.push({ x, y, r: hitR + uiDim(4) });
     };
 
     // Primary pad — hold to fire (auto-aims nearest hostile).
-    mkBtn(ax, ay, atkR, "ATK", 0xff3b6b, () => {}, { holdFire: true, fontPx: 17 });
+    mkBtn(ax, ay, atkR, "ATK", 0xff3b6b, () => {}, { holdFire: true, fontPx: 17, iconKey: "ability_rail" });
     // Inner ring: mobility + interact — one thumb-roll away from ATK.
     const dash = at(180, atkR + uiDim(38));
-    mkBtn(dash.x, dash.y, uiDim(26), "⇢", 0x00e5ff, h.onDash, { fontPx: 18, track: "dash" });
+    mkBtn(dash.x, dash.y, uiDim(26), "⇢", 0x00e5ff, h.onDash, { fontPx: 14, track: "dash", iconKey: "ability_dash" });
     const use = at(90, atkR + uiDim(38));
-    mkBtn(use.x, use.y, uiDim(26), "◆", 0x39ff88, h.onInteract, { fontPx: 16 });
+    mkBtn(use.x, use.y, uiDim(26), "◆", 0x39ff88, h.onInteract, { fontPx: 14, iconKey: "ability_radar" });
     // Outer arc: abilities — Q closest to the thumb, R (ult) a deliberate reach.
     const q = at(135, atkR + uiDim(88));
-    mkBtn(q.x, q.y, uiDim(26), "Q", 0xff2bd6, h.onAbility, { track: "q" });
+    mkBtn(q.x, q.y, uiDim(26), "Q", 0xff2bd6, h.onAbility, { track: "q", iconKey: "ability_virus", fontPx: 11 });
     const e = at(171, atkR + uiDim(94));
-    mkBtn(e.x, e.y, uiDim(24), "E", 0xf7ff3c, h.onAbility2, { track: "e" });
+    mkBtn(e.x, e.y, uiDim(24), "E", 0xf7ff3c, h.onAbility2, { track: "e", iconKey: "ability_shield", fontPx: 11 });
     const r = at(99, atkR + uiDim(94));
-    mkBtn(r.x, r.y, uiDim(24), "R", 0xff8a1f, h.onUlt, { track: "r" });
+    mkBtn(r.x, r.y, uiDim(24), "R", 0xff8a1f, h.onUlt, { track: "r", iconKey: "ability_overdrive", fontPx: 11 });
   }
 
   private wireGlobalPointers() {

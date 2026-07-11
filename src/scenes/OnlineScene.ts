@@ -115,7 +115,7 @@ import PvpCrucibleHud from "../ui/PvpCrucibleHud";
 import { drawHubNpcPlate } from "../ui/studioChrome";
 import { displayFont, bodyFont, hudFont } from "../ui/typography";
 import { onlineHudStack, uiGap, panelPadInner } from "../ui/spacing";
-import { drawHudPanel, drawPremiumBar } from "../ui/panelChrome";
+import { drawHudPanel, drawPremiumBar, ensureHudPanelImage } from "../ui/panelChrome";
 import ClickToMove from "../systems/ClickToMove";
 import ContextMenu from "../ui/ContextMenu";
 import TileCursor, { type TileCursorHint } from "../ui/TileCursor";
@@ -138,7 +138,7 @@ import OnlineCosmetics from "../ui/OnlineCosmetics";
 import OnlineMap from "../ui/OnlineMap";
 import { applyCosmetic } from "../game/cosmetics";
 import { npcDef, AMBIENT_NPCS, INTERIOR_PLAN, keeperFor, districtResident, hubResident, campaignAllyLines, STORY_ALLIES } from "../game/cityNpcs";
-import { portraitFor, type PortraitRef } from "../game/portraits";
+import { portraitFor, portraitForName, type PortraitRef } from "../game/portraits";
 import { bountyForNpc } from "../game/bounties";
 import type { PlayerLook } from "../net/protocol";
 import { setOnlinePlayer } from "../economy/session";
@@ -434,6 +434,9 @@ export default class OnlineScene extends Phaser.Scene {
   private faction = 0;
   private hud!: Phaser.GameObjects.Text;
   private hudPanelG!: Phaser.GameObjects.Graphics; // backing frame behind the status stack
+  /** Painted Higgsfield panel images (desktop + mobile); null if texture missing. */
+  private hudPanelImg: Phaser.GameObjects.NineSlice | Phaser.GameObjects.Image | null = null;
+  private trackerPanelImg: Phaser.GameObjects.NineSlice | Phaser.GameObjects.Image | null = null;
   private hpBarRect = { x: 0, y: 0, w: 0, h: 0 }; // laid out with the status panel at refresh
   private hpBar!: Phaser.GameObjects.Graphics;
   private kitPipsRect = { x: 0, y: 0, w: 0, h: 0 }; // dash + ability cooldown bars
@@ -2788,9 +2791,14 @@ export default class OnlineScene extends Phaser.Scene {
 
   /** Painted bust for a bubble speaker; sex from the NPC def keeps the face on-sprite. */
   private bubblePortrait(npcId?: string, name?: string): PortraitRef | undefined {
-    const id = npcId ?? (name ? "n_" + name.toLowerCase().replace(/\W+/g, "_") : undefined);
-    if (!id) return undefined;
-    return portraitFor(id, npcId ? npcDef(npcId)?.look?.sex : undefined);
+    if (npcId) return portraitFor(npcId, npcDef(npcId)?.look?.sex);
+    // Hub services / instructors ship display names like "THE FIXER · CONTRACTS".
+    if (name) {
+      const byName = portraitForName(name);
+      if (byName) return byName;
+      return portraitFor("n_" + name.toLowerCase().replace(/\W+/g, "_"));
+    }
+    return undefined;
   }
 
   /** Show a floating speech bubble above a world point (auto-fades). */
@@ -5161,8 +5169,17 @@ export default class OnlineScene extends Phaser.Scene {
     const pipH = uiDim(8);
     const innerW = Math.max(this.hud.width, uiDim(200));
     const innerH = this.hud.height + (showBar ? barGap + barH + uiGap("xs") + pipH : 0);
+    const panelW = innerW + pad * 2;
+    const panelH = innerH + pad * 2;
     this.hudPanelG.clear();
-    drawHudPanel(this.hudPanelG, px, py, innerW + pad * 2, innerH + pad * 2, 0x1fbf6a);
+    // Painted Higgsfield neon glass when available (both desktop + mobile sizes).
+    this.hudPanelImg = ensureHudPanelImage(this, this.hudPanelImg, px, py, panelW, panelH, 999, 0x8dffc8);
+    if (!this.hudPanelImg) {
+      drawHudPanel(this.hudPanelG, px, py, panelW, panelH, 0x1fbf6a);
+    } else {
+      // Soft accent wash under the art so bars still read on dark glass.
+      this.hudPanelG.fillStyle(0x05040e, 0.35).fillRect(px + uiDim(8), py + uiDim(8), panelW - uiDim(16), panelH - uiDim(16));
+    }
     this.hpBarRect = showBar
       ? { x: px + pad, y: py + pad + this.hud.height + barGap, w: innerW, h: barH }
       : { x: 0, y: 0, w: 0, h: 0 };
@@ -5185,6 +5202,7 @@ export default class OnlineScene extends Phaser.Scene {
     );
     this.trackerG.clear();
     if (rows.length === 0) {
+      if (this.trackerPanelImg) this.trackerPanelImg.setVisible(false);
       this.trackerBottomY = trackerTop;
       this.positionCoach();
       return;
@@ -5201,7 +5219,21 @@ export default class OnlineScene extends Phaser.Scene {
     // never let the tracker frame lap the status panel — slide right until clear
     const tcx = Math.max(cx, px + innerW + pad * 2 + uiGap("md") + frameW / 2);
     for (const row of rows) row.setX(tcx);
-    drawHudPanel(this.trackerG, tcx - frameW / 2, trackerTop, frameW, frameH, 0xb06bff);
+    this.trackerPanelImg = ensureHudPanelImage(
+      this,
+      this.trackerPanelImg,
+      tcx - frameW / 2,
+      trackerTop,
+      frameW,
+      frameH,
+      999,
+      0xd0a0ff,
+    );
+    if (!this.trackerPanelImg) {
+      drawHudPanel(this.trackerG, tcx - frameW / 2, trackerTop, frameW, frameH, 0xb06bff);
+    } else {
+      this.trackerG.fillStyle(0x0a0618, 0.3).fillRect(tcx - frameW / 2 + uiDim(6), trackerTop + uiDim(6), frameW - uiDim(12), frameH - uiDim(12));
+    }
     this.trackerBottomY = trackerTop + frameH;
     this.positionCoach();
   }

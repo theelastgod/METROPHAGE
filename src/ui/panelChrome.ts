@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import { COLORS } from "../config";
+import { UI_PANEL_KEY } from "../assets/manifest";
 import { uiDim } from "./uiLayout";
 
 /** HUD / radar corner brackets — unified studio chrome. */
@@ -68,6 +69,55 @@ export function drawHudPanel(g: Phaser.GameObjects.Graphics, x: number, y: numbe
   g.lineStyle(uiDim(2), accent, 0.9).strokeRect(x, y, w, h);
   g.lineStyle(uiDim(1), COLORS.neonMagenta, 0.34).strokeRect(x + uiDim(3), y + uiDim(3), w - uiDim(6), h - uiDim(6));
   drawCornerBrackets(g, x, y, w, h, COLORS.neonMagenta, 0.92, uiDim(10));
+}
+
+/**
+ * Place (or resize) a painted Higgsfield HUD panel behind chrome.
+ * Falls back to `drawHudPanel` graphics when the texture isn't loaded.
+ * Uses NineSlice so the neon frame stays crisp on desktop and mobile sizes.
+ */
+export function ensureHudPanelImage(
+  scene: Phaser.Scene,
+  existing: Phaser.GameObjects.NineSlice | Phaser.GameObjects.Image | null | undefined,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  depth = 999,
+  tint = 0xffffff,
+): Phaser.GameObjects.NineSlice | Phaser.GameObjects.Image | null {
+  if (!scene.textures.exists(UI_PANEL_KEY)) return null;
+  const min = Math.max(w, h, 1);
+  // NineSlice needs a source large enough for left/right/top/bottom slices.
+  const slice = Math.min(48, Math.floor(Math.min(w, h) * 0.28));
+  if (existing && "setSize" in existing && typeof (existing as Phaser.GameObjects.NineSlice).setSize === "function") {
+    const ns = existing as Phaser.GameObjects.NineSlice;
+    ns.setPosition(x + w / 2, y + h / 2);
+    ns.setSize(Math.max(w, slice * 2 + 4), Math.max(h, slice * 2 + 4));
+    ns.setTint(tint);
+    ns.setVisible(true);
+    return ns;
+  }
+  if (existing) existing.destroy();
+  try {
+    const ns = scene.add
+      .nineslice(x + w / 2, y + h / 2, UI_PANEL_KEY, undefined, Math.max(w, slice * 2 + 4), Math.max(h, slice * 2 + 4), slice, slice, slice, slice)
+      .setScrollFactor(0)
+      .setDepth(depth)
+      .setTint(tint)
+      .setAlpha(0.92);
+    return ns;
+  } catch {
+    // Older path / odd texture dims — stretch as Image.
+    const img = scene.add
+      .image(x + w / 2, y + h / 2, UI_PANEL_KEY)
+      .setDisplaySize(Math.max(w, min * 0.5), Math.max(h, min * 0.5))
+      .setScrollFactor(0)
+      .setDepth(depth)
+      .setTint(tint)
+      .setAlpha(0.9);
+    return img;
+  }
 }
 
 /** Gradient-filled status bar with specular lip. */

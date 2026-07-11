@@ -84,10 +84,28 @@ export const PORTRAIT_KEEPERS_KEY = "portraits_keepers";
 export const PORTRAIT_RESIDENTS_KEY = "portraits_residents";
 export const UI_FRAME_KEY = "ui_frame";
 export const UI_GUN_KEY = "ui_gun";
+/** Higgsfield neon glass HUD panel (NineSlice-friendly). */
+export const UI_PANEL_KEY = "ui_panel";
+/** Circular neon ring for mobile action buttons. */
+export const UI_BTN_RING_KEY = "ui_btn_ring";
+/** Ability icons (Higgsfield) — dash / shield / pulse / virus / rail / overdrive / blade / radar. */
+export const ABILITY_ICON_KEYS = [
+  "ability_dash",
+  "ability_shield",
+  "ability_pulse",
+  "ability_virus",
+  "ability_rail",
+  "ability_overdrive",
+  "ability_blade",
+  "ability_radar",
+] as const;
+export type AbilityIconKey = (typeof ABILITY_ICON_KEYS)[number];
 // Painted menu backdrop + per-class select-card art (same Higgsfield build).
 export const MENU_BG_KEY = "menu_bg";
 export const classArtKey = (classId: string) => "classart_" + classId;
 export const VO_MELTDOWN_KEY = "vo_meltdown";
+/** Higgsfield top-down prop pack (12 cells, tools/higgsfield-hud-build.mjs). */
+export const HF_PROP_KEYS = Array.from({ length: 12 }, (_, i) => "hf_prop_" + String(i + 1).padStart(2, "0"));
 
 // Top-down character sheet frame order (drop-in pack): 0=down 1=left 2=right 3=up.
 const CHAR: Pick<AssetEntry, "frameWidth" | "frameHeight"> = {
@@ -152,8 +170,13 @@ export const ASSETS: Record<string, AssetEntry[]> = {
     { key: PORTRAIT_RESIDENTS_KEY, file: "assets/portraits/residents_sheet.jpg", frameWidth: 256, frameHeight: 256 },
   ],
   ui: [
-    { key: UI_FRAME_KEY, file: null }, // code-authored neon terminal/screen frame
-    { key: UI_GUN_KEY, file: null }, // code-authored weapon icon
+    // Real art (PixelWhale pack + Higgsfield HUD kit via tools/higgsfield-hud-build.mjs).
+    // Procedural bake in textures.ts only fills keys still missing after load.
+    { key: UI_FRAME_KEY, file: "assets/ui/skill_frame.png" },
+    { key: UI_GUN_KEY, file: "assets/ui/gun_hf_01.png" },
+    { key: UI_PANEL_KEY, file: "assets/ui/hud_panel.png" },
+    { key: UI_BTN_RING_KEY, file: "assets/ui/btn_ring.png" },
+    ...ABILITY_ICON_KEYS.map((k) => ({ key: k, file: `assets/ui/${k}.png` })),
     { key: MENU_BG_KEY, file: "assets/ui/menu_bg.jpg" }, // painted menu key art
     { key: classArtKey("metrophage"), file: "assets/ui/classart_metrophage.jpg" },
     { key: classArtKey("k-guerilla"), file: "assets/ui/classart_k-guerilla.jpg" },
@@ -195,7 +218,11 @@ export const ASSETS: Record<string, AssetEntry[]> = {
     ...HOLO_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
   ],
   // Real isometric cyberpunk crates/containers — non-colliding cargo decals (asset-drop).
-  decals: DECO_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
+  decals: [
+    ...DECO_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
+    // Higgsfield top-down props (tools/higgsfield-hud-build.mjs) — street scatter pool.
+    ...HF_PROP_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
+  ],
   // Real isometric tech machines — building-interior set-dressing (asset-drop).
   interior: OBJ_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
   // Real garment icons (apparel pack) for the cosmetics wardrobe — keyed "cos_<id>".

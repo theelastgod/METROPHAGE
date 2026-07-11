@@ -170,3 +170,25 @@ resolves any NPC id to a stable `{key, frame}`; the OnlineScene speech bubble do
 painted bust chip beside the text, and the legacy SP DialogueBox keys off the same sheets.
 Grid slicing cuts on exact grid fractions with a safety inset — nano-banana's gutters are
 regular enough that no gutter detection is needed.
+
+## Higgsfield HUD / UI kit + prop sprites (desktop + mobile)
+
+Second Higgsfield pass (4 × nano-banana-pro 2K sheets, ~8 credits) for in-game HUD chrome
+and world props. Rebuild with:
+
+```sh
+node tools/higgsfield-hud-build.mjs
+```
+
+| Raw input | Shipped | Used by |
+| --------- | ------- | ------- |
+| `sheet_hud_chrome.png` (3×3) | `ui/hud_panel.png`, `skill_frame.png`, `btn_ring.png` | OnlineScene status/tracker NineSlice panels; hotbar frames; mobile action rings |
+| `sheet_ability_icons.png` | `ui/ability_*.png` ×8 | MobileControls Q/E/R/dash/ATK icons |
+| `sheet_weapon_icons.png` | `ui/gun_hf_01…06.png` (+ `gun_01.png`) | HUD weapon slot (`UI_GUN_KEY`) |
+| `sheet_props.png` | `objects/hf_prop_01…12.png` | `propScatter` street density pool |
+
+`manifest.ts` points `UI_FRAME_KEY` / `UI_GUN_KEY` / `UI_PANEL_KEY` / `UI_BTN_RING_KEY` at real
+files; procedural bakers in `textures.ts` only fill keys still missing after load. The
+painted HUD panel is applied via `ensureHudPanelImage` (Phaser NineSlice) so desktop wide
+panels and compact mobile sizes share one art source without stretch artifacts. Mobile
+action pads tint the circular ring + ability icons for thumb readability.

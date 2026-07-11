@@ -9,6 +9,10 @@ import {
   PORTRAIT_NPC_KEY,
   UI_FRAME_KEY,
   UI_GUN_KEY,
+  UI_PANEL_KEY,
+  UI_BTN_RING_KEY,
+  ABILITY_ICON_KEYS,
+  MENU_BG_KEY,
 } from "./manifest";
 
 /** Soft radial / gradient textures — LINEAR avoids blocky banding when scaled. */
@@ -22,6 +26,10 @@ const LINEAR_KEYS = new Set([
   PORTRAIT_NPC_KEY,
   UI_FRAME_KEY,
   UI_GUN_KEY,
+  UI_PANEL_KEY,
+  UI_BTN_RING_KEY,
+  MENU_BG_KEY,
+  ...ABILITY_ICON_KEYS,
 ]);
 
 /**
