@@ -3480,22 +3480,67 @@ export default class OnlineScene extends Phaser.Scene {
       g.lineStyle(2, door.color, 0.9).strokeRect(px - 18, py - 24, 36, 48);
       this.add.image(px, py, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(door.color).setDepth(8).setScale(0.5).setAlpha(0.4);
     }
-    // Door labels start soft; brighten on hover so the map isn't a wall of text.
-    const lbl = this.add
-      .text(px, py - (door.flat ? TILE + 10 : 36), door.label, {
+    if (door.flat) {
+      // Building doors get a real SIGN: a neon board mounted on the facade above the
+      // doorway that reads at a glance — no hovering required to know what a place is.
+      this.drawBuildingSign(px, py - TILE - 6, door.label, door.color);
+    } else {
+      // Stall/transit markers keep the soft hover label so the plaza isn't a wall of text.
+      const lbl = this.add
+        .text(px, py - 36, door.label, {
+          fontFamily: "Courier New, monospace",
+          fontSize: "9px",
+          color: "#" + (door.color & 0xffffff).toString(16).padStart(6, "0"),
+          fontStyle: "bold",
+        })
+        .setOrigin(0.5)
+        .setDepth(9)
+        .setAlpha(0.42);
+      const zl = this.add.zone(px - 18, py - 24, 36, 48).setOrigin(0).setInteractive({ useHandCursor: true }).setDepth(9);
+      zl.on("pointerover", () => lbl.setAlpha(1));
+      zl.on("pointerout", () => lbl.setAlpha(0.42));
+      zl.on("pointerdown", () => this.enterZone(door.dest));
+      this.npcs.push({ kind: "door", dest: door.dest, name: door.label, x: px, y: py });
+      return;
+    }
+    const z = this.add.zone(px - 18, py - 24, 36, 48).setOrigin(0).setInteractive({ useHandCursor: true }).setDepth(9);
+    z.on("pointerdown", () => this.enterZone(door.dest));
+    this.npcs.push({ kind: "door", dest: door.dest, name: door.label, x: px, y: py });
+  }
+
+  /** A neon signboard on a building facade — dark board, lit rim, the venue name in
+   *  its accent colour, a light-wash below. A few signs flicker like tired neon. */
+  private drawBuildingSign(cx: number, cy: number, label: string, color: number) {
+    const text = this.add
+      .text(cx, cy, label, {
         fontFamily: "Courier New, monospace",
         fontSize: "9px",
-        color: "#" + (door.color & 0xffffff).toString(16).padStart(6, "0"),
+        color: "#eafdff",
         fontStyle: "bold",
       })
       .setOrigin(0.5)
-      .setDepth(9)
-      .setAlpha(0.42);
-    const z = this.add.zone(px - 18, py - 24, 36, 48).setOrigin(0).setInteractive({ useHandCursor: true }).setDepth(9);
-    z.on("pointerover", () => lbl.setAlpha(1));
-    z.on("pointerout", () => lbl.setAlpha(0.42));
-    z.on("pointerdown", () => this.enterZone(door.dest));
-    this.npcs.push({ kind: "door", dest: door.dest, name: door.label, x: px, y: py });
+      .setDepth(6.2)
+      .setShadow(0, 0, "#" + (color & 0xffffff).toString(16).padStart(6, "0"), 4, true, true);
+    const w = Math.max(34, text.width + 12);
+    const g = this.add.graphics().setDepth(6.1);
+    g.fillStyle(0x070912, 0.94).fillRect(cx - w / 2, cy - 9, w, 18);
+    g.lineStyle(1.5, color, 0.95).strokeRect(cx - w / 2, cy - 9, w, 18);
+    g.fillStyle(color, 0.75).fillRect(cx - w / 2 + 2, cy + 7, w - 4, 2); // lit underside
+    // mounting stubs so the board reads attached to the wall, not floating
+    g.fillStyle(0x2a3244, 1).fillRect(cx - w / 2 + 3, cy - 12, 3, 4).fillRect(cx + w / 2 - 6, cy - 12, 3, 4);
+    this.add.image(cx, cy + 8, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(color).setDepth(6).setScale(0.55).setAlpha(0.3);
+    // ~1 in 4 signs has a lazy neon flicker — life, not chaos (deterministic per spot)
+    if ((Math.abs(cx * 31 + cy * 17) >> 3) % 4 === 0) {
+      this.tweens.add({
+        targets: text,
+        alpha: { from: 1, to: 0.55 },
+        duration: 120 + ((cx | 0) % 90),
+        yoyo: true,
+        repeat: -1,
+        repeatDelay: 1400 + ((cy | 0) % 1700),
+        ease: "Stepped",
+      });
+    }
   }
 
   /** Travel into another zone (door/interior/transit) — organic arrival unlocks fast travel. */
