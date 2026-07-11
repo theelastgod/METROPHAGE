@@ -50,6 +50,7 @@ import {
   buildSafehouse,
   SAFEHOUSE_SPAWN,
   buildVenueRoom,
+  venueSpawnFor,
   VENUE_SPAWN,
   buildSubway,
   SUBWAY_SPAWN,
@@ -736,8 +737,8 @@ export class WorldDO {
       this.interior = true;
       this.zoneName = zone!;
       this.districtIndex = bldg.district;
-      this.grid = buildVenueRoom();
-      this.spawn = VENUE_SPAWN;
+      this.grid = buildVenueRoom(zone!); // zone-hashed floor plan — must match the client's
+      this.spawn = venueSpawnFor(zone);
       this.nodes = [];
       void this.state.storage.put("zone", zone);
       return;
@@ -748,8 +749,8 @@ export class WorldDO {
       this.interior = true;
       this.zoneName = zone!;
       this.districtIndex = 0;
-      this.grid = buildVenueRoom();
-      this.spawn = VENUE_SPAWN;
+      this.grid = buildVenueRoom(zone!); // zone-hashed floor plan — must match the client's
+      this.spawn = venueSpawnFor(zone);
       this.nodes = [];
       void this.state.storage.put("zone", zone);
       return;

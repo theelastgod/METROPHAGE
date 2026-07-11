@@ -357,34 +357,123 @@ export const SAFEHOUSE_SPAWN = {
 };
 
 /**
- * FRLG-style venue room — a district building's interior at Pokémon-house scale:
- * one screen, a service counter along the top, and a door mat against the south
- * wall. You appear one step above the mat; stepping DOWN onto it walks you out.
- * Shared by the client (renders + exit trigger) and the server (sims the room).
+ * FRLG-style venue rooms — building interiors at Pokémon-house scale, with a
+ * service counter and a door mat against the south wall. You appear one step
+ * above the mat; stepping DOWN onto it walks you out.
+ *
+ * Every d{N}i{K} / h{K} building picks ONE of several floor plans, chosen by a
+ * deterministic hash of its zone id, so the client and server always build the
+ * IDENTICAL grid (collision is server-authoritative) and a given door always
+ * opens on the same room. est{K} player homes are pinned to the classic STUDIO
+ * plan forever — placed furniture persists tile coordinates.
  */
 export const VENUE_ROOM_W = 15;
 export const VENUE_ROOM_H = 11;
-/** The exit mat — floor tile against the south wall's centre. */
+/** The classic room's exit mat — est{K} furniture code + home rooms key off this. */
 export const VENUE_MAT_TILE: [number, number] = [7, 9];
-/** Arrival point — one step above the mat (walking down = leaving, FRLG-style). */
+/** Classic arrival point — one step above the mat (walking down = leaving). */
 export const VENUE_SPAWN = {
   x: VENUE_MAT_TILE[0] * TILE + TILE / 2,
   y: (VENUE_MAT_TILE[1] - 1) * TILE + TILE / 2,
 };
-export function buildVenueRoom(): TileGrid {
+
+export interface VenueLayout {
+  w: number;
+  h: number;
+  /** Exit mat tile on the south wall. */
+  mat: [number, number];
+  /** Walkable spots for occupants + service NPCs, spread around the plan. */
+  seats: Array<[number, number]>;
+  /** Service counter: wall run along row `y`, x0..x1, with a pass-through gap. */
+  counter: { x0: number; x1: number; y: number; gap: number };
+  /** Extra interior wall blocks (inclusive tile rects): pillars, partitions, islands. */
+  blocks?: Array<[number, number, number, number]>;
+  /** Flavor tag for the client dresser. */
+  tag: "studio" | "loft" | "hall" | "backroom" | "atrium";
+}
+
+/** Index 0 MUST stay byte-identical to the original 15×11 room (est homes use it). */
+export const VENUE_LAYOUTS: VenueLayout[] = [
+  {
+    // STUDIO — the classic one-counter room
+    w: 15, h: 11, mat: [7, 9], tag: "studio",
+    counter: { x0: 4, x1: 10, y: 3, gap: 7 },
+    seats: [[7, 2], [4, 5], [10, 5], [11, 7]],
+  },
+  {
+    // LOFT — wide room, pillar pairs split a lounge off the counter run
+    w: 21, h: 13, mat: [10, 11], tag: "loft",
+    counter: { x0: 3, x1: 9, y: 3, gap: 6 },
+    blocks: [[13, 5, 14, 6], [17, 8, 18, 9]],
+    seats: [[6, 2], [4, 6], [15, 4], [16, 11], [11, 7]],
+  },
+  {
+    // HALL — long bar along the north wall, booth dividers make alcoves
+    w: 27, h: 11, mat: [13, 9], tag: "hall",
+    counter: { x0: 3, x1: 23, y: 3, gap: 13 },
+    blocks: [[6, 6, 6, 8], [19, 6, 19, 8]],
+    seats: [[13, 2], [4, 6], [9, 7], [22, 6], [17, 7]],
+  },
+  {
+    // BACKROOM — front-of-house + a stockroom through a doorway
+    w: 19, h: 15, mat: [9, 13], tag: "backroom",
+    counter: { x0: 4, x1: 12, y: 9, gap: 9 },
+    blocks: [[1, 5, 7, 5], [11, 5, 17, 5]],
+    seats: [[9, 8], [3, 11], [15, 11], [4, 2], [14, 2]],
+  },
+  {
+    // ATRIUM — big floor, central planter island, counter in the north-east
+    w: 23, h: 17, mat: [11, 15], tag: "atrium",
+    counter: { x0: 13, x1: 20, y: 3, gap: 17 },
+    blocks: [[8, 7, 13, 9], [3, 11, 4, 12], [18, 11, 19, 12]],
+    seats: [[17, 2], [5, 4], [3, 8], [19, 14], [11, 11]],
+  },
+];
+
+/** djb2 — tiny, stable, identical on client + server (no Math.random anywhere). */
+function venueHash(zone: string): number {
+  let h = 5381;
+  for (let i = 0; i < zone.length; i++) h = ((h << 5) + h + zone.charCodeAt(i)) >>> 0;
+  return h;
+}
+
+/** The floor plan for a venue-sized zone. est{K} homes are pinned to STUDIO. */
+export function venueLayoutFor(zone?: string | null): VenueLayout {
+  if (zone && /^(d\d+i\d+|h\d+)$/.test(zone)) {
+    return VENUE_LAYOUTS[venueHash(zone) % VENUE_LAYOUTS.length];
+  }
+  return VENUE_LAYOUTS[0];
+}
+
+/** Arrival point for a venue zone — one step above that plan's exit mat. */
+export function venueSpawnFor(zone?: string | null): { x: number; y: number } {
+  const L = venueLayoutFor(zone);
+  return { x: L.mat[0] * TILE + TILE / 2, y: (L.mat[1] - 1) * TILE + TILE / 2 };
+}
+
+export function buildVenueRoomFromLayout(L: VenueLayout): TileGrid {
   const g: TileGrid = [];
-  for (let y = 0; y < VENUE_ROOM_H; y++) {
+  for (let y = 0; y < L.h; y++) {
     const row: number[] = [];
-    for (let x = 0; x < VENUE_ROOM_W; x++) {
-      const border = x === 0 || x === VENUE_ROOM_W - 1 || y === 0 || y === VENUE_ROOM_H - 1;
+    for (let x = 0; x < L.w; x++) {
+      const border = x === 0 || x === L.w - 1 || y === 0 || y === L.h - 1;
       row.push(border ? TILE_INNER_WALL : TILE_INNER_FLOOR);
     }
     g.push(row);
   }
   // service counter — the keeper stands behind it, customers in front
-  for (let x = 4; x <= 10; x++) g[3][x] = TILE_INNER_WALL;
-  g[3][7] = TILE_INNER_FLOOR; // counter gap so the keeper's spot stays reachable-adjacent
+  for (let x = L.counter.x0; x <= L.counter.x1; x++) g[L.counter.y][x] = TILE_INNER_WALL;
+  g[L.counter.y][L.counter.gap] = TILE_INNER_FLOOR; // pass-through keeps the far side reachable
+  for (const [x0, y0, x1, y1] of L.blocks ?? []) {
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) g[y][x] = TILE_INNER_WALL;
+    }
+  }
   return g;
+}
+
+export function buildVenueRoom(zone?: string): TileGrid {
+  return buildVenueRoomFromLayout(venueLayoutFor(zone));
 }
 
 /**
@@ -520,10 +609,10 @@ export function spawnPointForTravel(
   zoneSpawn?: { x: number; y: number },
 ): { x: number; y: number } {
   // Compact venue rooms (district buildings, hub buildings, estate homes) — always the
-  // mat-adjacent entry tile. Using district/safehouse coords here put runners OUTSIDE
-  // the 15×11 walls after walking in.
+  // mat-adjacent entry tile OF THAT ZONE'S FLOOR PLAN. Using district/safehouse coords
+  // here put runners outside the walls after walking in.
   if (isVenueSizedZone(zone)) {
-    return { x: VENUE_SPAWN.x, y: VENUE_SPAWN.y };
+    return venueSpawnFor(zone);
   }
   // Named hub service interiors (clinic/bar/den/shop/vault) use the large safehouse plan.
   if (isSafehouseSizedInterior(zone)) {
