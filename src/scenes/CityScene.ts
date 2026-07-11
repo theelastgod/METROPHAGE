@@ -8,7 +8,6 @@ import { PlayerLight } from "../render/PlayerLight";
 import MusicDirector from "../audio/MusicDirector";
 import { TILE, COLORS, NPC } from "../config";
 import {
-  PORTRAIT_NPC_KEY,
   GLOW_KEY,
   PROP_PLANTER_KEY,
   PROP_BIN_KEY,
@@ -20,6 +19,7 @@ import {
   DECO_KEYS,
   OBJ_KEYS,
 } from "../assets/manifest";
+import { portraitFor } from "../game/portraits";
 import { COLLIDING_TILES, isWall } from "../world/district";
 import {
   buildCity,
@@ -703,7 +703,7 @@ export default class CityScene extends Phaser.Scene {
     if (this.mode === "interior" && this.interiorKind && HEAL_KINDS.includes(this.interiorKind) && (n.id.startsWith("keep_") || n.id === "doc")) {
       this.healPlayer();
     }
-    this.showTalk(this.quests.onTalk(n.id, n.name, n.def.lines, n.def.quest));
+    this.showTalk(this.quests.onTalk(n.id, n.name, n.def.lines, n.def.quest), n.id, n.def.look?.sex);
   }
 
   /** Full-heal the persisted HP — the hospital / hotel / clinic service. */
@@ -730,8 +730,8 @@ export default class CityScene extends Phaser.Scene {
     this.toast("▣ FULLY HEALED — patched to full strength");
   }
 
-  private showTalk(res: TalkResult) {
-    const portrait = { key: PORTRAIT_NPC_KEY, frame: 0 };
+  private showTalk(res: TalkResult, npcId: string, npcSex?: string) {
+    const portrait = portraitFor(npcId, npcSex);
     if (res.kind === "offer") {
       const pages = res.lines.map((text, i) => ({
         speaker: res.speaker,

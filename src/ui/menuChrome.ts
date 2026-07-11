@@ -1,15 +1,26 @@
 import Phaser from "phaser";
 import { VIEW_W, VIEW_H, COLORS } from "../config";
-import { GLOW_KEY } from "../assets/manifest";
+import { GLOW_KEY, MENU_BG_KEY } from "../assets/manifest";
 import { uiDim } from "./uiLayout";
 
-/** Faint grid + vignette used by title / prologue / customize screens. */
+/** Painted key art + faint grid + vignette used by title / prologue / customize screens. */
 export function drawMenuBackdrop(scene: Phaser.Scene, depth = 0): Phaser.GameObjects.Graphics {
+  const base = scene.add.graphics().setDepth(depth);
+  base.fillStyle(COLORS.bgVoid, 1).fillRect(0, 0, VIEW_W, VIEW_H);
+
+  // painted city key art (Higgsfield) under the procedural chrome — cover-fit and
+  // dimmed so menu text keeps contrast; the art is authored dark in the center.
+  const hasArt = scene.textures.exists(MENU_BG_KEY);
+  if (hasArt) {
+    const img = scene.add.image(VIEW_W / 2, VIEW_H / 2, MENU_BG_KEY).setDepth(depth);
+    img.setScale(Math.max(VIEW_W / img.width, VIEW_H / img.height)).setAlpha(0.85);
+  }
+
   const g = scene.add.graphics().setDepth(depth);
-  g.fillStyle(COLORS.bgVoid, 1).fillRect(0, 0, VIEW_W, VIEW_H);
+  if (hasArt) g.fillStyle(0x04020a, 0.38).fillRect(0, 0, VIEW_W, VIEW_H);
 
   const step = uiDim(32);
-  g.lineStyle(1, 0x1b2740, 0.38);
+  g.lineStyle(1, 0x1b2740, hasArt ? 0.16 : 0.38);
   for (let x = 0; x <= VIEW_W; x += step) g.lineBetween(x, 0, x, VIEW_H);
   for (let y = 0; y <= VIEW_H; y += step) g.lineBetween(0, y, VIEW_W, y);
 
@@ -18,8 +29,8 @@ export function drawMenuBackdrop(scene: Phaser.Scene, depth = 0): Phaser.GameObj
   g.fillStyle(0x0a1830, 0.16).fillCircle(VIEW_W * 0.72, VIEW_H * 0.58, VIEW_W * 0.28);
 
   const pad = uiDim(48);
-  g.fillStyle(0x02020a, 0.42).fillRect(0, 0, VIEW_W, pad);
-  g.fillStyle(0x02020a, 0.5).fillRect(0, VIEW_H - pad, VIEW_W, pad);
+  g.fillStyle(0x02020a, hasArt ? 0.6 : 0.42).fillRect(0, 0, VIEW_W, pad);
+  g.fillStyle(0x02020a, hasArt ? 0.66 : 0.5).fillRect(0, VIEW_H - pad, VIEW_W, pad);
   return g;
 }
 

@@ -77,8 +77,16 @@ export const OBJ_KEYS = Array.from({ length: 12 }, (_, i) => "obj_" + String(i +
 
 export const PORTRAIT_PLAYER_KEY = "portrait_player";
 export const PORTRAIT_NPC_KEY = "portrait_npc";
+// Painted 4×3 portrait sheets (Higgsfield, tools/higgsfield-art-build.mjs) — 256px
+// frames, row-major. Frame maps + NPC id resolution live in src/game/portraits.ts.
+export const PORTRAIT_CAST_KEY = "portraits_cast";
+export const PORTRAIT_KEEPERS_KEY = "portraits_keepers";
+export const PORTRAIT_RESIDENTS_KEY = "portraits_residents";
 export const UI_FRAME_KEY = "ui_frame";
 export const UI_GUN_KEY = "ui_gun";
+// Painted menu backdrop + per-class select-card art (same Higgsfield build).
+export const MENU_BG_KEY = "menu_bg";
+export const classArtKey = (classId: string) => "classart_" + classId;
 export const VO_MELTDOWN_KEY = "vo_meltdown";
 
 // Top-down character sheet frame order (drop-in pack): 0=down 1=left 2=right 3=up.
@@ -135,13 +143,22 @@ export const ASSETS: Record<string, AssetEntry[]> = {
     { key: BULLET_ENEMY_KEY, file: "assets/fx/bullet_enemy.png" }, // real HSS energy bolt (pack)
   ],
   portraits: [
-    // Premium dialogue portraits (neon-noir runner + FIXER contact).
-    { key: PORTRAIT_PLAYER_KEY, file: "assets/portraits/portrait_player.png" },
-    { key: PORTRAIT_NPC_KEY, file: "assets/portraits/portrait_npc.png" },
+    // Premium dialogue portraits — painted Higgsfield busts (fixer + runner singles).
+    { key: PORTRAIT_PLAYER_KEY, file: "assets/portraits/painted_player.jpg" },
+    { key: PORTRAIT_NPC_KEY, file: "assets/portraits/painted_fixer.jpg" },
+    // Painted city-cast sheets: 12 × 256px frames each (see src/game/portraits.ts).
+    { key: PORTRAIT_CAST_KEY, file: "assets/portraits/cast_sheet.jpg", frameWidth: 256, frameHeight: 256 },
+    { key: PORTRAIT_KEEPERS_KEY, file: "assets/portraits/keepers_sheet.jpg", frameWidth: 256, frameHeight: 256 },
+    { key: PORTRAIT_RESIDENTS_KEY, file: "assets/portraits/residents_sheet.jpg", frameWidth: 256, frameHeight: 256 },
   ],
   ui: [
     { key: UI_FRAME_KEY, file: null }, // code-authored neon terminal/screen frame
     { key: UI_GUN_KEY, file: null }, // code-authored weapon icon
+    { key: MENU_BG_KEY, file: "assets/ui/menu_bg.jpg" }, // painted menu key art
+    { key: classArtKey("metrophage"), file: "assets/ui/classart_metrophage.jpg" },
+    { key: classArtKey("k-guerilla"), file: "assets/ui/classart_k-guerilla.jpg" },
+    { key: classArtKey("wintermute"), file: "assets/ui/classart_wintermute.jpg" },
+    { key: classArtKey("swarm"), file: "assets/ui/classart_swarm.jpg" },
   ],
   // Build-time generated VO + the per-environment music beds (ElevenLabs). The
   // beds are OPTIONAL: only those whose mp3 actually exists in src/assets/music/

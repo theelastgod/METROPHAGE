@@ -105,11 +105,17 @@
   footer{position:relative; z-index:10; text-align:center; padding:18px 20px 26px; color:#4b5070; font-size:11px; letter-spacing:.2em; text-transform:uppercase}
   footer b{color:var(--mag)}
 
+  /* painted city key art behind the haze — fades out before the retro grid */
+  .cityart{position:fixed; left:0; right:0; top:0; height:74vh; z-index:0; pointer-events:none;
+    background:url(hero.jpg) center 24%/cover no-repeat; opacity:.44;
+    -webkit-mask-image:linear-gradient(to bottom,#000 52%,transparent 100%);
+    mask-image:linear-gradient(to bottom,#000 52%,transparent 100%);}
   @media (max-width:540px){ .cta .btn{flex:1 1 100%} }
   @media (prefers-reduced-motion:reduce){ .grid,.dot{animation:none} }
 </style>
 </head>
 <body>
+  <div class="cityart"></div>
   <div class="haze"></div>
   <div class="grid"></div>
 

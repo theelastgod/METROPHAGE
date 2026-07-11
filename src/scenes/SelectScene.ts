@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { VIEW_W, VIEW_H, COLORS, UI_SCALE, uiDim } from "../config";
-import { playerKeyFor } from "../assets/manifest";
+import { classArtKey, playerKeyFor } from "../assets/manifest";
 import { CLASSES, classIdFromLook } from "../game/classes";
 import OptionsPanel from "../ui/OptionsPanel";
 import { applyMenuNeon } from "../render/ensureNeon";
@@ -785,13 +785,28 @@ export default class SelectScene extends Phaser.Scene {
       bg.fillStyle(0x12102a, 0.98).fillRect(x + uiGap("xs"), cardY + uiGap("xs"), cardW - uiGap("sm"), cardH - uiGap("sm"));
       bg.lineStyle(uiDim(2), c.color, 0.9).strokeRect(x, cardY, cardW, cardH);
       card.add(bg);
-      card.add(
-        this.add
-          .image(cx, cardY + uiDim(72), playerKeyFor(c.id), 0)
-          .setScale(3.2 * UI_SCALE)
-          .setTint(0xffffff)
-          .setAlpha(1),
-      );
+      if (this.textures.exists(classArtKey(c.id))) {
+        // painted class art fills the card; a gradient into the panel colour keeps
+        // the name/loadout text legible over it (art is pre-cropped to card aspect)
+        const art = this.add.image(x + cardW / 2, cardY + cardH / 2, classArtKey(c.id));
+        art.setDisplaySize(cardW - uiGap("sm"), cardH - uiGap("sm"));
+        card.add(art);
+        const fade = this.add.graphics();
+        const fadeTop = cardY + uiDim(100);
+        const solidTop = cardY + uiDim(210);
+        fade.fillGradientStyle(0x0e0a1d, 0x0e0a1d, 0x0e0a1d, 0x0e0a1d, 0, 0, 0.95, 0.95);
+        fade.fillRect(x + uiGap("xs"), fadeTop, cardW - uiGap("sm"), solidTop - fadeTop);
+        fade.fillStyle(0x0e0a1d, 0.95).fillRect(x + uiGap("xs"), solidTop, cardW - uiGap("sm"), cardY + cardH - uiGap("xs") - solidTop);
+        card.add(fade);
+      } else {
+        card.add(
+          this.add
+            .image(cx, cardY + uiDim(72), playerKeyFor(c.id), 0)
+            .setScale(3.2 * UI_SCALE)
+            .setTint(0xffffff)
+            .setAlpha(1),
+        );
+      }
       card.add(
         this.add
           .text(cx, cardY + uiDim(152), c.name, displayFont(18, { color: c.hex, fontStyle: "bold" }))

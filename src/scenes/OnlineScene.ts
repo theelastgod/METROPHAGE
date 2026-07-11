@@ -138,6 +138,7 @@ import OnlineCosmetics from "../ui/OnlineCosmetics";
 import OnlineMap from "../ui/OnlineMap";
 import { applyCosmetic } from "../game/cosmetics";
 import { npcDef, AMBIENT_NPCS, INTERIOR_PLAN, keeperFor, districtResident, hubResident, campaignAllyLines, STORY_ALLIES } from "../game/cityNpcs";
+import { portraitFor, type PortraitRef } from "../game/portraits";
 import { bountyForNpc } from "../game/bounties";
 import type { PlayerLook } from "../net/protocol";
 import { setOnlinePlayer } from "../economy/session";
@@ -521,6 +522,9 @@ export default class OnlineScene extends Phaser.Scene {
   private nearNpc: ZoneNpc | null = null;
   private interactPrompt?: Phaser.GameObjects.Text;
   private speechBubble?: Phaser.GameObjects.Text;
+  // painted bust chip shown beside the bubble when an authored NPC speaks
+  private speechPortrait?: Phaser.GameObjects.Image;
+  private speechPortraitRing?: Phaser.GameObjects.Graphics;
 
   // THE ESTATES — home interior state (ownership prompt + furniture editor)
   private homeIdx = -1;
@@ -1088,6 +1092,12 @@ export default class OnlineScene extends Phaser.Scene {
       .setOrigin(0.5, 1)
       .setDepth(12)
       .setVisible(false);
+    // painted speaker bust docked to the bubble's left edge (portraits.ts sheets)
+    const ps = uiDim(56);
+    this.speechPortraitRing = this.add.graphics().setDepth(12).setVisible(false);
+    this.speechPortraitRing.fillStyle(0x0b0716, 0.92).fillRect(-ps / 2 - uiDim(3), -ps / 2 - uiDim(3), ps + uiDim(6), ps + uiDim(6));
+    this.speechPortraitRing.lineStyle(uiDim(2), 0x29e7ff, 0.85).strokeRect(-ps / 2 - uiDim(3), -ps / 2 - uiDim(3), ps + uiDim(6), ps + uiDim(6));
+    this.speechPortrait = this.add.image(0, 0, "__WHITE").setDepth(12.1).setVisible(false);
     // Mobile gets a bigger, pill-backed prompt — it doubles as the tap target for
     // doors/NPCs, so it has to read (and press) like a button under a thumb. It sits
     // above the bottom hotbar + menu rows there.
@@ -2680,11 +2690,12 @@ export default class OnlineScene extends Phaser.Scene {
   }
 
   private talkInstructor(npc: Extract<ZoneNpc, { kind: "instructor" }>) {
+    const face = this.bubblePortrait(undefined, npc.name);
     const step = tutorialStepAt(this.net.tutorialStep, this.net.tutorialMode);
     if (step?.kind === npc.lessonKind) {
       const line = npc.lines[npc.lineIdx % npc.lines.length];
       npc.lineIdx++;
-      this.showBubble(npc.x, npc.y, `${npc.name}: ${line}`);
+      this.showBubble(npc.x, npc.y, `${npc.name}: ${line}`, face);
       // Briefing lessons clear by talking to the authored instructor (playable, not pure text).
       // Action lessons (fire/kill/equip/…) still require the real mechanic — talk is flavour only.
       if (isTutorialTalkKind(step.kind)) {
@@ -2700,10 +2711,11 @@ export default class OnlineScene extends Phaser.Scene {
         cur
           ? `${npc.name}: finish ${step.title} with ${cur.name} first — then come back.`
           : `${npc.name}: you're on ${step.title}. Head east along the corridor.`,
+        face,
       );
       return;
     }
-    this.showBubble(npc.x, npc.y, `${npc.name}: drills complete. Deploy through the east gate.`);
+    this.showBubble(npc.x, npc.y, `${npc.name}: drills complete. Deploy through the east gate.`, face);
   }
 
   /** Deploy through the east portal — E key, click, or server walk-in. */
@@ -2763,22 +2775,60 @@ export default class OnlineScene extends Phaser.Scene {
   private talkNpc(npc: { npcId?: string; name: string; lines?: string[]; lineIdx?: number; x: number; y: number }) {
     const b = npc.npcId ? bountyForNpc(npc.npcId) : undefined;
     if (b) {
+      const face = this.bubblePortrait(npc.npcId, npc.name);
       const active = this.net.bounty;
-      if (active && active.id === b.id) this.showBubble(npc.x, npc.y, `${npc.name}: still on it — ${active.progress}/${active.count}.`);
-      else if (active) this.showBubble(npc.x, npc.y, `${npc.name}: finish your current job first.`);
+      if (active && active.id === b.id) this.showBubble(npc.x, npc.y, `${npc.name}: still on it — ${active.progress}/${active.count}.`, face);
+      else if (active) this.showBubble(npc.x, npc.y, `${npc.name}: finish your current job first.`, face);
       else {
         this.net.bountyAccept(b.id);
-        this.showBubble(npc.x, npc.y, `${npc.name}: ${b.offer}`);
+        this.showBubble(npc.x, npc.y, `${npc.name}: ${b.offer}`, face);
       }
     } else this.sayLine(npc);
   }
 
+  /** Painted bust for a bubble speaker; sex from the NPC def keeps the face on-sprite. */
+  private bubblePortrait(npcId?: string, name?: string): PortraitRef | undefined {
+    const id = npcId ?? (name ? "n_" + name.toLowerCase().replace(/\W+/g, "_") : undefined);
+    if (!id) return undefined;
+    return portraitFor(id, npcId ? npcDef(npcId)?.look?.sex : undefined);
+  }
+
   /** Show a floating speech bubble above a world point (auto-fades). */
-  private showBubble(x: number, y: number, text: string) {
+  private showBubble(x: number, y: number, text: string, portrait?: PortraitRef) {
     if (!this.speechBubble) return;
     this.speechBubble.setText(text).setPosition(x, y - 34).setVisible(true).setAlpha(1);
     this.tweens.killTweensOf(this.speechBubble);
-    this.tweens.add({ targets: this.speechBubble, alpha: 0, delay: 3200, duration: 700, onComplete: () => this.speechBubble?.setVisible(false) });
+    const fading: Phaser.GameObjects.GameObject[] = [this.speechBubble];
+    if (this.speechPortrait && this.speechPortraitRing) {
+      this.tweens.killTweensOf([this.speechPortrait, this.speechPortraitRing]);
+      if (portrait && this.textures.exists(portrait.key)) {
+        const ps = uiDim(56);
+        const bx = x - this.speechBubble.displayWidth / 2 - ps / 2 - uiDim(6);
+        const by = y - 34 - this.speechBubble.displayHeight / 2;
+        this.speechPortrait
+          .setTexture(portrait.key, portrait.frame)
+          .setDisplaySize(ps, ps)
+          .setPosition(bx, by)
+          .setVisible(true)
+          .setAlpha(1);
+        this.speechPortraitRing.setPosition(bx, by).setVisible(true).setAlpha(1);
+        fading.push(this.speechPortrait, this.speechPortraitRing);
+      } else {
+        this.speechPortrait.setVisible(false);
+        this.speechPortraitRing.setVisible(false);
+      }
+    }
+    this.tweens.add({
+      targets: fading,
+      alpha: 0,
+      delay: 3200,
+      duration: 700,
+      onComplete: () => {
+        this.speechBubble?.setVisible(false);
+        this.speechPortrait?.setVisible(false);
+        this.speechPortraitRing?.setVisible(false);
+      },
+    });
   }
 
   /** Transit operative at a district edge — organic deploy to the next zone. */
@@ -4205,11 +4255,11 @@ export default class OnlineScene extends Phaser.Scene {
   }
 
   /** Speak an authored citizen's next flavour line in a floating bubble (cycles their lines). */
-  private sayLine(npc: { name: string; lines?: string[]; lineIdx?: number; x: number; y: number }) {
+  private sayLine(npc: { npcId?: string; name: string; lines?: string[]; lineIdx?: number; x: number; y: number }) {
     if (!npc.lines || npc.lines.length === 0) return;
     const line = npc.lines[(npc.lineIdx ?? 0) % npc.lines.length];
     npc.lineIdx = (npc.lineIdx ?? 0) + 1;
-    this.showBubble(npc.x, npc.y, `${npc.name}: ${line}`);
+    this.showBubble(npc.x, npc.y, `${npc.name}: ${line}`, this.bubblePortrait(npc.npcId, npc.name));
   }
 
   /** Retint the LOCAL avatar to the equipped transmog (remotes get it via the relayed look). */

@@ -148,3 +148,25 @@ zero-code upgrade.
 - **Mix:** per-bed `gain` in `musicTracks.ts`, then scaled live by the master + music
   sliders (Options menu) and ducked under dialogue / the meltdown VO.
 - **No copyrighted music** — these are AI-generated originals (see line 49).
+
+## Higgsfield generation pipeline (presentation art)
+
+Presentation-layer art (key art, menu backdrop, dialogue portraits, class cards) is
+AI-generated via Higgsfield (nano-banana-pro, 4K) and rebuilt for shipping by
+`tools/higgsfield-art-build.mjs` from raw generations staged in `art-source/higgsfield/`
+(gitignored, like the other art-source inputs). Regenerate → re-drop → re-run the tool.
+
+| Raw input                  | Shipped output | Used by |
+| -------------------------- | -------------- | ------- |
+| `keyart_title.png` (16:9)  | `public/og.png` + `landing/og.png` (1200×630) | social cards (`index.html` + landing og meta) |
+| `menu_bg.png` (16:9, textless) | `public/assets/ui/menu_bg.jpg` + `landing/hero.jpg` | `drawMenuBackdrop` (menuChrome) · landing `.cityart` |
+| `sheet_cast.png` (4×3 grid)| `portraits/cast_sheet.jpg` + `painted_fixer/player.jpg` | named story cast (frame map in `src/game/portraits.ts`) |
+| `sheet_keepers.png`        | `portraits/keepers_sheet.jpg` | venue keepers (`keep_*` + porter). Raw sheet has baked-in labels — the tool's deeper top inset crops them. |
+| `sheet_residents.png`      | `portraits/residents_sheet.jpg` | drawn residents 1:1 + hash fallback for everyone else (sex-matched pools) |
+| `sheet_classes.png` (2×2)  | `ui/classart_{id}.jpg` | SelectScene class cards (card-aspect crop + in-scene legibility gradient) |
+
+Portrait sheets ship as **12-frame 256px spritesheets** (row-major). `portraitFor(id, sex)`
+resolves any NPC id to a stable `{key, frame}`; the OnlineScene speech bubble docks the
+painted bust chip beside the text, and the legacy SP DialogueBox keys off the same sheets.
+Grid slicing cuts on exact grid fractions with a safety inset — nano-banana's gutters are
+regular enough that no gutter detection is needed.
