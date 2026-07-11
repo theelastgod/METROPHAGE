@@ -1,22 +1,29 @@
 import Phaser from "phaser";
-import { VIEW_W, VIEW_H, COLORS } from "../config";
+import { VIEW_W, VIEW_H, COLORS, UI_SCALE, uiDim } from "../config";
 import { getClass, ClassDef } from "../game/classes";
+import MusicDirector from "../audio/MusicDirector";
 import {
   Customization,
-  defaultCustomization,
+  randomCustomization,
   bakeCustomPlayer,
   PLAYER_CUSTOM_KEY,
   CUSTOM_COLORS,
   CUSTOM_BUILDS,
-  CUSTOM_HEADS,
-  CUSTOM_VISORS,
+  HUMAN_HEADS,
+  HUMAN_VISORS,
   CUSTOM_SHOULDERS,
   CUSTOM_DECALS,
   CUSTOM_CLOAKS,
+  CUSTOM_SEXES,
+  SEX_LABELS,
   SKIN_TONES,
   HAIR_STYLES,
   HAIR_COLORS,
   BEARDS,
+  FACE_MARKS,
+  EYE_COLORS,
+  CUSTOM_GLOVES,
+  CUSTOM_LEG_GEAR,
   HEAD_LABELS,
   VISOR_LABELS,
   BUILD_LABELS,
@@ -25,121 +32,145 @@ import {
   CLOAK_LABELS,
   HAIR_LABELS,
   BEARD_LABELS,
+  FACE_MARK_LABELS,
+  GLOVES_LABELS,
+  LEG_GEAR_LABELS,
   CALLSIGN_MAX,
   randomCallsign,
 } from "../game/customization";
-import NeonPipeline from "../render/NeonPipeline";
+import { applyMenuNeon } from "../render/ensureNeon";
+import { fadeInScene, transitionTo } from "../systems/transitions";
+import { asMenuUi, installMenuCameras, pinMenuUiLayer } from "../render/menuCameras";
+import { drawMenuBackdrop, drawPreviewPedestal, MenuAtmosphere, MENU_PAD, MENU_SECTION_GAP } from "../ui/menuChrome";
+import { uiGap } from "../ui/spacing";
+import { bodyFont, displayFont, uiFont } from "../ui/typography";
+import { drawPanelFrame } from "../ui/panelChrome";
+import { connectedWallet } from "../economy/wallet";
+import { writeLocalRunner } from "../systems/LocalRunner";
+import { ensureGuestDeviceSecret } from "../net/NetClient";
+import { prefersMobileUx } from "../systems/Mobile";
 
 interface Row {
   label: string;
   value: () => string;
-  swatch?: () => number; // optional colour chip beside the value
-  cycle: (dir: number) => void; // change the value (and re-bake if structural)
+  swatch?: () => number;
+  cycle: (dir: number) => void;
 }
 
 /**
- * Character customizer. Select -> Customize -> Game. Tunes the player's signature
- * colour + silhouette (build / headgear / optic / accents) with a live preview
- * baked from the parametric drawCharacter(). Confirms into the registry, then the
- * Game scene bakes + tints the final sprite.
+ * One-time character creator — full-screen, humanoid body tuning, bound to the
+ * connected wallet on first deploy.
  */
 export default class CustomizeScene extends Phaser.Scene {
   private classDef!: ClassDef;
   private cust!: Customization;
   private rowIndex = 0;
   private rows: Row[] = [];
-  private neon?: NeonPipeline;
-
-  private preview!: Phaser.GameObjects.Container; // re-populated on each re-bake
+  private preview!: Phaser.GameObjects.Container;
   private callsignText!: Phaser.GameObjects.Text;
   private caretOn = true;
   private rowG!: Phaser.GameObjects.Graphics;
   private rowTexts: Phaser.GameObjects.Text[] = [];
   private rowValTexts: Phaser.GameObjects.Text[] = [];
   private rowSwatches: Phaser.GameObjects.Rectangle[] = [];
+  private rowLeftBtns: Phaser.GameObjects.Text[] = [];
+  private rowRightBtns: Phaser.GameObjects.Text[] = [];
+  private rowZones: Phaser.GameObjects.Zone[] = [];
+  private scrollHint!: Phaser.GameObjects.Text;
+  private rowScroll = 0;
 
-  private readonly panelX = 470;
-  private readonly rowTop = 118;
-  private readonly rowH = 26;
+  private readonly mobile = prefersMobileUx();
+  private readonly panelX = Math.round(VIEW_W * (this.mobile ? 0.48 : 0.52));
+  private readonly panelW = VIEW_W - this.panelX - MENU_PAD;
+  private readonly previewX = MENU_PAD;
+  private readonly previewW = this.panelX - this.previewX - uiDim(6);
+  private readonly listTop = uiDim(this.mobile ? 168 : 176);
+  private readonly listBottom = VIEW_H - uiDim(this.mobile ? 100 : 88);
+  /** Taller rows on phones so ◀ ▶ and row hits are thumb-sized. */
+  private readonly rowH = uiDim(this.mobile ? 44 : 32);
+  private readonly visibleRows = Math.max(4, Math.floor((this.listBottom - this.listTop) / this.rowH));
+  private dragScrollY = 0;
+  private dragScrollActive = false;
 
   constructor() {
     super("Customize");
   }
 
   create() {
+    if (this.registry.get("characterLocked")) {
+      this.scene.start("Select");
+      return;
+    }
+    // Guest multiplayer (no wallet) or wallet-bound creation.
+    const guestOk =
+      !!this.registry.get("guestPlay") ||
+      !!this.registry.get("offlinePlay"); /* legacy flag */
+    if (!connectedWallet() && !this.registry.get("walletAddress") && !guestOk) {
+      this.scene.start("Select");
+      return;
+    }
+
     this.classDef = getClass(this.registry.get("classId") as string | undefined);
-    this.cust = defaultCustomization(this.classDef.id);
+    this.cust = randomCustomization(this.classDef.id);
 
     this.cameras.main.setBackgroundColor(COLORS.bgVoid);
-    this.cameras.main.fadeIn(350, 2, 2, 8);
+    installMenuCameras(this);
+    fadeInScene(this);
+    MusicDirector.for(this)?.play("menu", this);
     this.applyNeon();
+    drawMenuBackdrop(this);
+    new MenuAtmosphere(this);
 
     this.add
-      .text(VIEW_W / 2, 30, "CUSTOMIZE YOUR CYBERIAN", {
-        fontFamily: "Courier New, monospace",
-        fontSize: "24px",
-        color: "#00e5ff",
-        fontStyle: "bold",
-      })
+      .text(VIEW_W / 2, uiDim(52), "CREATE YOUR RUNNER", displayFont(32, { color: "#00e5ff", fontStyle: "bold" }))
       .setOrigin(0.5)
-      .setShadow(0, 0, "#ff2bd6", 12, true, true);
+      .setShadow(0, 0, "#ff2bd6", 6, true, true);
+
+    const wallet = (this.registry.get("walletAddress") as string | undefined) ?? connectedWallet();
+    const guest = !wallet && guestOk;
+    const sub = guest
+      ? `MULTIPLAYER SAVE  ·  no wallet · progress sticks to this device  ·  ${this.classDef.name}`
+      : (() => {
+          const w = wallet ?? "—";
+          const short = w.length > 12 ? `${w.slice(0, 4)}…${w.slice(-4)}` : w;
+          return `ONE-TIME CREATION  ·  bound to wallet ${short}  ·  ${this.classDef.name}`;
+        })();
     this.add
-      .text(VIEW_W / 2, 54, `${this.classDef.name} · ${this.classDef.primaryName}`, {
-        fontFamily: "Courier New, monospace",
-        fontSize: "11px",
-        color: this.classDef.hex,
-      })
+      .text(VIEW_W / 2, uiDim(96), sub, bodyFont(13, { color: guest ? "#39ff88" : "#f7ff3c" }))
       .setOrigin(0.5);
 
-    // ── preview pedestal (left) ──────────────────────────────────────
-    const pg = this.add.graphics();
-    pg.fillStyle(0x0b0716, 0.85).fillRect(40, 84, 380, 392);
-    pg.lineStyle(2, this.classDef.color, 0.7).strokeRect(40, 84, 380, 392);
-    pg.fillStyle(0x05060f, 0.9).fillEllipse(230, 366, 150, 30); // floor
-    this.preview = this.add.container(0, 0);
-
+    const py = uiDim(128);
+    const ph = VIEW_H - py - uiDim(104);
+    const pg = asMenuUi(this.add.graphics().setDepth(8));
+    // Painted HUD panel behind the character preview (title create flow).
+    drawPanelFrame(pg, this.previewX, py, this.previewW, ph, this.classDef.color, this);
+    // label chrome rides above the preview model (depth 12) so the sprite can't cover it
+    const previewLabelY = py + uiDim(13);
+    const previewLabelG = asMenuUi(this.add.graphics().setDepth(13));
+    previewLabelG.fillStyle(0x04030c, 0.92).fillRect(this.previewX + uiDim(12), previewLabelY - uiDim(4), this.previewW - uiDim(24), uiDim(22));
+    asMenuUi(
+      this.add
+        .text(this.previewX + this.previewW / 2, previewLabelY + uiDim(7), "RUNNER PREVIEW", displayFont(12, { color: "#9aa3b2", fontStyle: "bold" }))
+        .setOrigin(0.5)
+        .setDepth(14),
+    );
+    drawPreviewPedestal(this, this.previewX + this.previewW / 2, py + ph - uiDim(36), this.classDef.color, 10);
+    this.preview = asMenuUi(this.add.container(0, 0).setDepth(12));
     this.makeCallsignField();
+    this.makeListViewport();
     this.defineRows();
     this.bakeAndRefresh();
     this.renderRows();
+    this.scrollHint = this.add
+      .text(this.panelX + this.panelW / 2, this.listBottom + uiDim(6), "", bodyFont(10, { color: "#6b7184" }))
+      .setOrigin(0.5, 0);
 
-    // ── footer hints + buttons ───────────────────────────────────────
-    const back = this.add
-      .text(70, VIEW_H - 26, "◀ BACK", {
-        fontFamily: "Courier New, monospace",
-        fontSize: "13px",
-        color: "#9aa3b2",
-      })
-      .setInteractive({ useHandCursor: true });
-    back.on("pointerover", () => back.setColor("#eafdff"));
-    back.on("pointerout", () => back.setColor("#9aa3b2"));
-    back.on("pointerdown", () => this.goBack());
-
-    const confirm = this.add
-      .text(VIEW_W - 70, VIEW_H - 26, "DEPLOY ▶", {
-        fontFamily: "Courier New, monospace",
-        fontSize: "15px",
-        color: "#39ff88",
-        fontStyle: "bold",
-      })
-      .setOrigin(1, 0)
-      .setInteractive({ useHandCursor: true });
-    confirm.on("pointerover", () => confirm.setColor("#eafdff"));
-    confirm.on("pointerout", () => confirm.setColor("#39ff88"));
-    confirm.on("pointerdown", () => this.confirm());
-
-    this.add
-      .text(VIEW_W / 2, VIEW_H - 24, "TYPE callsign · ↑↓ select · ←→ change · ENTER deploy · ESC back", {
-        fontFamily: "Courier New, monospace",
-        fontSize: "10px",
-        color: "#6b7184",
-      })
-      .setOrigin(0.5);
+    this.buildFooter();
 
     this.setupInput();
+    pinMenuUiLayer(this);
   }
 
-  // ── option model ───────────────────────────────────────────────────
   private defineRows() {
     const cycleIn = <T>(arr: ReadonlyArray<T>, cur: T, dir: number): T => {
       const i = Math.max(0, arr.indexOf(cur));
@@ -153,7 +184,15 @@ export default class CustomizeScene extends Phaser.Scene {
         cycle: (d) => {
           const i = Math.max(0, CUSTOM_COLORS.findIndex((c) => c.value === this.cust.color));
           this.cust.color = CUSTOM_COLORS[(i + d + CUSTOM_COLORS.length) % CUSTOM_COLORS.length].value;
-          this.bakeAndRefresh(); // colour is baked into the sprite now — re-bake
+          this.bakeAndRefresh();
+        },
+      },
+      {
+        label: "BODY TYPE",
+        value: () => SEX_LABELS[this.cust.sex],
+        cycle: (d) => {
+          this.cust.sex = cycleIn(CUSTOM_SEXES, this.cust.sex, d);
+          this.bakeAndRefresh();
         },
       },
       {
@@ -165,10 +204,74 @@ export default class CustomizeScene extends Phaser.Scene {
         },
       },
       {
+        label: "SKIN",
+        value: () => SKIN_TONES.find((s) => s.value === this.cust.skin)?.name ?? "TAN",
+        swatch: () => this.cust.skin,
+        cycle: (d) => {
+          const i = Math.max(0, SKIN_TONES.findIndex((s) => s.value === this.cust.skin));
+          this.cust.skin = SKIN_TONES[(i + d + SKIN_TONES.length) % SKIN_TONES.length].value;
+          this.bakeAndRefresh();
+        },
+      },
+      {
+        label: "HAIR",
+        value: () => HAIR_LABELS[this.cust.hair],
+        cycle: (d) => {
+          this.cust.hair = cycleIn(HAIR_STYLES, this.cust.hair, d);
+          this.bakeAndRefresh();
+        },
+      },
+      {
+        label: "HAIR COLOUR",
+        value: () => HAIR_COLORS.find((c) => c.value === this.cust.hairColor)?.name ?? "CUSTOM",
+        swatch: () => this.cust.hairColor,
+        cycle: (d) => {
+          const i = Math.max(0, HAIR_COLORS.findIndex((c) => c.value === this.cust.hairColor));
+          this.cust.hairColor = HAIR_COLORS[(i + d + HAIR_COLORS.length) % HAIR_COLORS.length].value;
+          this.bakeAndRefresh();
+        },
+      },
+      {
+        label: "BEARD",
+        value: () => BEARD_LABELS[this.cust.beard],
+        cycle: (d) => {
+          this.cust.beard = cycleIn(BEARDS, this.cust.beard, d);
+          this.bakeAndRefresh();
+        },
+      },
+      {
+        label: "EYE COLOUR",
+        value: () => EYE_COLORS.find((c) => c.value === this.cust.eyeColor)?.name ?? "CUSTOM",
+        swatch: () => this.cust.eyeColor,
+        cycle: (d) => {
+          const i = Math.max(0, EYE_COLORS.findIndex((c) => c.value === this.cust.eyeColor));
+          this.cust.eyeColor = EYE_COLORS[(i + d + EYE_COLORS.length) % EYE_COLORS.length].value;
+          this.bakeAndRefresh();
+        },
+      },
+      {
+        label: "FACE MARK",
+        value: () => FACE_MARK_LABELS[this.cust.faceMark],
+        cycle: (d) => {
+          this.cust.faceMark = cycleIn(FACE_MARKS, this.cust.faceMark, d);
+          this.bakeAndRefresh();
+        },
+      },
+      {
+        label: "TRIM COLOUR",
+        value: () => CUSTOM_COLORS.find((c) => c.value === this.cust.accentColor)?.name ?? "CUSTOM",
+        swatch: () => this.cust.accentColor,
+        cycle: (d) => {
+          const i = Math.max(0, CUSTOM_COLORS.findIndex((c) => c.value === this.cust.accentColor));
+          this.cust.accentColor = CUSTOM_COLORS[(i + d + CUSTOM_COLORS.length) % CUSTOM_COLORS.length].value;
+          this.bakeAndRefresh();
+        },
+      },
+      {
         label: "HEADGEAR",
         value: () => HEAD_LABELS[this.cust.head],
         cycle: (d) => {
-          this.cust.head = cycleIn(CUSTOM_HEADS, this.cust.head, d);
+          this.cust.head = cycleIn(HUMAN_HEADS, this.cust.head, d);
           this.bakeAndRefresh();
         },
       },
@@ -176,7 +279,7 @@ export default class CustomizeScene extends Phaser.Scene {
         label: "OPTIC",
         value: () => VISOR_LABELS[this.cust.visor],
         cycle: (d) => {
-          this.cust.visor = cycleIn(CUSTOM_VISORS, this.cust.visor, d);
+          this.cust.visor = cycleIn(HUMAN_VISORS, this.cust.visor, d);
           this.bakeAndRefresh();
         },
       },
@@ -205,44 +308,18 @@ export default class CustomizeScene extends Phaser.Scene {
         },
       },
       {
-        label: "SKIN",
-        value: () => SKIN_TONES.find((s) => s.value === this.cust.skin)?.name ?? "SYNTH",
-        swatch: () => (this.cust.skin >= 0 ? this.cust.skin : 0x2a2a3a),
+        label: "GLOVES",
+        value: () => GLOVES_LABELS[this.cust.gloves],
         cycle: (d) => {
-          const i = Math.max(
-            0,
-            SKIN_TONES.findIndex((s) => s.value === this.cust.skin),
-          );
-          this.cust.skin = SKIN_TONES[(i + d + SKIN_TONES.length) % SKIN_TONES.length].value;
+          this.cust.gloves = cycleIn(CUSTOM_GLOVES, this.cust.gloves, d);
           this.bakeAndRefresh();
         },
       },
       {
-        label: "HAIR",
-        value: () => HAIR_LABELS[this.cust.hair],
+        label: "LEG GEAR",
+        value: () => LEG_GEAR_LABELS[this.cust.legGear],
         cycle: (d) => {
-          this.cust.hair = cycleIn(HAIR_STYLES, this.cust.hair, d);
-          this.bakeAndRefresh();
-        },
-      },
-      {
-        label: "HAIR COLOUR",
-        value: () => HAIR_COLORS.find((c) => c.value === this.cust.hairColor)?.name ?? "CUSTOM",
-        swatch: () => this.cust.hairColor,
-        cycle: (d) => {
-          const i = Math.max(
-            0,
-            HAIR_COLORS.findIndex((c) => c.value === this.cust.hairColor),
-          );
-          this.cust.hairColor = HAIR_COLORS[(i + d + HAIR_COLORS.length) % HAIR_COLORS.length].value;
-          this.bakeAndRefresh();
-        },
-      },
-      {
-        label: "BEARD",
-        value: () => BEARD_LABELS[this.cust.beard],
-        cycle: (d) => {
-          this.cust.beard = cycleIn(BEARDS, this.cust.beard, d);
+          this.cust.legGear = cycleIn(CUSTOM_LEG_GEAR, this.cust.legGear, d);
           this.bakeAndRefresh();
         },
       },
@@ -273,31 +350,55 @@ export default class CustomizeScene extends Phaser.Scene {
     ];
   }
 
-  // ── callsign field (keyboard-captured, with a blinking caret) ────────
   private makeCallsignField() {
     const x = this.panelX;
-    const w = VIEW_W - this.panelX - 40;
-    const y = 82;
-    const h = 24;
-    const g = this.add.graphics();
-    g.fillStyle(0x0b0716, 0.85).fillRect(x, y, w, h);
-    g.lineStyle(2, 0x00e5ff, 0.65).strokeRect(x, y, w, h);
-    g.fillStyle(0x00e5ff, 0.9).fillRect(x, y, 3, h); // accent tab
-    this.add
-      .text(x + 12, y + h / 2, "CALLSIGN", {
-        fontFamily: "Courier New, monospace",
-        fontSize: "11px",
-        color: "#6b7184",
-      })
-      .setOrigin(0, 0.5);
-    this.callsignText = this.add
-      .text(x + w - 12, y + h / 2, "", {
-        fontFamily: "Courier New, monospace",
-        fontSize: "15px",
-        color: "#eafdff",
-        fontStyle: "bold",
-      })
-      .setOrigin(1, 0.5);
+    const w = this.panelW;
+    const y = uiDim(this.mobile ? 128 : 132);
+    const h = uiDim(this.mobile ? 44 : 36);
+    const g = asMenuUi(this.add.graphics().setDepth(9));
+    g.fillStyle(0x0b0716, 0.9).fillRect(x, y, w, h);
+    g.lineStyle(uiDim(2), 0x00e5ff, 0.7).strokeRect(x, y, w, h);
+    g.fillStyle(0x00e5ff, 0.9).fillRect(x, y, uiDim(4), h);
+    asMenuUi(
+      this.add
+        .text(x + uiDim(14), y + h / 2, "CALLSIGN", bodyFont(12, { color: "#6b7184" }))
+        .setOrigin(0, 0.5)
+        .setDepth(10),
+    );
+    this.callsignText = asMenuUi(
+      this.add
+        .text(x + w - uiDim(this.mobile ? 72 : 14), y + h / 2, "", {
+          fontFamily: "Courier New, monospace",
+          fontSize: uiFont(this.mobile ? 16 : 18),
+          color: "#eafdff",
+          fontStyle: "bold",
+        })
+        .setOrigin(1, 0.5)
+        .setDepth(10),
+    );
+    // Tap field to type (soft keyboard on phones).
+    const fieldZone = asMenuUi(
+      this.add
+        .zone(x, y, w - (this.mobile ? uiDim(64) : 0), h)
+        .setOrigin(0)
+        .setDepth(12)
+        .setInteractive({ useHandCursor: true }),
+    );
+    fieldZone.on("pointerdown", () => this.promptCallsign());
+    if (this.mobile) {
+      const rnd = asMenuUi(
+        this.add
+          .text(x + w - uiDim(10), y + h / 2, "RND", bodyFont(12, { color: "#39ff88", fontStyle: "bold" }))
+          .setOrigin(1, 0.5)
+          .setDepth(13)
+          .setInteractive({ useHandCursor: true }),
+      );
+      rnd.on("pointerdown", (p: Phaser.Input.Pointer) => {
+        p.event?.stopPropagation?.();
+        this.cust.callsign = randomCallsign();
+        this.renderCallsign();
+      });
+    }
     this.renderCallsign();
     this.time.addEvent({
       delay: 420,
@@ -309,114 +410,258 @@ export default class CustomizeScene extends Phaser.Scene {
     });
   }
 
-  private renderCallsign() {
-    if (!this.callsignText) return;
-    this.callsignText.setText((this.cust.callsign || "") + (this.caretOn ? "_" : " "));
+  /** Soft keyboard on mobile; no-op if keyboard already works. */
+  private promptCallsign() {
+    if (typeof window === "undefined") return;
+    // Prefer HTML input for reliable soft keyboard on iOS/Android.
+    if (this.mobile) {
+      const next = window.prompt("CALLSIGN (A–Z 0–9 -)", this.cust.callsign || "");
+      if (next == null) return;
+      this.cust.callsign = next
+        .toUpperCase()
+        .replace(/[^A-Z0-9-]/g, "")
+        .slice(0, CALLSIGN_MAX);
+      this.renderCallsign();
+      return;
+    }
+    // Desktop: focus stays on keyboard handler already active.
   }
 
-  // ── preview ─────────────────────────────────────────────────────────
-  /** Re-bake the sprite from the current spec, then rebuild the preview images. */
+  private renderCallsign() {
+    if (!this.callsignText) return;
+    const typed = this.cust.callsign || "";
+    if (typed) {
+      this.callsignText.setText(typed + (this.caretOn ? "_" : " ")).setColor("#eafdff");
+    } else {
+      this.callsignText.setText((this.caretOn ? "TYPE CALLSIGN_" : "TYPE CALLSIGN")).setColor("#5a6172");
+    }
+  }
+
   private bakeAndRefresh() {
-    bakeCustomPlayer(this, this.cust); // baked in final colours — no in-scene tint
+    bakeCustomPlayer(this, this.cust);
     this.preview.removeAll(true);
-    // big hero (down-facing) + a row of the other facings beneath
-    const hero = this.add.image(230, 250, PLAYER_CUSTOM_KEY, 0).setScale(7);
+    const cx = this.previewX + this.previewW / 2;
+    const cy = uiDim(120) + (VIEW_H - uiDim(200)) * 0.42;
+    if (!this.textures.exists(PLAYER_CUSTOM_KEY)) return;
+    const hero = this.add.image(cx, cy, PLAYER_CUSTOM_KEY, 0).setScale(8.5 * UI_SCALE).setDepth(12);
     this.preview.add(hero);
-    const facings = [1, 3, 2]; // left / up / right
+    const facings = [1 * 4, 3 * 4, 2 * 4];
     facings.forEach((f, i) => {
-      const img = this.add.image(150 + i * 80, 400, PLAYER_CUSTOM_KEY, f).setScale(3).setAlpha(0.92);
+      const img = this.add
+        .image(cx - uiDim(100) + i * uiDim(100), cy + uiDim(140), PLAYER_CUSTOM_KEY, f)
+        .setScale(3.6 * UI_SCALE)
+        .setAlpha(0.92)
+        .setDepth(12);
       this.preview.add(img);
     });
   }
 
-  // ── option rows render ──────────────────────────────────────────────
+  private makeListViewport() {
+    const listH = this.listBottom - this.listTop;
+    const panelBg = asMenuUi(this.add.graphics().setDepth(8));
+    panelBg.fillStyle(0x0b0716, 0.96).fillRect(this.panelX, this.listTop - uiGap("sm"), this.panelW, listH + uiGap("lg"));
+    panelBg.lineStyle(uiDim(2), this.classDef.color, 0.5).strokeRect(this.panelX, this.listTop - uiGap("sm"), this.panelW, listH + uiGap("lg"));
+    // Scroll surface — must be UI-camera (scrollFactor 0) or touches miss on mobile.
+    const scrollZone = asMenuUi(
+      this.add
+        .zone(this.panelX, this.listTop, this.panelW, listH)
+        .setOrigin(0)
+        .setDepth(9)
+        .setInteractive(),
+    );
+    scrollZone.on("wheel", (_p: Phaser.Input.Pointer, _dx: number, dy: number) => this.scrollList(dy > 0 ? 1 : -1));
+    // Touch drag scroll (phones have no wheel).
+    scrollZone.on("pointerdown", (p: Phaser.Input.Pointer) => {
+      this.dragScrollActive = true;
+      this.dragScrollY = p.y;
+    });
+    this.input.on("pointermove", (p: Phaser.Input.Pointer) => {
+      if (!this.dragScrollActive || !p.isDown) return;
+      const dy = p.y - this.dragScrollY;
+      if (Math.abs(dy) >= this.rowH * 0.55) {
+        this.scrollList(dy > 0 ? -1 : 1);
+        this.dragScrollY = p.y;
+      }
+    });
+    this.input.on("pointerup", () => {
+      this.dragScrollActive = false;
+    });
+    this.input.on("pointerupoutside", () => {
+      this.dragScrollActive = false;
+    });
+  }
+
+  private maxRowScroll() {
+    return Math.max(0, this.rows.length - this.visibleRows);
+  }
+
+  private scrollList(delta: number) {
+    const next = Phaser.Math.Clamp(this.rowScroll + delta, 0, this.maxRowScroll());
+    if (next === this.rowScroll) return;
+    this.rowScroll = next;
+    this.layoutRows();
+    this.renderRowValues();
+  }
+
+  private ensureRowVisible(index: number) {
+    if (index < this.rowScroll) this.rowScroll = index;
+    else if (index >= this.rowScroll + this.visibleRows) this.rowScroll = index - this.visibleRows + 1;
+    this.rowScroll = Phaser.Math.Clamp(this.rowScroll, 0, this.maxRowScroll());
+  }
+
+  private rowY(index: number) {
+    return this.listTop + (index - this.rowScroll) * this.rowH + this.rowH / 2;
+  }
+
   private renderRows() {
-    this.rowG = this.add.graphics();
+    this.rowG = asMenuUi(this.add.graphics().setDepth(10));
+    const btnSize = uiDim(this.mobile ? 40 : 28);
     this.rows.forEach((row, i) => {
-      const y = this.rowTop + i * this.rowH;
       this.rowTexts.push(
-        this.add
-          .text(this.panelX + 16, y, row.label, {
-            fontFamily: "Courier New, monospace",
-            fontSize: "13px",
-            color: "#9aa3b2",
-          })
-          .setOrigin(0, 0.5),
+        asMenuUi(
+          this.add
+            .text(this.panelX + uiDim(16), 0, row.label, bodyFont(this.mobile ? 14 : 13, { color: "#9aa3b2" }))
+            .setOrigin(0, 0.5)
+            .setDepth(14),
+        ),
       );
       this.rowValTexts.push(
-        this.add
-          .text(VIEW_W - 70, y, "", {
-            fontFamily: "Courier New, monospace",
-            fontSize: "13px",
-            color: "#eafdff",
-          })
-          .setOrigin(1, 0.5),
+        asMenuUi(
+          this.add
+            .text(VIEW_W - MENU_PAD - uiDim(this.mobile ? 56 : 48), 0, "", bodyFont(this.mobile ? 14 : 13, { color: "#eafdff" }))
+            .setOrigin(1, 0.5)
+            .setDepth(14),
+        ),
       );
-      const sw = this.add.rectangle(VIEW_W - 56, y, 14, 14, 0xffffff).setStrokeStyle(1, 0x000000, 0.6);
+      const sw = asMenuUi(
+        this.add
+          .rectangle(0, 0, uiDim(this.mobile ? 18 : 14), uiDim(this.mobile ? 18 : 14), 0xffffff)
+          .setStrokeStyle(uiDim(1), 0x000000, 0.6)
+          .setDepth(14),
+      );
       sw.setVisible(false);
       this.rowSwatches.push(sw);
 
-      // clickable arrows
-      const left = this.add
-        .text(this.panelX + 150, y, "◀", { fontFamily: "monospace", fontSize: "14px", color: "#6b7184" })
-        .setOrigin(0.5)
-        .setInteractive({ useHandCursor: true });
-      const right = this.add
-        .text(VIEW_W - 30, y, "▶", { fontFamily: "monospace", fontSize: "14px", color: "#6b7184" })
-        .setOrigin(0.5)
-        .setInteractive({ useHandCursor: true });
-      left.on("pointerdown", () => {
+      // Big thumb targets — text alone was ~14px and nearly untappable on phones.
+      const left = asMenuUi(
+        this.add
+          .text(0, 0, "◀", displayFont(this.mobile ? 20 : 14, { color: "#00e5ff", fontStyle: "bold" }))
+          .setOrigin(0.5)
+          .setDepth(16)
+          .setInteractive({ useHandCursor: true, hitArea: new Phaser.Geom.Rectangle(-btnSize / 2, -btnSize / 2, btnSize, btnSize), hitAreaCallback: Phaser.Geom.Rectangle.Contains }),
+      );
+      const right = asMenuUi(
+        this.add
+          .text(0, 0, "▶", displayFont(this.mobile ? 20 : 14, { color: "#00e5ff", fontStyle: "bold" }))
+          .setOrigin(0.5)
+          .setDepth(16)
+          .setInteractive({ useHandCursor: true, hitArea: new Phaser.Geom.Rectangle(-btnSize / 2, -btnSize / 2, btnSize, btnSize), hitAreaCallback: Phaser.Geom.Rectangle.Contains }),
+      );
+      left.on("pointerdown", (p: Phaser.Input.Pointer) => {
+        p.event?.stopPropagation?.();
+        this.dragScrollActive = false;
         this.rowIndex = i;
         row.cycle(-1);
         this.renderRowValues();
       });
-      right.on("pointerdown", () => {
+      right.on("pointerdown", (p: Phaser.Input.Pointer) => {
+        p.event?.stopPropagation?.();
+        this.dragScrollActive = false;
         this.rowIndex = i;
         row.cycle(1);
         this.renderRowValues();
       });
-      // selecting the row by clicking its label area
-      this.add
-        .zone(this.panelX + 8, y - this.rowH / 2, VIEW_W - 70 - (this.panelX + 8), this.rowH)
-        .setOrigin(0)
-        .setInteractive({ useHandCursor: true })
-        .on("pointerdown", () => {
-          this.rowIndex = i;
-          this.renderRowValues();
-        });
+      this.rowLeftBtns.push(left);
+      this.rowRightBtns.push(right);
+
+      // Full-row hit: left third = prev, right two-thirds = next (mobile-friendly).
+      const z = asMenuUi(
+        this.add
+          .zone(0, 0, this.panelW - uiDim(16), this.rowH)
+          .setOrigin(0, 0.5)
+          .setDepth(15)
+          .setInteractive({ useHandCursor: true }),
+      );
+      z.on("pointerdown", (p: Phaser.Input.Pointer) => {
+        p.event?.stopPropagation?.();
+        this.dragScrollActive = false;
+        this.rowIndex = i;
+        // Local X within the zone (origin left-center).
+        const localX = p.x - z.x;
+        const w = this.panelW - uiDim(16);
+        if (localX < w * 0.35) row.cycle(-1);
+        else row.cycle(1);
+        this.renderRowValues();
+      });
+      this.rowZones.push(z);
     });
+    this.layoutRows();
     this.renderRowValues();
   }
 
-  /** Redraw the row values + selection highlight (cheap; called on every change). */
+  private layoutRows() {
+    const leftX = this.panelX + uiDim(this.mobile ? 200 : 180);
+    const rightX = VIEW_W - MENU_PAD - uiDim(this.mobile ? 14 : 8);
+    this.rows.forEach((_row, i) => {
+      const visible = i >= this.rowScroll && i < this.rowScroll + this.visibleRows;
+      const y = this.rowY(i);
+      this.rowTexts[i].setVisible(visible);
+      this.rowValTexts[i].setVisible(visible);
+      if (visible) {
+        this.rowTexts[i].setY(y);
+        this.rowValTexts[i].setY(y);
+      }
+      this.rowLeftBtns[i].setVisible(visible);
+      this.rowRightBtns[i].setVisible(visible);
+      this.rowZones[i].setVisible(visible).setActive(visible);
+      if (visible) {
+        this.rowLeftBtns[i].setPosition(leftX, y);
+        this.rowRightBtns[i].setPosition(rightX, y);
+        this.rowZones[i].setPosition(this.panelX + uiDim(8), y);
+        this.rowSwatches[i].setPosition(VIEW_W - MENU_PAD - uiDim(this.mobile ? 36 : 28), y);
+      } else {
+        this.rowSwatches[i].setVisible(false);
+      }
+    });
+    if (this.scrollHint) {
+      const max = this.maxRowScroll();
+      this.scrollHint.setText(
+        max > 0
+          ? this.mobile
+            ? `drag list · tap ◀ ▶  ·  ${this.rowScroll + 1}–${Math.min(this.rowScroll + this.visibleRows, this.rows.length)}/${this.rows.length}`
+            : `scroll ▲▼  ·  ${this.rowScroll + 1}–${Math.min(this.rowScroll + this.visibleRows, this.rows.length)} of ${this.rows.length}`
+          : "",
+      );
+    }
+  }
+
   private renderRowValues() {
+    this.ensureRowVisible(this.rowIndex);
+    this.layoutRows();
     this.rowG.clear();
-    this.rowG.fillStyle(0x0b0716, 0.55).fillRect(this.panelX, 108, VIEW_W - this.panelX - 40, this.rows.length * this.rowH + 16);
-    this.rowG.lineStyle(1, this.classDef.color, 0.4).strokeRect(this.panelX, 108, VIEW_W - this.panelX - 40, this.rows.length * this.rowH + 16);
+    this.rowG.fillStyle(0x0b0716, 0.35).fillRect(this.panelX, this.listTop, this.panelW, this.listBottom - this.listTop);
     this.rows.forEach((row, i) => {
-      const y = this.rowTop + i * this.rowH;
+      if (i < this.rowScroll || i >= this.rowScroll + this.visibleRows) return;
+      const y = this.rowY(i);
       const selected = i === this.rowIndex;
       if (selected) {
-        this.rowG.fillStyle(this.classDef.color, 0.14).fillRect(this.panelX + 6, y - this.rowH / 2 + 4, VIEW_W - this.panelX - 52, this.rowH - 8);
-        this.rowG.lineStyle(2, this.classDef.color, 0.9).strokeRect(this.panelX + 6, y - this.rowH / 2 + 4, VIEW_W - this.panelX - 52, this.rowH - 8);
+        this.rowG.fillStyle(this.classDef.color, 0.18).fillRect(this.panelX + uiDim(8), y - this.rowH / 2 + uiDim(3), this.panelW - uiDim(16), this.rowH - uiDim(6));
+        this.rowG.lineStyle(uiDim(2), this.classDef.color, 0.9).strokeRect(this.panelX + uiDim(8), y - this.rowH / 2 + uiDim(3), this.panelW - uiDim(16), this.rowH - uiDim(6));
       }
       this.rowTexts[i].setColor(selected ? "#eafdff" : "#9aa3b2");
       const sw = this.rowSwatches[i];
       if (row.swatch) {
         sw.setVisible(true).setFillStyle(row.swatch());
-        this.rowValTexts[i].setText(row.value()).setX(VIEW_W - 78);
+        this.rowValTexts[i].setText(row.value()).setX(VIEW_W - MENU_PAD - uiDim(52));
       } else {
         sw.setVisible(false);
-        this.rowValTexts[i].setText(row.value()).setX(VIEW_W - 56);
+        this.rowValTexts[i].setText(row.value()).setX(VIEW_W - MENU_PAD - uiDim(28));
       }
     });
   }
 
-  // ── input ───────────────────────────────────────────────────────────
   private setupInput() {
     this.input.keyboard?.on("keydown", (e: KeyboardEvent) => {
-      // Callsign editing: typed characters fill the field; backspace deletes.
-      // (Letters can't double as nav here, so only the arrow keys move/change rows.)
       if (e.key === "Backspace") {
         this.cust.callsign = this.cust.callsign.slice(0, -1);
         this.renderCallsign();
@@ -433,10 +678,12 @@ export default class CustomizeScene extends Phaser.Scene {
       switch (e.key) {
         case "ArrowUp":
           this.rowIndex = (this.rowIndex - 1 + this.rows.length) % this.rows.length;
+          this.ensureRowVisible(this.rowIndex);
           this.renderRowValues();
           break;
         case "ArrowDown":
           this.rowIndex = (this.rowIndex + 1) % this.rows.length;
+          this.ensureRowVisible(this.rowIndex);
           this.renderRowValues();
           break;
         case "ArrowLeft":
@@ -457,22 +704,78 @@ export default class CustomizeScene extends Phaser.Scene {
     });
   }
 
+  private buildFooter() {
+    const footerH = uiDim(56);
+    const footerY = VIEW_H - footerH;
+    const bar = asMenuUi(this.add.graphics().setDepth(90));
+    bar.fillStyle(0x05030c, 0.96).fillRect(0, footerY - uiDim(2), VIEW_W, footerH + uiDim(2));
+    bar.lineStyle(1, 0x00e5ff, 0.45).lineBetween(0, footerY, VIEW_W, footerY);
+
+    asMenuUi(
+      this.add
+        .text(
+          VIEW_W / 2,
+          footerY - MENU_SECTION_GAP,
+          this.mobile
+            ? "TAP callsign · TAP ◀ ▶ to change look · drag list · DEPLOY"
+            : "TYPE callsign · ↑↓ row · ←→ option · scroll wheel · ENTER to deploy",
+          bodyFont(10, { color: "#6b7184" }),
+        )
+        .setOrigin(0.5)
+        .setDepth(91),
+    );
+
+    const back = asMenuUi(
+      this.add
+        .text(MENU_PAD, footerY + footerH / 2, "◀ BACK", bodyFont(15, { color: "#9aa3b2" }))
+        .setOrigin(0, 0.5)
+        .setDepth(91)
+        .setInteractive({ useHandCursor: true }),
+    );
+    back.on("pointerover", () => back.setColor("#eafdff"));
+    back.on("pointerout", () => back.setColor("#9aa3b2"));
+    back.on("pointerdown", () => this.goBack());
+
+    const deployW = uiDim(248);
+    const deployH = uiDim(40);
+    const deployX = VIEW_W - MENU_PAD - deployW;
+    const deployY = footerY + (footerH - deployH) / 2;
+    const deployG = asMenuUi(this.add.graphics().setDepth(91));
+    const drawDeploy = (hover: boolean) => {
+      deployG.clear();
+      deployG.fillStyle(0x39ff88, hover ? 0.3 : 0.16).fillRoundedRect(deployX, deployY, deployW, deployH, 4);
+      const inset = uiDim(2);
+      deployG
+        .lineStyle(uiDim(2), 0x39ff88, hover ? 1 : 0.8)
+        .strokeRoundedRect(deployX + inset, deployY + inset, deployW - inset * 2, deployH - inset * 2, 4);
+    };
+    drawDeploy(false);
+    const deployLabel = asMenuUi(
+      this.add
+        .text(deployX + deployW / 2, deployY + deployH / 2, "LOCK IN & DEPLOY ▶", displayFont(16, { color: "#eafdff", fontStyle: "bold" }))
+        .setOrigin(0.5)
+        .setDepth(92),
+    );
+    const deployZone = asMenuUi(
+      this.add.zone(deployX, deployY, deployW, deployH).setOrigin(0).setDepth(93).setInteractive({ useHandCursor: true }),
+    );
+    deployZone.on("pointerover", () => {
+      drawDeploy(true);
+      deployLabel.setColor("#ffffff");
+    });
+    deployZone.on("pointerout", () => {
+      drawDeploy(false);
+      deployLabel.setColor("#eafdff");
+    });
+    deployZone.on("pointerdown", () => this.confirm());
+  }
+
   private applyNeon() {
-    if (this.renderer.type !== Phaser.WEBGL) return;
-    const cam = this.cameras.main;
-    cam.setPostPipeline("Neon");
-    const p = cam.getPostPipeline("Neon");
-    this.neon = (Array.isArray(p) ? p[0] : p) as NeonPipeline;
-    if (this.neon) {
-      this.neon.heat = 0.3;
-      this.neon.tint = [0, 0.9, 1];
-      this.neon.tintAmt = 0.12;
-    }
+    applyMenuNeon(this, { heat: 0.08, tint: [0, 0.9, 1], tintAmt: 0.12 });
   }
 
   private goBack() {
-    this.cameras.main.fadeOut(250, 2, 2, 8);
-    this.cameras.main.once("camerafadeoutcomplete", () => this.scene.start("Select"));
+    transitionTo(this, "Select", undefined, { style: "fade", accent: 0x9aa3b2 });
   }
 
   private confirm() {
@@ -480,7 +783,17 @@ export default class CustomizeScene extends Phaser.Scene {
     this.registry.set("classId", this.classDef.id);
     this.registry.set("customization", this.cust);
     this.registry.set("resume", false);
-    this.cameras.main.fadeOut(350, 2, 2, 8);
-    this.cameras.main.once("camerafadeoutcomplete", () => this.scene.start("Game"));
+    this.registry.set("characterLocked", true);
+    this.registry.set("guestPlay", true);
+    // Mint guest device secret now so the first multiplayer login binds this runner.
+    // Persist it on the local profile so CONTINUE never regenerates a mismatched key.
+    const deviceSecret = ensureGuestDeviceSecret(this.cust.callsign);
+    writeLocalRunner({
+      callsign: this.cust.callsign,
+      classId: this.classDef.id,
+      customization: this.cust,
+      deviceSecret,
+    });
+    transitionTo(this, "Prologue", undefined, { style: "deploy", accent: this.classDef.color });
   }
 }

@@ -48,6 +48,36 @@ Keep this order (or update `district.ts` tile constants + `setCollision`).
   gameplay. `Present_image2` is a **color/vibe reference only**.
 - **No copyrighted assets, characters, logos, or music.** Original or CC0 only.
 
+## `asset-drop/` packs — chroma-key slicing pipeline
+
+Large AI-generated tile/object **atlases** land in `asset-drop/<CATEGORY>/` (gitignored
+staging, like `art-source/`). They are flat **RGB with no alpha** — each object sits on a
+solid painted background — so the alpha-based `atlas-slice.mjs` can't cut them. Two
+sibling dev tools handle this (run with the project node, `~/.local/node/bin/node`):
+
+- `tools/atlas-key-slice.mjs "<atlas>" <outDir> [minArea] [dilate] [keyTol]` — keys the
+  background colour (sampled from the corners) to transparency, flood-fills the remaining
+  pixels into connected components, exports each as a clean trimmed RGBA sprite. Use for
+  objects on a plain background that are **well separated** (e.g. `DECORATIONS`).
+- `tools/grid-key-slice.mjs "<atlas>" <outDir> <cols> <rows> [inset] [keyTol]` — cuts a
+  regular grid, keys + trims each cell. Use when objects **touch** or sit on painted
+  grid-lines so flood-fill would merge them (e.g. `INTERACTIVE OBJECTS`, `WALLS`, terrain).
+
+Curate the montage (`asset-tool.mjs montage <dir> <out> <cols> <cell>`), then downscale
+the picks to game scale into `public/assets/objects/` and wire keys in `manifest.ts`.
+
+### What's integrated vs. held (and why)
+
+| Drop category        | Decision | Notes |
+| -------------------- | -------- | ----- |
+| `DECORATIONS`        | **Integrated** → `deco_01…14` | Isometric crates/containers, keyed clean. Scattered as non-colliding **cargo decals** against city buildings (`CityScene.drawDecorations`) + replace the procedural interior crate (`spawnInteriorProp`). Keyed via `decals` in `manifest.ts`. |
+| `INTERACTIVE OBJECTS`| **Integrated** → `obj_01…12` | File (2) is clean **isometric** machines (file 1 is messier front-view — not used). Curated 12 → building-interior set-dressing: `spawnInteriorProp` renders them for the `rack` / `locker` / `terminal` kinds (per-kind seed varies the shared pool; terminal keeps its interactive cyan glow). Keyed via `interior` in `manifest.ts`. |
+| `WALLS`              | Held | Side-on facade units — the city renders buildings as **top-down roof tiles**, so side-on walls don't fit the gameplay view. |
+| `GROUNDS` `FLOORS` `PATHS` `CORNERS` `EDGES` `ELEVATION` | **Integrated** → `tileset` (+ variants) | Real-art 8×4 tileset `public/assets/tilesets/metrophage_tiles.png` assembled by `tools/tileset-gen.mjs`, preserving the exact index→tile/collision contract (`src/world/district.ts`). Cells **0–17** are the canonical tiles; field tiles (floor/road/plaza/…) are centre-cropped uniform swatches from the kitbash `GROUNDS`/`PATHS`/`FLOORS` sheets, framed roof/wall tiles from `ELEVATION`/`CORNERS`/`EDGES`. Cells **18–31** hold same-surface **variants** of the most-repeated tiles. **Diversity pass:** `src/render/tileVariants.ts` `applyTileVariants(layer)` (called in all 5 tilemap scenes after `createLayer`, before `setCollision`) rewrites each tile's *render* index to a deterministic variant (`TILE_VARIANTS`/`variantOf` in district.ts) — render-only, so collision/gameplay still key off the canonical grid index. Roof-variant cells (25–29) are in `COLLIDING_TILES` so varied building tops still block; the 3 action scenes collide on `TILE_VARIANTS[TILE_WALL]`. **Crispness:** stored at **64px cells** (`config.TILESET_PX`) and sliced at that size by `addTilesetImage` in all 5 scenes; the world grid stays 32px so Phaser downscales each tile at render (sharper than pre-downscaling). **Revert to procedural** = `tilesets` entry `file=null` in `manifest.ts` **and** `TILESET_PX=32` (the procedural bake is 256×128/32px). |
+
+> Licensing: asset-drop packs are the project owner's responsibility per their source terms.
+> Only curated, processed sprites are committed (raw `asset-drop/` stays gitignored).
+
 ## UI assets integrated (from the user-supplied pack)
 
 The perspective-neutral UI pieces from the supplied `PixelWhale_SF_Project` pack
@@ -80,3 +110,85 @@ top-down gameplay. `image/Present_image2.png` = color/vibe reference only.
   key never ships to the browser). It plays on the meltdown and is fully optional —
   the procedural meltdown sting plays regardless, and the game runs fine if the mp3
   is absent (load is guarded). Re-generate with `bash tools/gen-vo.sh`.
+
+### Environment music beds (ElevenLabs)
+
+Each environment gets its own looping bed, crossfaded by the **MusicDirector**
+(`src/audio/MusicDirector.ts`, one game-level instance created in `BootScene`). A bed
+plays on top of the procedural SFX; the procedural *music* layer
+(`Synth.setMusicEnabled`) is muted while a real bed plays and re-enabled as the
+fallback when a bed is missing — so **there is always music** and adding a bed is a
+zero-code upgrade.
+
+| env                 | file (`src/assets/music/`) | where it plays                         |
+| ------------------- | -------------------------- | -------------------------------------- |
+| `menu`              | `menu.mp3`                 | title / customize / prologue           |
+| `city`              | `city.mp3`                 | overworld hub (`CityScene`)            |
+| `subway`            | `subway.mp3`               | inter-district transit (`SubwayScene`) |
+| `dive`              | `dive.mp3`                 | ICE dive — cyberspace (`DiveScene`)    |
+| `online`            | `online.mp3`               | multiplayer safehouse hub + interiors  |
+| `district_downtown` | `downtown.mp3`             | Palantir Plaza (magenta, rain)         |
+| `district_stacks`   | `stacks.mp3`               | Anduril Yards (yellow, smog)           |
+| `district_spire`    | `spire.mp3`                | Argus Spire (cyan, surveillance)       |
+| `district_core`     | `core.mp3`                 | The Kernel (red, embers, final)        |
+| `meltdown`          | `meltdown.mp3`             | city-meltdown climax                    |
+
+- **Online zones reuse beds:** in `OnlineScene`, district zones (`d0`–`d3`) play their
+  matching `district_*` bed, the subway dungeon plays `subway`, and the safehouse hub +
+  building interiors play `online`. So the multiplayer city sounds like its single-player
+  counterpart, zone for zone.
+- **Generate:** `npm run gen:music` (all missing beds) or `node tools/gen-music.mjs
+  --force` (regenerate). Subset: `node tools/gen-music.mjs menu dive core`. Reads the
+  key from `$ELEVENLABS_API_KEY` or gitignored `.env`; the key never ships to the
+  browser. Prompts (one tuned per environment) live in `tools/gen-music.mjs`.
+- **Detection:** beds live in `src/assets/music/` (not `public/`) so `import.meta.glob`
+  in `src/audio/musicTracks.ts` resolves the URL of every bed that **actually exists** —
+  missing beds simply aren't referenced (no 404 / mis-decode), and each falls back to
+  the procedural Synth. Drop a generated mp3 in and reload; it auto-registers.
+- **Mix:** per-bed `gain` in `musicTracks.ts`, then scaled live by the master + music
+  sliders (Options menu) and ducked under dialogue / the meltdown VO.
+- **No copyrighted music** — these are AI-generated originals (see line 49).
+
+## Higgsfield generation pipeline (presentation art)
+
+Presentation-layer art (key art, menu backdrop, dialogue portraits, class cards) is
+AI-generated via Higgsfield (nano-banana-pro, 4K) and rebuilt for shipping by
+`tools/higgsfield-art-build.mjs` from raw generations staged in `art-source/higgsfield/`
+(gitignored, like the other art-source inputs). Regenerate → re-drop → re-run the tool.
+
+| Raw input                  | Shipped output | Used by |
+| -------------------------- | -------------- | ------- |
+| `keyart_title.png` (16:9)  | `public/og.png` + `landing/og.png` (1200×630) | social cards (`index.html` + landing og meta) |
+| `menu_bg.png` (16:9, textless) | `public/assets/ui/menu_bg.jpg` + `landing/hero.jpg` | `drawMenuBackdrop` (menuChrome) · landing `.cityart` |
+| `sheet_cast.png` (4×3 grid)| `portraits/cast_sheet.jpg` + `painted_fixer/player.jpg` | named story cast (frame map in `src/game/portraits.ts`) |
+| `sheet_keepers.png`        | `portraits/keepers_sheet.jpg` | venue keepers (`keep_*` + porter). Raw sheet has baked-in labels — the tool's deeper top inset crops them. |
+| `sheet_residents.png`      | `portraits/residents_sheet.jpg` | drawn residents 1:1 + hash fallback for everyone else (sex-matched pools) |
+| `sheet_classes.png` (2×2)  | `ui/classart_{id}.jpg` | SelectScene class cards (card-aspect crop + in-scene legibility gradient) |
+
+Portrait sheets ship as **12-frame 256px spritesheets** (row-major). `portraitFor(id, sex)`
+resolves any NPC id to a stable `{key, frame}`; the OnlineScene speech bubble docks the
+painted bust chip beside the text, and the legacy SP DialogueBox keys off the same sheets.
+Grid slicing cuts on exact grid fractions with a safety inset — nano-banana's gutters are
+regular enough that no gutter detection is needed.
+
+## Higgsfield HUD / UI kit + prop sprites (desktop + mobile)
+
+Second Higgsfield pass (4 × nano-banana-pro 2K sheets, ~8 credits) for in-game HUD chrome
+and world props. Rebuild with:
+
+```sh
+node tools/higgsfield-hud-build.mjs
+```
+
+| Raw input | Shipped | Used by |
+| --------- | ------- | ------- |
+| `sheet_hud_chrome.png` (3×3) | `ui/hud_panel.png`, `skill_frame.png`, `btn_ring.png` | OnlineScene status/tracker NineSlice panels; hotbar frames; mobile action rings |
+| `sheet_ability_icons.png` | `ui/ability_*.png` ×8 | MobileControls Q/E/R/dash/ATK icons |
+| `sheet_weapon_icons.png` | `ui/gun_hf_01…06.png` (+ `gun_01.png`) | HUD weapon slot (`UI_GUN_KEY`) |
+| `sheet_props.png` | `objects/hf_prop_01…12.png` | `propScatter` street density pool |
+
+`manifest.ts` points `UI_FRAME_KEY` / `UI_GUN_KEY` / `UI_PANEL_KEY` / `UI_BTN_RING_KEY` at real
+files; procedural bakers in `textures.ts` only fill keys still missing after load. The
+painted HUD panel is applied via `ensureHudPanelImage` (Phaser NineSlice) so desktop wide
+panels and compact mobile sizes share one art source without stretch artifacts. Mobile
+action pads tint the circular ring + ability icons for thumb readability.

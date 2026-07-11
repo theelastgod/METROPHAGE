@@ -1,6 +1,8 @@
 import Phaser from "phaser";
 import { COLORS, VIEW_W, VIEW_H } from "../config";
 import { UI_FRAME_KEY } from "../assets/manifest";
+import { panelPad, uiDim, uiFont, uiGap } from "./uiLayout";
+import { bodyFont, displayFont } from "./typography";
 
 export interface DialoguePage {
   speaker: string;
@@ -39,10 +41,14 @@ export default class DialogueBox {
   private choiceTexts: Phaser.GameObjects.Text[] = [];
   private choicesActive = false;
 
-  private readonly boxX = 40;
-  private readonly boxY = VIEW_H - 150;
-  private readonly boxW = VIEW_W - 80;
-  private readonly boxH = 132;
+  private readonly boxX = uiDim(44);
+  private readonly boxY = VIEW_H - uiDim(168);
+  private readonly boxW = VIEW_W - uiDim(88);
+  private readonly boxH = uiDim(148);
+  private readonly textX = this.boxX + uiDim(140);
+  private readonly choiceStep = uiDim(24);
+  private readonly portraitSize = uiDim(100);
+  private readonly portraitInner = uiDim(82);
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
@@ -51,45 +57,29 @@ export default class DialogueBox {
     this.frame = scene.add.graphics().setScrollFactor(0).setDepth(D);
     this.drawFrame(this.frame);
 
-    const pcx = this.boxX + 62;
-    const pcy = this.boxY + this.boxH / 2 + 4;
+    const pcx = this.boxX + uiDim(66);
+    const pcy = this.boxY + this.boxH / 2 + uiDim(4);
     this.portraitFrame = scene.add
       .image(pcx, pcy, UI_FRAME_KEY)
       .setScrollFactor(0)
       .setDepth(D + 1)
-      .setDisplaySize(96, 96);
+      .setDisplaySize(this.portraitSize, this.portraitSize);
     this.portrait = scene.add
       .image(pcx, pcy, UI_FRAME_KEY)
       .setScrollFactor(0)
       .setDepth(D + 2)
-      .setDisplaySize(78, 78);
+      .setDisplaySize(this.portraitInner, this.portraitInner);
 
-    const textX = this.boxX + 128;
     this.nameText = scene.add
-      .text(textX, this.boxY + 14, "", {
-        fontFamily: "Courier New, monospace",
-        fontSize: "16px",
-        color: "#f7ff3c",
-        fontStyle: "bold",
-      })
+      .text(this.textX, this.boxY + panelPad(), "", displayFont(17, { color: "#f7ff3c", fontStyle: "bold" }))
       .setScrollFactor(0)
       .setDepth(D + 2);
     this.bodyText = scene.add
-      .text(textX, this.boxY + 44, "", {
-        fontFamily: "Courier New, monospace",
-        fontSize: "16px",
-        color: "#eafdff",
-        wordWrap: { width: this.boxW - 160 },
-        lineSpacing: 6,
-      })
+      .text(this.textX, this.boxY + uiDim(48), "", bodyFont(16, { color: "#eafdff", wordWrap: { width: this.boxW - uiDim(176) } }))
       .setScrollFactor(0)
       .setDepth(D + 2);
     this.arrow = scene.add
-      .text(this.boxX + this.boxW - 26, this.boxY + this.boxH - 26, "▼", {
-        fontFamily: "Courier New, monospace",
-        fontSize: "16px",
-        color: "#00e5ff",
-      })
+      .text(this.boxX + this.boxW - uiGap("xl"), this.boxY + this.boxH - uiGap("xl"), "▼", bodyFont(17, { color: "#00e5ff" }))
       .setScrollFactor(0)
       .setDepth(D + 2);
 
@@ -105,19 +95,18 @@ export default class DialogueBox {
 
     scene.tweens.add({
       targets: this.arrow,
-      y: this.arrow.y + 4,
+      y: this.arrow.y + uiDim(4),
       duration: 480,
       yoyo: true,
       repeat: -1,
       ease: "Sine.inOut",
     });
 
-    // Choice rows (branching) — created hidden, just above the box bottom.
     for (let i = 0; i < 4; i++) {
       const t = scene.add
-        .text(textX, this.boxY + 60 + i * 17, "", {
+        .text(this.textX, this.boxY + uiDim(64) + i * this.choiceStep, "", {
           fontFamily: "Courier New, monospace",
-          fontSize: "14px",
+          fontSize: uiFont(15),
           color: "#f7ff3c",
         })
         .setScrollFactor(0)
@@ -130,7 +119,6 @@ export default class DialogueBox {
       this.choiceTexts.push(t);
     }
 
-    // Advance listeners (no-op unless open).
     scene.input.on("pointerdown", this.advance, this);
     scene.input.keyboard?.on("keydown-SPACE", this.advance, this);
     scene.input.keyboard?.on("keydown-ENTER", this.advance, this);
@@ -169,11 +157,10 @@ export default class DialogueBox {
   private renderChoices(choices: string[]) {
     this.arrow.setVisible(false);
     this.choicesActive = true;
-    // Sit the choices just under the (possibly multi-line) body text.
-    const top = Math.min(this.bodyText.y + this.bodyText.height + 6, this.boxY + this.boxH - 40);
+    const top = Math.min(this.bodyText.y + this.bodyText.height + uiDim(6), this.boxY + this.boxH - uiDim(42));
     this.choiceTexts.forEach((t, i) => {
       if (i < choices.length) {
-        t.setY(top + i * 17)
+        t.setY(top + i * this.choiceStep)
           .setText(`${i + 1})  ${choices[i]}`)
           .setColor("#f7ff3c")
           .setVisible(true);
@@ -191,7 +178,7 @@ export default class DialogueBox {
     this.parts.forEach((p) => p.setVisible(false));
     this.onChoice = undefined;
     this.onClose = undefined;
-    cb?.(i); // the runner decides what to show next
+    cb?.(i);
   }
 
   private startPage() {
@@ -200,7 +187,7 @@ export default class DialogueBox {
 
     if (p.portrait) {
       this.portrait.setVisible(true).setTexture(p.portrait.key, p.portrait.frame ?? undefined);
-      this.portrait.setDisplaySize(78, 78);
+      this.portrait.setDisplaySize(this.portraitInner, this.portraitInner);
       this.portraitFrame.setVisible(true);
     } else {
       this.portrait.setVisible(false);
@@ -237,10 +224,10 @@ export default class DialogueBox {
   private advance() {
     if (!this.open) return;
     if (this.typeEvent) {
-      this.finishTyping(); // snap to full line first
+      this.finishTyping();
       return;
     }
-    if (this.choicesActive) return; // must pick a choice to proceed
+    if (this.choicesActive) return;
     this.index++;
     if (this.index >= this.pages.length) this.close();
     else this.startPage();
@@ -259,8 +246,8 @@ export default class DialogueBox {
   private drawFrame(g: Phaser.GameObjects.Graphics) {
     const { boxX: x, boxY: y, boxW: w, boxH: h } = this;
     g.fillStyle(0x07061a, 0.92).fillRect(x, y, w, h);
-    g.lineStyle(2, COLORS.neonCyan, 0.9).strokeRect(x, y, w, h);
-    g.lineStyle(1, COLORS.neonMagenta, 0.6).strokeRect(x + 4, y + 4, w - 8, h - 8);
-    g.fillStyle(COLORS.neonCyan, 0.18).fillRect(x + 116, y + 6, w - 150, 26);
+    g.lineStyle(uiDim(2), COLORS.neonCyan, 0.9).strokeRect(x, y, w, h);
+    g.lineStyle(uiDim(1), COLORS.neonMagenta, 0.6).strokeRect(x + uiDim(4), y + uiDim(4), w - uiDim(8), h - uiDim(8));
+    g.fillStyle(COLORS.neonCyan, 0.18).fillRect(x + uiDim(120), y + uiDim(6), w - uiDim(154), uiDim(28));
   }
 }

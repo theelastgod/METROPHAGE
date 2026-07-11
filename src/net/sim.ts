@@ -8,7 +8,7 @@
 // player as an axis-aligned box (half-extent PLAYER_RADIUS) and resolves walls per
 // axis so you slide along them. Both sides must import THIS — never reimplement.
 
-import { TILE, GRID_W, GRID_H, PLAYER } from "../config";
+import { TILE, DISTRICT_GRID_W, DISTRICT_GRID_H, PLAYER } from "../config";
 import { isWall, type TileGrid } from "../world/district";
 
 /** Fixed network tick — the simulation step size on both client and server. */
@@ -16,8 +16,16 @@ export const NET_TICK_MS = 50; // 20 Hz
 /** Player collision half-extent (px). Matches the old arcade body's ~9px radius. */
 export const PLAYER_RADIUS = 9;
 
-export const WORLD_W = GRID_W * TILE;
-export const WORLD_H = GRID_H * TILE;
+/** Default combat-district world size (largest common zone type). */
+export const WORLD_W = DISTRICT_GRID_W * TILE;
+export const WORLD_H = DISTRICT_GRID_H * TILE;
+
+/** Per-zone bounds derived from the authoritative tile grid. */
+export function gridDims(grid: TileGrid) {
+  const h = grid.length;
+  const w = grid[0]?.length ?? 0;
+  return { w, h, worldW: w * TILE, worldH: h * TILE };
+}
 
 export interface MoveInput {
   mx: number; // -1..1 intent on X
@@ -34,13 +42,14 @@ const clamp = (n: number, lo: number, hi: number) => (n < lo ? lo : n > hi ? hi 
 
 /** True if a PLAYER_RADIUS box centred at (x,y) overlaps any wall tile or the edge. */
 export function collides(x: number, y: number, grid: TileGrid): boolean {
+  const { w: gw, h: gh } = gridDims(grid);
   const minTx = Math.floor((x - PLAYER_RADIUS) / TILE);
   const maxTx = Math.floor((x + PLAYER_RADIUS) / TILE);
   const minTy = Math.floor((y - PLAYER_RADIUS) / TILE);
   const maxTy = Math.floor((y + PLAYER_RADIUS) / TILE);
   for (let ty = minTy; ty <= maxTy; ty++) {
     for (let tx = minTx; tx <= maxTx; tx++) {
-      if (tx < 0 || ty < 0 || tx >= GRID_W || ty >= GRID_H) return true;
+      if (tx < 0 || ty < 0 || tx >= gw || ty >= gh) return true;
       const row = grid[ty];
       if (!row || isWall(row[tx])) return true;
     }
@@ -71,11 +80,12 @@ export function stepMove(
   }
   const dt = dtMs / 1000;
   const dist = speed * dt;
+  const { worldW, worldH } = gridDims(grid);
 
   // Axis-separated resolution → slides along walls instead of sticking.
-  const nx = clamp(s.x + mx * dist, PLAYER_RADIUS, WORLD_W - PLAYER_RADIUS);
+  const nx = clamp(s.x + mx * dist, PLAYER_RADIUS, worldW - PLAYER_RADIUS);
   if (!collides(nx, s.y, grid)) s.x = nx;
-  const ny = clamp(s.y + my * dist, PLAYER_RADIUS, WORLD_H - PLAYER_RADIUS);
+  const ny = clamp(s.y + my * dist, PLAYER_RADIUS, worldH - PLAYER_RADIUS);
   if (!collides(s.x, ny, grid)) s.y = ny;
 }
 
@@ -97,28 +107,22 @@ export const ENEMY_FIRE_RANGE = 240;
 export const RESPAWN_MS = 2600;
 
 // ── Progression / loot / shared meta (all server-authoritative) ──
-export const XP_PER_KILL = 14;
+export const XP_PER_KILL = 20; // early levels should feel — first-hour progression
 export const levelForXp = (xp: number) => 1 + Math.floor(xp / 100);
 export const xpIntoLevel = (xp: number) => xp % 100; // 0..99 toward the next level
-export const CREDITS_PER_KILL = 12;
+export const CREDITS_PER_KILL = 18; // +50% over the original 12 — early grind felt slow
 export const LOOT_DROP_CHANCE = 0.55; // chance a cop drops a pickup
 export const PICKUP_RADIUS = 18; // walk within this to collect
 export const PICKUP_TTL_MS = 15000;
 /** Pickup kinds: 0 = credit cache, 1 = data core (rarer, worth more + bonus XP). */
 export const PICKUP_CREDIT = 0;
 export const PICKUP_CORE = 1;
-export const SING_PER_KILL = 0.6; // every kill (any player) pushes the shared meter
-export const SING_MAX = 100;
-/** When the Singularity hits SING_MAX a server-wide meltdown runs for this long,
- *  then the era resets (Singularity → 0, season++). During it the HSS goes berserk. */
-export const MELTDOWN_DURATION_MS = 8000;
-export const MELTDOWN_ENEMY_SPEED_MULT = 1.6;
-export const MELTDOWN_FIRE_FASTER = 0.5; // cop fire cooldown × this
 
 /** Area-of-interest radius — the server only sends a client the entities within
  *  this distance of its player. Bigger than the ~960×540 view so nothing pops in
  *  at the edge; the mechanism is what matters (it's what makes scale possible). */
-export const AOI_RADIUS = 720;
+/** AOI for entity snapshots — sized for superscaled zones (city + districts). */
+export const AOI_RADIUS = 1040;
 
 // ── Territory control + faction war (Step 4a) ──
 /** The four cells = the four classes. A player fights for one of them. */
@@ -153,11 +157,67 @@ export function factionForColor(color: number): number {
   return best;
 }
 
+// ── PvP arenas (free-for-all combat zones) ──
+// Designated rectangles away from story spawns / nodes. Everywhere else is PvE-safe.
+// Entering costs a $METRO buy-in (see game/pvp.ts); eliminations claim the victim's pot.
+// Hub, tutorial, and subway have no arenas — players interact there, they don't fight.
+export interface PvpZone {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  name: string;
+}
+
+const PVP_FREE_ZONES = new Set(["safe", "tutorial", "subway"]);
+
+/** True when this zone allows PvP arenas at all. */
+export function pvpEnabledForZone(zone: string): boolean {
+  if (PVP_FREE_ZONES.has(zone)) return false;
+  if (zone.startsWith("int_")) return false;
+  return /^d\d+$/.test(zone);
+}
+
+/** PvP arenas scaled to the zone's world size — tucked in the southeast, away from the
+ *  central story lanes where nodes, spawns, and FIXER beats concentrate. */
+export function pvpZonesFor(worldW: number, worldH: number, zone = ""): PvpZone[] {
+  if (!pvpEnabledForZone(zone)) return [];
+  const sx = worldW / WORLD_W;
+  const sy = worldH / WORLD_H;
+  const margin = 72 * sx;
+  const w = Math.min(520 * sx, worldW * 0.26);
+  const h = Math.min(380 * sy, worldH * 0.26);
+  return [
+    {
+      x: worldW - w - margin,
+      y: worldH - h - margin,
+      w,
+      h,
+      name: "THE CRUCIBLE",
+    },
+  ];
+}
+
+/** Index of the PvP arena containing (x,y), or -1 if outside all arenas. */
+export function pvpZoneAt(x: number, y: number, zones = pvpZonesFor(WORLD_W, WORLD_H, "d0")): number {
+  for (let i = 0; i < zones.length; i++) {
+    const z = zones[i];
+    if (x >= z.x && x <= z.x + z.w && y >= z.y && y <= z.y + z.h) return i;
+  }
+  return -1;
+}
+
+/** True if (x,y) is inside any PvP arena. */
+export const inPvpZone = (x: number, y: number, zones = pvpZonesFor(WORLD_W, WORLD_H, "d0")): boolean =>
+  pvpZoneAt(x, y, zones) >= 0;
+
 /** True if the point (x,y) is inside a wall tile or out of bounds. */
 export function tileIsWall(x: number, y: number, grid: TileGrid): boolean {
   const tx = Math.floor(x / TILE);
   const ty = Math.floor(y / TILE);
-  if (tx < 0 || ty < 0 || tx >= GRID_W || ty >= GRID_H) return true;
+  const gw = grid[0]?.length ?? 0;
+  const gh = grid.length;
+  if (tx < 0 || ty < 0 || tx >= gw || ty >= gh) return true;
   const row = grid[ty];
   return !row || isWall(row[tx]);
 }

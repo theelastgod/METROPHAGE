@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { PLAYER, COLORS, SHIELD } from "../config";
-import { PLAYER_KEY, playerKeyFor, faceFrame } from "../assets/manifest";
+import { PLAYER_KEY, playerKeyFor } from "../assets/manifest";
+import { driveChar } from "../assets/anim";
 import { ClassDef } from "../game/classes";
 
 /** Per-frame input snapshot, decoupled from the raw key/pointer objects. */
@@ -34,6 +35,8 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
   /** Ability / ultimate cooldown timestamps (scene-managed). */
   nextAbilityAt = 0;
   nextUltAt = 0;
+  /** Primary fire cadence — defaults to the class primary, overridden by an equipped weapon. */
+  fireRateMs: number;
 
   private dashUntil = 0;
   private dashReadyAt = 0;
@@ -66,6 +69,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this.classDef = classDef;
     this.maxHp = classDef.maxHp;
     this.hp = classDef.maxHp;
+    this.fireRateMs = classDef.primary.fireRateMs;
     scene.add.existing(this);
     scene.physics.add.existing(this);
     this.baseTint = opts?.color ?? 0xffffff;
@@ -74,6 +78,9 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this.setDepth(10);
     (this.body as Phaser.Physics.Arcade.Body).setCircle(9, 7, 9);
   }
+
+  /** Base display scale — keeps the runner legible against dense neon floors. */
+  private static readonly BASE_SCALE = 1.18;
 
   get invulnerable(): boolean {
     return this.scene.time.now < this.invulnUntil;
@@ -89,9 +96,8 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
   step(input: PlayerInput) {
     const now = this.scene.time.now;
 
-    // Aim: face the pointer via the directional sheet (0=down 1=left 2=right 3=up).
+    // Aim angle drives the facing; the walk cycle plays while moving (set below).
     const aim = Phaser.Math.Angle.Between(this.x, this.y, input.aimX, input.aimY);
-    this.setFrame(faceFrame(Math.cos(aim), Math.sin(aim)));
 
     const dir = new Phaser.Math.Vector2(
       (input.right ? 1 : 0) - (input.left ? 1 : 0),
@@ -131,14 +137,17 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     // Breathing / step bob + fire recoil — visual squash only (kept tiny so the
     // physics body is effectively unchanged).
     const moving = (this.body as Phaser.Physics.Arcade.Body).velocity.lengthSq() > 900;
+    // Facing follows the aim; legs/arms cycle while moving (or dashing).
+    driveChar(this, Math.cos(aim), Math.sin(aim), moving);
     const s = Math.sin(now * (moving ? 0.02 : 0.006));
-    let sx = 1 - s * (moving ? 0.05 : 0.02);
-    let sy = 1 + s * (moving ? 0.1 : 0.045);
+    const B = Player.BASE_SCALE;
+    let sx = B * (1 - s * (moving ? 0.05 : 0.02));
+    let sy = B * (1 + s * (moving ? 0.1 : 0.045));
     const since = now - this.firedAt;
     if (since < 130) {
       const k = 1 - since / 130;
-      sx -= 0.13 * k;
-      sy += 0.11 * k;
+      sx -= 0.13 * B * k;
+      sy += 0.11 * B * k;
     }
     this.setScale(sx, sy);
   }
@@ -164,7 +173,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     if (!input.fire) return null;
     const now = this.scene.time.now;
     if (now < this.nextFireAt) return null;
-    this.nextFireAt = now + this.classDef.primary.fireRateMs;
+    this.nextFireAt = now + this.fireRateMs;
     this.firedAt = now; // trigger the recoil squash
     return Phaser.Math.Angle.Between(this.x, this.y, input.aimX, input.aimY);
   }

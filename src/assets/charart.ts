@@ -1,6 +1,11 @@
-// METROPHAGE — code-authored characters, drawn parametrically at 32×32 (4× the
-// detail of the old 16×16 char maps). Same top-down 3/4 view; frame order matches
-// faceFrame(): [down, left, right, up], where `right` is `left` mirrored.
+// METROPHAGE — code-authored characters, drawn parametrically at 32×32. Top-down 3/4
+// view; frame order matches faceFrame(): [down, left, right, up], `right` mirrors `left`.
+//
+// FIGURE LANGUAGE (the "human" pass): ~3.4 heads tall — an 8px head on a necked,
+// waisted torso with long tapered legs. The old art was a 13px bobblehead on a stub
+// body; everything below draws an ADULT. Faces are real: brow, two 2px eyes with
+// iris colour, nose, mouth, jaw. Cyberpunk lives in the gear — jacket trim, neon
+// wraps, glowing decals/visors — not in the anatomy.
 //
 // Player / Cop / Boss are drawn GRAYSCALE so the in-scene setTint() recolors them
 // (white visor → bright class hue, darks stay dark). The NPC carries its own hues.
@@ -8,6 +13,17 @@
 // neon post-FX blooms it.
 
 export const CHAR = 32; // native px per character frame
+
+/** Walk-cycle frames baked per facing. Sheets are facing-major: the frame index is
+ *  `facing * WALK_STEPS + step`, so frame `facing*WALK_STEPS` is the neutral (idle)
+ *  stance and the four steps loop as a stride (see assets/anim.ts). */
+export const WALK_STEPS = 4;
+
+/** Per-step limb swing — a [0, +1, 0, -1] triangle across the cycle (contact → pass →
+ *  contact → pass). Legs/arms offset by this so a baked sheet reads as a walk. */
+export function walkSwing(step: number): number {
+  return [0, 1, 0, -1][((step % WALK_STEPS) + WALK_STEPS) % WALK_STEPS];
+}
 
 export type Facing = "down" | "left" | "right" | "up";
 const FACINGS: Facing[] = ["down", "left", "right", "up"];
@@ -66,13 +82,16 @@ const GREEN: Tones = {
 };
 
 export type Build = "slim" | "normal" | "bulky" | "huge";
-export type Head = "helmet" | "hood" | "cap" | "drone" | "mohawk" | "horns" | "crown";
+export type Head = "helmet" | "hood" | "cap" | "drone" | "mohawk" | "horns" | "crown" | "mask" | "beret" | "spikes";
 export type Visor = "band" | "goggles" | "single" | "wide" | "cross" | "scan" | "round";
 export type Shoulders = "none" | "pads" | "spikes" | "heavy";
-export type Decal = "none" | "cross" | "triangle" | "ring" | "bars" | "skull";
+export type Decal = "none" | "cross" | "triangle" | "ring" | "bars" | "skull" | "star" | "bolt";
 export type Cloak = "none" | "cape" | "coat";
-export type Hair = "none" | "short" | "long" | "spiky" | "bun" | "afro" | "ponytail" | "buzz" | "mohawk" | "braids";
+export type Hair = "none" | "short" | "long" | "spiky" | "bun" | "afro" | "ponytail" | "buzz" | "mohawk" | "braids" | "undercut" | "dreads";
 export type Beard = "none" | "stubble" | "mustache" | "goatee" | "full";
+export type FaceMark = "none" | "scar" | "tattoo" | "chrome" | "warpaint";
+export type Gloves = "none" | "wraps" | "knuckles" | "gauntlets";
+export type LegGear = "none" | "wraps" | "greaves" | "boots";
 
 export interface CharSpec {
   build: Build;
@@ -92,36 +111,72 @@ export interface CharSpec {
   hair?: Hair;
   hairColor?: number;
   beard?: Beard; // facial hair (uses the hair colour)
+  sex?: "f" | "m"; // human body proportions (female = slimmer torso + bust; male = broader shoulders)
+  faceMark?: FaceMark; // scar / tattoo / chrome-lines / war-paint (human faces)
+  eyeColor?: number; // iris colour on human faces (neon allowed)
+  gloves?: Gloves; // hand gear — wraps, studded knuckles, heavy gauntlets
+  legGear?: LegGear; // shin / boot accents
+  accentColor?: number; // second trim hue (pauldrons, rims, knuckles)
+  accentTones?: Tones; // pre-baked accent ramp (from accentColor)
 }
 
 // ── Per-class player specs (ids match game/classes.ts) ──────────────────────
+// Playable runners are humans — distinct silhouettes per class so they read at game scale.
 export const PLAYER_SPECS: Record<string, CharSpec> = {
-  // sleek cyber-operative, visor band
-  wintermute: { build: "normal", head: "helmet", visor: "band", tones: GRAY },
-  // hazmat infector — hooded, twin goggle lenses, glowing chest emblem
-  metrophage: { build: "bulky", head: "hood", visor: "goggles", emblem: true, tones: GRAY },
-  // street militant — capped brim, diagonal bandolier
-  "k-guerilla": { build: "normal", head: "cap", visor: "band", strap: true, tones: GRAY },
-  // drone-host — slim, twin antennae, single focused optic
-  swarm: { build: "slim", head: "drone", visor: "single", antennae: true, tones: GRAY },
+  wintermute: {
+    // Hacker — coat, long hair, chrome temple, cold eyes
+    build: "slim", head: "hood", visor: "band", tones: GRAY, sex: "f", skin: 0xe6b58c, hair: "long", hairColor: 0x1b1820,
+    eyeColor: 0x29e7ff, beard: "none", cloak: "coat", shoulders: "none", decal: "ring", faceMark: "chrome",
+    gloves: "wraps", legGear: "boots",
+  },
+  metrophage: {
+    // Contagion runner — beret, bandolier, scar, infection emblem
+    build: "normal", head: "beret", visor: "band", tones: GRAY, sex: "m", skin: 0xc98a5e, hair: "undercut", hairColor: 0x1b1820,
+    beard: "stubble", eyeColor: 0x39ff88, cloak: "coat", shoulders: "pads", decal: "triangle", strap: true,
+    faceMark: "scar", gloves: "knuckles", legGear: "wraps",
+  },
+  "k-guerilla": {
+    // Soldier — heavy pads, strap, boots, short cut
+    build: "bulky", head: "cap", visor: "goggles", strap: true, tones: GRAY, sex: "m", skin: 0x7c4f30, hair: "buzz", hairColor: 0x1b1820,
+    eyeColor: 0xf7ff3c, beard: "none", cloak: "none", shoulders: "heavy", decal: "bars",
+    gloves: "gauntlets", legGear: "greaves",
+  },
+  swarm: {
+    // Swarm host — slim, antennae, ponytail, neon wraps
+    build: "slim", head: "drone", visor: "band", tones: GRAY, sex: "f", skin: 0xa9794a, hair: "ponytail", hairColor: 0xb06bff,
+    eyeColor: 0xff2bd6, beard: "none", cloak: "cape", shoulders: "spikes", decal: "star", antennae: true,
+    gloves: "wraps", legGear: "wraps",
+  },
 };
 export const PLAYER_IDS = Object.keys(PLAYER_SPECS);
 
-export const COP_SPEC: CharSpec = { build: "bulky", head: "helmet", visor: "wide", tones: GRAY };
+export const COP_SPEC: CharSpec = {
+  build: "bulky", head: "helmet", visor: "wide", tones: GRAY, shoulders: "pads", decal: "cross",
+  gloves: "gauntlets", legGear: "greaves", strap: true,
+};
 export const BOSS_SPEC: CharSpec = {
   build: "huge",
   head: "helmet",
-  visor: "wide",
+  visor: "cross",
   emblem: true,
   tones: GRAY,
+  shoulders: "heavy",
+  decal: "skull",
+  gloves: "gauntlets",
+  legGear: "greaves",
+  cloak: "cape",
 };
 export const NPC_SPEC: CharSpec = {
   build: "normal",
   head: "hood",
   visor: "single",
-  antennae: true,
   collar: true,
   tones: GREEN,
+  skin: 0xc98a5e,
+  hair: "short",
+  hairColor: 0x2a1d14,
+  sex: "m",
+  beard: "stubble",
 };
 
 const hex = (c: number) => "#" + (c & 0xffffff).toString(16).padStart(6, "0");
@@ -130,35 +185,38 @@ const hex = (c: number) => "#" + (c & 0xffffff).toString(16).padStart(6, "0");
 export const AGENT_W = 16;
 export const AGENT_H = 22;
 
-/** A compact grayscale civilian for the ambient crowd (tinted per-instance). */
-export function drawAgent(ctx: CanvasRenderingContext2D) {
+/** A compact grayscale civilian for the ambient crowd (tinted per-instance). `step`
+ *  drives a small leg shuffle so the wandering crowd reads as walking. */
+export function drawAgent(ctx: CanvasRenderingContext2D, step = 0) {
   const t = GRAY;
+  const sw = walkSwing(step);
   const px = (x: number, y: number, w: number, h: number, c: number, a = 1) => {
     ctx.globalAlpha = a;
     ctx.fillStyle = hex(c);
     ctx.fillRect(x, y, w, h);
     ctx.globalAlpha = 1;
   };
-  const part = (x: number, y: number, w: number, h: number, fill: number) => {
-    px(x, y, w, h, t.o);
-    px(x + 1, y + 1, w - 2, h - 2, fill);
-  };
-  px(2, 20, 12, 1, 0x000000, 0.25); // shadow
-  // legs
-  part(5, 16, 3, 5, t.b);
-  part(8, 16, 3, 5, t.a);
-  // body
-  part(3, 9, 10, 8, t.b);
-  px(5, 10, 5, 5, t.c); // front light
-  px(11, 10, 1, 6, t.a);
+  px(3, 20, 10, 2, 0x000000, 0.28); // contact shadow
+  // small adult: 5px head, necked torso, long legs — stronger outline for density
+  px(6, 1, 5, 5, t.o);
+  px(7, 2, 3, 3, t.c); // head
+  px(7, 5, 3, 1, t.b); // jaw
+  px(8, 3, 1, 1, t.d, 0.7); // cheek light
+  px(7, 6, 2, 1, t.b); // neck
+  // torso — jacket with a neon zipper so the crowd reads as cyberpunk
+  px(5, 7, 7, 1, t.o);
+  px(5, 8, 7, 6, t.b);
+  px(6, 8, 2, 5, t.c);
+  px(10, 9, 1, 5, t.a);
+  px(8, 8, 1, 5, t.e, 0.35); // zipper glint (tints to crowd hue)
   // arms
-  part(2, 10, 2, 6, t.b);
-  part(12, 10, 2, 6, t.b);
-  // head
-  part(4, 2, 8, 8, t.b);
-  px(5, 3, 6, 2, t.c);
-  px(5, 3, 4, 1, t.d);
-  px(5, 6, 6, 1, t.e, 0.85); // faint visor glow
+  px(4, 8 + sw, 1, 5, t.a);
+  px(12, 8 - sw, 1, 5, t.a);
+  // legs — alternate on the shuffle
+  px(6, 14 - sw, 2, 6, t.a);
+  px(9, 14 + sw, 2, 6, t.b);
+  px(6, 19 - sw, 2, 1, t.o);
+  px(9, 19 + sw, 2, 1, t.o); // boots
 }
 
 /**
@@ -166,147 +224,230 @@ export function drawAgent(ctx: CanvasRenderingContext2D) {
  * top-left). Frame index → facing via FACINGS; `right` is drawn as a mirrored
  * `left`. Coordinates assume a 32×32 cell.
  */
-export function drawCharacter(ctx: CanvasRenderingContext2D, frame: number, spec: CharSpec) {
+export function drawCharacter(
+  ctx: CanvasRenderingContext2D,
+  frame: number,
+  spec: CharSpec,
+  step = 0,
+) {
   const facing = FACINGS[frame] ?? "down";
   if (facing === "right") {
     ctx.save();
     ctx.translate(CHAR, 0);
     ctx.scale(-1, 1);
-    drawPose(ctx, "left", spec);
+    drawPose(ctx, "left", spec, step);
     ctx.restore();
     return;
   }
-  drawPose(ctx, facing, spec);
+  drawPose(ctx, facing, spec, step);
 }
 
-function drawPose(ctx: CanvasRenderingContext2D, facing: Facing, spec: CharSpec) {
+/** Accent trim ramp — falls back to the main gear tones when no second colour is set. */
+function accentOf(spec: CharSpec): Tones {
+  return spec.accentTones ?? spec.tones;
+}
+
+type Px = (x: number, y: number, w: number, h: number, c: number, a?: number) => void;
+type Part = (x: number, y: number, w: number, h: number, fill: number) => void;
+
+function drawPose(ctx: CanvasRenderingContext2D, facing: Facing, spec: CharSpec, step = 0) {
   const t = spec.tones;
-  const px = (x: number, y: number, w: number, h: number, c: number, a = 1) => {
+  const acc = accentOf(spec);
+  const sw = walkSwing(step); // -1..1 stride phase; legs/arms offset oppositely
+  const bob = sw !== 0 ? 1 : 0; // passing frames drop the body 1px — the step bounce
+  const px: Px = (x, y, w, h, c, a = 1) => {
     ctx.globalAlpha = a;
     ctx.fillStyle = hex(c);
     ctx.fillRect(x, y, w, h);
     ctx.globalAlpha = 1;
   };
   // outline a block then inset-fill it (clean 1px silhouette edge)
-  const part = (x: number, y: number, w: number, h: number, fill: number) => {
+  const part: Part = (x, y, w, h, fill) => {
     px(x, y, w, h, t.o);
     px(x + 1, y + 1, w - 2, h - 2, fill);
   };
 
   // bulk widens the torso/shoulders
-  const bulk = spec.build === "huge" ? 4 : spec.build === "bulky" ? 2 : spec.build === "slim" ? -2 : 0;
+  const bulk = spec.build === "huge" ? 4 : spec.build === "bulky" ? 2 : spec.build === "slim" ? -1 : 0;
   const cx = 16;
+  const fem = spec.sex === "f";
 
-  // ── ground shadow ───────────────────────────────────────────────
-  px(cx - 7, 28, 14, 2, 0x000000, 0.26);
-  px(cx - 5, 29, 10, 1, 0x000000, 0.22);
+  // Stronger contact shadow + rim so characters pop on dense neon floors at game scale.
+  px(cx - 7, 29, 14, 2, 0x000000, 0.35);
+  px(cx - 5, 28, 10, 1, 0x000000, 0.18);
+  // faint emissive rim underfoot (tints to class / gear neon)
+  px(cx - 4, 30, 8, 1, t.e, 0.18);
+  px(cx - 2, 29, 4, 1, t.e, 0.1);
 
   if (facing === "left") {
-    drawProfile(spec, px, part, bulk);
+    ctx.save();
+    ctx.translate(0, bob);
+    drawProfile(spec, px, part, bulk, step);
+    ctx.restore();
     return;
   }
 
   const back = facing === "up";
+  ctx.save();
+  ctx.translate(0, bob);
 
-  // ── cloak: a cape drapes BEHIND the body (drawn first) ──────────
+  // torso metrics (shared by cloak/arms/legs)
+  const tw = (fem ? 10 : 12) + bulk; // shoulder width
+  const tx = cx - Math.floor(tw / 2);
+
+  // ── cape drapes BEHIND the body (drawn first) ───────────────────
   if (spec.cloak === "cape") {
-    const cw = 16 + bulk;
+    const cw = tw + 2;
     if (back) {
-      part(cx - cw / 2, 13, cw, 16, t.a); // full cape down the back
-      px(cx - cw / 2 + 1, 14, cw - 2, 13, t.b);
-      px(cx - 1, 14, 2, 14, t.a, 0.7); // centre fold
-      px(cx - cw / 2 + 1, 14, 1, 13, t.rim, 0.6); // edge rim-light
+      part(cx - Math.floor(cw / 2), 12, cw, 15, t.a); // full cape down the back
+      px(cx - Math.floor(cw / 2) + 1, 13, cw - 2, 12, t.b);
+      px(cx - 1, 13, 2, 13, t.a, 0.7); // centre fold
+      px(cx - Math.floor(cw / 2) + 1, 13, 1, 12, t.rim, 0.6);
     } else {
-      px(cx - cw / 2, 13, 2, 16, t.a); // edges peek past the shoulders
-      px(cx + cw / 2 - 2, 13, 2, 16, t.a);
-      px(cx - cw / 2, 13, 1, 16, t.rim, 0.5);
+      px(tx - 2, 13, 2, 13, t.a); // edges peek past the shoulders
+      px(tx + tw, 13, 2, 13, t.a);
+      px(tx - 2, 13, 1, 13, t.rim, 0.5);
     }
   }
 
-  // ── legs (clear stance, dark gap between) ───────────────────────
-  for (const lx of [cx - 6, cx + 2]) {
-    part(lx, 23, 5, 6, t.b); // 3px-fill leg
-    px(lx + 1, 24, 3, 3, t.c); // shin highlight
-    px(lx + 1, 28, 3, 1, t.a); // boot shadow
-  }
-  px(cx - 1, 23, 2, 5, t.o); // dark gap so the legs read as two
+  // ── pelvis (fills the gap between the legs) + legs ──────────────
+  part(cx - 4, 18, 9, 4, t.a); // hip block sits under the jacket hem
+  const legDy = [-sw, sw];
+  [cx - 4, cx + 1].forEach((lx, i) => {
+    const dy = legDy[i];
+    // trouser: long tapered leg
+    px(lx, 20 + dy, 4, 7, t.o);
+    px(lx + 1, 20 + dy, 2, 6, i === 0 ? t.a : scaleColor(t.a, 0.85));
+    px(lx + 1, 21 + dy, 1, 3, t.b, 0.6); // thigh catch-light
+    if (spec.legGear === "wraps") {
+      px(lx + 1, 23 + dy, 2, 1, acc.e, 0.9);
+      px(lx + 1, 25 + dy, 2, 1, acc.e, 0.75); // neon shin wraps
+    } else if (spec.legGear === "greaves") {
+      px(lx + 1, 23 + dy, 2, 3, acc.c);
+      px(lx + 1, 23 + dy, 1, 3, acc.rim, 0.7); // plated shin
+    }
+    // boot
+    const bootT = spec.legGear === "boots" ? acc.b : t.o;
+    px(lx, 27 + dy, 4, 2, t.o);
+    px(lx + 1, 27 + dy, 2, 1, bootT === t.o ? t.a : bootT);
+    if (spec.legGear === "boots") px(lx + 1, 28 + dy, 3, 1, acc.d, 0.7); // lit sole
+  });
 
-  // ── torso + shoulders (horizontal light banding, not vertical bars) ──
-  const tw = 14 + bulk; // torso width
-  const tx = cx - tw / 2;
-  part(tx - 1, 12, tw + 2, 5, t.b); // shoulder yoke
-  px(tx, 13, tw, 1, t.c); // lit shoulder top
-  px(tx, 14, tw, 1, t.d, 0.6); // shoulder highlight
-  part(tx, 16, tw, 8, t.b); // torso
+  // ── torso: fitted street jacket, waisted; broader yoke for men ──
+  part(tx, 12, tw, 5, t.b); // chest
+  const wtw = tw - 2; // waist taper
+  part(cx - Math.floor(wtw / 2), 15, wtw, 5, t.b); // waist → hips
+  px(tx + 1, 12, tw - 2, 1, t.c); // shoulder yoke light
+  // neon jacket hem + collar trim (class colour blooms via post-FX)
+  px(tx, 12, tw, 1, acc.e, 0.55);
+  px(tx, 16, 1, 3, acc.e, 0.35);
+  px(tx + tw - 1, 16, 1, 3, acc.e, 0.28);
   if (!back) {
-    px(tx + 1, 17, tw - 2, 2, t.c); // upper-chest light band
-    px(tx + 1, 22, tw - 2, 1, t.a); // lower-belly shadow band
-    px(cx - 2, 18, 1, 4, t.a, 0.6); // soft centre groove (short, not full height)
+    px(tx + 1, 13, 1, 3, t.rim, 0.55); // left rim
+    px(tx + 2, 13, 2, 2, t.c, 0.45); // soft chest light
+    px(cx, 13, 1, 6, t.a); // zip line
+    px(cx, 13, 1, 6, acc.e, 0.22); // neon zip glint
+    px(cx - Math.floor(wtw / 2) + 1, 18, wtw - 2, 1, acc.d, 0.85); // belt
+    px(cx - Math.floor(wtw / 2) + 2, 18, wtw - 4, 1, acc.e, 0.45); // belt core
+    if (fem) {
+      px(cx - 3, 14, 2, 1, t.c, 0.75);
+      px(cx + 1, 14, 2, 1, t.c, 0.75); // bust light
+    }
   } else {
-    px(tx + 1, 17, tw - 2, 6, t.a); // back is shadowed
-    px(tx + 1, 16, tw - 2, 1, t.c); // nape light
-    part(cx - 3, 18, 6, 5, t.a); // backpack housing
-    px(cx - 2, 19, 4, 1, t.rim, 0.8); // pack rim light
+    px(tx + 1, 13, tw - 2, 5, t.a); // back panel
+    px(cx, 13, 1, 6, t.o, 0.4); // spine seam
+    px(tx + 1, 12, tw - 2, 1, t.c);
+    px(tx + 2, 14, tw - 4, 1, acc.e, 0.3); // rear jacket band
   }
 
-  // arms at the sides
-  part(tx - 3, 15, 3, 8, t.b);
-  part(tx + tw, 15, 3, 8, t.b);
-  px(tx - 2, 16, 1, 5, t.c); // left arm catches light
-  px(tx + tw + 1, 17, 1, 5, t.a); // right arm in shadow
+  // ── arms: slim sleeves, counter-swing; hands or gloves ──────────
+  const laY = 12 + sw;
+  const raY = 12 - sw;
+  px(tx - 2, laY, 2, 7, t.o);
+  px(tx - 1, laY + 1, 1, 5, t.b); // left sleeve
+  px(tx + tw, raY, 2, 7, t.o);
+  px(tx + tw, raY + 1, 1, 5, scaleColor(t.b, 0.8)); // right sleeve (shadow side)
+  drawHands(spec, px, tx - 2, laY + 7, tx + tw, raY + 7, t, acc);
 
-  // ── shoulder armor (over the arms/yoke) ─────────────────────────
+  // ── shoulder armor (over the sleeves) ───────────────────────────
   if (spec.shoulders && spec.shoulders !== "none") drawShoulders(spec, px, part, tx, tw);
 
-  // ── coat: a skirt drapes OVER the legs (after the torso) ────────
+  // ── coat: a skirt drapes OVER the legs ──────────────────────────
   if (spec.cloak === "coat") {
-    const cw = tw + 2;
-    part(cx - cw / 2, 22, cw, 8, t.a);
-    px(cx - cw / 2 + 1, 23, cw - 2, 6, t.b);
-    px(cx - 1, 23, 2, 6, t.o, 0.85); // front split
-    if (!back) px(cx - cw / 2 + 1, 23, cw - 2, 1, t.c); // belt line
-    px(cx - cw / 2 + 1, 23, 1, 6, t.rim, 0.5);
+    const cw = tw;
+    part(cx - Math.floor(cw / 2), 19, cw, 7, t.a);
+    px(cx - Math.floor(cw / 2) + 1, 20, cw - 2, 5, t.b);
+    px(cx - 1, 20, 2, 6, t.o, 0.85); // front split
+    px(cx - Math.floor(cw / 2) + 1, 20, 1, 5, t.rim, 0.5);
   }
 
   // emblem / decal / bandolier on the chest (front only)
   if (!back && spec.emblem) {
-    px(cx - 2, 18, 4, 4, t.o); // socket
-    px(cx - 1, 19, 2, 2, t.e); // compact glowing core
+    px(cx - 2, 14, 4, 3, t.o); // socket
+    px(cx - 1, 15, 2, 1, t.e); // compact glowing core
   }
-  if (!back && spec.decal && spec.decal !== "none") drawDecal(spec, px, cx, 16);
+  if (!back && spec.decal && spec.decal !== "none") drawDecal(spec, px, cx, 12);
   if (!back && spec.strap) {
-    for (let i = 0; i < 6; i++) px(tx + 2 + i, 16 + i, 2, 1, t.d, 0.9); // bandolier
+    for (let i = 0; i < 5; i++) px(tx + 1 + i, 12 + i, 2, 1, t.d, 0.9); // bandolier
   }
 
-  // ── head ────────────────────────────────────────────────────────
-  if (spec.skin != null) drawHumanHead(facing, spec, px, part);
-  else drawHead(facing, spec, px, part);
+  // ── neck + head ─────────────────────────────────────────────────
+  if (spec.skin != null) {
+    const skinT = tonesFromColor(spec.skin);
+    px(cx - 1, 10, 3, 2, skinT.b);
+    px(cx - 1, 10, 2, 1, skinT.c); // neck
+    drawHumanHead(facing, spec, px, part);
+  } else drawHead(facing, spec, px, part);
+
+  ctx.restore();
 }
 
-type Px = (x: number, y: number, w: number, h: number, c: number, a?: number) => void;
-type Part = (x: number, y: number, w: number, h: number, fill: number) => void;
+/** Hands / hand gear at the sleeve ends — bare skin, neon wraps, studs, gauntlets. */
+function drawHands(spec: CharSpec, px: Px, lx: number, ly: number, rx: number, ry: number, t: Tones, acc: Tones) {
+  const g = spec.gloves ?? "none";
+  const skinT = spec.skin != null ? tonesFromColor(spec.skin) : t;
+  const hand = (x: number, y: number, lit: boolean) => {
+    if (g === "wraps") {
+      px(x, y, 2, 3, t.a);
+      px(x, y, 2, 1, acc.e, 0.9);
+      px(x, y + 2, 2, 1, acc.d, 0.7); // banded wraps
+    } else if (g === "knuckles") {
+      px(x, y, 2, 3, t.a);
+      px(x, y + 1, 2, 1, acc.e, 0.95); // stud row
+    } else if (g === "gauntlets") {
+      px(x, y, 2, 4, acc.c);
+      px(x, y, 2, 1, acc.e, 0.85);
+      px(x, y + 3, 2, 1, acc.b);
+    } else {
+      px(x, y, 2, 2, lit ? skinT.c : skinT.b); // bare hands
+    }
+  };
+  hand(lx, ly, true);
+  hand(rx, ry, false);
+}
 
 /** Shoulder armor: pads / spikes / heavy pauldrons over each shoulder. */
 function drawShoulders(spec: CharSpec, px: Px, part: Part, tx: number, tw: number) {
   const t = spec.tones;
-  const lx = tx - 4;
-  const rx = tx + tw + 1;
+  const acc = accentOf(spec);
+  const lx = tx - 2;
+  const rx = tx + tw - 1;
   if (spec.shoulders === "pads") {
-    part(lx, 13, 4, 4, t.c);
-    part(rx, 13, 4, 4, t.b);
-    px(lx + 1, 14, 2, 1, t.d);
+    part(lx, 11, 3, 3, t.c);
+    part(rx, 11, 3, 3, t.b);
+    px(lx + 1, 12, 1, 1, acc.e, 0.85);
+    px(rx + 1, 12, 1, 1, acc.d, 0.75);
   } else if (spec.shoulders === "spikes") {
-    part(lx, 13, 4, 3, t.b);
-    part(rx, 13, 4, 3, t.b);
-    px(lx, 10, 1, 4, t.d);
-    px(lx + 2, 11, 1, 3, t.c); // jutting spikes
-    px(rx + 3, 10, 1, 4, t.d);
-    px(rx + 1, 11, 1, 3, t.c);
+    part(lx, 11, 3, 3, t.b);
+    part(rx, 11, 3, 3, t.b);
+    px(lx, 8, 1, 4, acc.e);
+    px(rx + 2, 8, 1, 4, acc.e);
   } else if (spec.shoulders === "heavy") {
-    part(lx - 1, 12, 5, 6, t.c);
-    part(rx, 12, 5, 6, t.b);
-    px(lx, 13, 3, 1, t.d);
-    px(lx - 1, 13, 1, 5, t.rim, 0.6);
+    part(lx - 1, 10, 4, 5, t.c);
+    part(rx, 10, 4, 5, t.b);
+    px(lx, 11, 2, 1, acc.e, 0.9);
+    px(rx + 1, 11, 2, 1, acc.e, 0.85);
+    px(lx - 1, 11, 1, 3, acc.rim, 0.75);
   }
 }
 
@@ -316,13 +457,12 @@ function drawDecal(spec: CharSpec, px: Px, cx: number, top: number) {
   const o = spec.tones.o;
   const y = top + 2;
   if (spec.decal === "cross") {
-    px(cx - 1, y, 2, 5, e);
+    px(cx - 1, y, 2, 4, e);
     px(cx - 2, y + 1, 4, 2, e);
   } else if (spec.decal === "triangle") {
     px(cx, y, 1, 1, e);
     px(cx - 1, y + 1, 3, 1, e);
-    px(cx - 2, y + 2, 5, 1, e);
-    px(cx - 2, y + 3, 5, 1, e);
+    px(cx - 2, y + 2, 5, 2, e);
   } else if (spec.decal === "ring") {
     px(cx - 2, y, 4, 1, e);
     px(cx - 2, y + 3, 4, 1, e);
@@ -337,60 +477,138 @@ function drawDecal(spec: CharSpec, px: Px, cx: number, top: number) {
     px(cx - 1, y + 3, 2, 1, e);
     px(cx - 2, y + 1, 1, 1, o);
     px(cx + 1, y + 1, 1, 1, o); // dark eye sockets
+  } else if (spec.decal === "star") {
+    px(cx, y, 1, 1, e);
+    px(cx - 1, y + 1, 3, 1, e);
+    px(cx - 2, y + 2, 5, 1, e);
+    px(cx - 1, y + 3, 1, 2, e);
+    px(cx + 1, y + 3, 1, 2, e);
+  } else if (spec.decal === "bolt") {
+    px(cx, y, 1, 2, e);
+    px(cx - 1, y + 2, 3, 1, e);
+    px(cx, y + 3, 1, 2, e);
+    px(cx - 2, y + 1, 2, 1, e);
   }
 }
 
-/** Human head — skin face with eyes (no cyber visor) + hair, for down/up facings. */
+/** Human head — an 8px adult face: brow, eyes with iris colour, nose, mouth, jaw. */
 function drawHumanHead(facing: Facing, spec: CharSpec, px: Px, part: Part) {
   const cx = 16;
   const back = facing === "up";
   const skin = tonesFromColor(spec.skin ?? 0xe0b48a);
   const hair = tonesFromColor(spec.hairColor ?? 0x2a1d14);
 
-  // skull / head in skin
-  part(cx - 5, 3, 10, 11, skin.b);
-  px(cx - 4, 4, 8, 3, skin.c); // lit forehead
-  px(cx - 4, 4, 6, 1, skin.d); // crown highlight
-  px(cx + 3, 6, 1, 7, skin.a); // side shadow
-  px(cx - 5, 6, 1, 6, skin.rim, 0.6); // cool rim
+  // skull: outline box + jaw taper (chin row narrower than the crown)
+  px(cx - 4, 2, 9, 8, skin.o);
+  px(cx - 3, 3, 7, 6, skin.b);
+  px(cx - 3, 9, 7, 1, skin.o, 0.0); // (kept transparent: jaw defined below)
+  px(cx - 2, 9, 5, 1, skin.b); // chin
+  px(cx - 2, 3, 4, 1, skin.c, 0.55); // soft forehead light (full-width read as a headband)
+  px(cx + 2, 4, 2, 5, skin.a, 0.55); // right side shade
+  px(cx - 3, 4, 1, 5, skin.rim, 0.35); // left rim
 
   if (back) {
-    px(cx - 4, 5, 8, 8, skin.a); // back of the head — no face
+    px(cx - 3, 3, 7, 7, skin.a);
     drawHair("up", spec, px, hair);
+    drawHumanHeadgear(facing, spec, px, part);
     return;
   }
 
-  // face — brow / eyes / nose / mouth
-  px(cx - 4, 8, 8, 5, skin.b);
-  px(cx - 4, 12, 8, 1, skin.a); // jaw shadow
-  px(cx - 3, 9, 2, 2, 0x0a0b12);
-  px(cx + 1, 9, 2, 2, 0x0a0b12); // eye sockets
-  px(cx - 3, 9, 1, 1, skin.e);
-  px(cx + 1, 9, 1, 1, skin.e); // catchlights
-  px(cx - 1, 10, 1, 2, skin.a); // nose
-  px(cx - 1, 12, 2, 1, skin.a, 0.7); // mouth
-  px(cx - 3, 8, 2, 1, hair.b); // brows
-  px(cx + 1, 8, 2, 1, hair.b);
+  // face
+  const iris = spec.eyeColor ?? 0x1a1020;
+  px(cx - 3, 5, 2, 1, hair.b, 0.9); // left brow
+  px(cx + 1, 5, 2, 1, hair.b, 0.9); // right brow
+  px(cx - 3, 6, 1, 1, 0xf0f0f5); // eye whites (outer)…
+  px(cx + 2, 6, 1, 1, 0xf0f0f5);
+  px(cx - 2, 6, 1, 1, iris); // …iris inner
+  px(cx + 1, 6, 1, 1, iris);
+  px(cx - 3, 7, 3, 1, skin.c, 0.5); // cheek light
+  px(cx + 1, 7, 3, 1, skin.a, 0.35); // cheek shade
+  px(cx, 7, 1, 1, skin.a, 0.8); // nose
+  px(cx - 1, 8, 2, 1, 0x7a4038, 0.8); // mouth
+  px(cx - 2, 9, 5, 1, skin.a, 0.4); // jaw shade
 
   if (spec.beard && spec.beard !== "none") drawBeard(spec, px, cx, hair);
+  if (spec.faceMark && spec.faceMark !== "none") drawFaceMark(spec, px, cx, accentOf(spec));
   drawHair(facing, spec, px, hair);
+  drawHumanHeadgear(facing, spec, px, part);
+}
+
+/** Distinctive face markings — scars, tattoos, chrome lines, war paint. */
+function drawFaceMark(spec: CharSpec, px: Px, cx: number, acc: Tones) {
+  const mark = spec.faceMark;
+  if (mark === "scar") {
+    px(cx + 1, 4, 1, 4, 0x8a4a3a, 0.9);
+    px(cx + 2, 5, 1, 2, 0xd8a090, 0.6);
+  } else if (mark === "tattoo") {
+    px(cx - 3, 8, 2, 1, acc.e, 0.9);
+    px(cx - 3, 7, 1, 1, acc.d, 0.8); // cheek glyph
+  } else if (mark === "chrome") {
+    px(cx - 4, 4, 1, 5, acc.e, 0.95); // temple line
+    px(cx + 3, 5, 1, 4, acc.d, 0.85);
+  } else if (mark === "warpaint") {
+    px(cx - 3, 7, 2, 1, acc.e, 0.8);
+    px(cx + 2, 7, 2, 1, acc.e, 0.8); // cheek stripes
+  }
+}
+
+/** Light headgear layered over a human face (cap, hood, helmet rim, etc.). */
+function drawHumanHeadgear(facing: Facing, spec: CharSpec, px: Px, _part: Part) {
+  if (facing === "up") return;
+  const t = spec.tones;
+  const cx = 16;
+  if (spec.head === "cap") {
+    px(cx - 4, 1, 9, 2, t.b);
+    px(cx - 4, 3, 9, 1, t.o, 0.8); // brim shadow
+    px(cx - 3, 1, 7, 1, t.c);
+  } else if (spec.head === "hood") {
+    px(cx - 5, 1, 11, 3, t.a);
+    px(cx - 5, 3, 1, 6, t.a);
+    px(cx + 5, 3, 1, 6, t.a); // cowl frames the face
+    px(cx - 4, 2, 9, 1, t.rim, 0.4);
+  } else if (spec.head === "helmet") {
+    px(cx - 4, 1, 9, 2, t.c);
+    px(cx - 3, 0, 7, 2, t.d, 0.5);
+  } else if (spec.head === "mohawk") {
+    px(cx - 1, 0, 2, 3, t.e);
+  } else if (spec.head === "horns") {
+    px(cx - 5, 0, 1, 3, t.d);
+    px(cx + 4, 0, 1, 3, t.d);
+  } else if (spec.head === "crown") {
+    px(cx - 4, 1, 9, 1, t.d);
+    for (const ox of [-3, 0, 3]) px(cx + ox, 0, 1, 1, t.e);
+  } else if (spec.head === "drone") {
+    px(cx + 3, 3, 3, 2, t.b);
+    px(cx + 4, 3, 1, 1, t.e);
+    px(cx + 5, 2, 2, 1, accentOf(spec).e, 0.9); // eye-side optic
+  } else if (spec.head === "mask") {
+    px(cx - 3, 6, 7, 4, t.a);
+    px(cx - 2, 7, 5, 2, t.b);
+    px(cx - 2, 7, 1, 1, accentOf(spec).e, 0.95);
+    px(cx + 2, 7, 1, 1, accentOf(spec).e, 0.95); // breather lights
+  } else if (spec.head === "beret") {
+    px(cx - 5, 1, 8, 2, t.b);
+    px(cx - 1, 0, 5, 2, t.c); // tilt
+  } else if (spec.head === "spikes") {
+    for (const ox of [-3, -1, 1, 3]) px(cx + ox, 0, 1, 2, accentOf(spec).e);
+  }
 }
 
 /** Facial hair on the human face (uses the hair tones). */
 function drawBeard(spec: CharSpec, px: Px, cx: number, hair: Tones) {
   if (spec.beard === "stubble") {
-    px(cx - 3, 12, 6, 1, hair.a, 0.5);
-    px(cx - 2, 11, 4, 1, hair.a, 0.35);
+    px(cx - 2, 9, 5, 1, hair.a, 0.5);
+    px(cx - 2, 8, 1, 1, hair.a, 0.35);
+    px(cx + 2, 8, 1, 1, hair.a, 0.35);
   } else if (spec.beard === "mustache") {
-    px(cx - 2, 11, 4, 1, hair.b);
+    px(cx - 1, 8, 3, 1, hair.b); // covers the lip
   } else if (spec.beard === "goatee") {
-    px(cx - 2, 11, 4, 1, hair.b); // mustache
-    px(cx - 1, 12, 2, 2, hair.b); // chin tuft
+    px(cx - 1, 8, 3, 1, hair.b);
+    px(cx - 1, 9, 2, 1, hair.b); // chin tuft
   } else if (spec.beard === "full") {
-    px(cx - 4, 11, 8, 1, hair.b);
-    px(cx - 4, 12, 8, 2, hair.b); // jaw
-    px(cx - 2, 14, 4, 1, hair.a); // chin
-    px(cx - 1, 11, 2, 1, hair.c); // lit upper lip
+    px(cx - 3, 8, 7, 1, hair.b);
+    px(cx - 2, 9, 5, 1, hair.b); // jaw wrap
+    px(cx - 1, 8, 2, 1, hair.c, 0.6);
   }
 }
 
@@ -400,293 +618,352 @@ function drawHair(facing: Facing, spec: CharSpec, px: Px, hair: Tones) {
   const cx = 16;
   const back = facing === "up";
   if (spec.hair === "mohawk") {
-    px(cx - 1, 0, 2, 5, hair.b); // central crest, shaved sides
-    px(cx - 1, 0, 1, 5, hair.c);
-    px(cx, 0, 1, 1, hair.d);
+    px(cx - 1, 0, 2, 4, hair.b);
+    px(cx - 1, 0, 1, 3, hair.c); // crest, shaved sides
     return;
   }
-  // base cap over the crown (all other styles)
-  px(cx - 6, 1, 12, 1, hair.o);
-  px(cx - 5, 1, 10, 3, hair.b);
-  px(cx - 5, 2, 10, 1, hair.c);
-  px(cx - 6, 4, 1, 4, hair.b);
-  px(cx + 5, 4, 1, 4, hair.b); // temples
+  // hairline cap over the crown (all other styles)
+  px(cx - 4, 2, 9, 2, hair.b);
+  px(cx - 3, 2, 7, 1, hair.c);
+  px(cx - 4, 4, 1, 2, hair.b);
+  px(cx + 4, 4, 1, 2, hair.b); // temples
   if (spec.hair === "long") {
-    px(cx - 7, 4, 1, 9, hair.a);
-    px(cx + 6, 4, 1, 9, hair.a);
-    if (back) px(cx - 6, 4, 12, 9, hair.a);
+    px(cx - 5, 3, 1, 8, hair.a);
+    px(cx + 5, 3, 1, 8, hair.a);
+    if (back) {
+      px(cx - 4, 3, 9, 8, hair.a);
+      px(cx - 3, 4, 3, 6, hair.b, 0.6);
+    }
   } else if (spec.hair === "spiky") {
-    for (const sx of [cx - 4, cx - 1, cx + 2]) px(sx, 0, 1, 3, hair.c);
+    for (const sx of [cx - 3, cx - 1, cx + 1, cx + 3]) px(sx, 0, 1, 2, hair.c);
   } else if (spec.hair === "bun") {
     px(cx - 1, 0, 3, 2, hair.b);
     px(cx, 0, 1, 1, hair.c);
   } else if (spec.hair === "afro") {
-    px(cx - 7, 0, 14, 5, hair.b);
-    px(cx - 6, 0, 1, 5, hair.o);
-    px(cx + 6, 0, 1, 5, hair.o);
-    px(cx - 5, 0, 10, 1, hair.c);
+    px(cx - 5, 0, 11, 4, hair.b);
+    px(cx - 4, 0, 9, 1, hair.c);
   } else if (spec.hair === "ponytail") {
-    if (back) px(cx - 1, 4, 2, 9, hair.a);
-    else px(cx + 5, 4, 2, 7, hair.a);
+    if (back) px(cx - 1, 3, 2, 9, hair.a);
+    else px(cx + 4, 3, 2, 6, hair.a);
   } else if (spec.hair === "buzz") {
-    px(cx - 5, 1, 10, 3, hair.a, 0.85); // tight + darker — buzzed
+    px(cx - 3, 2, 7, 2, hair.a, 0.8); // tight + darker
   } else if (spec.hair === "braids") {
-    px(cx - 7, 4, 2, 9, hair.a);
-    px(cx + 5, 4, 2, 9, hair.a); // two strands down the sides
-    px(cx - 7, 12, 2, 1, hair.b);
-    px(cx + 5, 12, 2, 1, hair.b); // ties
+    px(cx - 5, 3, 1, 8, hair.a);
+    px(cx + 5, 3, 1, 8, hair.a);
+    px(cx - 5, 10, 1, 1, hair.c);
+    px(cx + 5, 10, 1, 1, hair.c); // ties
+  } else if (spec.hair === "undercut") {
+    px(cx - 4, 4, 1, 3, hair.a, 0.5);
+    px(cx + 4, 4, 1, 3, hair.a, 0.5); // shaved sides
+    px(cx - 2, 0, 5, 3, hair.b); // top sweep
+    px(cx - 1, 0, 3, 1, hair.c);
+  } else if (spec.hair === "dreads") {
+    for (const ox of [-4, -2, 0, 2, 4]) px(cx + ox, 1, 1, 6 + (ox & 1), hair.b);
+    px(cx - 4, 1, 9, 1, hair.b);
   }
-  // "short" = just the base cap
+  // "short" = just the hairline cap
 }
 
-/** Human head in side profile (facing left) — skin, one eye, hair. */
-function drawHumanProfile(spec: CharSpec, px: Px, part: Part) {
+/** Human head in side profile (facing left) — skin, one eye, nose, hair. */
+function drawHumanProfile(spec: CharSpec, px: Px, _part: Part) {
   const cx = 15;
   const skin = tonesFromColor(spec.skin ?? 0xe0b48a);
   const hair = tonesFromColor(spec.hairColor ?? 0x2a1d14);
-  part(cx - 6, 3, 11, 11, skin.b);
-  px(cx - 5, 4, 9, 3, skin.c);
-  px(cx - 5, 4, 7, 1, skin.d);
-  px(cx + 2, 6, 2, 7, skin.a); // back of skull shadow
-  px(cx - 6, 8, 1, 2, skin.c); // nose juts left
-  px(cx - 4, 8, 2, 2, 0x0a0b12); // eye
-  px(cx - 4, 8, 1, 1, skin.e);
-  px(cx - 4, 11, 2, 1, skin.a, 0.7); // mouth
-  px(cx - 5, 7, 2, 1, hair.b); // brow
-  if (spec.beard === "stubble") px(cx - 5, 11, 5, 1, hair.a, 0.5);
-  else if (spec.beard === "mustache") px(cx - 5, 10, 3, 1, hair.b);
+  px(cx - 4, 2, 8, 8, skin.o);
+  px(cx - 3, 3, 6, 6, skin.b);
+  px(cx - 3, 3, 6, 1, skin.c); // crown light
+  px(cx + 1, 4, 2, 5, skin.a, 0.5); // back of skull
+  px(cx - 4, 5, 1, 2, skin.b); // nose juts left
+  px(cx - 4, 5, 1, 1, skin.c);
+  px(cx - 2, 9, 4, 1, skin.b); // jaw
+  const iris = spec.eyeColor ?? 0x0a0b12;
+  px(cx - 3, 5, 1, 1, hair.b, 0.9); // brow
+  px(cx - 3, 6, 1, 1, 0xf0f0f5);
+  px(cx - 2, 6, 1, 1, iris); // eye
+  px(cx - 3, 8, 2, 1, 0x7a4038, 0.7); // mouth
+  if (spec.beard === "stubble") px(cx - 3, 9, 4, 1, hair.a, 0.5);
+  else if (spec.beard === "mustache") px(cx - 3, 8, 2, 1, hair.b);
   else if (spec.beard === "goatee") {
-    px(cx - 5, 10, 3, 1, hair.b);
-    px(cx - 4, 11, 2, 2, hair.b);
+    px(cx - 3, 8, 2, 1, hair.b);
+    px(cx - 3, 9, 2, 1, hair.b);
   } else if (spec.beard === "full") {
-    px(cx - 5, 10, 4, 3, hair.b);
-    px(cx - 4, 13, 3, 1, hair.a);
+    px(cx - 3, 8, 4, 2, hair.b);
   }
   if (spec.hair && spec.hair !== "none") {
-    px(cx - 5, 1, 9, 1, hair.o);
-    px(cx - 5, 1, 9, 3, hair.b);
-    px(cx - 5, 2, 9, 1, hair.c);
-    px(cx + 3, 3, 1, 6, hair.a);
-    if (spec.hair === "long" || spec.hair === "ponytail") px(cx + 3, 4, 2, 9, hair.a);
-    else if (spec.hair === "spiky") for (const sx of [cx - 3, cx, cx + 2]) px(sx, 0, 1, 2, hair.c);
-    else if (spec.hair === "afro") part(cx - 6, 0, 11, 5, hair.b);
-    else if (spec.hair === "bun") px(cx + 3, 1, 2, 2, hair.b);
+    px(cx - 3, 2, 7, 2, hair.b);
+    px(cx - 2, 2, 5, 1, hair.c);
+    px(cx + 2, 3, 1, 4, hair.b); // nape
+    if (spec.hair === "long") px(cx + 2, 3, 2, 8, hair.a);
+    else if (spec.hair === "ponytail") px(cx + 3, 4, 2, 6, hair.a);
+    else if (spec.hair === "spiky") for (const sx of [cx - 2, cx, cx + 2]) px(sx, 0, 1, 2, hair.c);
+    else if (spec.hair === "afro") px(cx - 4, 0, 9, 4, hair.b);
+    else if (spec.hair === "bun") px(cx + 2, 1, 2, 2, hair.b);
+    else if (spec.hair === "undercut") {
+      px(cx - 3, 0, 5, 3, hair.b);
+      px(cx + 1, 3, 1, 4, hair.a, 0.5);
+    } else if (spec.hair === "dreads") {
+      for (const ox of [-2, 0, 2]) px(cx + ox, 1, 1, 7, hair.b);
+    } else if (spec.hair === "mohawk") {
+      px(cx - 3, 0, 6, 2, hair.b);
+    }
+  }
+  if (spec.faceMark && spec.faceMark !== "none") {
+    const acc = accentOf(spec);
+    if (spec.faceMark === "scar") px(cx - 2, 5, 1, 3, 0x8a4a3a, 0.9);
+    else if (spec.faceMark === "tattoo") px(cx - 3, 7, 2, 1, acc.e, 0.85);
+    else if (spec.faceMark === "chrome") px(cx - 4, 4, 1, 4, acc.e, 0.9);
+    else if (spec.faceMark === "warpaint") px(cx - 3, 7, 2, 1, acc.e, 0.7);
+  }
+  drawProfileHeadgear(spec, px);
+}
+
+/** Headgear in profile — mirrors the front set at profile coordinates. */
+function drawProfileHeadgear(spec: CharSpec, px: Px) {
+  const t = spec.tones;
+  const cx = 15;
+  if (spec.head === "cap") {
+    px(cx - 5, 1, 8, 2, t.b);
+    px(cx - 6, 3, 4, 1, t.o, 0.8); // brim juts forward
+  } else if (spec.head === "hood") {
+    px(cx - 4, 1, 9, 3, t.a);
+    px(cx + 3, 3, 1, 6, t.a);
+  } else if (spec.head === "helmet") {
+    px(cx - 4, 1, 8, 2, t.c);
+  } else if (spec.head === "beret") {
+    px(cx - 4, 1, 7, 2, t.b);
+    px(cx, 0, 4, 2, t.c);
+  } else if (spec.head === "mask") {
+    px(cx - 4, 6, 5, 3, t.a);
+    px(cx - 3, 7, 3, 1, accentOf(spec).e, 0.9);
+  } else if (spec.head === "spikes") {
+    for (const ox of [-2, 0, 2]) px(cx + ox, 0, 1, 2, accentOf(spec).e);
+  } else if (spec.head === "crown") {
+    px(cx - 3, 1, 7, 1, t.d);
+    px(cx - 2, 0, 1, 1, t.e);
+    px(cx + 2, 0, 1, 1, t.e);
+  } else if (spec.head === "horns") {
+    px(cx - 4, 0, 1, 3, t.d);
+  } else if (spec.head === "mohawk") {
+    px(cx - 3, 0, 7, 1, t.e);
   }
 }
 
-/** Head + headgear for the down / up facings. */
-function drawHead(
-  facing: Facing,
-  spec: CharSpec,
-  px: (x: number, y: number, w: number, h: number, c: number, a?: number) => void,
-  part: (x: number, y: number, w: number, h: number, fill: number) => void,
-) {
+/** Robot / drone head (non-human): compact dome + emissive visor. */
+function drawHead(facing: Facing, spec: CharSpec, px: Px, part: Part) {
   const t = spec.tones;
   const cx = 16;
   const back = facing === "up";
 
-  // antennae poke up behind the head
   if (spec.antennae) {
-    px(cx - 4, 1, 1, 4, t.o);
-    px(cx + 3, 1, 1, 4, t.o);
-    px(cx - 4, 1, 1, 1, t.e);
-    px(cx + 3, 1, 1, 1, t.e);
+    px(cx - 3, 0, 1, 3, t.o);
+    px(cx + 2, 0, 1, 3, t.o);
+    px(cx - 3, 0, 1, 1, t.e);
+    px(cx + 2, 0, 1, 1, t.e);
   }
 
-  // helmet / head dome (10 wide)
-  part(cx - 6, 3, 12, 11, t.b);
-  px(cx - 5, 4, 10, 2, t.c); // lit crown
-  px(cx - 4, 4, 8, 1, t.d); // crown highlight
-  px(cx + 3, 6, 2, 7, t.a); // right side shadow
-  px(cx - 5, 6, 1, 7, t.rim, 0.7); // cool rim on the left
+  // armored neck ring
+  px(cx - 1, 10, 3, 2, t.a);
 
-  // crest ridge
-  px(cx - 1, 2, 3, 2, t.c);
-  px(cx, 2, 1, 1, t.d);
+  // dome (10 wide, 9 tall) — crown light, cheek plates, jaw guard
+  part(cx - 5, 2, 10, 9, t.b);
+  px(cx - 4, 3, 8, 2, t.c);
+  px(cx - 3, 3, 5, 1, t.d);
+  px(cx + 2, 5, 2, 5, t.a);
+  px(cx - 4, 5, 1, 5, t.rim, 0.7);
+  px(cx - 1, 1, 3, 2, t.c); // crest ridge
+  px(cx, 1, 1, 1, t.d);
 
-  // ── extra headgear that layers on the dome (front + back) ───────
   if (spec.head === "mohawk") {
-    px(cx - 1, 0, 2, 6, t.e); // emissive crest fin running front→back
-    px(cx - 1, 1, 1, 4, t.d);
+    px(cx - 1, 0, 2, 4, t.e);
   } else if (spec.head === "horns") {
-    px(cx - 7, 1, 1, 3, t.d);
-    px(cx - 6, 2, 1, 2, t.c); // left horn
-    px(cx + 6, 1, 1, 3, t.d);
-    px(cx + 5, 2, 1, 2, t.c); // right horn
+    px(cx - 6, 0, 1, 3, t.d);
+    px(cx + 5, 0, 1, 3, t.d);
   } else if (spec.head === "crown") {
-    px(cx - 6, 2, 12, 1, t.d); // band
-    px(cx - 5, 0, 1, 2, t.e);
-    px(cx - 1, 0, 1, 2, t.e);
-    px(cx + 4, 0, 1, 2, t.e); // emissive spikes
-  }
-
-  if (spec.head === "hood") {
-    // cowl framing the face
-    part(cx - 7, 3, 14, 9, t.a);
-    px(cx - 6, 4, 12, 1, t.b);
-    px(cx - 6, 4, 1, 8, t.c);
+    px(cx - 5, 1, 10, 1, t.d);
+    for (const ox of [-4, 0, 3]) px(cx + ox, 0, 1, 1, t.e);
+  } else if (spec.head === "mask") {
+    px(cx - 4, 7, 8, 3, t.a);
+    px(cx - 3, 8, 2, 1, accentOf(spec).e);
+    px(cx + 1, 8, 2, 1, accentOf(spec).e);
+  } else if (spec.head === "beret") {
+    px(cx - 6, 1, 9, 2, t.a);
+    px(cx - 1, 0, 6, 2, t.c);
+  } else if (spec.head === "spikes") {
+    for (const ox of [-4, -1, 2]) px(cx + ox, 0, 1, 2, accentOf(spec).e);
+  } else if (spec.head === "hood") {
+    px(cx - 6, 2, 12, 3, t.a);
+    px(cx - 6, 4, 1, 7, t.a);
+    px(cx + 5, 4, 1, 7, t.a);
   } else if (spec.head === "cap") {
-    // forward brim shading the upper face
-    px(cx - 6, 7, 12, 1, t.o);
-    px(cx - 6, 6, 12, 1, t.a);
+    px(cx - 5, 5, 10, 1, t.o, 0.8);
+    px(cx - 5, 4, 10, 1, t.a);
   }
 
   if (back) {
-    // back of the head — no visor, just a shaded skull + a nape light
-    px(cx - 4, 6, 8, 6, t.a);
-    px(cx - 4, 11, 8, 1, t.c);
-    if (spec.head === "helmet" || spec.head === "cap") px(cx - 3, 5, 6, 1, t.rim, 0.6);
+    px(cx - 3, 4, 7, 5, t.a);
+    px(cx - 3, 9, 7, 1, t.c); // nape light
     return;
   }
 
-  // face recess under the visor
-  px(cx - 4, 11, 8, 2, t.a);
-
   // ── visor (emissive, tints to class hue) ────────────────────────
   if (spec.visor === "goggles") {
-    px(cx - 5, 7, 10, 4, t.o); // housing
-    px(cx - 4, 8, 3, 2, t.e); // left lens
-    px(cx + 1, 8, 3, 2, t.e); // right lens
-    px(cx - 4, 8, 1, 1, t.e);
-    px(cx + 1, 8, 1, 1, t.e); // hot specks
+    px(cx - 4, 5, 8, 3, t.o);
+    px(cx - 3, 6, 2, 1, t.e);
+    px(cx + 1, 6, 2, 1, t.e);
+    px(cx - 3, 6, 1, 1, 0xffffff, 0.85);
+    px(cx, 6, 1, 2, t.o); // nose bridge
   } else if (spec.visor === "single") {
-    px(cx - 4, 7, 8, 3, t.o);
-    px(cx - 2, 8, 4, 1, t.e); // narrow focused optic
-    px(cx - 2, 8, 1, 1, t.d);
+    px(cx - 3, 5, 6, 3, t.o);
+    px(cx - 1, 6, 3, 1, t.e);
   } else if (spec.visor === "cross") {
-    px(cx - 4, 7, 8, 4, t.o); // housing
-    px(cx - 1, 7, 2, 4, t.e); // vertical bar
-    px(cx - 3, 8, 6, 2, t.e); // horizontal bar
-    px(cx - 1, 8, 1, 1, t.d);
+    px(cx - 3, 5, 7, 3, t.o);
+    px(cx, 5, 1, 3, t.e);
+    px(cx - 2, 6, 5, 1, t.e);
   } else if (spec.visor === "scan") {
-    px(cx - 5, 7, 10, 4, t.o);
-    px(cx - 4, 8, 1, 2, t.e);
-    px(cx - 1, 8, 1, 2, t.e);
-    px(cx + 2, 8, 1, 2, t.e); // three scanner bars
-    px(cx - 4, 8, 1, 1, t.d);
+    px(cx - 4, 5, 8, 3, t.o);
+    px(cx - 3, 6, 1, 1, t.e);
+    px(cx - 1, 6, 1, 1, t.e);
+    px(cx + 1, 6, 1, 1, t.e);
   } else if (spec.visor === "round") {
-    px(cx - 5, 7, 10, 4, t.o);
-    px(cx - 4, 8, 2, 2, t.e);
-    px(cx + 2, 8, 2, 2, t.e); // twin round lenses
-    px(cx - 4, 8, 1, 1, t.d);
-    px(cx + 2, 8, 1, 1, t.d);
+    px(cx - 4, 5, 8, 3, t.o);
+    px(cx - 3, 6, 2, 1, t.e);
+    px(cx + 1, 6, 2, 1, t.e);
   } else {
     // band / wide
-    const w = spec.visor === "wide" ? 10 : 9;
-    const x = cx - w / 2;
-    px(x, 7, w, 4, t.o); // recessed housing
-    px(x + 1, 8, w - 2, 2, t.e); // glowing band
-    px(x + 1, 8, 2, 1, t.d); // reflection
-    px(x + w - 3, 9, 2, 1, t.a, 0.7);
+    const w = spec.visor === "wide" ? 8 : 7;
+    const x = cx - Math.floor(w / 2);
+    px(x, 5, w, 3, t.o);
+    px(x + 1, 6, w - 2, 1, t.e);
+    px(x + 1, 6, 2, 1, 0xffffff, 0.6); // hot streak
+    px(x + 1, 7, w - 2, 1, t.e, 0.35); // under-glow
   }
 }
 
 /** Side profile (facing left); mirrored in-bake for right. */
 function drawProfile(
   spec: CharSpec,
-  px: (x: number, y: number, w: number, h: number, c: number, a?: number) => void,
-  part: (x: number, y: number, w: number, h: number, fill: number) => void,
+  px: Px,
+  part: Part,
   bulk: number,
+  step = 0,
 ) {
   const t = spec.tones;
+  const acc = accentOf(spec);
   const cx = 15;
+  const sw = walkSwing(step); // front/back legs scissor along the walk axis
 
   // cape trails behind (to the right, since we face left)
   if (spec.cloak === "cape") {
-    part(cx + 2, 13, 5 + Math.max(0, bulk), 16, t.a);
-    px(cx + 3, 14, 3, 13, t.b);
-    px(cx + 2, 14, 1, 14, t.rim, 0.5);
+    part(cx + 1, 12, 5 + Math.max(0, bulk), 14, t.a);
+    px(cx + 2, 13, 3, 11, t.b);
+    px(cx + 1, 13, 1, 12, t.rim, 0.5);
   }
 
-  // legs — front + trailing
-  part(cx - 1, 23, 4, 6, t.b);
-  part(cx + 3, 23, 4, 6, t.a); // trailing leg, shadowed
-  px(cx, 24, 1, 4, t.c);
+  // pelvis + legs — scissor along the facing axis, long and tapered
+  const tw = 7 + Math.max(0, bulk) - (spec.sex === "f" ? 1 : 0);
+  part(cx - 3, 18, tw + 1, 4, t.a);
+  // leading leg
+  px(cx - 3 - sw * 2, 20, 3, 7, t.o);
+  px(cx - 2 - sw * 2, 20, 1, 6, t.a);
+  px(cx - 3 - sw * 2, 27, 4, 2, t.o); // boot (toe forward)
+  if (spec.legGear === "boots") px(cx - 2 - sw * 2, 27, 2, 1, acc.b);
+  // trailing leg
+  px(cx + sw * 2, 20, 3, 7, t.o);
+  px(cx + 1 + sw * 2, 20, 1, 6, scaleColor(t.a, 0.8));
+  px(cx + sw * 2, 27, 3, 2, t.o);
+  if (spec.legGear === "wraps") {
+    px(cx - 2 - sw * 2, 23, 1, 1, acc.e, 0.9);
+    px(cx - 2 - sw * 2, 25, 1, 1, acc.e, 0.75);
+  }
 
-  // torso (narrower in profile), facing left
-  const tw = 9 + Math.max(0, bulk);
-  part(cx - 3, 13, tw, 4, t.b); // shoulder
-  px(cx - 3, 14, tw, 1, t.c);
-  part(cx - 3, 16, tw, 8, t.b);
-  px(cx - 2, 17, 4, 6, t.c); // front-lit chest
-  px(cx + tw - 4, 17, 1, 6, t.a); // back shadow
-  if (spec.emblem) px(cx - 2, 18, 3, 3, t.e, 0.95);
-  if (spec.decal && spec.decal !== "none") px(cx - 2, 18, 2, 3, t.e, 0.9); // decal hint
-  if (spec.strap) for (let i = 0; i < 5; i++) px(cx - 2 + i, 16 + i, 2, 1, t.d, 0.85);
+  // torso (narrow in profile)
+  part(cx - 3, 12, tw, 8, t.b);
+  px(cx - 2, 13, 2, 5, t.c); // front-lit chest
+  px(cx + tw - 4, 13, 1, 6, t.a); // back shadow
+  px(cx - 2, 18, tw - 2, 1, acc.d, 0.6); // belt
+  if (spec.emblem) px(cx - 2, 14, 2, 2, t.e, 0.95);
+  if (spec.decal && spec.decal !== "none") px(cx - 2, 14, 2, 2, t.e, 0.9); // decal hint
+  if (spec.strap) for (let i = 0; i < 4; i++) px(cx - 2 + i, 13 + i, 2, 1, t.d, 0.85);
 
   // shoulder armor (the visible, leading shoulder)
   if (spec.shoulders && spec.shoulders !== "none") {
-    part(cx - 4, 12, 4, 4, spec.shoulders === "pads" ? t.c : t.b);
-    if (spec.shoulders === "spikes") px(cx - 4, 9, 1, 4, t.d);
+    part(cx - 3, 11, 3, 3, spec.shoulders === "pads" ? t.c : t.b);
+    if (spec.shoulders === "spikes") px(cx - 3, 8, 1, 3, acc.e);
     if (spec.shoulders === "heavy") {
-      part(cx - 5, 11, 5, 6, t.c);
-      px(cx - 5, 12, 1, 5, t.rim, 0.6);
+      part(cx - 4, 10, 4, 5, t.c);
+      px(cx - 4, 11, 1, 3, acc.rim, 0.6);
     }
   }
 
   // coat skirt over the legs
   if (spec.cloak === "coat") {
-    part(cx - 3, 22, tw + 2, 8, t.a);
-    px(cx - 2, 23, tw, 6, t.b);
-    px(cx - 2, 23, 1, 6, t.rim, 0.5);
+    part(cx - 3, 19, tw + 1, 6, t.a);
+    px(cx - 2, 20, tw - 1, 4, t.b);
+    px(cx - 2, 20, 1, 4, t.rim, 0.5);
   }
 
-  // leading arm
-  part(cx - 4, 16, 3, 8, t.b);
-  px(cx - 3, 17, 1, 6, t.c);
+  // leading arm — swings with the trailing leg
+  px(cx - 3 + sw, 13, 2, 6, t.o);
+  px(cx - 2 + sw, 14, 1, 4, t.b);
+  drawHands(spec, px, cx - 3 + sw, 19, cx - 3 + sw, 19, t, acc);
 
   // antennae (cyber heads only)
   if (spec.antennae && spec.skin == null) {
-    px(cx - 4, 1, 1, 4, t.o);
-    px(cx - 4, 1, 1, 1, t.e);
+    px(cx - 3, 0, 1, 3, t.o);
+    px(cx - 3, 0, 1, 1, t.e);
   }
 
-  // human face replaces the cyber visored head
+  // neck + head
   if (spec.skin != null) {
+    const skinT = tonesFromColor(spec.skin);
+    px(cx - 1, 10, 2, 2, skinT.b);
     drawHumanProfile(spec, px, part);
     return;
   }
 
-  // head (profile) — nose/brow to the left
-  part(cx - 6, 3, 11, 11, t.b);
-  px(cx - 5, 4, 9, 2, t.c);
-  px(cx - 5, 4, 7, 1, t.d);
-  px(cx + 2, 6, 2, 7, t.a); // back of skull shadow
-  px(cx - 6, 6, 1, 6, t.rim, 0.7);
-  px(cx - 1, 2, 3, 2, t.c); // crest
+  // robot head (profile) — visor toward the front (left)
+  px(cx - 1, 10, 3, 2, t.a);
+  part(cx - 5, 2, 9, 9, t.b);
+  px(cx - 4, 3, 7, 2, t.c);
+  px(cx + 1, 5, 2, 5, t.a);
+  px(cx - 4, 5, 1, 5, t.rim, 0.7);
+  px(cx - 1, 1, 3, 2, t.c); // crest
 
-  // extra headgear (profile)
   if (spec.head === "mohawk") {
-    px(cx - 2, 1, 6, 1, t.e);
-    px(cx - 2, 2, 5, 1, t.d); // crest along the crown
+    px(cx - 2, 0, 6, 1, t.e);
   } else if (spec.head === "horns") {
-    px(cx - 6, 1, 1, 3, t.d);
-    px(cx + 3, 1, 1, 3, t.d);
+    px(cx - 5, 0, 1, 3, t.d);
+    px(cx + 2, 0, 1, 3, t.d);
   } else if (spec.head === "crown") {
-    px(cx - 5, 2, 9, 1, t.d);
-    px(cx - 4, 0, 1, 2, t.e);
-    px(cx + 1, 0, 1, 2, t.e);
-  }
-
-  if (spec.head === "hood") {
-    part(cx - 7, 3, 13, 9, t.a);
-    px(cx - 6, 4, 1, 8, t.c);
+    px(cx - 4, 1, 8, 1, t.d);
+    px(cx - 3, 0, 1, 1, t.e);
+    px(cx + 1, 0, 1, 1, t.e);
+  } else if (spec.head === "mask") {
+    px(cx - 5, 6, 6, 3, t.a);
+    px(cx - 4, 7, 4, 1, accentOf(spec).e, 0.85);
+  } else if (spec.head === "beret") {
+    px(cx - 5, 1, 7, 2, t.c);
+  } else if (spec.head === "spikes") {
+    px(cx - 3, 0, 1, 2, accentOf(spec).e);
+    px(cx, 0, 1, 2, accentOf(spec).e);
+  } else if (spec.head === "hood") {
+    px(cx - 6, 2, 11, 3, t.a);
+    px(cx - 6, 4, 1, 6, t.c);
   } else if (spec.head === "cap") {
-    px(cx - 7, 7, 9, 1, t.o); // brim juts forward
-    px(cx - 7, 6, 9, 1, t.a);
+    px(cx - 6, 5, 8, 1, t.o, 0.8);
+    px(cx - 6, 4, 8, 1, t.a);
   }
 
-  // visor — toward the front (left)
   if (spec.visor === "goggles") {
-    px(cx - 6, 7, 7, 4, t.o);
-    px(cx - 5, 8, 3, 2, t.e);
-    px(cx - 1, 8, 2, 2, t.e);
+    px(cx - 5, 5, 6, 3, t.o);
+    px(cx - 4, 6, 2, 1, t.e);
+    px(cx - 1, 6, 2, 1, t.e);
   } else if (spec.visor === "single") {
-    px(cx - 6, 7, 6, 3, t.o);
-    px(cx - 5, 8, 3, 1, t.e);
+    px(cx - 5, 5, 5, 3, t.o);
+    px(cx - 4, 6, 2, 1, t.e);
   } else {
-    px(cx - 6, 7, 8, 4, t.o);
-    px(cx - 5, 8, 6, 2, t.e);
-    px(cx - 5, 8, 2, 1, t.d);
+    px(cx - 5, 5, 7, 3, t.o);
+    px(cx - 4, 6, 5, 1, t.e);
+    px(cx - 4, 6, 2, 1, t.d);
   }
 }

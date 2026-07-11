@@ -24,15 +24,14 @@ import {
   UI_FRAME_KEY,
   UI_GUN_KEY,
 } from "./manifest";
-import { bakeCanvas, bakeDrawnFrames } from "./pixelart";
+import { bakeCanvas } from "./pixelart";
+import { bakeWalkSheet, bakeAgentSheet } from "./anim";
 import { playerKeyFor } from "./manifest";
+import { classPreviewSpec } from "../game/customization";
+import { CLASSES } from "../game/classes";
 import {
-  CHAR,
   AGENT_W,
   AGENT_H,
-  drawCharacter,
-  drawAgent,
-  PLAYER_SPECS,
   PLAYER_IDS,
   COP_SPEC,
   BOSS_SPEC,
@@ -45,11 +44,11 @@ import {
  * floor/plaza grids meet on edges, walls stack into building facades.
  */
 function makeTileset(scene: Phaser.Scene) {
-  bakeCanvas(scene, TILESET_KEY, 256, 64, (ctx) => {
-    const px = (x: number, y: number, w: number, h: number, color: number, a = 1) => {
+  bakeCanvas(scene, TILESET_KEY, 256, 128, (ctx) => {
+    const px = (x: number, y: number, w: number, hh: number, color: number, a = 1) => {
       ctx.globalAlpha = a;
       ctx.fillStyle = "#" + (color & 0xffffff).toString(16).padStart(6, "0");
-      ctx.fillRect(x, y, w, h);
+      ctx.fillRect(x, y, w, hh);
       ctx.globalAlpha = 1;
     };
     // deterministic 0..1 hash so grime/detail is stable, not random per build
@@ -60,138 +59,359 @@ function makeTileset(scene: Phaser.Scene) {
     const cellX = (i: number) => (i % 8) * 32;
     const cellY = (i: number) => Math.floor(i / 8) * 32;
 
-    // Tech-floor ground: base + a recessed inner panel + dim edge seams (so tiles
-    // grid up) + corner rivets + faint grime. Clean — the play space should read.
-    const ground = (
+    // Paneled ground: base + recessed inner panel + edge seams (tiles grid up) +
+    // corner rivets + faint grime. Clean — the play surface should read.
+    const ground = (i: number, base: number, panel: number, seam: number, rivet: number, grime = base, wet = false) => {
+      const ox = cellX(i);
+      const oy = cellY(i);
+      px(ox, oy, 32, 32, base);
+      px(ox + 2, oy + 2, 28, 28, panel);
+      px(ox + 2, oy + 2, 28, 1, seam, 0.5); // panel top sheen
+      px(ox, oy, 32, 1, seam, 0.55); // top seam
+      px(ox, oy, 1, 32, seam, 0.55); // left seam
+      for (const [dx, dy] of [[4, 4], [27, 4], [4, 27], [27, 27]]) px(ox + dx, oy + dy, 1, 1, rivet, 0.7);
+      for (let y = 4; y < 30; y++)
+        for (let x = 4; x < 30; x++) if (h(ox + x * 1.7, oy + y * 1.3) > 0.975) px(ox + x, oy + y, 1, 1, grime, 1);
+      // Rain-slicked: scattered specular glints + faint neon reflections bleeding down.
+      if (wet) {
+        for (let y = 3; y < 31; y++)
+          for (let x = 3; x < 31; x++) if (h(ox + x * 2.3, oy + y * 1.1) > 0.985) px(ox + x, oy + y, 1, 1, 0x8a9bc0, 0.55);
+        px(ox + 8, oy + 5, 1, 8, 0x29e7ff, 0.06); // reflected cyan sign
+        px(ox + 9, oy + 5, 1, 8, 0x29e7ff, 0.03);
+        px(ox + 22, oy + 17, 1, 7, 0xff2bd6, 0.06); // reflected magenta sign
+        px(ox + 16, oy + 9, 1, 10, 0xffffff, 0.03); // gloss streak
+      }
+    };
+
+    // Building ROOF (top-down): a solid dark mass with a lit parapet on top/left and
+    // deep shadow on bottom/right, a panel grid, then per-style rooftop detail drawn
+    // by `detail(ox,oy)`. Edge lighting + the base tone give every district its read.
+    const roof = (
       i: number,
       base: number,
-      panel: number,
-      seam: number,
-      rivet: number,
+      panelHi: number,
+      panelLo: number,
+      parapetLit: number,
+      parapetDark: number,
+      detail: (ox: number, oy: number) => void,
     ) => {
       const ox = cellX(i);
       const oy = cellY(i);
       px(ox, oy, 32, 32, base);
-      px(ox + 2, oy + 2, 28, 28, panel); // inset panel
-      px(ox + 2, oy + 2, 28, 1, seam, 0.5); // panel top sheen
-      // edge seams (top + left) so adjacent tiles meet on a continuous grid
-      px(ox, oy, 32, 1, seam, 0.55);
-      px(ox, oy, 1, 32, seam, 0.55);
-      // corner rivets
-      for (const [dx, dy] of [[4, 4], [27, 4], [4, 27], [27, 27]])
-        px(ox + dx, oy + dy, 1, 1, rivet, 0.7);
-      // sparse grime specks (low, not noisy)
-      for (let y = 4; y < 30; y++)
-        for (let x = 4; x < 30; x++) {
-          const n = h(ox + x * 1.7, oy + y * 1.3);
-          if (n > 0.972) px(ox + x, oy + y, 1, 1, base, 1); // dark fleck
+      for (let y = 0; y < 32; y++)
+        for (let x = 0; x < 32; x++) {
+          const n = h(ox + x * 2.1, oy + y * 1.9);
+          if (n > 0.93) px(ox + x, oy + y, 1, 1, panelHi);
+          else if (n < 0.06) px(ox + x, oy + y, 1, 1, panelLo);
         }
+      px(ox + 10, oy, 1, 32, panelLo, 0.6); // panel seams
+      px(ox + 21, oy, 1, 32, panelLo, 0.6);
+      px(ox, oy + 16, 32, 1, panelLo, 0.6);
+      px(ox, oy, 32, 2, parapetLit); // top parapet (sky-lit)
+      px(ox, oy, 32, 1, parapetLit, 0.7);
+      px(ox, oy, 2, 32, parapetLit, 0.8); // left parapet
+      px(ox, oy + 30, 32, 2, parapetDark); // bottom shadow
+      px(ox + 30, oy, 2, 32, parapetDark, 0.85); // right shadow
+      detail(ox, oy);
     };
 
-    // 0 — floor: dark asphalt, dim cyan seams
-    ground(0, 0x0a0e1a, 0x0c111e, 0x1d3a55, 0x2a4d6a);
+    // ── floors ──────────────────────────────────────────────────────────────
+    // 0 concrete — the default play surface (rain-slicked)
+    ground(0, 0x0c1120, 0x0e1424, 0x1d3a55, 0x2a4d6a, 0x080b14, true);
 
-    // 2 — road: darkest, bright dashed centre lane + side curbs + cracks
-    const rx = cellX(2);
-    const ry = cellY(2);
-    px(rx, ry, 32, 32, 0x07090f);
-    px(rx + 1, ry + 1, 30, 30, 0x080b12);
-    px(rx, ry, 2, 32, 0x10141e); // left curb
-    px(rx + 30, ry, 2, 32, 0x10141e); // right curb
-    px(rx + 1, ry, 1, 32, 0x223047, 0.6); // curb edge light
-    px(rx + 14, ry + 3, 3, 9, 0xc8902e); // centre dashes (bright; bloom lifts)
-    px(rx + 14, ry + 20, 3, 9, 0xc8902e);
-    px(rx + 15, ry + 3, 1, 9, 0xffd66a, 0.6); // dash hot core
-    for (let k = 0; k < 6; k++) {
-      const cxk = 4 + ((h(rx + k, ry) * 24) | 0);
-      const cyk = 4 + ((h(rx, ry + k) * 24) | 0);
-      px(rx + cxk, ry + cyk, 2, 1, 0x12161f); // hairline cracks
+    // 1 sidewalk — paler paving slabs (2-slab grid) + curb edge + a manhole
+    {
+      const ox = cellX(1);
+      const oy = cellY(1);
+      px(ox, oy, 32, 32, 0x1a2032);
+      px(ox + 1, oy + 1, 30, 30, 0x202739);
+      for (let s = 0; s < 32; s += 16) {
+        px(ox + s, oy, 1, 32, 0x121728, 0.8); // slab grout
+        px(ox, oy + s, 32, 1, 0x121728, 0.8);
+        px(ox + s + 1, oy, 1, 32, 0x2a3147, 0.4); // grout sheen
+      }
+      px(ox + 22, oy + 21, 6, 6, 0x14192a); // manhole
+      px(ox + 23, oy + 22, 4, 4, 0x1d2236);
+      px(ox + 23, oy + 22, 4, 1, 0x2c3450, 0.7); // manhole rim light
+      px(ox + 6, oy + 8, 5, 1, 0x141728, 0.6); // a hairline crack
     }
 
-    // 3 — plaza: warmer ground, magenta seams + a glowing centre diamond inlay
-    ground(3, 0x130a20, 0x160c26, 0x4a2060, 0x6a2e84);
-    const pxo = cellX(3);
-    const pyo = cellY(3);
-    const dia = [
-      [16, 10],
-      [15, 11], [16, 11], [17, 11],
-      [14, 12], [18, 12],
-      [13, 13], [19, 13],
-      [13, 14], [19, 14],
-      [14, 15], [18, 15],
-      [15, 16], [16, 16], [17, 16],
-      [16, 17],
-    ];
-    for (const [x, y] of dia) px(pxo + x, pyo + y, 1, 1, 0x7a3a92);
-    px(pxo + 15, pyo + 13, 2, 2, 0xb060c8); // hot centre
-    px(pxo + 15, pyo + 13, 1, 1, 0xff2bd6, 0.8);
+    // 2 road — asphalt, yellow centre dashes, curbs, cracks, oil stain
+    {
+      const rx = cellX(2);
+      const ry = cellY(2);
+      px(rx, ry, 32, 32, 0x07090f);
+      px(rx + 1, ry + 1, 30, 30, 0x090c14);
+      px(rx, ry, 2, 32, 0x10141e);
+      px(rx + 30, ry, 2, 32, 0x10141e);
+      px(rx + 1, ry, 1, 32, 0x223047, 0.6);
+      px(rx + 14, ry + 3, 3, 9, 0xc8902e);
+      px(rx + 14, ry + 20, 3, 9, 0xc8902e);
+      px(rx + 15, ry + 3, 1, 9, 0xffd66a, 0.6);
+      px(rx + 8, ry + 14, 6, 4, 0x05070c, 0.6); // oil stain
+      for (let k = 0; k < 6; k++)
+        px(rx + 4 + ((h(rx + k, ry) * 24) | 0), ry + 4 + ((h(rx, ry + k) * 24) | 0), 2, 1, 0x12161f);
+      // wet asphalt — specular glints + faint neon reflections streaking down
+      for (let y = 2; y < 31; y++)
+        for (let x = 2; x < 31; x++) if (h(rx + x * 2.7, ry + y * 1.4) > 0.987) px(rx + x, ry + y, 1, 1, 0x4a5878, 0.55);
+      px(rx + 6, ry + 2, 1, 9, 0x29e7ff, 0.07); // reflected cyan sign
+      px(rx + 25, ry + 18, 1, 8, 0xff2bd6, 0.07); // reflected magenta sign
+      px(rx + 16, ry, 1, 12, 0xffffff, 0.04); // centre gloss
+    }
 
-    // 4 — wall: a building ROOFTOP seen top-down — a dark slab (darker than the
-    // street so buildings read as solid mass), lit parapet on the top/left edges,
-    // deep shadow on the bottom/right, sparse rooftop tech + one dim skylight.
-    const wx = cellX(4);
-    const wy = cellY(4);
-    px(wx, wy, 32, 32, 0x0b0f18); // dark roof base
-    // panelized roof texture (subtle, tiles into a mass)
-    for (let y = 0; y < 32; y++)
-      for (let x = 0; x < 32; x++) {
-        const n = h(wx + x * 2.1, wy + y * 1.9);
-        if (n > 0.93) px(wx + x, wy + y, 1, 1, 0x121726);
-        else if (n < 0.06) px(wx + x, wy + y, 1, 1, 0x080b12);
+    // 3 plaza — neon tile floor, magenta grout + a glowing diamond inlay (rain-slicked)
+    ground(3, 0x130a20, 0x160c26, 0x4a2060, 0x6a2e84, 0x0e0718, true);
+    {
+      const pxo = cellX(3);
+      const pyo = cellY(3);
+      const dia = [[16, 10], [15, 11], [16, 11], [17, 11], [14, 12], [18, 12], [13, 13], [19, 13], [13, 14], [19, 14], [14, 15], [18, 15], [15, 16], [16, 16], [17, 16], [16, 17]];
+      for (const [x, y] of dia) px(pxo + x, pyo + y, 1, 1, 0x7a3a92);
+      px(pxo + 15, pyo + 13, 2, 2, 0xb060c8);
+      px(pxo + 15, pyo + 13, 1, 1, 0xff2bd6, 0.85);
+    }
+
+    // 5 grass / park — dark green base, lighter tufts, tiny bloom-lights
+    {
+      const ox = cellX(5);
+      const oy = cellY(5);
+      px(ox, oy, 32, 32, 0x0c2417);
+      px(ox + 1, oy + 1, 30, 30, 0x10301d);
+      for (let y = 2; y < 30; y++)
+        for (let x = 2; x < 30; x++) {
+          const n = h(ox + x * 1.4, oy + y * 1.8);
+          if (n > 0.85) px(ox + x, oy + y, 1, 1 + ((n * 2) | 0), 0x1c4a2c); // grass blades
+          else if (n < 0.05) px(ox + x, oy + y, 1, 1, 0x07180e); // dirt fleck
+        }
+      px(ox + 8, oy + 22, 1, 1, 0x6fff9a, 0.9); // tiny path lights
+      px(ox + 24, oy + 9, 1, 1, 0x39ff88, 0.8);
+    }
+
+    // 6 water / canal — dark blue, cyan ripple lines, a reflection sparkle
+    {
+      const ox = cellX(6);
+      const oy = cellY(6);
+      px(ox, oy, 32, 32, 0x040d1a);
+      px(ox, oy, 32, 16, 0x061325, 0.7); // depth gradient (top lighter)
+      for (let y = 3; y < 30; y += 4) {
+        const off = (h(ox, oy + y) * 6) | 0;
+        px(ox + 3 + off, oy + y, 12, 1, 0x14507a, 0.55); // ripples
+        px(ox + 17 - off, oy + y + 1, 9, 1, 0x0e3a5c, 0.5);
       }
-    px(wx + 8, wy, 1, 32, 0x0d1320, 0.7); // roof panel seams
-    px(wx + 22, wy, 1, 32, 0x0d1320, 0.7);
-    px(wx, wy + 16, 32, 1, 0x0d1320, 0.7);
-    // parapet: lit on top + left (sky glow), shadow on bottom + right (depth)
-    px(wx, wy, 32, 2, 0x2a3450);
-    px(wx, wy, 32, 1, 0x3c4a6e);
-    px(wx, wy, 2, 32, 0x232c44);
-    px(wx, wy, 1, 32, 0x33405e);
-    px(wx, wy + 30, 32, 2, 0x050709);
-    px(wx + 30, wy, 2, 32, 0x070a10);
-    // rooftop tech: an AC/vent box (shaded) + a vent grille + a dim skylight
-    px(wx + 6, wy + 7, 8, 6, 0x161d2e); // unit body
-    px(wx + 6, wy + 7, 8, 1, 0x26314c); // unit lit top
-    px(wx + 6, wy + 12, 8, 1, 0x05080e); // unit shadow
-    for (let g = 0; g < 3; g++) px(wx + 7 + g * 2, wy + 8, 1, 4, 0x0a0e18); // grille
-    px(wx + 19, wy + 19, 7, 6, 0x10182a); // skylight frame
-    px(wx + 20, wy + 20, 5, 4, 0x1c3a4a); // glass
-    px(wx + 20, wy + 20, 5, 1, 0x29708e, 0.8); // dim skylight glow (not blinding)
-    px(wx + 24, wy + 5, 1, 1, 0xff5a6e, 0.9); // tiny rooftop beacon
+      px(ox + 22, oy + 8, 2, 1, 0x4fd0ff, 0.8); // glint
+      px(ox + 9, oy + 19, 1, 1, 0x4fd0ff, 0.7);
+    }
+
+    // 10 market ground — warm terracotta tiles + scattered goods specks
+    {
+      const ox = cellX(10);
+      const oy = cellY(10);
+      px(ox, oy, 32, 32, 0x241509);
+      px(ox + 1, oy + 1, 30, 30, 0x2c1a0c);
+      for (let s = 0; s < 32; s += 8) {
+        px(ox + s, oy, 1, 32, 0x1a0f06, 0.7);
+        px(ox, oy + s, 32, 1, 0x1a0f06, 0.7);
+      }
+      const goods = [0xff7a18, 0x39ff88, 0xff2bd6, 0xf7ff3c, 0x4fd0ff];
+      for (let k = 0; k < 7; k++) {
+        const gx = 4 + ((h(ox + k * 3, oy) * 24) | 0);
+        const gy = 4 + ((h(ox, oy + k * 3) * 24) | 0);
+        px(ox + gx, oy + gy, 1, 1, goods[k % goods.length], 0.85);
+      }
+    }
+
+    // 11 grate — dark metal with a diamond grating + bar highlights
+    {
+      const ox = cellX(11);
+      const oy = cellY(11);
+      px(ox, oy, 32, 32, 0x0a0d14);
+      for (let y = 0; y < 32; y += 4)
+        for (let x = 0; x < 32; x += 4) {
+          px(ox + x, oy + y, 3, 3, 0x070910); // hole (dark below)
+          px(ox + x, oy + y, 3, 1, 0x1b2436, 0.8); // bar top light
+          px(ox + x, oy + y, 1, 3, 0x141b2a, 0.7);
+        }
+    }
+
+    // 12 crosswalk — asphalt + bright zebra stripes
+    {
+      const ox = cellX(12);
+      const oy = cellY(12);
+      px(ox, oy, 32, 32, 0x07090f);
+      px(ox + 1, oy + 1, 30, 30, 0x090c14);
+      for (let s = 3; s < 30; s += 7) {
+        px(ox + s, oy + 2, 4, 28, 0xb9c6d6, 0.92); // stripe
+        px(ox + s, oy + 2, 4, 1, 0xe8f2ff, 0.5);
+      }
+    }
+
+    // 13 neon-strip floor — dark with bright underglow lines (nightlife)
+    {
+      const ox = cellX(13);
+      const oy = cellY(13);
+      px(ox, oy, 32, 32, 0x0a0613);
+      px(ox + 1, oy + 1, 30, 30, 0x0d0819);
+      px(ox + 6, oy, 1, 32, 0xff2bd6, 0.75); // magenta strip
+      px(ox + 7, oy, 1, 32, 0xff2bd6, 0.25);
+      px(ox + 24, oy, 1, 32, 0x00e5ff, 0.7); // cyan strip
+      px(ox + 23, oy, 1, 32, 0x00e5ff, 0.22);
+      px(ox, oy + 15, 32, 1, 0x7a3aff, 0.4); // cross glow
+    }
+
+    // 14 dirt / wasteland — brown, cracks, sparse debris
+    {
+      const ox = cellX(14);
+      const oy = cellY(14);
+      px(ox, oy, 32, 32, 0x1a140e);
+      px(ox + 1, oy + 1, 30, 30, 0x201810);
+      for (let y = 3; y < 30; y++)
+        for (let x = 3; x < 30; x++) {
+          const n = h(ox + x * 1.6, oy + y * 1.2);
+          if (n > 0.93) px(ox + x, oy + y, 1, 1, 0x2c2114);
+          else if (n < 0.05) px(ox + x, oy + y, 1, 1, 0x100b06);
+        }
+      px(ox + 6, oy + 10, 7, 1, 0x0c0804, 0.8); // crack
+      px(ox + 18, oy + 22, 5, 1, 0x0c0804, 0.7);
+    }
+
+    // ── building roofs (collide) ──────────────────────────────────────────────
+    // 4 DOWNTOWN — neon-trimmed roof, AC units, a lit holo-billboard, beacon
+    roof(4, 0x0b0f18, 0x121726, 0x080b12, 0x2a3450, 0x050709, (ox, oy) => {
+      px(ox + 1, oy + 1, 30, 1, 0x00e5ff, 0.5); // neon roof-edge glow
+      px(ox + 6, oy + 7, 8, 6, 0x161d2e); // AC unit
+      px(ox + 6, oy + 7, 8, 1, 0x26314c);
+      for (let g = 0; g < 3; g++) px(ox + 7 + g * 2, oy + 8, 1, 4, 0x0a0e18);
+      px(ox + 18, oy + 18, 9, 8, 0x18062a); // holo-billboard
+      px(ox + 19, oy + 19, 7, 6, 0xff2bd6, 0.5);
+      px(ox + 19, oy + 19, 7, 1, 0xff8de4, 0.7);
+      px(ox + 24, oy + 5, 1, 1, 0xff5a6e, 0.9); // beacon
+    });
+
+    // 7 INDUSTRIAL — corrugated metal ridges, rust, big vents + a pipe
+    roof(7, 0x14161a, 0x1c1f24, 0x0c0d10, 0x2b2f38, 0x070809, (ox, oy) => {
+      for (let x = 3; x < 29; x += 3) px(ox + x, oy + 2, 1, 28, 0x0d0f12, 0.7); // corrugation
+      for (let k = 0; k < 8; k++) {
+        const gx = 3 + ((h(ox + k, oy) * 26) | 0);
+        const gy = 3 + ((h(ox, oy + k) * 26) | 0);
+        px(ox + gx, oy + gy, 2, 2, 0x4a2f18, 0.6); // rust patches
+      }
+      px(ox + 5, oy + 6, 9, 8, 0x202329); // vent box
+      px(ox + 5, oy + 6, 9, 1, 0x33373f);
+      for (let g = 0; g < 4; g++) px(ox + 6 + g * 2, oy + 7, 1, 6, 0x0c0e11);
+      px(ox + 20, oy + 4, 3, 24, 0x181b20); // pipe run
+      px(ox + 20, oy + 4, 1, 24, 0x2a2e35, 0.7);
+    });
+
+    // 8 RESIDENTIAL — warmer concrete roof, water tanks, vent stacks
+    roof(8, 0x191520, 0x221c2c, 0x100c16, 0x342a40, 0x0a0710, (ox, oy) => {
+      px(ox + 6, oy + 8, 6, 7, 0x2a2030); // water tank
+      px(ox + 6, oy + 8, 6, 2, 0x3a2c44);
+      px(ox + 7, oy + 7, 4, 1, 0x44344f);
+      px(ox + 21, oy + 18, 4, 4, 0x241a2c); // vent stack
+      px(ox + 22, oy + 17, 2, 1, 0x4a3a58);
+      px(ox + 14, oy + 22, 10, 1, 0x3a2c44, 0.5); // laundry line
+      for (let k = 0; k < 4; k++) px(ox + 15 + k * 2, oy + 22, 1, 2, 0x6a5a78, 0.6);
+    });
+
+    // 9 CORPORATE — sleek near-black roof, blue glass skylight grid, red warn-light
+    roof(9, 0x070a12, 0x0d121e, 0x04060c, 0x1a2336, 0x030509, (ox, oy) => {
+      for (let gy = 6; gy < 26; gy += 7)
+        for (let gx = 5; gx < 27; gx += 7) {
+          px(ox + gx, oy + gy, 5, 5, 0x0a1626); // skylight frame
+          px(ox + gx + 1, oy + gy + 1, 3, 3, 0x12406a, 0.85); // glass
+          px(ox + gx + 1, oy + gy + 1, 3, 1, 0x2f7ea8, 0.7);
+        }
+      px(ox + 16, oy + 5, 1, 1, 0xff3344, 0.95); // aircraft warning light
+    });
+
+    // 15 SLUM — patchwork shanty roof: mixed rust tarps + junk + a dish
+    roof(15, 0x171108, 0x22180c, 0x0e0a05, 0x2e2414, 0x080503, (ox, oy) => {
+      px(ox + 3, oy + 4, 11, 9, 0x3a2614, 0.9); // rust tarp A
+      px(ox + 3, oy + 4, 11, 1, 0x55391d);
+      px(ox + 16, oy + 14, 12, 12, 0x14304a, 0.55); // blue tarp B
+      px(ox + 16, oy + 14, 12, 1, 0x2a5c80, 0.7);
+      px(ox + 18, oy + 5, 4, 4, 0x101418); // satellite dish base
+      px(ox + 19, oy + 4, 3, 1, 0x39414e);
+      for (let k = 0; k < 5; k++) px(ox + 5 + k * 4, oy + 26, 2, 1, 0x2a2014, 0.7); // junk
+    });
+
+    // ── interiors ──────────────────────────────────────────────────────────────
+    // 16 interior floor — warm wood planks (horizontal boards, grain, seams)
+    {
+      const ox = cellX(16);
+      const oy = cellY(16);
+      px(ox, oy, 32, 32, 0x2a1d10);
+      for (let y = 0; y < 32; y += 8) {
+        px(ox, oy + y, 32, 7, 0x33240f);
+        px(ox, oy + y, 32, 1, 0x453519, 0.8); // board top light
+        px(ox, oy + y + 7, 32, 1, 0x1c1208, 0.9); // board shadow seam
+      }
+      for (let k = 0; k < 10; k++)
+        px(ox + ((h(ox + k, oy) * 30) | 0), oy + ((h(ox, oy + k) * 30) | 0), 1, 1, 0x241808, 0.7); // grain
+      px(ox + 8, oy, 1, 16, 0x1c1208, 0.6); // board butt-joints
+      px(ox + 24, oy + 16, 1, 16, 0x1c1208, 0.6);
+    }
+    // 17 interior wall — plain plaster, top light + baseboard + a faint panel seam
+    {
+      const ox = cellX(17);
+      const oy = cellY(17);
+      px(ox, oy, 32, 32, 0x1a1622);
+      px(ox + 1, oy + 1, 30, 30, 0x201b2a);
+      px(ox, oy, 32, 2, 0x2c2640);
+      px(ox, oy, 32, 1, 0x3a3354, 0.7);
+      px(ox, oy + 28, 32, 4, 0x14101c); // baseboard
+      px(ox, oy + 28, 32, 1, 0x2a2440, 0.6);
+      px(ox + 16, oy, 1, 28, 0x161220, 0.5);
+    }
   });
 }
 
-/** Player sprites — a detailed grayscale cyberian per class (tinted in-scene),
- *  plus a default key. 4 facings (down/left/right/up) each, 32×32. */
+/** Player sprites — human runners per class (jacket colour baked in; render untinted).
+ *  4 facings × WALK_STEPS animated frames each, 32×32. */
 function makePlayer(scene: Phaser.Scene) {
-  const bake = (key: string, id: string) =>
-    bakeDrawnFrames(scene, key, 4, CHAR, CHAR, (ctx, f) => drawCharacter(ctx, f, PLAYER_SPECS[id]));
-  bake(PLAYER_KEY, "wintermute"); // default / fallback
+  const colorFor = (id: string) => CLASSES.find((c) => c.id === id)?.color ?? 0x00e5ff;
+  const bake = (key: string, id: string) => bakeWalkSheet(scene, key, classPreviewSpec(id, colorFor(id)));
+  bake(PLAYER_KEY, "wintermute");
   for (const id of PLAYER_IDS) bake(playerKeyFor(id), id);
 }
 
 /** Projectile: a hot white bolt with a soft glow (tinted to the class per shot). */
 function makeBullet(scene: Phaser.Scene) {
-  bakeCanvas(scene, BULLET_KEY, 14, 14, (ctx) => {
-    const grad = ctx.createRadialGradient(7, 7, 0.5, 7, 7, 7);
-    grad.addColorStop(0, "rgba(255,255,255,1)");
-    grad.addColorStop(0.4, "rgba(255,255,255,0.8)");
-    grad.addColorStop(1, "rgba(255,255,255,0)");
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, 14, 14);
+  bakeCanvas(scene, BULLET_KEY, 28, 12, (ctx) => {
+    // Wide soft bloom so projectiles read as neon tracers at game scale.
+    const bloom = ctx.createRadialGradient(20, 6, 0.5, 20, 6, 10);
+    bloom.addColorStop(0, "rgba(255,255,255,0.55)");
+    bloom.addColorStop(0.55, "rgba(255,255,255,0.12)");
+    bloom.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = bloom;
+    ctx.fillRect(0, 0, 28, 12);
+    const trail = ctx.createLinearGradient(0, 6, 20, 6);
+    trail.addColorStop(0, "rgba(255,255,255,0)");
+    trail.addColorStop(0.25, "rgba(255,255,255,0.2)");
+    trail.addColorStop(0.65, "rgba(255,255,255,0.7)");
+    trail.addColorStop(1, "rgba(255,255,255,1)");
+    ctx.fillStyle = trail;
+    ctx.fillRect(0, 3, 22, 6);
+    ctx.fillStyle = "rgba(255,255,255,0.55)";
+    ctx.fillRect(2, 4, 16, 2); // hot core streak
+    const head = ctx.createRadialGradient(22, 6, 0.2, 22, 6, 6);
+    head.addColorStop(0, "rgba(255,255,255,1)");
+    head.addColorStop(0.45, "rgba(255,255,255,0.85)");
+    head.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = head;
+    ctx.fillRect(14, 0, 14, 12);
     ctx.fillStyle = "#ffffff";
-    ctx.fillRect(6, 6, 2, 2); // hot core
+    ctx.fillRect(22, 4, 4, 4); // muzzle tip
   });
 }
 
-/** Turing Cop: grayscale armored trooper, tinted per tier. 4 frames, 32×32. */
+/** Turing Cop: grayscale armored trooper, tinted per tier. Animated walk, 32×32. */
 function makeCop(scene: Phaser.Scene) {
-  bakeDrawnFrames(scene, COP_KEY, 4, CHAR, CHAR, (ctx, f) => drawCharacter(ctx, f, COP_SPEC));
+  bakeWalkSheet(scene, COP_KEY, COP_SPEC);
 }
 
-/** District boss: grayscale hulking sentinel, tinted per boss. 4 frames, 32×32. */
+/** District boss: grayscale hulking sentinel, tinted per boss. Animated walk, 32×32. */
 function makeBoss(scene: Phaser.Scene) {
-  bakeDrawnFrames(scene, BOSS_KEY, 4, CHAR, CHAR, (ctx, f) => drawCharacter(ctx, f, BOSS_SPEC));
+  bakeWalkSheet(scene, BOSS_KEY, BOSS_SPEC);
 }
 
 /** A city node — a glowing data-obelisk on a pedestal. Same shape, two states. */
@@ -276,40 +496,58 @@ function makeNodeInfected(scene: Phaser.Scene) {
   bakeCanvas(scene, NODE_INFECTED_KEY, 48, 48, (ctx) => drawTerminal(ctx, 0x1f8f4a, 0x39ff88, true));
 }
 
-/** Friendly NPC (the FIXER contact): lime civilian w/ a yellow optic. 4 frames, 32×32. */
+/** Friendly NPC (the FIXER contact): lime civilian w/ a yellow optic. Animated, 32×32. */
 function makeNpc(scene: Phaser.Scene) {
-  bakeDrawnFrames(scene, NPC_KEY, 4, CHAR, CHAR, (ctx, f) => drawCharacter(ctx, f, NPC_SPEC));
+  bakeWalkSheet(scene, NPC_KEY, NPC_SPEC);
 }
 
 /** Soft additive glow disc (white — tinted per use: muzzle, gate, light). */
 function makeGlow(scene: Phaser.Scene) {
   bakeCanvas(scene, GLOW_KEY, 64, 64, (ctx) => {
-    const grad = ctx.createRadialGradient(32, 32, 1, 32, 32, 31);
-    grad.addColorStop(0, "rgba(255,255,255,1)");
-    grad.addColorStop(0.32, "rgba(255,255,255,0.55)");
-    grad.addColorStop(1, "rgba(255,255,255,0)");
-    ctx.fillStyle = grad;
+    const outer = ctx.createRadialGradient(32, 32, 8, 32, 32, 31);
+    outer.addColorStop(0, "rgba(255,255,255,0.22)");
+    outer.addColorStop(0.55, "rgba(255,255,255,0.06)");
+    outer.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = outer;
+    ctx.fillRect(0, 0, 64, 64);
+    const mid = ctx.createRadialGradient(32, 32, 2, 32, 32, 20);
+    mid.addColorStop(0, "rgba(255,255,255,0.55)");
+    mid.addColorStop(0.65, "rgba(255,255,255,0.12)");
+    mid.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = mid;
+    ctx.fillRect(0, 0, 64, 64);
+    const core = ctx.createRadialGradient(32, 32, 0, 32, 32, 9);
+    core.addColorStop(0, "rgba(255,255,255,1)");
+    core.addColorStop(0.4, "rgba(255,255,255,0.82)");
+    core.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = core;
     ctx.fillRect(0, 0, 64, 64);
   });
 }
 
 /** Hit spark — a hot 4-point star (white, tinted per impact). */
 function makeSpark(scene: Phaser.Scene) {
-  bakeCanvas(scene, SPARK_KEY, 16, 16, (ctx) => {
+  bakeCanvas(scene, SPARK_KEY, 24, 24, (ctx) => {
     const a = (x: number, y: number, w: number, h: number, al: number) => {
       ctx.globalAlpha = al;
       ctx.fillStyle = "#ffffff";
       ctx.fillRect(x, y, w, h);
       ctx.globalAlpha = 1;
     };
-    a(7, 0, 2, 16, 0.45); // vertical ray
-    a(0, 7, 16, 2, 0.45); // horizontal ray
-    a(3, 3, 2, 2, 0.35);
-    a(11, 3, 2, 2, 0.35);
-    a(3, 11, 2, 2, 0.35);
-    a(11, 11, 2, 2, 0.35); // diagonal sparks
-    a(6, 6, 4, 4, 1); // core
-    a(7, 7, 2, 2, 1);
+    const halo = ctx.createRadialGradient(12, 12, 0.5, 12, 12, 11);
+    halo.addColorStop(0, "rgba(255,255,255,0.95)");
+    halo.addColorStop(0.45, "rgba(255,255,255,0.35)");
+    halo.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = halo;
+    ctx.fillRect(0, 0, 24, 24);
+    a(11, 0, 2, 24, 0.55);
+    a(0, 11, 24, 2, 0.55);
+    a(5, 5, 2, 2, 0.45);
+    a(17, 5, 2, 2, 0.45);
+    a(5, 17, 2, 2, 0.45);
+    a(17, 17, 2, 2, 0.45);
+    a(10, 10, 4, 4, 1);
+    a(11, 11, 2, 2, 1);
   });
 }
 
@@ -322,14 +560,23 @@ function makeCrate(scene: Phaser.Scene) {
       ctx.fillRect(x, y, w, h);
       ctx.globalAlpha = 1;
     };
-    px(6, 7, 20, 19, 0x161c30);
-    px(6, 7, 20, 2, 0x2a3450); // top edge
-    px(6, 7, 2, 19, 0x222a44); // left edge
+    px(6, 7, 20, 19, 0x161c30); // body
+    px(7, 8, 18, 17, 0x1b2236); // inner panel
+    px(6, 7, 20, 2, 0x2a3450); // top edge (lit)
+    px(7, 8, 17, 1, 0x3a455f, 0.7); // top inner highlight
+    px(6, 7, 2, 19, 0x222a44); // left edge (lit)
     px(24, 7, 2, 19, 0x0d1120); // right shadow
-    px(6, 24, 20, 2, 0x0a0c16); // bottom
-    px(6, 15, 20, 2, 0xf7ff3c, 0.85); // glowing lid seam
-    px(15, 7, 2, 19, 0x29e7ff, 0.6); // vertical seam
-    [[8, 10], [22, 10], [8, 21], [22, 21]].forEach(([x, y]) => px(x, y, 2, 2, 0x39ff88));
+    px(6, 24, 20, 2, 0x0a0c16); // bottom shadow
+    for (let sx = 8; sx < 24; sx += 4) px(sx, 11, 2, 2, 0xf7ff3c, 0.5); // hazard stripes
+    px(6, 15, 20, 2, 0xf7ff3c, 0.9); // glowing lid seam
+    px(14, 14, 4, 4, 0x0d1120); // latch housing
+    px(15, 15, 2, 2, 0x29e7ff); // latch light
+    px(15, 7, 2, 8, 0x29e7ff, 0.5); // vertical seam (upper)
+    px(15, 17, 2, 8, 0x29e7ff, 0.5); // vertical seam (lower)
+    [[8, 10], [22, 10], [8, 21], [22, 21]].forEach(([x, y]) => {
+      px(x, y, 2, 2, 0x39ff88); // corner bolt
+      px(x, y, 1, 1, 0xeafdff, 0.6); // bolt glint
+    });
   });
 }
 
@@ -341,19 +588,26 @@ function makeStreetlight(scene: Phaser.Scene) {
       ctx.fillRect(x, y, w, h);
     };
     // lamp glow (white -> accent when tinted)
-    const grad = ctx.createRadialGradient(16, 8, 1, 16, 8, 13);
-    grad.addColorStop(0, "rgba(255,255,255,0.85)");
+    const grad = ctx.createRadialGradient(16, 8, 1, 16, 8, 14);
+    grad.addColorStop(0, "rgba(255,255,255,0.9)");
+    grad.addColorStop(0.5, "rgba(255,255,255,0.35)");
     grad.addColorStop(1, "rgba(255,255,255,0)");
     ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, 32, 22);
-    // pole + base
+    ctx.fillRect(0, 0, 32, 24);
+    // pole + base (lit left, shadow right)
     px(15, 11, 2, 35, 0x39415a);
-    px(15, 11, 1, 35, 0x586488);
-    px(12, 45, 8, 2, 0x222a3c);
-    // lamp housing (bright)
-    px(11, 4, 10, 6, 0xffffff);
-    px(12, 3, 8, 2, 0xffffff);
-    px(13, 10, 6, 2, 0xe0e8ff);
+    px(15, 11, 1, 35, 0x586488); // highlight
+    px(16, 11, 1, 35, 0x222a3c); // shadow side
+    px(11, 45, 10, 2, 0x222a3c); // base plate
+    px(12, 44, 8, 1, 0x39415a); // base lip
+    // lamp fixture — defined housing + brackets + hot bulb
+    px(10, 5, 12, 5, 0x2a3142); // housing
+    px(10, 5, 12, 1, 0x4a5470); // housing top lit
+    px(11, 4, 10, 1, 0x5a6488); // cap
+    px(9, 7, 1, 3, 0x39415a); // left bracket
+    px(22, 7, 1, 3, 0x39415a); // right bracket
+    px(12, 9, 8, 2, 0xffffff); // bright bulb
+    px(13, 10, 6, 1, 0xeafdff); // hot bulb core
   });
 }
 
@@ -411,12 +665,13 @@ function makeUiGun(scene: Phaser.Scene) {
   });
 }
 
-/** Ambient citizen: a small grayscale civilian, tinted per-instance by the crowd. */
+/** Ambient citizen: a small grayscale civilian, tinted per-instance by the crowd.
+ *  Animated shuffle sheet (single facing) so the wandering crowd walks. */
 function makeAgent(scene: Phaser.Scene) {
-  bakeDrawnFrames(scene, AGENT_KEY, 1, AGENT_W, AGENT_H, (ctx) => drawAgent(ctx));
+  bakeAgentSheet(scene, AGENT_KEY, AGENT_W, AGENT_H);
 }
 
-/** Player dialogue portrait: a detailed neon cyberian bust against the city. */
+/** Player dialogue portrait: a human runner bust against the neon city. */
 function makePortraitPlayer(scene: Phaser.Scene) {
   bakeCanvas(scene, PORTRAIT_PLAYER_KEY, 96, 96, (ctx) => {
     const cssc = (c: number) => "#" + (c & 0xffffff).toString(16).padStart(6, "0");
@@ -426,7 +681,6 @@ function makePortraitPlayer(scene: Phaser.Scene) {
       ctx.fillRect(x, y, w, h);
       ctx.globalAlpha = 1;
     };
-    // backdrop city + faint grid + distant window lights
     px(0, 0, 96, 96, 0x080a14);
     for (let i = 8; i < 96; i += 8) {
       px(0, i, 96, 1, 0x0e1422, 0.5);
@@ -442,52 +696,46 @@ function makePortraitPlayer(scene: Phaser.Scene) {
     ctx.fillStyle = vg;
     ctx.fillRect(0, 0, 96, 96);
 
-    // shoulders / armor
+    // jacket shoulders
     px(12, 72, 72, 24, 0x141a2c);
     px(12, 72, 72, 3, 0x222a44);
     px(12, 72, 3, 24, 0x2a3450);
     px(19, 78, 7, 14, 0x29e7ff, 0.35);
     px(70, 78, 7, 14, 0xff2bd6, 0.3);
-    // neck
-    px(40, 62, 16, 12, 0x1a2236);
-    px(40, 62, 2, 12, 0x2a3450);
+    px(40, 62, 16, 12, 0xe6b58c);
+    px(40, 62, 2, 12, 0xf3d2b8);
 
-    // head / helmet
-    px(28, 16, 40, 50, 0x161c30);
-    px(28, 16, 3, 50, 0x33405e); // left neon rim
-    px(28, 16, 40, 3, 0x222a44); // top
-    px(65, 16, 3, 50, 0x0d1120); // right shadow
-    px(31, 66, 34, 2, 0x0a0c16); // jaw shadow
-    // crest
-    px(43, 9, 10, 8, 0x1a2236);
-    px(45, 7, 6, 2, 0x29e7ff, 0.75);
+    // hair
+    px(26, 14, 44, 14, 0x1b1820);
+    px(27, 15, 42, 4, 0x2a1d14);
+    px(28, 12, 40, 4, 0x1b1820);
+    px(30, 10, 36, 3, 0x2a1d14);
 
-    // visor — glowing band with scanlines + reflection
-    px(31, 34, 34, 15, 0x06121e);
-    px(33, 36, 30, 11, 0x0a3a52);
-    px(33, 37, 30, 3, 0x29e7ff, 0.95);
-    px(33, 41, 30, 1, 0x29e7ff, 0.5);
-    px(33, 44, 30, 2, 0x18708e, 0.85);
-    px(36, 37, 6, 4, 0xffffff, 0.9); // hot reflection
-    px(54, 38, 4, 2, 0xffffff, 0.5);
+    // face
+    px(28, 24, 40, 42, 0xe6b58c);
+    px(29, 25, 38, 10, 0xf3d2b8);
+    px(29, 25, 24, 4, 0xfff0e0);
+    px(62, 30, 6, 32, 0xc98a5e, 0.55);
+    px(28, 30, 3, 30, 0x9ad6ff, 0.35);
+    px(36, 40, 8, 8, 0xf0f0f5);
+    px(52, 40, 8, 8, 0xf0f0f5);
+    px(38, 42, 4, 4, 0x1a4a8a);
+    px(54, 42, 4, 4, 0x1a4a8a);
+    px(38, 40, 2, 2, 0xffffff, 0.9);
+    px(54, 40, 2, 2, 0xffffff, 0.9);
+    px(34, 36, 10, 2, 0x2a1d14);
+    px(46, 36, 10, 2, 0x2a1d14);
+    px(42, 48, 12, 2, 0xc98a5e);
+    px(44, 50, 8, 2, 0xf3d2b8, 0.65);
+    px(40, 58, 16, 3, 0xc98a5e);
+    px(41, 60, 14, 1, 0xa9794a);
 
-    // data-jack (right temple, magenta) + mouth grille
-    px(64, 28, 6, 3, 0xff2bd6);
-    px(67, 31, 2, 9, 0x8a1a6a);
-    px(40, 54, 16, 2, 0x0d1120);
-    px(41, 52, 14, 1, 0x222a44);
-
-    // ── detail pass: rim light, visor gloss, HUD reticle, atmosphere ──
-    px(28, 17, 1, 48, 0x4ad6ff, 0.5); // cyan rim down the lit helmet edge
-    px(29, 16, 1, 4, 0x9af0ff, 0.6);
-    px(45, 7, 6, 2, 0x29e7ff, 0.5); // crest glow
-    px(45, 38, 11, 1, 0x9af0ff, 0.4); // visor gloss
-    px(57, 39, 3, 3, 0xffffff, 0.75); // bright glint
-    px(46, 41, 3, 1, 0xeafdff, 0.6); // tiny HUD reticle in the visor
-    px(47, 40, 1, 3, 0xeafdff, 0.6);
-    px(19, 78, 2, 12, 0x29e7ff, 0.4); // shoulder rim accents
+    // neon earpiece + collar accent
+    px(64, 34, 5, 3, 0x29e7ff, 0.9);
+    px(66, 35, 2, 8, 0xff2bd6, 0.75);
+    px(19, 78, 2, 12, 0x29e7ff, 0.4);
     px(75, 78, 2, 12, 0xff2bd6, 0.32);
-    const haze = ctx.createLinearGradient(0, 0, 0, 46); // volumetric top haze
+    const haze = ctx.createLinearGradient(0, 0, 0, 46);
     haze.addColorStop(0, "rgba(41,231,255,0.10)");
     haze.addColorStop(1, "rgba(0,0,0,0)");
     ctx.fillStyle = haze;

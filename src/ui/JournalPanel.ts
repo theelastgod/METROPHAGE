@@ -1,9 +1,9 @@
 import Phaser from "phaser";
-import { VIEW_W, VIEW_H } from "../config";
 import Memory from "../systems/Memory";
 import Quests from "../systems/Quests";
 import { FRAGMENTS } from "../game/fragments";
 import { drawPanelFrame } from "./panelChrome";
+import { overlayRect, uiDim, uiFont } from "./uiLayout";
 
 /**
  * Journal (J) — the active quest + its objective/log, plus recovered memory
@@ -24,10 +24,11 @@ export default class JournalPanel {
   private countText!: Phaser.GameObjects.Text;
   private open = false;
 
-  private readonly x = 70;
-  private readonly y = 36;
-  private readonly w = VIEW_W - 140;
-  private readonly h = VIEW_H - 64;
+  private readonly frame = overlayRect(18);
+  private readonly x = this.frame.x;
+  private readonly y = this.frame.y;
+  private readonly w = this.frame.w;
+  private readonly h = this.frame.h;
 
   constructor(scene: Phaser.Scene, memory: Memory, quests: Quests) {
     this.scene = scene;
@@ -36,24 +37,24 @@ export default class JournalPanel {
     this.g = scene.add.graphics().setScrollFactor(0).setDepth(1600);
     const D = 1601;
 
-    this.text(this.x + 16, this.y + 10, "JOURNAL", "#eafdff", "13px", D);
-    this.countText = this.text(this.x + this.w - 16, this.y + 10, "", "#8a5cff", "11px", D);
+    this.text(this.x + uiDim(18), this.y + uiDim(12), "JOURNAL", "#eafdff", 15, D);
+    this.countText = this.text(this.x + this.w - uiDim(18), this.y + uiDim(12), "", "#8a5cff", 12, D);
     this.countText.setOrigin(1, 0);
 
-    this.text(this.x + 16, this.y + 34, "ACTIVE", "#f7ff3c", "10px", D);
-    this.questTitle = this.text(this.x + 20, this.y + 48, "", "#39ff88", "12px", D);
-    this.questBody = this.body(this.x + 20, this.y + 66, this.w - 40, D);
+    this.text(this.x + uiDim(18), this.y + uiDim(38), "ACTIVE", "#f7ff3c", 11, D);
+    this.questTitle = this.text(this.x + uiDim(22), this.y + uiDim(54), "", "#39ff88", 13, D);
+    this.questBody = this.body(this.x + uiDim(22), this.y + uiDim(74), this.w - uiDim(44), D);
 
-    this.text(this.x + 16, this.y + 104, "MEMORY", "#29e7ff", "10px", D);
-    const startY = this.y + 120;
-    const rowH = (this.h - 132) / FRAGMENTS.length;
+    this.text(this.x + uiDim(18), this.y + uiDim(112), "MEMORY", "#29e7ff", 11, D);
+    const startY = this.y + uiDim(130);
+    const rowH = (this.h - uiDim(142)) / FRAGMENTS.length;
     FRAGMENTS.forEach((_f, i) => {
       const ty = startY + i * rowH;
-      this.fragTitles.push(this.text(this.x + 20, ty, "", "#39ff88", "11px", D));
-      this.fragBodies.push(this.body(this.x + 30, ty + 14, this.w - 60, D));
+      this.fragTitles.push(this.text(this.x + uiDim(22), ty, "", "#39ff88", 12, D));
+      this.fragBodies.push(this.body(this.x + uiDim(32), ty + uiDim(16), this.w - uiDim(64), D));
     });
 
-    this.text(this.x + this.w - 116, this.y + this.h - 18, "J / ESC to close", "#9aa3b2", "10px", D);
+    this.text(this.x + this.w - uiDim(124), this.y + this.h - uiDim(22), "J / ESC to close", "#9aa3b2", 11, D);
     this.setVisible(false);
   }
 
@@ -114,18 +115,18 @@ export default class JournalPanel {
     return this.scene.add
       .text(x, y, "", {
         fontFamily: "Courier New, monospace",
-        fontSize: "10px",
+        fontSize: uiFont(11),
         color: "#9aa3b2",
-        lineSpacing: 2,
+        lineSpacing: uiDim(2),
         wordWrap: { width: w },
       })
       .setScrollFactor(0)
       .setDepth(depth);
   }
 
-  private text(x: number, y: number, s: string, color: string, size: string, depth: number) {
+  private text(x: number, y: number, s: string, color: string, sizePx: number, depth: number) {
     const t = this.scene.add
-      .text(x, y, s, { fontFamily: "Courier New, monospace", fontSize: size, color })
+      .text(x, y, s, { fontFamily: "Courier New, monospace", fontSize: uiFont(sizePx), color })
       .setScrollFactor(0)
       .setDepth(depth);
     this.statics.push(t);

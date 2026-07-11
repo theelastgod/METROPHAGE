@@ -1,27 +1,173 @@
-import { WorldDO, parseZone, type Env } from "./world";
-import { getAccount, quote, withdraw, deposit, simSettlement, type Settlement } from "./metro";
+import { WorldDO, parseZone, isNamedZone, type Env } from "./world";
+import { getAccount, quote, withdraw, confirmWithdraw, deposit, poolInfo, simSettlement, type Settlement } from "./metro";
+import { verifyWalletLogin } from "./auth";
+import { loginMessage } from "../../src/net/protocol";
 
 export { WorldDO };
 
-/**
- * Choose the bridge settlement. With the devnet treasury configured (.dev.vars), use
- * real Solana — dynamically imported so @solana/web3.js never loads on the game's hot
- * path. Otherwise the devnet-sim settlement (the accounting still works end-to-end).
- */
-async function pickSettlement(env: Env): Promise<Settlement> {
-  if (env.METRO_TREASURY_SECRET && env.METRO_DEVNET_MINT) {
-    const { makeSolanaSettlement } = await import("./solana");
-    return makeSolanaSettlement({
-      rpc: env.METRO_RPC || "https://api.devnet.solana.com",
-      mint: env.METRO_DEVNET_MINT,
-      treasurySecretB64: env.METRO_TREASURY_SECRET,
-    });
+/** Mint from either METRO_MINT (preferred) or legacy METRO_DEVNET_MINT. */
+function metroMint(env: Env): string | undefined {
+  const m = (env.METRO_MINT || env.METRO_DEVNET_MINT || "").trim();
+  return m || undefined;
+}
+
+/** True for value-bearing mainnets (Robinhood 4663, Ethereum mainnet, Solana mainnet). */
+function rpcIsMainnet(rpc: string, chainId?: number): boolean {
+  if (chainId === 4663) return true; // Robinhood Chain mainnet
+  if (chainId === 46630) return false; // Robinhood Chain testnet
+  if (/testnet\.chain\.robinhood|rpc\.testnet\.chain\.robinhood/i.test(rpc)) return false;
+  if (/mainnet\.chain\.robinhood/i.test(rpc)) return true;
+  return /mainnet/i.test(rpc) && !/sepolia|goerli|holesky|devnet|testnet/i.test(rpc);
+}
+
+function isEvmMintAddr(mint: string): boolean {
+  return /^0x[a-fA-F0-9]{40}$/.test(mint);
+}
+
+/** Preferred EVM defaults: Robinhood Chain testnet (safe); mainnet when chain id 4663. */
+function defaultEvmRpc(chainId?: number): string {
+  if (chainId === 4663) return "https://rpc.mainnet.chain.robinhood.com";
+  return "https://rpc.testnet.chain.robinhood.com"; // 46630 testnet
+}
+
+function defaultEvmChainId(env: Env): number {
+  if (env.METRO_CHAIN_ID) {
+    const n = parseInt(env.METRO_CHAIN_ID, 10);
+    if (Number.isFinite(n)) return n;
   }
-  return simSettlement;
+  // Counsel-armed + mint → mainnet Robinhood; else testnet.
+  if (env.METRO_MAINNET_ARMED === "1") return 4663;
+  return 46630;
+}
+
+export type SettlementKind = "sim" | "evm" | "solana";
+
+/**
+ * Choose the bridge settlement.
+ * - ERC-20 (0x mint) → Robinhood Chain / EVM when treasury key set
+ * - Solana mint (base58) → legacy SPL settlement
+ * - Mainnet RPC/chain (incl. Robinhood 4663) requires METRO_MAINNET_ARMED=1
+ * - Otherwise sim
+ */
+async function pickSettlement(env: Env): Promise<{ settlement: Settlement; kind: SettlementKind }> {
+  const mint = metroMint(env);
+  const secret = env.METRO_TREASURY_SECRET?.trim();
+  if (!mint || !secret) return { settlement: simSettlement, kind: "sim" };
+
+  if (isEvmMintAddr(mint)) {
+    const chainId = defaultEvmChainId(env);
+    const rpc = (env.METRO_RPC || defaultEvmRpc(chainId)).trim();
+    if (rpcIsMainnet(rpc, chainId) && env.METRO_MAINNET_ARMED !== "1") {
+      return { settlement: simSettlement, kind: "sim" };
+    }
+    const { makeEvmSettlement, robinhoodRpcs } = await import("./evm");
+    return {
+      settlement: makeEvmSettlement({
+        rpcs: robinhoodRpcs(chainId, rpc),
+        mint,
+        treasuryPrivateKey: secret,
+        chainId,
+        db: env.DB,
+      }),
+      kind: "evm",
+    };
+  }
+
+  const rpc = (env.METRO_RPC || "https://api.devnet.solana.com").trim();
+  if (rpcIsMainnet(rpc) && env.METRO_MAINNET_ARMED !== "1") {
+    return { settlement: simSettlement, kind: "sim" };
+  }
+  const { makeSolanaSettlement } = await import("./solana");
+  return {
+    settlement: makeSolanaSettlement({ rpc, mint, treasurySecretB64: secret }),
+    kind: "solana",
+  };
+}
+
+/** Require a wallet signature that proves `player` is the wallet owner (w:<addr>).
+ *  EVM uses personal_sign; Solana uses ed25519 SIWS. */
+async function requireWalletPlayer(
+  b: { player?: string; wallet?: string; sig?: string; ts?: number },
+  kind: SettlementKind,
+): Promise<{ ok: true; player: string; wallet: string } | { ok: false; reason: string }> {
+  const wallet = (b.wallet || "").trim();
+  const player = (b.player || "").trim();
+  const ts = Number(b.ts);
+  const sig = b.sig ?? "";
+  if (!wallet || !sig || !Number.isFinite(ts)) {
+    return { ok: false, reason: "wallet sign-in required — missing wallet/sig/ts" };
+  }
+  if (kind === "evm" || /^0x[a-fA-F0-9]{40}$/.test(wallet)) {
+    const { verifyEvmLogin } = await import("./evm");
+    const age = Math.abs(Date.now() - ts);
+    if (age > 10 * 60_000) return { ok: false, reason: "wallet sign-in required — stale timestamp" };
+    const id = verifyEvmLogin(wallet, loginMessage(wallet, ts), sig);
+    if (!id) return { ok: false, reason: "wallet sign-in required — bad EVM signature" };
+    if (player && player !== id && player.toLowerCase() !== wallet.toLowerCase() && player !== id.slice(2)) {
+      return { ok: false, reason: "player id does not match signed wallet" };
+    }
+    return { ok: true, player: id, wallet };
+  }
+  const id = verifyWalletLogin({ wallet, sig, ts });
+  if (!id) return { ok: false, reason: "wallet sign-in required — bad or stale signature" };
+  if (player && player !== id && player !== wallet && player !== id.slice(2)) {
+    return { ok: false, reason: "player id does not match signed wallet" };
+  }
+  return { ok: true, player: id, wallet };
 }
 
 const json = (body: unknown, status = 200): Response =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+  new Response(JSON.stringify(body), {
+    status,
+    // CORS so the browser client (Vite dev origin) can read the HTTP economy/board APIs.
+    headers: { "content-type": "application/json", "access-control-allow-origin": "*" },
+  });
+
+/**
+ * Cross-zone leaderboards. Reads the shared D1 player_stats (every zone DO contributes),
+ * ranking players by a stat. Lives in the Worker, not a DO, because it aggregates across
+ * ALL zones — the whole point of keeping global state in D1.
+ */
+/** Wallet-authenticated character lookup — used by the title screen before WS login. */
+async function handleIdentity(req: Request, env: Env): Promise<Response> {
+  try {
+    const b = (await req.json()) as { wallet?: string; sig?: string; ts?: number };
+    const id = verifyWalletLogin({ wallet: b.wallet ?? "", sig: b.sig ?? "", ts: Number(b.ts) });
+    if (!id) return json({ ok: false, reason: "wallet sign-in failed" }, 401);
+    const row = await env.DB.prepare("SELECT name, look FROM players WHERE id = ?")
+      .bind(id)
+      .first<{ name: string; look: string | null }>();
+    let look: unknown = null;
+    if (row?.look) {
+      try {
+        look = JSON.parse(row.look);
+      } catch {
+        look = null;
+      }
+    }
+    const locked = !!row?.look;
+    return json({ ok: true, id, name: row?.name ?? null, look, locked });
+  } catch (e) {
+    return json({ ok: false, reason: String((e as Error)?.message ?? e) }, 400);
+  }
+}
+
+async function handleLeaderboard(url: URL, env: Env): Promise<Response> {
+  // digits allowed: weekly stats are keyed "wk<week>" and rotate with the epoch week
+  const stat = (url.searchParams.get("stat") || "kills").replace(/[^a-z0-9]/g, "").slice(0, 24);
+  const n = Math.min(50, Math.max(1, parseInt(url.searchParams.get("n") || "10", 10)));
+  try {
+    const { results } = await env.DB.prepare(
+      "SELECT s.player AS player, COALESCE(p.name, s.player) AS name, s.v AS v " +
+        "FROM player_stats s LEFT JOIN players p ON p.id = s.player WHERE s.stat = ? AND s.v > 0 ORDER BY s.v DESC LIMIT ?",
+    )
+      .bind(stat, n)
+      .all<{ player: string; name: string; v: number }>();
+    return json({ ok: true, stat, rows: results ?? [] });
+  } catch (e) {
+    return json({ ok: false, reason: String((e as Error)?.message ?? e), rows: [] }, 200);
+  }
+}
 
 /**
  * $METRO custodial bridge endpoints (Phase 5). Account-level economy — operates on the
@@ -29,20 +175,201 @@ const json = (body: unknown, status = 200): Response =>
  * is the devnet sim for now (step 2a); step 2b selects a real settlement when armed.
  */
 async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> {
-  const settlement = await pickSettlement(env);
+  const { settlement, kind } = await pickSettlement(env);
+  const mint = metroMint(env);
+  const hasTreasury = !!(env.METRO_TREASURY_SECRET && env.METRO_TREASURY_SECRET.trim());
+  const rpc = (env.METRO_RPC || "").trim();
+  const armed = env.METRO_MAINNET_ARMED === "1";
+  const live = kind !== "sim";
+  // CRITICAL: mint configured but settlement is sim → never accept deposits/withdraws
+  // (sim trusts amounts). Explicit METRO_ALLOW_SIM=1 required for harness with a mint.
+  const allowSimWithMint = env.METRO_ALLOW_SIM === "1";
+  const dangerousSim = !live && !!mint && !allowSimWithMint;
+
+  const rejectIfDangerousSim = (): Response | null => {
+    if (!dangerousSim) return null;
+    return json(
+      {
+        ok: false,
+        reason:
+          "bridge locked: mint is set but settlement is still sim (arm mainnet, fix secrets, or set METRO_ALLOW_SIM=1 for harness only)",
+        settlement: kind,
+        mintConfigured: true,
+      },
+      503,
+    );
+  };
+
   try {
     if (url.pathname === "/metro/account" && req.method === "GET")
       return json(await getAccount(env.DB, url.searchParams.get("player") ?? ""));
+    if (url.pathname === "/metro/pool" && req.method === "GET") {
+      const info = (await poolInfo(env.DB)) as Record<string, unknown>;
+      info.mintConfigured = !!mint;
+      info.treasuryConfigured = hasTreasury;
+      info.mainnetArmed = armed;
+      info.rpc = rpc || null;
+      const cid = mint && isEvmMintAddr(mint) ? defaultEvmChainId(env) : null;
+      info.chain = mint && isEvmMintAddr(mint) ? (cid === 4663 || cid === 46630 ? "robinhood" : "evm") : mint ? "solana" : null;
+      info.chainId = cid;
+      info.networkName =
+        cid === 4663 ? "Robinhood Chain" : cid === 46630 ? "Robinhood Chain Testnet" : info.chain;
+      info.readyForCa = hasTreasury && !mint;
+      info.liveBridge = live;
+      info.settlement = kind;
+      info.dangerousSim = dangerousSim;
+      info.note =
+        "Robinhood Chain ≠ Robinhood app. Use MetaMask on chain " + (cid ?? "46630") + " to deposit/withdraw.";
+      info.getMetroHint =
+        cid === 4663
+          ? "Trade $METRO on Robinhood Chain DEXes or peer transfers — not the Robinhood stock app."
+          : "Testnet: mint/get test $METRO on RH testnet, then deposit via MetaMask in this panel.";
+      if (hasTreasury) {
+        if (mint && isEvmMintAddr(mint)) {
+          const { treasuryEvmAddress, treasuryHealth, robinhoodRpcs } = await import("./evm");
+          info.treasury = treasuryEvmAddress(env.METRO_TREASURY_SECRET!);
+          if (live) {
+            try {
+              const health = await treasuryHealth({
+                rpcs: robinhoodRpcs(cid ?? 46630, rpc || undefined),
+                mint,
+                treasuryPrivateKey: env.METRO_TREASURY_SECRET!,
+              });
+              info.treasuryEth = health.eth;
+              info.treasuryMetro = health.metro;
+              info.treasuryOk = health.ok;
+              if (health.warn) info.treasuryWarn = health.warn;
+            } catch {
+              /* non-fatal */
+            }
+          }
+        } else {
+          try {
+            const { treasuryPubkey } = await import("./solana");
+            info.treasury = treasuryPubkey(env.METRO_TREASURY_SECRET!);
+          } catch {
+            info.treasury = null;
+          }
+        }
+      }
+      if (!live) {
+        if (dangerousSim) {
+          info.reason = "LOCKED — mint set but settlement is sim (prevents fake deposits)";
+        } else if (hasTreasury && mint && rpcIsMainnet(rpc, cid ?? undefined) && !armed) {
+          info.reason = "mainnet RPC set but METRO_MAINNET_ARMED is off — settlement stays sim";
+        } else if (!mint) {
+          info.reason = "awaiting mint CA — set METRO_MINT to an ERC-20 on Robinhood Chain";
+        } else if (!hasTreasury) {
+          info.reason = "awaiting METRO_TREASURY_SECRET (EVM hex key)";
+        }
+      }
+      return json(info);
+    }
+    if (url.pathname === "/metro/status" && req.method === "GET") {
+      return json({
+        ok: true,
+        mintConfigured: !!mint,
+        treasuryConfigured: hasTreasury,
+        mainnetArmed: armed,
+        settlement: kind,
+        chain: mint && isEvmMintAddr(mint) ? (defaultEvmChainId(env) === 4663 || defaultEvmChainId(env) === 46630 ? "robinhood" : "evm") : mint ? "solana" : null,
+        chainId: mint && isEvmMintAddr(mint) ? defaultEvmChainId(env) : null,
+        readyForCa: hasTreasury && !mint,
+        clusterHint: rpcIsMainnet(rpc, mint && isEvmMintAddr(mint) ? defaultEvmChainId(env) : undefined)
+          ? "mainnet"
+          : rpc
+            ? "testnet/custom"
+            : "unset",
+      });
+    }
     if (url.pathname === "/metro/quote" && req.method === "GET")
       return json(quote(Number(url.searchParams.get("credits") ?? "0")));
     if (url.pathname === "/metro/withdraw" && req.method === "POST") {
-      const b = (await req.json()) as { player?: string; wallet?: string; credits?: number };
+      const locked = rejectIfDangerousSim();
+      if (locked) return locked;
+      const b = (await req.json()) as {
+        player?: string;
+        wallet?: string;
+        credits?: number;
+        sig?: string;
+        ts?: number;
+      };
+      if (live) {
+        const auth = await requireWalletPlayer(b, kind);
+        if (!auth.ok) return json(auth, 401);
+        // Money wallet must match authenticated identity
+        if (b.wallet && auth.wallet.toLowerCase() !== b.wallet.trim().toLowerCase()) {
+          return json({ ok: false, reason: "wallet must match signed identity" }, 401);
+        }
+        return json(
+          await withdraw(env.DB, settlement, {
+            player: auth.player,
+            wallet: auth.wallet,
+            credits: Number(b.credits),
+          }),
+        );
+      }
       return json(await withdraw(env.DB, settlement, { player: b.player ?? "", wallet: b.wallet ?? "", credits: Number(b.credits) }));
     }
-    if (url.pathname === "/metro/deposit" && req.method === "POST") {
-      const b = (await req.json()) as { player?: string; wallet?: string; txSig?: string; metro?: number };
+    if (url.pathname === "/metro/withdraw/confirm" && req.method === "POST") {
+      const locked = rejectIfDangerousSim();
+      if (locked) return locked;
+      const b = (await req.json()) as {
+        player?: string;
+        withdrawId?: number;
+        txSig?: string;
+        wallet?: string;
+        sig?: string;
+        ts?: number;
+      };
+      let player = b.player ?? "";
+      if (live) {
+        const auth = await requireWalletPlayer(b, kind);
+        if (!auth.ok) return json(auth, 401);
+        player = auth.player;
+      }
       return json(
-        await deposit(env.DB, settlement, { player: b.player ?? "", wallet: b.wallet ?? "", txSig: b.txSig ?? "", metro: Number(b.metro) }),
+        await confirmWithdraw(env.DB, settlement, {
+          player,
+          withdrawId: Number(b.withdrawId),
+          txSig: b.txSig ?? "",
+        }),
+      );
+    }
+    if (url.pathname === "/metro/deposit" && req.method === "POST") {
+      const locked = rejectIfDangerousSim();
+      if (locked) return locked;
+      const b = (await req.json()) as {
+        player?: string;
+        wallet?: string;
+        txSig?: string;
+        metro?: number;
+        sig?: string;
+        ts?: number;
+      };
+      if (live) {
+        const auth = await requireWalletPlayer(b, kind);
+        if (!auth.ok) return json(auth, 401);
+        if (b.wallet && auth.wallet.toLowerCase() !== b.wallet.trim().toLowerCase()) {
+          return json({ ok: false, reason: "wallet must match signed identity" }, 401);
+        }
+        // On-chain amount only — ignore client metro for trust (settlement re-reads logs)
+        return json(
+          await deposit(env.DB, settlement, {
+            player: auth.player,
+            wallet: auth.wallet,
+            txSig: b.txSig ?? "",
+            metro: Number(b.metro) || 0,
+          }),
+        );
+      }
+      return json(
+        await deposit(env.DB, settlement, {
+          player: b.player ?? "",
+          wallet: b.wallet ?? "",
+          txSig: b.txSig ?? "",
+          metro: Number(b.metro),
+        }),
       );
     }
     return json({ ok: false, reason: "not found" }, 404);
@@ -60,6 +387,20 @@ export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
 
+    // CORS preflight — the browser client POSTs JSON (identity, metro bridge) from the
+    // game origin, which always preflights. Without this, every POST fails in-browser.
+    if (req.method === "OPTIONS") {
+      return new Response(null, {
+        status: 204,
+        headers: {
+          "access-control-allow-origin": "*",
+          "access-control-allow-methods": "GET, POST, OPTIONS",
+          "access-control-allow-headers": "content-type",
+          "access-control-max-age": "86400",
+        },
+      });
+    }
+
     if (url.pathname === "/health") {
       return new Response(JSON.stringify({ ok: true, ts: Date.now() }), {
         status: 200,
@@ -69,15 +410,21 @@ export default {
 
     // Ops: forward a per-zone metrics probe to that zone's DO.
     if (url.pathname === "/stats") {
-      const zone = "d" + parseZone(url.searchParams.get("zone"));
+      const raw = url.searchParams.get("zone");
+      const zone = isNamedZone(raw) ? raw! : "d" + parseZone(raw);
       const stub = env.WORLD.get(env.WORLD.idFromName(zone));
       return stub.fetch(new Request(`https://world/stats?zone=${zone}`));
     }
 
+    if (url.pathname === "/leaderboard") return handleLeaderboard(url, env);
+
+    if (url.pathname === "/identity" && req.method === "POST") return handleIdentity(req, env);
+
     if (url.pathname.startsWith("/metro/")) return handleMetro(url, req, env);
 
     if (url.pathname === "/ws") {
-      const zone = "d" + parseZone(url.searchParams.get("zone")); // canonical
+      const raw = url.searchParams.get("zone");
+      const zone = isNamedZone(raw) ? raw! : "d" + parseZone(raw); // canonical; interiors + building interiors pass through
       const stub = env.WORLD.get(env.WORLD.idFromName(zone));
       return stub.fetch(req);
     }

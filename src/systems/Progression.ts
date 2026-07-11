@@ -11,6 +11,8 @@ export interface ProgressData {
   xp: number;
   skillPoints: number;
   currency: number;
+  metro?: number; // off-chain $METRO premium balance (the Black-Market currency)
+  hp?: number; // persisted current HP (carries across districts; -1 / undefined = full)
   allocations: Record<string, number>;
   consumables?: Record<string, number>;
 }
@@ -31,6 +33,8 @@ export default class Progression {
   xp = 0;
   skillPoints = 0;
   currency = 0;
+  metro = 0; // off-chain $METRO premium balance (Black-Market currency)
+  hp = -1; // persisted current HP across districts (-1 = full / not yet wounded)
   allocations: Record<string, number> = {};
   consumables: Record<string, number> = {};
 
@@ -41,9 +45,20 @@ export default class Progression {
       this.xp = data.xp;
       this.skillPoints = data.skillPoints;
       this.currency = data.currency;
+      this.metro = data.metro ?? 0;
+      this.hp = data.hp ?? -1;
       this.allocations = { ...data.allocations };
       this.consumables = { ...(data.consumables ?? {}) };
     }
+  }
+
+  addMetro(n: number) {
+    this.metro = Math.max(0, this.metro + n);
+  }
+  spendMetro(n: number): boolean {
+    if (this.metro < n) return false;
+    this.metro -= n;
+    return true;
   }
 
   addConsumable(id: string, n = 1) {
@@ -135,6 +150,8 @@ export default class Progression {
       xp: this.xp,
       skillPoints: this.skillPoints,
       currency: this.currency,
+      metro: this.metro,
+      hp: this.hp,
       allocations: { ...this.allocations },
       consumables: { ...this.consumables },
     };

@@ -1,0 +1,50 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html,body { margin:0; padding:0; width:1280px; height:720px; overflow:hidden; background:transparent; }
+  .cap { position:absolute; left:0; right:0; top:66%; display:none; flex-direction:column; align-items:center; gap:10px; }
+  .cap.active { display:flex; }
+  .line { font-family:"Courier New", monospace; font-weight:bold; font-size:34px; letter-spacing:.32em;
+    padding:10px 30px 10px calc(30px + .32em); background:rgba(5,6,12,.72);
+    border-top:1px solid rgba(255,255,255,.14); border-bottom:1px solid rgba(255,255,255,.14); }
+  .sub { font-family:"Courier New", monospace; font-size:17px; letter-spacing:.42em; color:#8b95a7;
+    padding:4px 18px 4px calc(18px + .42em); background:rgba(5,6,12,.6); }
+  .cyan    { color:#29e7ff; text-shadow:0 0 14px rgba(41,231,255,.8), 0 0 46px rgba(41,231,255,.35); }
+  .magenta { color:#ff2ea6; text-shadow:0 0 14px rgba(255,46,166,.85), 0 0 52px rgba(255,46,166,.4); }
+  .green   { color:#39ff88; text-shadow:0 0 14px rgba(57,255,136,.75), 0 0 46px rgba(57,255,136,.3); }
+  .gold    { color:#ffd75a; text-shadow:0 0 14px rgba(255,215,90,.8), 0 0 50px rgba(255,215,90,.35); }
+  .white   { color:#dfe7f5; text-shadow:0 0 12px rgba(223,231,245,.6); }
+
+  /* full-frame end card */
+  .card { position:absolute; inset:0; display:none; align-items:center; justify-content:center; flex-direction:column; gap:22px; background:#07070d; }
+  .card.active { display:flex; }
+  .card::before { content:""; position:absolute; inset:0;
+    background-image:linear-gradient(rgba(41,231,255,.04) 1px, transparent 1px),
+                     linear-gradient(90deg, rgba(41,231,255,.04) 1px, transparent 1px);
+    background-size:56px 56px; }
+  .card::after { content:""; position:absolute; inset:0;
+    background:repeating-linear-gradient(0deg, rgba(0,0,0,.22) 0 2px, transparent 2px 4px); }
+  .mono { font-family:"Courier New", monospace; letter-spacing:.35em; text-align:center; }
+  .mid { font-size:34px; font-weight:bold; }
+  .small { font-size:19px; color:#8b95a7; letter-spacing:.5em; }
+  .rule { width:440px; height:1px; background:linear-gradient(90deg, transparent, #29e7ff, transparent); opacity:.6; }
+</style>
+</head>
+<body>
+  <div class="cap" id="p1"><div class="line cyan">ONE MASSIVE SHARED CYBERPUNK CITY</div><div class="sub">EIGHT DISTRICTS · ONE SERVER-AUTHORITATIVE WORLD</div></div>
+  <div class="cap" id="p2"><div class="line magenta">YOUR RUNNER — BOUND TO YOUR WALLET</div><div class="sub">ONE-TIME CREATION · WEB3 IDENTITY</div></div>
+  <div class="cap" id="p3"><div class="line white">A PERSONAL CAMPAIGN IN A LIVING WORLD</div><div class="sub">THE WAKE · THREE ACTS · WAKE THE BLANKS</div></div>
+  <div class="cap" id="p4"><div class="line green">FACTION WAR ACROSS EIGHT DISTRICTS</div><div class="sub">TERRITORY · WORLD BOSSES · DYNAMIC EVENTS</div></div>
+  <div class="cap" id="p5"><div class="line magenta">OPEN PVP · SERVER-VALIDATED KITS</div><div class="sub">DASH-BLINK DUELS · CRUCIBLE BUY-INS</div></div>
+  <div class="cap" id="p6"><div class="line gold">EARN CREDITS → BRIDGE TO $METRO</div><div class="sub">PLAYER-FUNDED P2E ECONOMY ON SOLANA</div></div>
+  <div class="cap" id="p7"><div class="line cyan">RAID THE ICE VAULTS</div><div class="sub">INSTANCED DIVES · MEMORY FRAGMENTS · WARDENS</div></div>
+  <div class="cap" id="p8"><div class="line cyan">A LIVING BROWSER MMORPG</div><div class="sub">PARTIES · CHAT · TRADING · ONE PERSISTENT WORLD</div></div>
+  <div class="card" id="c6">
+    <div class="mono mid" style="color:#29e7ff; text-shadow:0 0 16px rgba(41,231,255,.8)">PLAY FREE · IN YOUR BROWSER</div>
+    <div class="rule"></div>
+    <div class="mono small">SP CAMPAIGN · OPEN PVP · WEB3 RUNNERS · $METRO P2E</div>
+  </div>
+</body>
+</html>

@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { AGENT } from "../config";
 import { AGENT_KEY } from "../assets/manifest";
+import { driveAgent } from "../assets/anim";
 
 enum AgentState {
   Idle = "idle",
@@ -34,6 +35,7 @@ export default class Agent extends Phaser.Physics.Arcade.Sprite {
   step(now: number) {
     // Upright breathing / walking bob (tiny squash, body unaffected).
     const moving = this.fsm === AgentState.Wander;
+    driveAgent(this, moving); // leg shuffle while wandering
     const s = Math.sin(now * (moving ? 0.018 : 0.005) + this.bobPhase);
     this.setScale(1 - s * (moving ? 0.05 : 0.02), 1 + s * (moving ? 0.09 : 0.04));
 

@@ -1,24 +1,77 @@
 // METROPHAGE — global constants.
 // Kept as plain data so game logic stays independent of Phaser/render code.
+// Also imported by the Workers server (server/src/world.ts) — nothing here may
+// touch DOM globals or client-only modules; render-tier selection lives in
+// render/renderTier.ts and feeds back through setRenderResolution().
 
 export const TILE = 32;
 
-/** District grid dimensions, in tiles. */
+/**
+ * Source cell size of the real-art tileset PNG (public/assets/tilesets/metrophage_tiles.png).
+ * MUST equal `TILE`: the renderer is pixelArt (NEAREST filtering), so any downscale at draw
+ * time samples a shifting texel lattice as the camera scrolls — the floor visibly shimmers
+ * and "flashes" while moving. The high-res 96px sheet is kept at metrophage_tiles@96.png and
+ * baked to 32px offline (per-cell Lanczos, no cross-tile bleed) — better quality than any
+ * runtime minification, 8.5× smaller download, and rock-stable under scroll.
+ */
+export const TILESET_PX = 32;
+
+/** The tileset is real authored art (not the procedural fallback) — polish passes use the
+ *  subtler alpha/detail branches. Was inferred from TILESET_PX > TILE before the 1:1 bake. */
+export const TILESET_REAL_ART = true;
+
+/** Base grid for tutorial / subway / small interiors (tiles). */
 export const GRID_W = 40;
 export const GRID_H = 30;
 
-export const WORLD_W = GRID_W * TILE;
-export const WORLD_H = GRID_H * TILE;
+/** Combat districts + wilderness bridges: scale authored 40×30 layouts for MMO density. */
+export const DISTRICT_SCALE = 3;
+export const DISTRICT_GRID_W = GRID_W * DISTRICT_SCALE;
+export const DISTRICT_GRID_H = GRID_H * DISTRICT_SCALE;
+
+/** Online hub city scale. Base is now a compact 112×88 (see city.ts) — a walkable town of
+ *  ~30 buildings around the plaza — so the multiplier is 1×. */
+export const CITY_SCALE = 1;
+
+/** Legacy default world size (district-scale); prefer gridDims() for per-zone bounds. */
+export const WORLD_W = DISTRICT_GRID_W * TILE;
+export const WORLD_H = DISTRICT_GRID_H * TILE;
 
 /**
- * Logical render size. The canvas scales to fit the window (Phaser.Scale.FIT).
- * The camera stays at zoom 1 (scroll-fixed UI would be displaced by camera zoom),
- * so this resolution IS the fidelity ceiling for the post-FX, text, and emissive
- * glows. Bumped 720×405 → 960×540 (+78% pixels) for a sharper neon-noir image; the
- * UI is anchored to these constants / `scale.width`, so it re-layouts cleanly.
+ * Render/backing resolution. The canvas scales to fit the window (Phaser.Scale.FIT),
+ * so this IS the fidelity ceiling — below the window size Phaser nearest-neighbour
+ * upscales it (blocky). Supersampled from the 960×540 design size up to 2560×1440
+ * (RENDER_SCALE) for a crisp neon-noir image at modern window sizes.
+ *
+ * Framing is preserved, not changed: each world camera zooms by RENDER_SCALE (see
+ * render/cameras.ts → installUiCamera), so the world is still authored/played in the
+ * 960×540 logical space but drawn into the bigger buffer. Screen-space UI
+ * (scrollFactor 0) rides a separate zoom-1 UI camera, so it stays put + escapes the
+ * world post-FX. The UI anchors to these constants / `scale.width`, so it re-layouts
+ * cleanly at the new size.
  */
-export const VIEW_W = 960;
-export const VIEW_H = 540;
+/** Original logical design size — the world + UI are still authored at this scale. */
+export const DESIGN_W = 960;
+export const DESIGN_H = 540;
+/** Backing buffer (exact integers — these are the real canvas dimensions). */
+export let VIEW_W = 2560;
+export let VIEW_H = 1440;
+/** Supersample factor: each world camera zooms by this to keep the 960×540 framing. */
+export let RENDER_SCALE = VIEW_W / DESIGN_W; // 8/3
+/** Screen-space UI scale — keeps typography/layout proportional at higher backing resolution. */
+export let UI_SCALE = RENDER_SCALE;
+
+/** Set the backing buffer before Phaser.Game init (called by render/renderTier.ts). */
+export function setRenderResolution(w: number, h: number): void {
+  VIEW_W = w;
+  VIEW_H = h;
+  RENDER_SCALE = VIEW_W / DESIGN_W;
+  UI_SCALE = RENDER_SCALE;
+}
+/** Scale a design-space pixel dimension to the current backing buffer. */
+export const uiDim = (px: number) => Math.round(px * UI_SCALE);
+/** Scale a design-space font size for Phaser text styles. */
+export const uiFont = (px: number) => `${uiDim(px)}px`;
 
 /** Player tuning. */
 export const PLAYER = {
@@ -86,6 +139,9 @@ export const SPAWN = {
 
 /** WINTERMUTE beam shield-break multiplier. */
 export const BEAM_SHIELD_MULT = 3;
+
+/** Critical-hit damage multiplier (crit chance comes from skills/gear: ModBag.critPct). */
+export const CRIT_MULT = 1.85;
 
 /** Player shield pool (from gear): absorbs before HP, regenerates when safe. */
 export const SHIELD = {

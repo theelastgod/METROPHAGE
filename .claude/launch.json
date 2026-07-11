@@ -6,6 +6,12 @@
       "runtimeExecutable": "/Users/wendellphillips/.local/node/bin/node",
       "runtimeArgs": ["node_modules/vite/bin/vite.js", "--host", "--port", "5188"],
       "port": 5188
+    },
+    {
+      "name": "metrophage-prod",
+      "runtimeExecutable": "/Users/wendellphillips/.local/node/bin/node",
+      "runtimeArgs": ["node_modules/vite/bin/vite.js", "preview", "--host", "--port", "4188"],
+      "port": 4188
     }
   ]
 }

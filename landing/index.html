@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>METROPHAGE — play-to-earn neon cyberpunk action-RPG</title>
+<meta name="description" content="Fight the corps, run the sprawl, earn $METRO. A neon-noir cyberpunk action-RPG in your browser. Connect your Solana wallet and deploy." />
+
+<meta property="og:type" content="website" />
+<meta property="og:title" content="METROPHAGE — play-to-earn cyberpunk action-RPG" />
+<meta property="og:description" content="Fight the corps, run the sprawl, earn $METRO. Connect your wallet and deploy into the shared sprawl." />
+<meta property="og:url" content="https://metrophage.fun" />
+<meta property="og:image" content="https://metrophage.fun/og.png" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="METROPHAGE — play-to-earn cyberpunk action-RPG" />
+<meta name="twitter:description" content="Fight the corps, run the sprawl, earn $METRO. Connect your wallet and deploy." />
+<meta name="twitter:image" content="https://metrophage.fun/og.png" />
+
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800;900&family=Share+Tech+Mono&display=swap" rel="stylesheet" />
+
+<style>
+  :root{
+    --mag:#ff2bd6; --cyan:#29e7ff; --violet:#6a3cff; --lime:#39ff88;
+    --bg:#07060d; --bg2:#0d0b18; --ink:#eef0fa; --muted:#8b90ab;
+    --mono:'Share Tech Mono', ui-monospace, 'Courier New', monospace;
+    --disp:'Orbitron', var(--mono);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{ background:var(--bg); color:var(--ink); font-family:var(--mono);
+    overflow-x:hidden; -webkit-font-smoothing:antialiased; min-height:100vh; min-height:100dvh; position:relative; }
+
+  .haze{position:fixed; inset:0; z-index:0; pointer-events:none;
+    background:
+      radial-gradient(60% 50% at 50% 8%, rgba(106,60,255,.22), transparent 70%),
+      radial-gradient(55% 45% at 82% 18%, rgba(255,43,214,.16), transparent 70%),
+      radial-gradient(50% 45% at 16% 22%, rgba(41,231,255,.14), transparent 70%);}
+  .grid{position:fixed; left:-25%; right:-25%; bottom:-10vh; height:62vh; z-index:0; pointer-events:none;
+    transform:perspective(420px) rotateX(74deg); transform-origin:50% 100%;
+    background-image:
+      linear-gradient(transparent 0 calc(100% - 2px), rgba(41,231,255,.55) calc(100% - 2px)),
+      linear-gradient(90deg, transparent 0 calc(100% - 2px), rgba(255,43,214,.42) calc(100% - 2px));
+    background-size:100% 46px, 46px 100%; animation:grid 2.6s linear infinite;
+    -webkit-mask-image:linear-gradient(to top, #000 8%, transparent 92%);
+    mask-image:linear-gradient(to top, #000 8%, transparent 92%);}
+  @keyframes grid{to{background-position:0 46px, 0 0}}
+  .scan{position:fixed; inset:0; z-index:30; pointer-events:none;
+    background:repeating-linear-gradient(180deg, rgba(0,0,0,0) 0 2px, rgba(0,0,0,.16) 2px 3px); mix-blend-mode:multiply;}
+  .vig{position:fixed; inset:0; z-index:30; pointer-events:none; box-shadow:inset 0 0 240px 40px rgba(0,0,0,.9);}
+
+  main{position:relative; z-index:10; min-height:100vh; min-height:100dvh;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:44px 22px 26px;}
+
+  .kicker{font-size:12px; letter-spacing:.4em; color:var(--cyan); text-transform:uppercase; opacity:.9;
+    margin:0 0 20px; text-shadow:0 0 14px rgba(41,231,255,.6); display:inline-flex; align-items:center; gap:9px; flex-wrap:wrap; justify-content:center;}
+  .kicker b{color:var(--mag); text-shadow:0 0 14px rgba(255,43,214,.7)}
+  .live{display:inline-flex; align-items:center; gap:7px; color:var(--lime); text-shadow:0 0 12px rgba(57,255,136,.6)}
+  .dot{width:8px; height:8px; border-radius:50%; background:var(--lime); box-shadow:0 0 10px var(--lime); animation:pulse 1.4s ease-in-out infinite;}
+  @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.7)}}
+
+  .logo{font-family:var(--disp); font-weight:900; margin:0; font-size:clamp(40px, 12vw, 132px);
+    letter-spacing:.04em; line-height:.9; color:#fff; position:relative;
+    text-shadow:0 0 8px rgba(255,255,255,.35), 0 0 28px rgba(255,43,214,.65), 0 0 60px rgba(106,60,255,.55);}
+  .logo::before,.logo::after{content:attr(data-text); position:absolute; inset:0; pointer-events:none; opacity:.85;}
+  .logo::before{color:var(--mag); transform:translate(-2px,0); mix-blend-mode:screen; text-shadow:none;}
+  .logo::after{color:var(--cyan); transform:translate(2px,0); mix-blend-mode:screen; text-shadow:none;}
+  .logo.glitch::before{animation:gA .42s steps(2) 1}
+  .logo.glitch::after{animation:gB .42s steps(2) 1}
+  @keyframes gA{0%{transform:translate(-2px,0)}25%{transform:translate(-7px,-2px);clip-path:inset(16% 0 52% 0)}50%{transform:translate(5px,1px);clip-path:inset(60% 0 8% 0)}100%{transform:translate(-2px,0)}}
+  @keyframes gB{0%{transform:translate(2px,0)}25%{transform:translate(7px,2px);clip-path:inset(58% 0 12% 0)}50%{transform:translate(-5px,-1px);clip-path:inset(12% 0 60% 0)}100%{transform:translate(2px,0)}}
+
+  .lore{font-size:clamp(15px,2.4vw,21px); color:var(--cyan); margin:24px 0 6px; letter-spacing:.02em; line-height:1.5; text-shadow:0 0 16px rgba(41,231,255,.4);}
+  .desc{font-size:clamp(13px,1.7vw,16px); color:var(--muted); margin:0 0 24px; letter-spacing:.03em;}
+  .metro{color:var(--mag); text-shadow:0 0 14px rgba(255,43,214,.55); font-weight:400;}
+
+  .cta{display:flex; gap:12px; flex-wrap:wrap; justify-content:center; margin:0 0 14px}
+  .btn{cursor:pointer; font-family:var(--disp); font-weight:800; letter-spacing:.1em; font-size:14px; text-transform:uppercase;
+    border-radius:11px; padding:14px 24px; border:0; text-decoration:none; display:inline-flex; align-items:center; gap:9px;
+    transition:transform .12s, box-shadow .2s, filter .2s, border-color .2s, color .2s;}
+  .btn-primary{color:#0a0410; background:linear-gradient(180deg,#ff5ce0,var(--mag)); box-shadow:0 0 30px rgba(255,43,214,.5)}
+  .btn-primary:hover{transform:translateY(-1px); box-shadow:0 0 46px rgba(255,43,214,.85); filter:brightness(1.07)}
+  .btn-primary:disabled{opacity:.7; cursor:default; filter:none; transform:none}
+  .btn-ghost{color:var(--cyan); background:rgba(13,11,24,.6); border:1px solid rgba(41,231,255,.4)}
+  .btn-ghost:hover{border-color:var(--cyan); box-shadow:0 0 24px rgba(41,231,255,.25); color:#eafdff}
+  .wallet-status{font-size:13px; color:var(--muted); min-height:18px; margin:0 0 24px; letter-spacing:.03em; max-width:520px; line-height:1.5}
+  .wallet-status b{color:var(--lime); text-shadow:0 0 12px rgba(57,255,136,.5)}
+  .wallet-status a{color:var(--cyan); text-decoration:none; border-bottom:1px solid rgba(41,231,255,.4)}
+  .addr{font-family:var(--mono); color:var(--cyan)}
+
+  .chips{display:flex; flex-wrap:wrap; gap:8px 10px; justify-content:center; list-style:none; padding:0; margin:0 0 26px; max-width:600px}
+  .chips li{font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--muted); border:1px solid rgba(139,144,171,.22); border-radius:999px; padding:6px 13px;}
+  .chips li::before{content:'◢ '; color:var(--violet)}
+  .chips li.gold{color:#ffd27a; border-color:rgba(255,180,60,.32)} .chips li.gold::before{color:var(--mag)}
+
+  .social{display:flex; gap:14px; align-items:center; justify-content:center}
+  .social a{display:inline-flex; align-items:center; gap:8px; text-decoration:none; color:var(--ink); font-size:13px; letter-spacing:.06em;
+    border:1px solid rgba(139,144,171,.25); border-radius:10px; padding:9px 14px; transition:border-color .2s, color .2s, box-shadow .2s}
+  .social a:hover{border-color:var(--cyan); color:var(--cyan); box-shadow:0 0 22px rgba(41,231,255,.22)}
+  .social svg{width:15px; height:15px; fill:currentColor}
+
+  footer{position:relative; z-index:10; text-align:center; padding:18px 20px 26px; color:#4b5070; font-size:11px; letter-spacing:.2em; text-transform:uppercase}
+  footer b{color:var(--mag)}
+
+  /* painted city key art behind the haze — fades out before the retro grid */
+  .cityart{position:fixed; left:0; right:0; top:0; height:74vh; z-index:0; pointer-events:none;
+    background:url(hero.jpg) center 24%/cover no-repeat; opacity:.44;
+    -webkit-mask-image:linear-gradient(to bottom,#000 52%,transparent 100%);
+    mask-image:linear-gradient(to bottom,#000 52%,transparent 100%);}
+  @media (max-width:540px){ .cta .btn{flex:1 1 100%} }
+  @media (prefers-reduced-motion:reduce){ .grid,.dot{animation:none} }
+</style>
+</head>
+<body>
+  <div class="cityart"></div>
+  <div class="haze"></div>
+  <div class="grid"></div>
+
+  <main>
+    <p class="kicker">// METROPHAGE<b>.FUN</b> — NEON CORE · ERA 0 <span class="live"><span class="dot"></span>LIVE</span></p>
+
+    <h1 class="logo" id="logo" data-text="METROPHAGE">METROPHAGE</h1>
+
+    <p class="lore">The city's machines woke up.<br>The private-security corps were faster.</p>
+    <p class="desc">A neon-noir cyberpunk action-RPG. Fight the corps, run the sprawl, earn <b class="metro">$METRO</b>.</p>
+
+    <div class="cta">
+      <button class="btn btn-primary" id="connectBtn" type="button">▶ Connect Wallet</button>
+      <a class="btn btn-ghost" id="guestBtn" href="#play">Play as Guest</a>
+    </div>
+    <p class="wallet-status" id="walletStatus">Sign in with a Solana wallet to <b style="color:var(--ink)">save your progress</b> &amp; earn <b class="metro" style="color:var(--mag)">$METRO</b>. Guests can play — but runs aren't saved.</p>
+
+    <ul class="chips">
+      <li>Twin-stick combat</li>
+      <li>Shared online world</li>
+      <li class="gold">Earn $METRO</li>
+      <li>Seasonal meltdowns</li>
+      <li>Factions</li>
+    </ul>
+
+    <nav class="social">
+      <a href="https://x.com/metrophage" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.9 2H22l-7.6 8.7L23 22h-6.9l-5.4-7-6.2 7H1.3l8.1-9.3L1 2h7l4.9 6.5L18.9 2Zm-2.4 18h1.9L7.6 4H5.6l10.9 16Z"/></svg>
+        @metrophage
+      </a>
+    </nav>
+  </main>
+
+  <footer>metrophage.fun · play-to-earn in the sprawl · <b>ERA&nbsp;0</b> · © 2026</footer>
+
+  <div class="scan"></div>
+  <div class="vig"></div>
+
+  <script>
+    // ── where "deploy" sends the player. Point this at your hosted game build. ──
+    const PLAY_URL = "/play";
+
+    // occasional title glitch
+    const logo = document.getElementById('logo');
+    (function loop(){ setTimeout(()=>{ logo.classList.add('glitch'); setTimeout(()=>logo.classList.remove('glitch'),420); loop(); }, 2600 + Math.random()*4200); })();
+
+    // ── Solana wallet login: connect → sign in → enter (injected Phantom / Solflare / Backpack) ──
+    const btn = document.getElementById('connectBtn');
+    const guest = document.getElementById('guestBtn');
+    const status = document.getElementById('walletStatus');
+    const metro = '<b class="metro" style="color:var(--mag)">$METRO</b>';
+    let provider = null, providerName = '', address = null, signedIn = false;
+
+    guest.addEventListener('click', (e) => { e.preventDefault(); location.href = PLAY_URL + '?as=guest'; });
+
+    function detectWallet(){
+      const w = window;
+      if (w.phantom && w.phantom.solana && w.phantom.solana.isPhantom) return { p: w.phantom.solana, name: 'Phantom' };
+      if (w.solana && w.solana.isPhantom) return { p: w.solana, name: 'Phantom' };
+      if (w.solflare && w.solflare.isSolflare) return { p: w.solflare, name: 'Solflare' };
+      if (w.backpack && w.backpack.isBackpack) return { p: w.backpack, name: 'Backpack' };
+      if (w.solana) return { p: w.solana, name: 'Wallet' };
+      return null;
+    }
+    const trunc = (a) => a.slice(0,4) + '…' + a.slice(-4);
+
+    async function connect(){
+      const wallet = detectWallet();
+      if (!wallet) {
+        status.innerHTML = 'No Solana wallet detected — install <a href="https://phantom.app/" target="_blank" rel="noopener">Phantom</a> or <a href="https://solflare.com/" target="_blank" rel="noopener">Solflare</a>, then reload. (Guests can still play — but runs aren\'t saved.)';
+        return;
+      }
+      try {
+        btn.disabled = true; btn.textContent = 'Connecting…';
+        const res = await wallet.p.connect();
+        provider = wallet.p; providerName = wallet.name;
+        address = ((res && res.publicKey) || wallet.p.publicKey).toString();
+        status.innerHTML = '◢ <b>Connected</b> · <span class="addr">' + trunc(address) + '</span> · ' + providerName + ' — sign in to save your run &amp; earn ' + metro + '.';
+        btn.disabled = false; btn.textContent = 'Sign In ▶';
+      } catch (e) {
+        btn.disabled = false; btn.textContent = '▶ Connect Wallet';
+        status.innerHTML = '// Connection cancelled. Try again — or play as guest (no save).';
+      }
+    }
+
+    async function signIn(){
+      try {
+        btn.disabled = true; btn.textContent = 'Signing in…';
+        const msg = 'Sign in to METROPHAGE\n\nWallet: ' + address + '\nERA 0 · ' + Date.now();
+        await provider.signMessage(new TextEncoder().encode(msg), 'utf8');
+        signedIn = true;
+        status.innerHTML = '◢ <b>Signed in</b> · <span class="addr">' + trunc(address) + '</span> — progress saved, ' + metro + ' tracked. Deploy.';
+        btn.disabled = false; btn.textContent = 'Enter the Sprawl ▶';
+      } catch (e) {
+        btn.disabled = false; btn.textContent = 'Sign In ▶';
+        status.innerHTML = '// Sign-in is required to save your run &amp; earn ' + metro + '. Try again — or play as guest (no save).';
+      }
+    }
+
+    btn.addEventListener('click', () => {
+      if (signedIn) { location.href = PLAY_URL + '?wallet=' + encodeURIComponent(address); return; }
+      if (address) { signIn(); return; }
+      connect();
+    });
+  </script>
+</body>
+</html>

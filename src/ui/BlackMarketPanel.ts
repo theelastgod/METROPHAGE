@@ -1,0 +1,226 @@
+import Phaser from "phaser";
+import { WEAPON_STORE, type WeaponDef } from "../game/weapons";
+import { CONSUMABLES, type ConsumableDef } from "../game/consumables";
+import { fmtMetro } from "../economy/metro";
+import { iconKey } from "../assets/itemIcons";
+import { drawPanelFrame } from "./panelChrome";
+import { overlayRect, uiDim, uiFont } from "./uiLayout";
+
+/** What the host scene must provide — the panel never touches the save/inventory itself. */
+export interface BlackMarketHooks {
+  getMetro: () => number;
+  buyWeapon: (id: string) => "ok" | "poor" | "full" | "nochar";
+  buyConsumable: (id: string) => "ok" | "poor" | "nochar";
+}
+
+type Entry =
+  | { kind: "weapon"; w: WeaponDef }
+  | { kind: "consumable"; c: ConsumableDef }
+  | { kind: "header"; label: string };
+
+const TIER_HEX: Record<string, string> = { common: "#9aa3b2", rare: "#39e0ff", exotic: "#ff2bd6" };
+
+/**
+ * THE BLACK MARKET — the city arms dealer. A scrollable catalogue of every weapon
+ * (cheap commons → exotics) and the med/utility consumables, each with a tinted icon,
+ * tier-coloured price in $METRO, and a one-line stat. Scroll with the wheel; click to buy.
+ */
+export default class BlackMarketPanel {
+  private scene: Phaser.Scene;
+  private hooks: BlackMarketHooks;
+  private g: Phaser.GameObjects.Graphics;
+  private statics: Phaser.GameObjects.Text[] = [];
+  private header!: Phaser.GameObjects.Text;
+  private status!: Phaser.GameObjects.Text;
+  private icons: Phaser.GameObjects.Image[] = [];
+  private titles: Phaser.GameObjects.Text[] = [];
+  private subs: Phaser.GameObjects.Text[] = [];
+  private zones: Phaser.GameObjects.Zone[] = [];
+  private open = false;
+  private offset = 0;
+  private entries: Entry[] = [];
+
+  private readonly frame = overlayRect(18);
+  private readonly x = this.frame.x;
+  private readonly y = this.frame.y;
+  private readonly w = this.frame.w;
+  private readonly h = this.frame.h;
+  private readonly rowH = uiDim(44);
+  private readonly listTop: number;
+  private readonly visible: number;
+  private readonly iconSize = uiDim(34);
+
+  constructor(scene: Phaser.Scene, hooks: BlackMarketHooks) {
+    this.scene = scene;
+    this.hooks = hooks;
+    this.listTop = this.y + uiDim(62);
+    this.visible = Math.floor((this.h - uiDim(80)) / this.rowH);
+    this.entries = [
+      { kind: "header", label: "WEAPONS" },
+      ...WEAPON_STORE.map((w) => ({ kind: "weapon", w }) as Entry),
+      { kind: "header", label: "MEDS & UTILITY" },
+      ...CONSUMABLES.map((c) => ({ kind: "consumable", c }) as Entry),
+    ];
+
+    this.g = scene.add.graphics().setScrollFactor(0).setDepth(1600);
+    const D = 1601;
+    this.header = this.text(this.x + uiDim(18), this.y + uiDim(14), "", "#eafdff", 15, D);
+    this.text(
+      this.x + uiDim(18),
+      this.y + uiDim(40),
+      "ARMS + MEDS · paid in $METRO · 1B fixed supply · scroll ▲▼ · click to buy",
+      "#9aa3b2",
+      11,
+      D,
+    );
+
+    for (let r = 0; r < this.visible; r++) {
+      const ry = this.listTop + r * this.rowH;
+      const img = scene.add
+        .image(this.x + uiDim(36), ry + this.rowH / 2, iconKey("PISTOL"))
+        .setDisplaySize(this.iconSize, this.iconSize)
+        .setScrollFactor(0)
+        .setDepth(D + 1);
+      this.icons.push(img);
+      this.titles.push(this.text(this.x + uiDim(64), ry + uiDim(8), "", "#eafdff", 13, D + 1));
+      this.subs.push(this.text(this.x + uiDim(64), ry + uiDim(26), "", "#7a8295", 10, D + 1));
+      const z = scene.add
+        .zone(this.x + uiDim(14), ry + uiDim(2), this.w - uiDim(28), this.rowH - uiDim(4))
+        .setOrigin(0)
+        .setScrollFactor(0)
+        .setInteractive({ useHandCursor: true });
+      z.on("pointerdown", () => this.buyRow(r));
+      z.on("pointerover", () => this.titles[r].setColor("#ffffff"));
+      z.on("pointerout", () => this.refresh());
+      this.zones.push(z);
+    }
+
+    this.status = this.text(this.x + uiDim(18), this.y + this.h - uiDim(30), "", "#f7ff3c", 12, D + 1);
+    this.text(this.x + this.w - uiDim(134), this.y + this.h - uiDim(30), "B / E / ESC to close", "#9aa3b2", 11, D);
+
+    scene.input.on("wheel", (_p: unknown, _o: unknown, _dx: number, dy: number) => {
+      if (!this.open) return;
+      this.scrollBy(dy > 0 ? 1 : -1);
+    });
+
+    this.setVisible(false);
+  }
+
+  get isOpen(): boolean {
+    return this.open;
+  }
+  toggle() {
+    this.open ? this.close() : this.show();
+  }
+  show() {
+    this.open = true;
+    this.offset = 0;
+    this.setVisible(true);
+    this.status.setText("");
+    this.refresh();
+  }
+  close() {
+    this.open = false;
+    this.setVisible(false);
+  }
+
+  private scrollBy(d: number) {
+    const max = Math.max(0, this.entries.length - this.visible);
+    this.offset = Phaser.Math.Clamp(this.offset + d, 0, max);
+    this.refresh();
+  }
+
+  private buyRow(r: number) {
+    const e = this.entries[this.offset + r];
+    if (!e || e.kind === "header") return;
+    let res: string;
+    let name: string;
+    let price: number;
+    if (e.kind === "weapon") {
+      res = this.hooks.buyWeapon(e.w.id);
+      name = e.w.name;
+      price = e.w.metro;
+    } else {
+      res = this.hooks.buyConsumable(e.c.id);
+      name = e.c.name;
+      price = e.c.metro;
+    }
+    if (res === "ok") this.flash(`✓ ${name} acquired — in your bag`, "#39ff88");
+    else if (res === "poor") this.flash(`✗ not enough $METRO (need ◈ ${fmtMetro(price)})`, "#ff3b6b");
+    else if (res === "full") this.flash("✗ bag full — sell or drop something", "#ff3b6b");
+    else this.flash("✗ start the campaign first", "#ff3b6b");
+    this.refresh();
+  }
+
+  private flash(msg: string, color: string) {
+    this.status.setText(msg).setColor(color).setAlpha(1);
+    this.scene.tweens.killTweensOf(this.status);
+    this.scene.tweens.add({ targets: this.status, alpha: 0.6, duration: 1600 });
+  }
+
+  private refresh() {
+    const g = this.g;
+    g.clear();
+    drawPanelFrame(g, this.x, this.y, this.w, this.h);
+    const metro = this.hooks.getMetro();
+    this.header.setText(`◈ THE BLACK MARKET          BALANCE:  ◈ ${fmtMetro(metro)} $METRO`);
+
+    for (let r = 0; r < this.visible; r++) {
+      const e = this.entries[this.offset + r];
+      const ry = this.listTop + r * this.rowH;
+      const icon = this.icons[r];
+      const title = this.titles[r];
+      const sub = this.subs[r];
+      if (!e) {
+        icon.setVisible(false);
+        title.setText("");
+        sub.setText("");
+        continue;
+      }
+      if (e.kind === "header") {
+        icon.setVisible(false);
+        g.fillStyle(0x14102a, 0.9).fillRect(this.x + uiDim(12), ry + uiDim(2), this.w - uiDim(24), this.rowH - uiDim(4));
+        title.setText(`— ${e.label} —`).setColor("#00e5ff");
+        sub.setText("");
+        continue;
+      }
+      g.lineStyle(uiDim(1), 0x2a2440, 0.6).lineBetween(
+        this.x + uiDim(14),
+        ry + this.rowH - uiDim(1),
+        this.x + this.w - uiDim(14),
+        ry + this.rowH - uiDim(1),
+      );
+      if (e.kind === "weapon") {
+        const w = e.w;
+        const afford = metro >= w.metro;
+        icon.setVisible(true).setTexture(iconKey(w.klass)).setTint(0xffffff).setAlpha(afford ? 1 : 0.4);
+        title.setText(`${w.name}   ·   ${w.klass}`).setColor(afford ? TIER_HEX[w.tier] : "#5a6172");
+        sub.setText(`${w.desc}   ⚔ ${w.primary.damage}            ◈ ${fmtMetro(w.metro)}`).setColor("#7a8295");
+      } else {
+        const c = e.c;
+        const afford = metro >= c.metro;
+        icon.setVisible(true).setTexture(iconKey(c.klass)).setTint(0xffffff).setAlpha(afford ? 1 : 0.4);
+        title.setText(`${c.name}`).setColor(afford ? c.hex : "#5a6172");
+        sub.setText(`${c.desc}            ◈ ${fmtMetro(c.metro)}`).setColor("#7a8295");
+      }
+    }
+  }
+
+  private setVisible(v: boolean) {
+    this.g.setVisible(v);
+    this.statics.forEach((t) => t.setVisible(v));
+    this.zones.forEach((z) => z.setVisible(v));
+    this.icons.forEach((i) => i.setVisible(v));
+    this.titles.forEach((t) => t.setVisible(v));
+    this.subs.forEach((s) => s.setVisible(v));
+  }
+
+  private text(x: number, y: number, s: string, color: string, sizePx: number, depth: number) {
+    const t = this.scene.add
+      .text(x, y, s, { fontFamily: "Courier New, monospace", fontSize: uiFont(sizePx), color })
+      .setScrollFactor(0)
+      .setDepth(depth);
+    this.statics.push(t);
+    return t;
+  }
+}

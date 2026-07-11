@@ -4,43 +4,12 @@
 // config, plus an ability + ultimate whose effects are tiny hooks calling the
 // generic AbilityHost. Classes stay config, not bespoke systems.
 
+import type { PlayerLook } from "../net/protocol";
 import type { AbilityDef } from "./ability";
-
-/** Primary-weapon configs, interpreted generically by GameScene.fireWeapon. */
-export type PrimaryDef =
-  | {
-      kind: "spread"; // short-range cone of pellets
-      fireRateMs: number;
-      damage: number;
-      speed: number;
-      lifetimeMs: number;
-      pellets: number;
-      spreadDeg: number;
-    }
-  | {
-      kind: "burst"; // N-round burst per trigger
-      fireRateMs: number;
-      damage: number;
-      speed: number;
-      lifetimeMs: number;
-      burstCount: number;
-      burstGapMs: number;
-    }
-  | {
-      kind: "rapid"; // very fast, weak, slightly inaccurate
-      fireRateMs: number;
-      damage: number;
-      speed: number;
-      lifetimeMs: number;
-      jitterDeg: number;
-    }
-  | {
-      kind: "beam"; // piercing hitscan line (bonus vs shields lands in Step 3)
-      fireRateMs: number;
-      damage: number;
-      range: number;
-      halfWidth: number;
-    };
+// PrimaryDef now lives with the weapons, keeping the class → ability → render chain out
+// of the shared weapon/item model; re-exported here so existing importers don't move.
+import type { PrimaryDef } from "./weapons";
+export type { PrimaryDef };
 
 export interface ClassDef {
   id: string;
@@ -54,7 +23,12 @@ export interface ClassDef {
   primaryDesc: string;
   ability: AbilityDef; // cooldown-gated
   ultimate: AbilityDef; // Heat-gated
+  /** Signature status the primary inflicts on hit (undefined = pure physical). */
+  element?: StatusKind;
 }
+
+/** On-hit status effects. burn = damage-over-time, chill = slow, shock = brief stun. */
+export type StatusKind = "burn" | "chill" | "shock";
 
 export const CLASSES: ClassDef[] = [
   {
@@ -62,6 +36,7 @@ export const CLASSES: ClassDef[] = [
     name: "METROPHAGE",
     color: 0x6bff3d,
     hex: "#6bff3d",
+    element: "burn",
     maxHp: 110,
     speed: 196,
     primaryName: "CONTAGION SPRAY",
@@ -130,6 +105,7 @@ export const CLASSES: ClassDef[] = [
     name: "WINTERMUTE",
     color: 0x29e7ff,
     hex: "#29e7ff",
+    element: "chill",
     maxHp: 90,
     speed: 200,
     primaryName: "ICE BEAM",
@@ -159,6 +135,7 @@ export const CLASSES: ClassDef[] = [
     name: "SWARM",
     color: 0x9b5cff,
     hex: "#9b5cff",
+    element: "shock",
     maxHp: 95,
     speed: 212,
     primaryName: "SWARM-BOLTS",
@@ -188,4 +165,9 @@ export const CLASSES: ClassDef[] = [
 
 export function getClass(id: string | undefined): ClassDef {
   return CLASSES.find((c) => c.id === id) ?? CLASSES[0];
+}
+
+/** Infer class from a saved server look (signature colour is the stable key). */
+export function classIdFromLook(look: PlayerLook): string {
+  return CLASSES.find((c) => c.color === look.color)?.id ?? CLASSES[0].id;
 }

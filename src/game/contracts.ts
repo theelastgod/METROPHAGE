@@ -41,7 +41,7 @@ export const AUTHORED: Contract[] = [
     authored: true,
     briefing: [
       "New blood. Let's see if you bite.",
-      "Three Turing cops are sweeping the plaza. Delete them.",
+      "Three Anduril enforcers are sweeping the plaza. Delete them.",
     ],
     objectives: [obj("eliminate", 3)],
     rewards: { xp: 60, currency: 40, loot: 1, lootBoost: 0 },

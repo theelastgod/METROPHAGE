@@ -1,5 +1,6 @@
 import Phaser from "phaser";
-import { BOSS_KEY, faceFrame } from "../assets/manifest";
+import { BOSS_KEY } from "../assets/manifest";
+import { driveChar } from "../assets/anim";
 import { EnemyHost } from "../game/enemies";
 import { BossDef } from "../game/bosses";
 import { juiceShake } from "../systems/juice";
@@ -126,7 +127,7 @@ export default class Boss extends Phaser.Physics.Arcade.Sprite {
       this.strafeFlipAt = now + 1400 + Math.random() * 1200;
     }
 
-    this.setFrame(faceFrame(player.x - this.x, player.y - this.y));
+    driveChar(this, player.x - this.x, player.y - this.y, (this.body as Phaser.Physics.Arcade.Body).velocity.lengthSq() > 64);
 
     const cdMult = this.enraged ? d.enrageCooldownMult : 1;
     if (now >= this.nextVolleyAt) {

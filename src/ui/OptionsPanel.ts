@@ -1,11 +1,14 @@
 import Phaser from "phaser";
-import { VIEW_W, VIEW_H } from "../config";
-import { getSettings, updateSettings, SettingsData } from "../systems/Settings";
+import { effectiveGraphicsQuality, getSettings, updateSettings, type GraphicsQuality, type SettingsData } from "../systems/Settings";
+import { prefersMobileUx } from "../systems/Mobile";
 import { drawPanelFrame } from "./panelChrome";
+import { dimBackdrop, modalRect, panelPad, uiDim, uiFont, uiGap } from "./uiLayout";
+import { COLORS } from "../config";
 
 interface Row {
   key: keyof SettingsData;
   toggle: boolean;
+  cycle?: GraphicsQuality[];
   y: number;
   trackX: number;
   trackW: number;
@@ -24,58 +27,83 @@ export default class OptionsPanel {
   private onChange?: () => void;
 
   private g: Phaser.GameObjects.Graphics;
-  private backdrop: Phaser.GameObjects.Rectangle;
+  private panelArt: Phaser.GameObjects.NineSlice | Phaser.GameObjects.Image | null = null;
+  private backdrop: Phaser.GameObjects.Container;
   private statics: Phaser.GameObjects.Text[] = [];
   private zones: Phaser.GameObjects.Zone[] = [];
   private rows: Row[] = [];
   private open = false;
 
-  private readonly w = 384;
-  private readonly h = 276;
-  private readonly x = (VIEW_W - 384) / 2;
-  private readonly y = (VIEW_H - 276) / 2;
+  private readonly frame = modalRect(440, 520);
+  private readonly x = this.frame.x;
+  private readonly y = this.frame.y;
+  private readonly w = this.frame.w;
+  private readonly h = this.frame.h;
   private readonly trackX: number;
   private readonly trackW: number;
+  private readonly rowH = uiDim(36);
+  private readonly zoneH = uiDim(24);
 
   constructor(scene: Phaser.Scene, onChange?: () => void) {
     this.scene = scene;
     this.onChange = onChange;
-    this.trackX = this.x + 170;
-    this.trackW = this.w - 190;
-    // Full-screen dim backdrop that swallows clicks to whatever's underneath.
-    this.backdrop = scene.add
-      .rectangle(VIEW_W / 2, VIEW_H / 2, VIEW_W, VIEW_H, 0x02020a, 0.62)
-      .setScrollFactor(0)
-      .setDepth(1799)
-      .setInteractive();
-    this.backdrop.on("pointerdown", () => {}); // swallow
+    this.trackX = this.x + uiDim(180);
+    this.trackW = this.w - uiDim(200);
+    this.backdrop = dimBackdrop(scene, 1799);
+    // full-screen hit area — a Container needs an explicit shape to swallow clicks
+    this.backdrop.setInteractive(
+      new Phaser.Geom.Rectangle(0, 0, scene.scale.width, scene.scale.height),
+      Phaser.Geom.Rectangle.Contains,
+    );
+    this.backdrop.on("pointerdown", () => {});
     this.g = scene.add.graphics().setScrollFactor(0).setDepth(1800);
     const D = 1801;
 
-    this.text(this.x + 18, this.y + 14, "OPTIONS", "#eafdff", "14px", D);
+    this.text(this.x + panelPad(), this.y + uiGap("lg"), "OPTIONS", "#eafdff", 15, D);
 
-    let ry = this.y + 50;
-    this.addRow("reduceFlashing", "REDUCE FLASHING", true, ry, D, "#ff3b6b"); // ⚠ safety
-    ry += 31;
+    let ry = this.y + uiDim(58);
+    this.addRow(
+      "rsControls",
+      prefersMobileUx() ? "TAP-TO-WALK (locked on phone)" : "TAP-TO-WALK (opt-in)",
+      true,
+      ry,
+      D,
+      "#f7ff3c",
+    );
+    ry += this.rowH;
+    this.addCycleRow("uiDensity", "HUD DENSITY", ["new", "full"] as unknown as GraphicsQuality[], ry, D, "#39ff88");
+    ry += this.rowH;
+    this.addRow("firstSessionCoach", "FIRST-SESSION COACH", true, ry, D, "#b06bff");
+    ry += this.rowH;
+    this.addRow("reduceFlashing", "REDUCE FLASHING", true, ry, D, "#ff3b6b");
+    ry += this.rowH;
     this.addRow("lowFx", "LOW-FX MODE", true, ry, D, "#29e7ff");
-    ry += 33;
+    ry += this.rowH;
+    this.addCycleRow("graphicsQuality", "GRAPHICS QUALITY", ["auto", "low", "medium", "high"], ry, D, "#b06bff");
+    ry += this.rowH;
+    this.addRow("highContrast", "HIGH CONTRAST HUD", true, ry, D, "#f7ff3c");
+    ry += this.rowH;
+    this.addRow("uiScale", "UI TEXT SIZE", false, ry, D);
+    ry += this.rowH;
+    this.addRow("gamepadEnabled", "GAMEPAD ENABLED", true, ry, D, "#39ff88");
+    ry += this.rowH + uiGap("xs");
     this.addRow("shake", "SCREEN SHAKE", false, ry, D);
-    ry += 31;
+    ry += this.rowH;
     this.addRow("master", "MASTER VOLUME", false, ry, D);
-    ry += 31;
+    ry += this.rowH;
     this.addRow("music", "MUSIC VOLUME", false, ry, D);
-    ry += 31;
+    ry += this.rowH;
     this.addRow("sfx", "SFX VOLUME", false, ry, D);
 
     this.text(
-      this.x + 18,
-      this.y + this.h - 22,
-      "Reduce Flashing = photosensitivity-safe.  Low-FX = lighter for low-end devices.",
+      this.x + uiDim(20),
+      this.y + this.h - uiDim(30),
+      "Reduce Flashing = photosensitivity-safe. Graphics auto-detects your device tier.",
       "#9aa3b2",
-      "9px",
+      10,
       D,
     );
-    this.text(this.x + this.w - 92, this.y + this.h - 22, "O / ESC close", "#9aa3b2", "9px", D);
+    this.text(this.x + this.w - uiDim(100), this.y + this.h - uiDim(30), "O / ESC close", "#9aa3b2", 10, D);
     this.setVisible(false);
   }
 
@@ -87,13 +115,13 @@ export default class OptionsPanel {
     depth: number,
     labelColor = "#eafdff",
   ) {
-    this.text(this.x + 18, y, label, labelColor, "11px", depth);
-    const valueText = this.text(this.x + this.w - 64, y, "", "#f7ff3c", "11px", depth);
+    this.text(this.x + uiDim(20), y, label, labelColor, 12, depth);
+    const valueText = this.text(this.x + this.w - uiDim(68), y, "", "#f7ff3c", 12, depth);
     const row: Row = { key, toggle, y, trackX: this.trackX, trackW: this.trackW, valueText };
     this.rows.push(row);
 
     const z = this.scene.add
-      .zone(this.trackX, y - 4, toggle ? 80 : this.trackW + 60, 20)
+      .zone(this.trackX, y - uiDim(4), toggle ? uiDim(86) : this.trackW + uiDim(64), this.zoneH)
       .setOrigin(0)
       .setScrollFactor(0)
       .setDepth(depth)
@@ -104,14 +132,51 @@ export default class OptionsPanel {
 
   private onRowClick(row: Row, localX: number) {
     if (!this.open) return;
-    if (row.toggle) {
+    if (row.cycle) {
+      const cur = String(getSettings()[row.key]);
+      const i = row.cycle.indexOf(cur as GraphicsQuality);
+      const next = row.cycle[(i + 1 + row.cycle.length) % row.cycle.length];
+      updateSettings({ [row.key]: next } as Partial<SettingsData>);
+    } else if (row.toggle) {
+      // Phones need tap-to-walk — don't let it flip off and soft-lock movement.
+      if (row.key === "rsControls" && prefersMobileUx() && getSettings().rsControls) return;
       updateSettings({ [row.key]: !getSettings()[row.key] } as Partial<SettingsData>);
+    } else if (row.key === "uiScale") {
+      const v = Phaser.Math.Clamp(localX / row.trackW, 0, 1);
+      const scaled = 0.85 + v * 0.5;
+      updateSettings({ uiScale: Math.round(scaled * 100) / 100 });
     } else {
       const v = Phaser.Math.Clamp(localX / row.trackW, 0, 1);
       updateSettings({ [row.key]: Math.round(v * 100) / 100 } as Partial<SettingsData>);
     }
     this.onChange?.();
     this.refresh();
+  }
+
+  private addCycleRow(
+    key: keyof SettingsData,
+    label: string,
+    cycle: GraphicsQuality[],
+    y: number,
+    depth: number,
+    labelColor = "#eafdff",
+  ) {
+    this.text(this.x + uiDim(20), y, label, labelColor, 12, depth);
+    const valueText = this.text(this.x + this.w - uiDim(108), y, "", "#f7ff3c", 12, depth);
+    const row: Row = { key, toggle: false, cycle, y, trackX: this.trackX, trackW: this.trackW, valueText };
+    this.rows.push(row);
+    const z = this.scene.add
+      .zone(this.trackX, y - uiDim(4), uiDim(120), this.zoneH)
+      .setOrigin(0)
+      .setScrollFactor(0)
+      .setDepth(depth)
+      .setInteractive({ useHandCursor: true });
+    z.on("pointerdown", () => this.onRowClick(row, 0));
+    this.zones.push(z);
+  }
+
+  setOnChange(fn: () => void) {
+    this.onChange = fn;
   }
 
   get isOpen(): boolean {
@@ -128,22 +193,42 @@ export default class OptionsPanel {
   close() {
     this.open = false;
     this.setVisible(false);
+    if (this.panelArt) this.panelArt.setVisible(false);
   }
 
   refresh() {
     const g = this.g;
     g.clear();
-    drawPanelFrame(g, this.x, this.y, this.w, this.h);
+    this.panelArt = drawPanelFrame(g, this.x, this.y, this.w, this.h, COLORS.neonCyan, this.scene, this.panelArt);
+    if (this.panelArt) this.panelArt.setVisible(this.open).setDepth(1799);
     const s = getSettings();
+    const trackH = uiDim(8);
     for (const row of this.rows) {
-      if (row.toggle) {
+      if (row.cycle) {
+        const cur = String(s[row.key]);
+        const eff =
+          row.key === "graphicsQuality" && cur === "auto"
+            ? `AUTO (${effectiveGraphicsQuality()})`
+            : row.key === "uiDensity"
+              ? cur === "new"
+                ? "SIMPLE"
+                : "FULL"
+              : cur.toUpperCase();
+        row.valueText.setText(eff).setColor("#f7ff3c");
+      } else if (row.toggle) {
         const on = !!s[row.key];
         row.valueText.setText(on ? "[ ON ]" : "[ OFF ]").setColor(on ? "#39ff88" : "#5a6172");
+      } else if (row.key === "uiScale") {
+        const v = (s.uiScale - 0.85) / 0.5;
+        g.fillStyle(0x140a1e, 0.95).fillRect(row.trackX, row.y + uiDim(2), row.trackW, trackH);
+        g.fillStyle(0x29e7ff, 1).fillRect(row.trackX + uiDim(1), row.y + uiDim(3), (row.trackW - uiDim(2)) * v, trackH - uiDim(2));
+        g.lineStyle(uiDim(1), 0x3a4a66, 0.8).strokeRect(row.trackX, row.y + uiDim(2), row.trackW, trackH);
+        row.valueText.setText(`${Math.round(s.uiScale * 100)}%`).setColor("#eafdff");
       } else {
         const v = s[row.key] as number;
-        g.fillStyle(0x140a1e, 0.95).fillRect(row.trackX, row.y + 2, row.trackW, 8);
-        g.fillStyle(0x29e7ff, 1).fillRect(row.trackX + 1, row.y + 3, (row.trackW - 2) * v, 6);
-        g.lineStyle(1, 0x3a4a66, 0.8).strokeRect(row.trackX, row.y + 2, row.trackW, 8);
+        g.fillStyle(0x140a1e, 0.95).fillRect(row.trackX, row.y + uiDim(2), row.trackW, trackH);
+        g.fillStyle(0x29e7ff, 1).fillRect(row.trackX + uiDim(1), row.y + uiDim(3), (row.trackW - uiDim(2)) * v, trackH - uiDim(2));
+        g.lineStyle(uiDim(1), 0x3a4a66, 0.8).strokeRect(row.trackX, row.y + uiDim(2), row.trackW, trackH);
         row.valueText.setText(`${Math.round(v * 100)}%`).setColor("#eafdff");
       }
     }
@@ -160,9 +245,9 @@ export default class OptionsPanel {
     });
   }
 
-  private text(x: number, y: number, s: string, color: string, size: string, depth: number) {
+  private text(x: number, y: number, s: string, color: string, sizePx: number, depth: number) {
     const t = this.scene.add
-      .text(x, y, s, { fontFamily: "Courier New, monospace", fontSize: size, color })
+      .text(x, y, s, { fontFamily: "Courier New, monospace", fontSize: uiFont(sizePx), color })
       .setScrollFactor(0)
       .setDepth(depth);
     this.statics.push(t);

@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { NODE, COLORS } from "../config";
-import { NODE_KEY, NODE_INFECTED_KEY } from "../assets/manifest";
+import { NODE_KEY, NODE_INFECTED_KEY, GLOW_KEY } from "../assets/manifest";
 
 type NodeState = "dormant" | "channeling" | "infected";
 
@@ -28,10 +28,18 @@ export default class InfectionNode {
     this.x = x;
     this.y = y;
 
-    this.base = scene.add.image(x, y, NODE_KEY).setDepth(6);
+    this.base = scene.add.image(x, y, NODE_KEY).setDepth(6).setScale(0.95);
+    // Soft neon halo under the authored node art so it reads as a landmark.
+    const halo = scene.add
+      .image(x, y + 6, GLOW_KEY)
+      .setDepth(5.5)
+      .setTint(0x6a3cff)
+      .setAlpha(0.32)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setScale(1.8);
     this.ring = scene.add.graphics().setDepth(7);
     this.label = scene.add
-      .text(x, y - 26, "NODE", {
+      .text(x, y - 34, "NODE", {
         fontFamily: "Courier New, monospace",
         fontSize: "10px",
         color: "#8a5cff",
@@ -41,8 +49,17 @@ export default class InfectionNode {
 
     scene.tweens.add({
       targets: this.base,
-      scale: { from: 0.92, to: 1.08 },
+      scale: { from: 0.9, to: 1.05 },
       duration: 1200,
+      yoyo: true,
+      repeat: -1,
+      ease: "Sine.inOut",
+    });
+    scene.tweens.add({
+      targets: halo,
+      scale: { from: 1.55, to: 2.1 },
+      alpha: { from: 0.18, to: 0.42 },
+      duration: 1000,
       yoyo: true,
       repeat: -1,
       ease: "Sine.inOut",

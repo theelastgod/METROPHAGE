@@ -7,6 +7,8 @@
   "scripts": {
     "dev": "wrangler dev",
     "migrate:local": "wrangler d1 migrations apply metrophage --local",
+    "migrate:remote": "wrangler d1 migrations apply metrophage --remote",
+    "deploy": "wrangler deploy",
     "smoke": "node scripts/smoke.mjs",
     "typecheck": "tsc --noEmit"
   },
@@ -17,6 +19,7 @@
   },
   "dependencies": {
     "@solana/spl-token": "^0.4.14",
-    "@solana/web3.js": "^1.98.4"
+    "@solana/web3.js": "^1.98.4",
+    "ethers": "^6.17.0"
   }
 }

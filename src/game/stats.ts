@@ -11,6 +11,13 @@ export interface ModBag {
   hackPct: number; // hack/shield-break potency
   heatGainPct: number; // +heat gained
   heatDecayPct: number; // -heat decay (slower cooldown)
+  critPct: number; // chance a direct hit crits (×CRIT_MULT damage)
+  lifestealPct: number; // fraction of direct-hit damage healed back
+  // ── kit-mods: rare gear lines that change HOW the kit behaves, not just numbers ──
+  dashTrailPct: number; // dash leaves a contagion damage trail (roll scales the damage)
+  abilityEchoPct: number; // the signature (Q) echoes moments later at a damage fraction
+  killNovaPct: number; // kills detonate a friendly nova (roll scales the damage)
+  ultHeatDiscount: number; // flat HEAT-threshold reduction on the ultimate (R)
 }
 
 export const ZERO_MODS: ModBag = {
@@ -23,20 +30,20 @@ export const ZERO_MODS: ModBag = {
   hackPct: 0,
   heatGainPct: 0,
   heatDecayPct: 0,
+  critPct: 0,
+  lifestealPct: 0,
+  dashTrailPct: 0,
+  abilityEchoPct: 0,
+  killNovaPct: 0,
+  ultHeatDiscount: 0,
 };
 
 export function addMods(a: ModBag, b: Partial<ModBag>): ModBag {
-  return {
-    dmgPct: a.dmgPct + (b.dmgPct ?? 0),
-    movePct: a.movePct + (b.movePct ?? 0),
-    hpAdd: a.hpAdd + (b.hpAdd ?? 0),
-    shieldAdd: a.shieldAdd + (b.shieldAdd ?? 0),
-    cdReducePct: a.cdReducePct + (b.cdReducePct ?? 0),
-    infectPct: a.infectPct + (b.infectPct ?? 0),
-    hackPct: a.hackPct + (b.hackPct ?? 0),
-    heatGainPct: a.heatGainPct + (b.heatGainPct ?? 0),
-    heatDecayPct: a.heatDecayPct + (b.heatDecayPct ?? 0),
-  };
+  const out = { ...a };
+  (Object.keys(ZERO_MODS) as (keyof ModBag)[]).forEach((key) => {
+    out[key] = a[key] + (b[key] ?? 0);
+  });
+  return out;
 }
 
 export function scaleMods(b: Partial<ModBag>, k: number): Partial<ModBag> {

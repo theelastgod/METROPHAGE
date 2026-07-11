@@ -2,50 +2,268 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="theme-color" content="#04020a" />
+    <meta name="format-detection" content="telephone=no" />
     <title>METROPHAGE</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="description" content="Fight the corps, run the sprawl, earn $METRO. A neon-noir cyberpunk action-RPG in your browser." />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="METROPHAGE — neon cyberpunk action-RPG" />
+    <meta property="og:description" content="Fight the corps, run the sprawl, earn $METRO. Deploy into the shared sprawl from your browser." />
+    <meta property="og:image" content="https://metrophagev1.pages.dev/og.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="METROPHAGE — neon cyberpunk action-RPG" />
+    <meta name="twitter:image" content="https://metrophagev1.pages.dev/og.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&family=Orbitron:wght@500;700;900&display=swap"
+      rel="stylesheet"
+    />
     <style>
       :root {
         color-scheme: dark;
+        --void: #04020a;
+        --cyan: #00e5ff;
+        --magenta: #ff2bd6;
       }
       html,
       body {
         margin: 0;
         padding: 0;
+        width: 100%;
         height: 100%;
-        background: #04020a;
+        height: 100dvh;
+        background: var(--void);
         overflow: hidden;
-        font-family: "Courier New", ui-monospace, monospace;
+        overscroll-behavior: none;
+        touch-action: none;
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-tap-highlight-color: transparent;
+        -webkit-text-size-adjust: 100%;
+        font-family: "IBM Plex Mono", "Courier New", ui-monospace, monospace;
       }
       #game-root {
         position: fixed;
         inset: 0;
+        /* Desktop: keep a tiny safe inset; mobile goes edge-to-edge (see .mp-mobile). */
+        padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+          env(safe-area-inset-left);
+        box-sizing: border-box;
         display: flex;
         align-items: center;
         justify-content: center;
+        touch-action: none;
+        width: 100%;
+        height: 100%;
+        height: 100dvh;
+        overflow: hidden;
       }
       #game-root canvas {
-        image-rendering: pixelated;
+        image-rendering: auto;
+        filter: contrast(1.04) saturate(1.14) brightness(1.03);
+        box-shadow:
+          0 0 120px rgba(0, 229, 255, 0.06),
+          0 0 280px rgba(255, 43, 214, 0.04),
+          inset 0 0 80px rgba(0, 0, 0, 0.35);
+        border-radius: 2px;
+        max-width: 100%;
+        max-height: 100%;
+        touch-action: none;
       }
-      /* Boot flash while the bundle loads */
+      /* Mobile: fill the *visible* browser window, never overflow past it.
+         (ENVELOP was growing the canvas larger than the phone viewport.) */
+      .mp-mobile,
+      .mp-mobile body {
+        width: 100%;
+        height: 100%;
+        height: 100dvh;
+        max-width: 100vw;
+        max-height: 100dvh;
+        overflow: hidden;
+        position: fixed;
+        inset: 0;
+      }
+      .mp-mobile #game-root {
+        padding: 0;
+        /* JS pins exact visualViewport px; these are fallbacks. */
+        width: 100%;
+        height: 100%;
+        max-width: 100vw;
+        max-height: 100dvh;
+        max-height: -webkit-fill-available;
+        overflow: hidden;
+        box-sizing: border-box;
+      }
+      .mp-mobile #game-root canvas {
+        /* Hard cap: never paint outside the phone browser window.
+           Phaser FIT sets width/height; we only clamp maxima. */
+        max-width: 100% !important;
+        max-height: 100% !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
+        filter: contrast(1.03) saturate(1.1) brightness(1.02);
+        display: block;
+        margin: auto;
+      }
+      /* When browser fullscreen API succeeds, stretch to the real display. */
+      .mp-mobile:fullscreen #game-root,
+      .mp-mobile:-webkit-full-screen #game-root {
+        width: 100% !important;
+        height: 100% !important;
+        max-width: none;
+        max-height: none;
+        left: 0 !important;
+        top: 0 !important;
+      }
+      .mp-mobile:fullscreen #game-root canvas,
+      .mp-mobile:-webkit-full-screen #game-root canvas {
+        max-width: 100% !important;
+        max-height: 100% !important;
+      }
+      /* Full landscape gate — phone must be on its side to play. */
+      #mp-landscape-gate {
+        display: none;
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        align-items: center;
+        justify-content: center;
+        background:
+          radial-gradient(ellipse at 50% 40%, #1a0a28 0%, #04020a 70%);
+        color: #eafdff;
+        text-align: center;
+        padding: 24px;
+        box-sizing: border-box;
+      }
+      #mp-landscape-gate.mp-show {
+        display: flex;
+      }
+      .mp-land-inner {
+        max-width: 320px;
+      }
+      .mp-land-phone {
+        font-size: 56px;
+        line-height: 1;
+        margin-bottom: 18px;
+        animation: mpPhoneTilt 1.6s ease-in-out infinite;
+        filter: drop-shadow(0 0 18px rgba(0, 229, 255, 0.45));
+      }
+      .mp-land-title {
+        font-family: "Orbitron", sans-serif;
+        font-weight: 800;
+        font-size: 18px;
+        letter-spacing: 0.18em;
+        color: #00e5ff;
+        margin-bottom: 12px;
+        text-shadow: 0 0 16px rgba(0, 229, 255, 0.5);
+      }
+      .mp-land-body {
+        font-size: 13px;
+        line-height: 1.55;
+        color: #9aa3b2;
+        margin-bottom: 16px;
+      }
+      .mp-land-hint {
+        font-size: 11px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: #39ff88;
+      }
+      @keyframes mpPhoneTilt {
+        0%,
+        100% {
+          transform: rotate(0deg);
+        }
+        40% {
+          transform: rotate(90deg);
+        }
+        60% {
+          transform: rotate(90deg);
+        }
+      }
+      /* Hide game while portrait-blocked so players only see the rotate gate. */
+      .mp-portrait-block #game-root,
+      .mp-portrait-block #boot,
+      .mp-portrait-block #rotate-hint {
+        visibility: hidden !important;
+        pointer-events: none !important;
+      }
+      #rotate-hint {
+        display: none;
+      }
       #boot {
         position: fixed;
         inset: 0;
         display: flex;
+        flex-direction: column;
         align-items: center;
         justify-content: center;
-        color: #ff2bd6;
-        letter-spacing: 0.4em;
-        text-shadow: 0 0 12px #ff2bd6;
-        font-size: 14px;
+        gap: 1.25rem;
+        background: radial-gradient(ellipse at 50% 42%, #120a24 0%, var(--void) 68%);
         pointer-events: none;
-        transition: opacity 0.6s ease;
+        transition: opacity 0.8s ease;
+        z-index: 4;
+      }
+      #boot .logo {
+        font-family: "Orbitron", sans-serif;
+        font-weight: 900;
+        font-size: clamp(22px, 2.4vw, 36px);
+        letter-spacing: 0.38em;
+        color: var(--magenta);
+        text-shadow: 0 0 18px rgba(255, 43, 214, 0.55), 0 0 42px rgba(0, 229, 255, 0.2);
+        animation: bootPulse 2.4s ease-in-out infinite;
+      }
+      #boot .tag {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: clamp(10px, 0.85vw, 13px);
+        letter-spacing: 0.28em;
+        color: #6b7184;
+      }
+      #boot .bar {
+        width: min(280px, 52vw);
+        height: 3px;
+        background: #141026;
+        border: 1px solid rgba(0, 229, 255, 0.25);
+        overflow: hidden;
+      }
+      #boot .bar > span {
+        display: block;
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, var(--cyan), var(--magenta));
+        box-shadow: 0 0 12px rgba(0, 229, 255, 0.45);
+        transition: width 0.15s ease;
+      }
+      @keyframes bootPulse {
+        0%,
+        100% {
+          opacity: 0.92;
+          transform: scale(1);
+        }
+        50% {
+          opacity: 1;
+          transform: scale(1.02);
+        }
       }
     </style>
   </head>
   <body>
     <div id="game-root"></div>
-    <div id="boot">METROPHAGE // BOOTING</div>
+    <div id="boot">
+      <div class="logo">METROPHAGE</div>
+      <div class="tag">INITIALIZING NEON GRID</div>
+      <div class="bar"><span id="boot-bar"></span></div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

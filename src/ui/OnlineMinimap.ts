@@ -1,0 +1,153 @@
+import Phaser from "phaser";
+import { TILE } from "../config";
+import { isWall, type TileGrid } from "../world/district";
+import { getSettings } from "../systems/Settings";
+import { bodyFont, displayFont } from "./typography";
+import { drawCornerBrackets } from "./panelChrome";
+import { uiDim } from "./uiLayout";
+
+export interface MiniBlip {
+  x: number;
+  y: number;
+  color: number;
+  r?: number;
+}
+
+/**
+ * Clickable zone minimap — RS-style radar; click a tile to walk there.
+ */
+export default class OnlineMinimap {
+  onWalk?: (worldX: number, worldY: number) => void;
+  private frame: Phaser.GameObjects.Image;
+  private g: Phaser.GameObjects.Graphics;
+  private zone: Phaser.GameObjects.Zone;
+  private title: Phaser.GameObjects.Text;
+  private hint: Phaser.GameObjects.Text;
+  private readonly ox: number;
+  private readonly oy: number;
+  private readonly mw = uiDim(118);
+  private readonly mh = uiDim(88);
+  private readonly pad = uiDim(3);
+  private readonly sx: number;
+  private readonly sy: number;
+  private pulse = 0;
+
+  constructor(
+    scene: Phaser.Scene,
+    grid: TileGrid,
+    worldW: number,
+    worldH: number,
+  ) {
+    this.sx = this.mw / worldW;
+    this.sy = this.mh / worldH;
+    this.ox = scene.scale.width - this.mw - uiDim(14);
+    this.oy = uiDim(96);
+
+    // Terrain + chrome are BAKED to a texture once. As live Graphics this was tens of
+    // thousands of wall fillRects (450×360 city tiles) re-executed by the renderer
+    // every single frame — the dominant draw cost of the whole city HUD.
+    const bw = Math.ceil(this.mw + this.pad * 2);
+    const bh = Math.ceil(this.mh + this.pad * 2);
+    const bake = scene.make.graphics({ x: 0, y: 0 }, false);
+    bake.fillStyle(0x05060f, 0.9).fillRect(0, 0, bw, bh);
+    bake.fillStyle(0x0a1428, 0.35).fillRect(2, 2, bw - 4, uiDim(12));
+    bake.fillStyle(0x1c2842, 0.85);
+    const tw = TILE * this.sx + 0.6;
+    const th = TILE * this.sy + 0.6;
+    for (let ty = 0; ty < grid.length; ty++) {
+      const row = grid[ty];
+      for (let tx = 0; tx < row.length; tx++) {
+        if (isWall(row[tx])) bake.fillRect(this.pad + tx * TILE * this.sx, this.pad + ty * TILE * this.sy, tw, th);
+      }
+    }
+    bake.lineStyle(uiDim(2), 0x29e7ff, 0.72).strokeRect(0, 0, bw, bh);
+    bake.lineStyle(1, 0xff2bd6, 0.22).strokeRect(3, 3, bw - 6, bh - 6);
+    drawCornerBrackets(bake, 0, 0, bw, bh, 0x29e7ff, 0.5, uiDim(8));
+    const key = "minimap_bake"; // one minimap per scene; re-baked on every zone entry
+    if (scene.textures.exists(key)) scene.textures.remove(key);
+    bake.generateTexture(key, bw, bh);
+    bake.destroy();
+    this.frame = scene.add
+      .image(this.ox - this.pad, this.oy - this.pad, key)
+      .setOrigin(0)
+      .setScrollFactor(0)
+      .setDepth(1400);
+
+    this.title = scene.add
+      .text(this.ox + this.mw / 2, this.oy - uiDim(14), "AREA MAP", displayFont(9, { color: "#29e7ff", fontStyle: "bold" }))
+      .setOrigin(0.5, 0)
+      .setScrollFactor(0)
+      .setDepth(1401);
+
+    this.g = scene.add.graphics().setScrollFactor(0).setDepth(1401);
+    this.zone = scene.add
+      .zone(this.ox, this.oy, this.mw, this.mh)
+      .setOrigin(0)
+      .setScrollFactor(0)
+      .setDepth(1402)
+      .setInteractive({ useHandCursor: true });
+    this.zone.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
+      if (!getSettings().rsControls || pointer.rightButtonDown()) return;
+      const lx = Phaser.Math.Clamp(pointer.x - this.ox, 0, this.mw);
+      const ly = Phaser.Math.Clamp(pointer.y - this.oy, 0, this.mh);
+      const wx = (lx / this.mw) * worldW;
+      const wy = (ly / this.mh) * worldH;
+      this.onWalk?.(wx, wy);
+    });
+
+    this.hint = scene.add
+      .text(this.ox + this.mw, this.oy + this.mh + uiDim(4), "click to walk", bodyFont(9, { color: "#6b7184" }))
+      .setOrigin(1, 0)
+      .setScrollFactor(0)
+      .setDepth(1401);
+
+    scene.events.on(Phaser.Scenes.Events.UPDATE, (_t: number, dt: number) => {
+      this.pulse += dt * 0.004;
+    });
+  }
+
+  private px(x: number) {
+    return this.ox + x * this.sx;
+  }
+  private py(y: number) {
+    return this.oy + y * this.sy;
+  }
+
+  private poiG?: Phaser.GameObjects.Graphics;
+
+  /** Static points of interest (building doors, transit) — small gold ticks drawn
+   *  once over the baked terrain, under the live blips. Turns the radar into an
+   *  actual navigation tool: you can SEE where the enterable doors are. */
+  setPois(pois: Array<{ x: number; y: number; color?: number }>, scene: Phaser.Scene) {
+    this.poiG?.destroy();
+    this.poiG = scene.add.graphics().setScrollFactor(0).setDepth(1400.5);
+    for (const p of pois) {
+      const mx = this.px(p.x);
+      const my = this.py(p.y);
+      this.poiG.fillStyle(p.color ?? 0xf7ff3c, 0.9).fillRect(mx - 1, my - 1, 2.5, 2.5);
+    }
+  }
+
+  render(player: MiniBlip, extras: MiniBlip[] = [], dest?: { x: number; y: number } | null) {
+    const g = this.g;
+    g.clear();
+    for (const b of extras) {
+      g.fillStyle(b.color, 0.9).fillCircle(this.px(b.x), this.py(b.y), b.r ?? uiDim(2));
+    }
+    if (dest) {
+      g.lineStyle(1, 0xf7ff3c, 0.85).strokeCircle(this.px(dest.x), this.py(dest.y), uiDim(3.5) + Math.sin(this.pulse) * 0.4);
+      g.fillStyle(0xf7ff3c, 0.35).fillCircle(this.px(dest.x), this.py(dest.y), uiDim(2));
+    }
+    g.fillStyle(0xeafdff, 1).fillCircle(this.px(player.x), this.py(player.y), uiDim(2.6));
+    g.lineStyle(1, player.color, 0.95).strokeCircle(this.px(player.x), this.py(player.y), uiDim(4) + Math.sin(this.pulse) * 0.5);
+  }
+
+  destroy() {
+    this.frame.destroy();
+    this.g.destroy();
+    this.zone.destroy();
+    this.title.destroy();
+    this.hint.destroy();
+    this.poiG?.destroy();
+  }
+}

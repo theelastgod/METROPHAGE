@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import { VIEW_W } from "../config";
+import { uiDim, uiFont } from "./uiLayout";
 
 /**
  * Boss health bar — a wide framed meter near the top of the screen, with the
@@ -14,19 +15,19 @@ export default class BossBar {
   private frac = 1;
   private shown = false;
 
-  private readonly w = 360;
-  private readonly h = 12;
-  // Tucked right of the top-left HUD panel so the two never overlap.
-  private readonly x = VIEW_W - 360 - 30;
-  private readonly y = 26;
-  private readonly cx = VIEW_W - 360 - 30 + 180;
+  private readonly w = uiDim(380);
+  private readonly h = uiDim(14);
+  private readonly x = VIEW_W - uiDim(380) - uiDim(30);
+  private readonly y = uiDim(28);
+  private readonly cx = this.x + this.w / 2;
+  private readonly pad = uiDim(4);
 
   constructor(scene: Phaser.Scene) {
     this.g = scene.add.graphics().setScrollFactor(0).setDepth(1500);
     this.nameText = scene.add
-      .text(this.cx, this.y - 12, "", {
+      .text(this.cx, this.y - uiDim(14), "", {
         fontFamily: "Courier New, monospace",
-        fontSize: "13px",
+        fontSize: uiFont(14),
         color: "#ff3b6b",
         fontStyle: "bold",
       })
@@ -34,9 +35,9 @@ export default class BossBar {
       .setScrollFactor(0)
       .setDepth(1501);
     this.titleText = scene.add
-      .text(this.cx, this.y + this.h + 4, "", {
+      .text(this.cx, this.y + this.h + uiDim(5), "", {
         fontFamily: "Courier New, monospace",
-        fontSize: "9px",
+        fontSize: uiFont(10),
         color: "#9aa3b2",
       })
       .setOrigin(0.5, 0)
@@ -69,12 +70,11 @@ export default class BossBar {
   private draw() {
     const g = this.g;
     g.clear();
-    g.fillStyle(0x07061a, 0.82).fillRect(this.x - 4, this.y - 4, this.w + 8, this.h + 8);
-    g.lineStyle(2, this.accent, 0.9).strokeRect(this.x - 4, this.y - 4, this.w + 8, this.h + 8);
+    g.fillStyle(0x07061a, 0.82).fillRect(this.x - this.pad, this.y - this.pad, this.w + this.pad * 2, this.h + this.pad * 2);
+    g.lineStyle(uiDim(2), this.accent, 0.9).strokeRect(this.x - this.pad, this.y - this.pad, this.w + this.pad * 2, this.h + this.pad * 2);
     g.fillStyle(0x140a1e, 0.95).fillRect(this.x, this.y, this.w, this.h);
-    // depletes right-to-left, hot core
     g.fillStyle(this.accent, 1).fillRect(this.x, this.y, this.w * this.frac, this.h);
-    g.fillStyle(0xffffff, 0.5).fillRect(this.x, this.y, this.w * this.frac, 2);
+    g.fillStyle(0xffffff, 0.5).fillRect(this.x, this.y, this.w * this.frac, uiDim(2));
   }
 
   private setVisible(v: boolean) {

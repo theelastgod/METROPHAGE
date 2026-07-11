@@ -1,48 +1,92 @@
 // METROPHAGE — $METRO on-chain layer gate (Phase 5).
 //
-// SINGLE SOURCE OF TRUTH for whether the on-chain layer is live. Empty by default:
-// the whole game runs on the off-chain, server-authoritative soft currency (`credits`)
-// with NO crypto. Point VITE_METRO_MINT at a real SPL mint (devnet first) and the
-// layer wakes up — by construction nothing on-chain can activate before there is an
-// address to point at.
-//
-// P2E architecture note (read before extending this):
-//   Gameplay currency STAYS the off-chain authoritative ledger — you cannot run a
-//   20 Hz authoritative loop on-chain (per-tx signatures, gas, ~100ms–seconds of
-//   latency). "$METRO as a P2E currency" therefore means a server-mediated BRIDGE
-//   that converts the off-chain balance to/from the tradeable token at explicit
-//   deposit / withdraw moments. That convertibility is the load-bearing P2E element.
-//   The server authorizes every withdraw (Phase 4 authority — the client never mints
-//   or decides a balance); the chain only SETTLES what the server already authorized.
-//
-// Safety rails encoded here:
-//   - empty mint            → `metroEnabled === false` → pure off-chain game.
-//   - cluster defaults to devnet; mainnet is never implicit.
-//   - real-value mainnet additionally requires METRO_MAINNET_ARMED — a stray or
-//     mistaken mint can never silently move real money. Stays disarmed until a
-//     deliberate, post-counsel switch.
+// Preferred settlement: **Robinhood Chain** (Ethereum L2, Arbitrum Orbit) ERC-20.
+// - Testnet (46630) default for rehearsal
+// - Mainnet (4663) requires METRO_MAINNET_ARMED (counsel)
+// Legacy: Solana SPL still works if mint is base58.
+// Empty mint → pure off-chain credits.
 
-const env = import.meta.env as Record<string, string | undefined>;
+import {
+  ROBINHOOD_MAINNET,
+  ROBINHOOD_TESTNET,
+  type RobinhoodCluster,
+  robinhoodNetwork,
+} from "./robinhoodChain";
 
-/** The $METRO SPL mint address (the "CA"). Empty string = layer off. */
+const env: Record<string, string | undefined> =
+  (typeof import.meta !== "undefined" &&
+    (import.meta as unknown as { env?: Record<string, string | undefined> }).env) ||
+  {};
+
+/** The $METRO mint / ERC-20 contract (the "CA"). Empty string = layer off. */
 export const METRO_MINT = env.VITE_METRO_MINT ?? "";
 
-export type MetroCluster = "devnet" | "mainnet-beta";
-/** Target cluster. Devnet unless explicitly set to mainnet-beta. */
-export const METRO_CLUSTER: MetroCluster = env.VITE_METRO_CLUSTER === "mainnet-beta" ? "mainnet-beta" : "devnet";
+export type MetroCluster =
+  | "robinhood"
+  | "robinhood-testnet"
+  | "sepolia"
+  | "mainnet"
+  | "devnet"
+  | "mainnet-beta"
+  | "custom";
 
-/** Real-value mainnet requires this explicit arm flag (post-counsel). 1 = armed. */
+function parseCluster(): MetroCluster {
+  const c = (env.VITE_METRO_CLUSTER || "").toLowerCase().trim();
+  if (c === "robinhood" || c === "rh" || c === "rh-mainnet") return "robinhood";
+  if (c === "robinhood-testnet" || c === "rh-testnet" || c === "testnet") return "robinhood-testnet";
+  if (c === "mainnet" || c === "mainnet-beta") return c === "mainnet-beta" ? "mainnet-beta" : "mainnet";
+  if (c === "sepolia" || c === "devnet" || c === "custom") return c as MetroCluster;
+  // Default for ERC-20 mints: Robinhood Chain testnet (safe rehearsal).
+  if (isEvmAddress(METRO_MINT)) return "robinhood-testnet";
+  return "devnet";
+}
+
+/** Target network. Defaults Robinhood Chain testnet for EVM mints. */
+export const METRO_CLUSTER: MetroCluster = parseCluster();
+
 export const METRO_MAINNET_ARMED = env.VITE_METRO_MAINNET_ARMED === "1";
 
-/** HTTP base for the server bridge endpoints (`/metro/*`), derived from the WS server URL. */
 export function metroApiBase(): string {
   const ws = env.VITE_SERVER_URL ?? "ws://127.0.0.1:8787/ws";
   return ws.replace(/^ws/, "http").replace(/\/ws$/, "");
 }
 
-const BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+export function isEvmAddress(s: string): boolean {
+  return /^0x[a-fA-F0-9]{40}$/.test((s || "").trim());
+}
 
-/** Decode a base58 string to bytes (no deps). Returns null on any invalid character. */
+/** Active Robinhood network when cluster is robinhood / robinhood-testnet. */
+export function activeRobinhoodNetwork() {
+  if (METRO_CLUSTER === "robinhood") return ROBINHOOD_MAINNET;
+  if (METRO_CLUSTER === "robinhood-testnet") return ROBINHOOD_TESTNET;
+  return null;
+}
+
+export function metroChainId(): number | null {
+  const rh = activeRobinhoodNetwork();
+  if (rh) return rh.chainId;
+  if (env.VITE_METRO_CHAIN_ID) {
+    const n = parseInt(env.VITE_METRO_CHAIN_ID, 10);
+    return Number.isFinite(n) ? n : null;
+  }
+  if (isEvmAddress(METRO_MINT)) return ROBINHOOD_TESTNET.chainId;
+  return null;
+}
+
+export function metroRpc(): string {
+  if (env.VITE_METRO_RPC) return env.VITE_METRO_RPC;
+  const rh = activeRobinhoodNetwork();
+  if (rh) return rh.rpcUrl;
+  if (isEvmAddress(METRO_MINT)) return ROBINHOOD_TESTNET.rpcUrl;
+  return METRO_CLUSTER === "mainnet-beta" ? "https://api.mainnet-beta.solana.com" : "https://api.devnet.solana.com";
+}
+
+/** Default Robinhood cluster string for wallet_switch. */
+export function metroRobinhoodCluster(): RobinhoodCluster {
+  return METRO_CLUSTER === "robinhood" ? "robinhood" : "robinhood-testnet";
+}
+
+const BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 function base58Decode(s: string): number[] | null {
   const bytes: number[] = [0];
   for (const ch of s) {
@@ -59,70 +103,93 @@ function base58Decode(s: string): number[] | null {
       carry >>= 8;
     }
   }
-  for (let i = 0; i < s.length && s[i] === "1"; i++) bytes.push(0); // leading zeros
+  for (let i = 0; i < s.length && s[i] === "1"; i++) bytes.push(0);
   return bytes.reverse();
 }
 
-/**
- * A valid Solana mint is a base58 string that decodes to exactly 32 bytes. (When the
- * wallet increment adds `@solana/web3.js`, this can be tightened to
- * `PublicKey.isOnCurve` — but a correct 32-byte base58 check already rejects a
- * fat-fingered CA on launch day, which is what matters here.)
- */
 export function isValidSolanaMint(s: string): boolean {
   if (!s || s.length < 32 || s.length > 44) return false;
   const bytes = base58Decode(s);
   return bytes != null && bytes.length === 32;
 }
 
-/** THE gate. Every on-chain feature branches on this; false → the game is pure off-chain. */
-export const metroEnabled = isValidSolanaMint(METRO_MINT);
+export function isValidMetroMint(s: string): boolean {
+  return isEvmAddress(s) || isValidSolanaMint(s);
+}
+
+export const metroEnabled = isValidMetroMint(METRO_MINT);
+export const metroIsEvm = isEvmAddress(METRO_MINT);
+export const metroIsRobinhood =
+  METRO_CLUSTER === "robinhood" || METRO_CLUSTER === "robinhood-testnet" || (metroIsEvm && !env.VITE_METRO_CLUSTER);
 
 export interface MetroStatus {
   enabled: boolean;
   cluster: MetroCluster;
   mint: string;
+  chain: "robinhood" | "evm" | "solana" | "off";
+  chainId: number | null;
+  networkName: string;
   mainnetArmed: boolean;
-  /** true only when a real-value mainnet path is fully armed (valid mint + cluster + arm flag). */
   mainnetLive: boolean;
 }
 
-/** Snapshot of the gate state, for boot logging / UI / ops. */
 export function getMetroStatus(): MetroStatus {
+  const rh = activeRobinhoodNetwork();
+  const mainnetCluster =
+    METRO_CLUSTER === "robinhood" || METRO_CLUSTER === "mainnet" || METRO_CLUSTER === "mainnet-beta";
+  let chain: MetroStatus["chain"] = "off";
+  if (metroEnabled) {
+    if (rh || metroIsRobinhood) chain = "robinhood";
+    else if (metroIsEvm) chain = "evm";
+    else chain = "solana";
+  }
   return {
     enabled: metroEnabled,
     cluster: METRO_CLUSTER,
     mint: METRO_MINT,
+    chain,
+    chainId: metroChainId(),
+    networkName: rh?.name ?? (metroIsEvm ? "EVM" : metroEnabled ? "Solana" : "off"),
     mainnetArmed: METRO_MAINNET_ARMED,
-    mainnetLive: metroEnabled && METRO_CLUSTER === "mainnet-beta" && METRO_MAINNET_ARMED,
+    mainnetLive: metroEnabled && mainnetCluster && METRO_MAINNET_ARMED,
   };
 }
 
-// ── P2E bridge seam (dormant) ──────────────────────────────────────────────
-// The off-chain authoritative ledger (server `credits`) is the live currency. The
-// bridge converts it to/from $METRO. Defined here as an interface + a safe disabled
-// implementation so the rest of the game can reference withdraw/deposit/balance
-// without any chain code. The real (devnet) implementation lands in the wallet
-// increment; mainnet stays gated behind METRO_MAINNET_ARMED.
+// ── Token framing for Robinhood Chain ERC-20 launch ────────────────────────
+// Fixed 1B human units (contract may use 18 decimals; game talks in whole $METRO).
+// P2E share is smaller than the old pump.fun pitch — most supply is market float on
+// RH; the bridge only ever pays from the player-funded deposit pool, not this pool.
+export const METRO_TOTAL_SUPPLY = 1_000_000_000;
+/** Soft design budget for lifetime earn rates (not a mintable on-chain allocation). */
+export const METRO_P2E_POOL = 100_000_000; // 10% of supply — design ceiling for rewards math
+export const METRO_MAX_PLAYERS = 100_000;
+export const METRO_PER_PLAYER_BUDGET = Math.round(METRO_P2E_POOL / METRO_MAX_PLAYERS); // = 1_000
+
+/** Bridge rates (must match server/src/metro.ts BRIDGE — shown in UI when pool offline). */
+export const METRO_DEPOSIT_CREDITS = 100;
+export const METRO_WITHDRAW_CREDITS = 125;
+export const METRO_MIN_WITHDRAW_CREDITS = 250;
+
+export function fmtMetro(n: number): string {
+  const strip = (s: string) => s.replace(/\.?0+$/, "");
+  if (n >= 1_000_000) return strip((n / 1_000_000).toFixed(2)) + "M";
+  if (n >= 1_000) return strip((n / 1_000).toFixed(1)) + "k";
+  return strip(n.toFixed(2));
+}
 
 export interface BridgeResult {
   ok: boolean;
   reason?: string;
-  /** opaque on-chain reference (e.g. tx signature) when a settlement actually happens. */
   ref?: string;
 }
 
 export interface MetroBridge {
   readonly enabled: boolean;
-  /** On-chain $METRO balance for a connected wallet (0 when disabled). */
   balanceOf(owner: string): Promise<number>;
-  /** Off-chain credits → on-chain $METRO. Server-authorized; the client never mints. */
   withdraw(owner: string, credits: number): Promise<BridgeResult>;
-  /** On-chain $METRO → off-chain credits, after the deposit is verified on-chain. */
   deposit(owner: string, metro: number): Promise<BridgeResult>;
 }
 
-/** The default bridge while the layer is off — every operation is a safe no-op. */
 export const disabledBridge: MetroBridge = {
   enabled: false,
   async balanceOf() {
@@ -136,12 +203,9 @@ export const disabledBridge: MetroBridge = {
   },
 };
 
-/**
- * Resolve the active bridge. Until the devnet wallet increment lands (and, for
- * mainnet, counsel sign-off), this always returns the disabled bridge — so no chain
- * code runs and the game is unaffected.
- */
 export function getMetroBridge(): MetroBridge {
-  // increment 2 (devnet): `if (metroEnabled) return new SolanaMetroBridge(...)`.
   return disabledBridge;
 }
+
+// re-export for callers that need network add params
+export { robinhoodNetwork, ROBINHOOD_MAINNET, ROBINHOOD_TESTNET };

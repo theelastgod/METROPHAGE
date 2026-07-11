@@ -1,7 +1,9 @@
 import Phaser from "phaser";
 import { COLORS } from "../config";
-import { COP_KEY, faceFrame } from "../assets/manifest";
+import { COP_KEY } from "../assets/manifest";
+import { driveChar } from "../assets/anim";
 import { EnemyTierDef, ENEMY_TIERS, EnemyHost } from "../game/enemies";
+import type { EliteModifier } from "../game/elites";
 
 export enum CopState {
   Patrol = "patrol",
@@ -19,8 +21,19 @@ export enum CopState {
 export default class TuringCop extends Phaser.Physics.Arcade.Sprite {
   readonly tier: EnemyTierDef;
   hp: number;
+  maxHp: number;
   shield: number;
+  level = 1;
+  private dmgMult = 1;
+  private rewardMult = 1;
+  private levelLabel?: Phaser.GameObjects.Text;
   state: CopState = CopState.Patrol;
+  /** Movement multiplier from status (chill slows; 1 = normal). Set by the scene. */
+  speedScale = 1;
+  /** Rolled elite modifier (undefined = ordinary unit). */
+  elite?: EliteModifier;
+  private eliteSpeed = 1; // base move multiplier from an elite (SWIFT etc.)
+  private eliteAura?: Phaser.GameObjects.Arc;
 
   private home: Phaser.Math.Vector2;
   private patrolTarget: Phaser.Math.Vector2;
@@ -40,12 +53,14 @@ export default class TuringCop extends Phaser.Physics.Arcade.Sprite {
     super(scene, x, y, COP_KEY);
     this.tier = tier;
     this.hp = tier.hp;
+    this.maxHp = tier.hp;
     this.shield = tier.shieldHp;
     scene.add.existing(this);
     scene.physics.add.existing(this);
     this.setCollideWorldBounds(true);
     this.setDepth(8);
-    this.setScale(tier.scale);
+    // Slight base upscale so HSS units read against dense neon floors (tier.scale still applies).
+    this.setScale(tier.scale * 1.12);
     this.applyTierTint();
     const r = tier.bodyRadius;
     (this.body as Phaser.Physics.Arcade.Body).setCircle(r, 16 - r, 18 - r);
@@ -72,7 +87,89 @@ export default class TuringCop extends Phaser.Physics.Arcade.Sprite {
   /** NG+ scaling: multiply this unit's pools. Applied once at spawn. */
   scaleHp(mult: number) {
     this.hp = Math.round(this.hp * mult);
+    this.maxHp = Math.round(this.maxHp * mult);
     if (this.shield > 0) this.shield = Math.round(this.shield * mult);
+  }
+
+  /** Area difficulty: set this unit's level (scales pools + damage + rewards) and float a
+   *  colour-coded "Lv N" tag above its head — green = trivial, white = even, red ☠ = deadly. */
+  setLevel(level: number, playerLevel: number) {
+    this.level = Math.max(1, level);
+    const mult = 1 + (this.level - 1) * 0.1; // +10% per level
+    this.hp = Math.round(this.hp * mult);
+    this.maxHp = Math.round(this.maxHp * mult);
+    if (this.shield > 0) this.shield = Math.round(this.shield * mult);
+    this.dmgMult = mult;
+    this.rewardMult = mult;
+
+    const diff = this.level - playerLevel;
+    let color = "#eafdff";
+    let tail = "";
+    if (diff <= -4) color = "#5a6172"; // trivial
+    else if (diff <= -1) color = "#9aebc0"; // easy
+    else if (diff <= 1) color = "#eafdff"; // even
+    else if (diff <= 3) color = "#f7ff3c"; // tough
+    else if (diff <= 6) color = "#ff9a3c"; // dangerous
+    else {
+      color = "#ff3b6b"; // deadly
+      tail = " ☠";
+    }
+    this.levelLabel = this.scene.add
+      .text(this.x, this.y, `Lv ${this.level}${tail}`, {
+        fontFamily: "Courier New, monospace",
+        fontSize: "10px",
+        color,
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5, 1)
+      .setDepth(12)
+      .setShadow(0, 0, "#000000", 4, true, true);
+  }
+
+  /** Level-scaled rewards (read by the scene on kill). */
+  get xpReward(): number {
+    return Math.round(this.tier.xp * this.rewardMult);
+  }
+  get creditReward(): number {
+    return Math.round(this.tier.credits * this.rewardMult);
+  }
+
+  /** MENDER support pulse: restore HP up to this unit's (scaled) max. */
+  heal(amount: number): boolean {
+    if (this.dead || this.hp >= this.maxHp) return false;
+    this.hp = Math.min(this.maxHp, this.hp + amount);
+    this.setTint(0x6affa0);
+    this.scene.time.delayedCall(80, () => {
+      if (!this.dead) this.applyTierTint();
+    });
+    return true;
+  }
+
+  /** Promote to an elite: scale pools + base speed, raise a coloured aura. At spawn. */
+  makeElite(mod: EliteModifier) {
+    this.elite = mod;
+    this.hp = Math.round(this.hp * mod.hpMult);
+    this.maxHp = Math.round(this.maxHp * mod.hpMult);
+    if (this.shield > 0) this.shield = Math.round(this.shield * mod.hpMult);
+    this.eliteSpeed = mod.speedMult;
+    const r = this.tier.bodyRadius * this.tier.scale + 8;
+    this.eliteAura = this.scene.add
+      .circle(this.x, this.y, r, mod.aura, 0.08)
+      .setStrokeStyle(2, mod.aura, 0.7)
+      .setDepth(7);
+    this.scene.tweens.add({
+      targets: this.eliteAura,
+      scale: { from: 0.94, to: 1.12 },
+      duration: 850,
+      yoyo: true,
+      repeat: -1,
+      ease: "Sine.inOut",
+    });
+  }
+
+  /** Combined status resistance (innate tier + elite), 0..1. */
+  get statusResist(): number {
+    return Math.max(this.tier.statusResist ?? 0, this.elite?.statusResist ?? 0);
   }
 
   private applyTierTint() {
@@ -101,6 +198,8 @@ export default class TuringCop extends Phaser.Physics.Arcade.Sprite {
     if (this.dead) return;
     const now = this.scene.time.now;
     if (this.shieldArc) this.shieldArc.setPosition(this.x, this.y);
+    if (this.eliteAura) this.eliteAura.setPosition(this.x, this.y);
+    if (this.levelLabel) this.levelLabel.setPosition(this.x, this.y - (this.tier.bodyRadius * this.tier.scale + 13));
 
     if (now < this.disabledUntil) {
       this.setVelocity(0, 0);
@@ -153,9 +252,11 @@ export default class TuringCop extends Phaser.Physics.Arcade.Sprite {
           this.attackTell();
           if (t.attack === "shot") {
             const a = Phaser.Math.Angle.Between(this.x, this.y, player.x, player.y);
-            host.enemyShot(this.x, this.y, a, t.attackDamage);
+            host.enemyShot(this.x, this.y, a, Math.round(t.attackDamage * this.dmgMult));
+          } else if (t.attack === "heal") {
+            host.enemyHeal(this.x, this.y, t.slamRadius, t.healAmount ?? 20);
           } else {
-            host.enemySlam(player.x, player.y, t.slamRadius, t.attackDamage, t.slamWindupMs);
+            host.enemySlam(player.x, player.y, t.slamRadius, Math.round(t.attackDamage * this.dmgMult), t.slamWindupMs);
           }
         }
         break;
@@ -166,11 +267,11 @@ export default class TuringCop extends Phaser.Physics.Arcade.Sprite {
 
   private faceTarget(player: Phaser.Physics.Arcade.Sprite) {
     const body = this.body as Phaser.Physics.Arcade.Body;
-    if (this.state === CopState.Patrol && body.velocity.lengthSq() > 1) {
-      this.setFrame(faceFrame(body.velocity.x, body.velocity.y));
-    } else {
-      this.setFrame(faceFrame(player.x - this.x, player.y - this.y));
-    }
+    const moving = body.velocity.lengthSq() > 64;
+    // Walking (patrol/chase): face + animate along travel. Holding/attacking: face the
+    // player on the neutral stance.
+    if (moving) driveChar(this, body.velocity.x, body.velocity.y, true);
+    else driveChar(this, player.x - this.x, player.y - this.y, false);
   }
 
   private patrol(now: number) {
@@ -196,7 +297,15 @@ export default class TuringCop extends Phaser.Physics.Arcade.Sprite {
 
   private moveToward(tx: number, ty: number, speed: number) {
     const a = Phaser.Math.Angle.Between(this.x, this.y, tx, ty);
-    this.setVelocity(Math.cos(a) * speed, Math.sin(a) * speed);
+    const s = speed * this.speedScale * this.eliteSpeed; // chill slows; elites (SWIFT) speed up
+    this.setVelocity(Math.cos(a) * s, Math.sin(a) * s);
+  }
+
+  /** Status overlay tint: a colour while a status is active, or null to restore the tier. */
+  setStatusTint(color: number | null) {
+    if (this.dead) return;
+    if (color === null) this.applyTierTint();
+    else this.setTint(color);
   }
 
   private attackTell() {
@@ -262,6 +371,8 @@ export default class TuringCop extends Phaser.Physics.Arcade.Sprite {
     body.stop();
     body.enable = false;
     this.shieldArc?.destroy();
+    this.eliteAura?.destroy();
+    this.levelLabel?.destroy();
 
     const burst = this.scene.add
       .circle(this.x, this.y, 8 * this.tier.scale, COLORS.enemy, 0.9)

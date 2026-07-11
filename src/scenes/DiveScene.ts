@@ -1,18 +1,26 @@
 import Phaser from "phaser";
+import { installUiCamera } from "../render/cameras";
 import { TILE, COLORS, BULLET, ENEMY_BULLET } from "../config";
 import { getClass, ClassDef, PrimaryDef } from "../game/classes";
 import { ENEMY_TIERS, EnemyHost } from "../game/enemies";
 import { DiveDef, DiveResult } from "../game/dives";
 import { PLAYER_CUSTOM_KEY } from "../game/customization";
-import { TILESET_KEY, GLOW_KEY } from "../assets/manifest";
+import { GLOW_KEY } from "../assets/manifest";
 import Player, { PlayerInput } from "../entities/Player";
 import Bullets from "../entities/Bullets";
 import TuringCop from "../entities/TuringCop";
 import NeonPipeline from "../render/NeonPipeline";
-import { juiceShake, juiceFlash } from "../systems/juice";
+import { createTerrainLayer } from "../render/terrainLayer";
+import { TILE_VARIANTS } from "../world/district";
+import { juiceShake, juiceFlash, juiceKill } from "../systems/juice";
 import Synth from "../audio/Synth";
+import MusicDirector from "../audio/MusicDirector";
 import Particles from "../render/Particles";
 
+/**
+ * @legacy UNREGISTERED — ICE dives are OnlineScene zones "v0"–"v7". Do not re-register.
+ * Kept only as a reference for dive layout/combat feel.
+ */
 const TILE_FLOOR = 0;
 const TILE_WALL = 4;
 const AW = 28; // arena width in tiles
@@ -77,6 +85,7 @@ export default class DiveScene extends Phaser.Scene implements EnemyHost {
     this.dive = data.dive;
     this.cycleMult = data.cycleMult ?? 1;
     this.synth = this.registry.get("synth") as Synth | undefined;
+    MusicDirector.for(this)?.play("dive", this); // cyberspace bed (GameScene re-asserts on return)
     this.particles = new Particles(this);
     this.coreHp = this.coreMaxHp = Math.round(220 + data.level * 12);
     this.coreUnlocked = false;
@@ -121,10 +130,8 @@ export default class DiveScene extends Phaser.Scene implements EnemyHost {
     ];
     for (const [x, y] of blocks) grid[y][x] = TILE_WALL;
 
-    const map = this.make.tilemap({ data: grid, tileWidth: TILE, tileHeight: TILE });
-    const tileset = map.addTilesetImage(TILESET_KEY, TILESET_KEY, TILE, TILE)!;
-    this.wallLayer = map.createLayer(0, tileset, 0, 0)!;
-    this.wallLayer.setCollision(TILE_WALL);
+    this.wallLayer = createTerrainLayer(this, grid, { profile: "dungeon", accent: 0x29e7ff });
+    this.wallLayer.setCollision(TILE_VARIANTS[TILE_WALL]); // base wall + its roof variant
     this.physics.world.setBounds(0, 0, AW * TILE, AH * TILE);
     this.cameras.main.setBackgroundColor(COLORS.bgVoid);
   }
@@ -139,13 +146,14 @@ export default class DiveScene extends Phaser.Scene implements EnemyHost {
 
   private setupProjectiles() {
     const prim = this.classDef.primary;
+    const ranged = prim.kind !== "beam" && prim.kind !== "melee";
     this.bullets = new Bullets(this, {
-      speed: prim.kind === "beam" ? 600 : prim.speed,
-      lifetimeMs: prim.kind === "beam" ? 200 : prim.lifetimeMs,
+      speed: ranged ? prim.speed : 600,
+      lifetimeMs: ranged ? prim.lifetimeMs : 200,
       radius: BULLET.radius,
       maxActive: 96,
       tint: this.playerColor,
-      damage: prim.kind === "beam" ? prim.damage : prim.damage,
+      damage: prim.damage,
     });
     this.enemyBullets = new Bullets(this, {
       speed: ENEMY_BULLET.speed,
@@ -200,6 +208,7 @@ export default class DiveScene extends Phaser.Scene implements EnemyHost {
     const cam = this.cameras.main;
     cam.setBounds(0, 0, AW * TILE, AH * TILE);
     cam.startFollow(this.player, true, 0.12, 0.12);
+    installUiCamera(this, 1);
   }
 
   private setupPostFX() {
@@ -209,7 +218,7 @@ export default class DiveScene extends Phaser.Scene implements EnemyHost {
     const p = cam.getPostPipeline("Neon") as NeonPipeline;
     const neon = Array.isArray(p) ? p[0] : p;
     if (neon) {
-      neon.heat = 0.4; // dives run hot and tense
+      neon.heat = 0.2; // dives run tense — but keep the readout text legible
       neon.tint = [0.16, 0.9, 1]; // ICE-cyan signature
       neon.tintAmt = 0.25;
     }
@@ -450,8 +459,8 @@ export default class DiveScene extends Phaser.Scene implements EnemyHost {
     if (!cop.active || cop.isDead) return;
     const killed = cop.hurt(dmg, shieldMult);
     if (killed) {
-      this.spark(cop.x, cop.y, COLORS.enemy, 2);
-      juiceShake(this, 80, 0.004);
+      this.spark(cop.x, cop.y, COLORS.enemy, 2.4);
+      juiceKill(this);
       this.synth?.kill();
     } else {
       cop.knock(cop.x - this.player.x, cop.y - this.player.y, 140);
@@ -504,6 +513,19 @@ export default class DiveScene extends Phaser.Scene implements EnemyHost {
     });
   }
 
+  /** MENDER support pulse: top up dive enemies within range. */
+  enemyHeal(x: number, y: number, radius: number, amount: number) {
+    this.enemies.getChildren().forEach((go) => {
+      const cop = go as TuringCop;
+      if (!cop.active || cop.isDead) return;
+      if (Phaser.Math.Distance.Between(cop.x, cop.y, x, y) <= radius && cop.heal(amount)) {
+        this.spark(cop.x, cop.y, 0x6affa0, 1.2);
+      }
+    });
+    const ring = this.add.circle(x, y, radius, 0x6affa0, 0.1).setStrokeStyle(2, 0x6affa0, 0.6).setDepth(5);
+    this.tweens.add({ targets: ring, alpha: 0, scale: 1.2, duration: 360, onComplete: () => ring.destroy() });
+  }
+
   // ---- fx + hud ----
 
   private spark(x: number, y: number, color: number, scale: number) {
@@ -554,7 +576,7 @@ export default class DiveScene extends Phaser.Scene implements EnemyHost {
       .setScrollFactor(0)
       .setDepth(2000)
       .setAlpha(0);
-    t.setShadow(0, 0, "#ff2bd6", 18, true, true);
+    t.setShadow(0, 0, "#ff2bd6", 6, true, true);
     this.tweens.add({ targets: t, alpha: 1, scale: { from: 1.4, to: 1 }, duration: 500, yoyo: true, hold: 700, onComplete: () => t.destroy() });
   }
 
@@ -582,7 +604,7 @@ export default class DiveScene extends Phaser.Scene implements EnemyHost {
       .setOrigin(0.5)
       .setScrollFactor(0)
       .setDepth(2000);
-    msg.setShadow(0, 0, "#00e5ff", 18, true, true);
+    msg.setShadow(0, 0, "#00e5ff", 6, true, true);
     if (success) juiceFlash(this, 300, 40, 200, 160);
     juiceShake(this, 300, 0.008);
 

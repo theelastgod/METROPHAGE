@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { installUiCamera } from "../render/cameras";
 import {
   TILE,
   WORLD_W,
@@ -13,14 +14,17 @@ import {
   AGENT_TINTS,
   SPAWN,
   BEAM_SHIELD_MULT,
+  CRIT_MULT,
 } from "../config";
 import { getClass, ClassDef, PrimaryDef } from "../game/classes";
 import { AbilityHost, AbilityDef } from "../game/ability";
-import { ENEMY_TIERS, EnemyHost } from "../game/enemies";
-import { buildGrid, spawnPoint, isWall, TILE_WALL, TileGrid } from "../world/district";
+import { ENEMY_TIERS, ENEMY_BARKS, EnemyHost } from "../game/enemies";
+import { rollElite, type EliteModifier } from "../game/elites";
+import { buildGrid, spawnPoint, isWall, TILE_WALL, TILE_VARIANTS, TileGrid } from "../world/district";
+import { createTerrainLayer } from "../render/terrainLayer";
+import { paintRooftopLights } from "../render/rooftopLights";
 import { DistrictDef, DISTRICTS } from "../game/districts";
 import {
-  TILESET_KEY,
   PORTRAIT_PLAYER_KEY,
   PORTRAIT_NPC_KEY,
   VO_MELTDOWN_KEY,
@@ -53,6 +57,7 @@ import {
 import { CONSUMABLES, CONSUMABLE_KEYS } from "../game/consumables";
 import { ModBag, ZERO_MODS, addMods } from "../game/stats";
 import { rollItem } from "../game/items";
+import { getWeapon, weaponIlvlMult, weaponHitDamage } from "../game/weapons";
 import { Contract, objectiveLabel } from "../game/contracts";
 import { getFragment, FRAGMENTS } from "../game/fragments";
 import { generateDive, DiveResult } from "../game/dives";
@@ -60,13 +65,17 @@ import Pickup from "../entities/Pickup";
 import Terminal from "../entities/Terminal";
 import ExtractionGate from "../entities/ExtractionGate";
 import Boss from "../entities/Boss";
-import { getBoss } from "../game/bosses";
+import { getBoss, BossDef } from "../game/bosses";
 import NeonPipeline from "../render/NeonPipeline";
+import Atmosphere from "../render/Atmosphere";
+
 import Synth from "../audio/Synth";
+import MusicDirector from "../audio/MusicDirector";
 import Pops from "../render/Pops";
 import Particles from "../render/Particles";
-import { juiceShake, juiceFlash } from "../systems/juice";
+import { juiceShake, juiceFlash, juiceNeonPulse, juiceHitStop, juiceZoomPunch } from "../systems/juice";
 import Hud from "../ui/Hud";
+import Minimap from "../ui/Minimap";
 import DialogueBox, { DialoguePage } from "../ui/DialogueBox";
 import SkillPanel from "../ui/SkillPanel";
 import InventoryPanel from "../ui/InventoryPanel";
@@ -75,14 +84,16 @@ import VendorPanel from "../ui/VendorPanel";
 import CityMapPanel from "../ui/CityMapPanel";
 import JournalPanel from "../ui/JournalPanel";
 import OptionsPanel from "../ui/OptionsPanel";
+import StatsPanel, { StatLine } from "../ui/StatsPanel";
 import Quests from "../systems/Quests";
 import { DIALOGUE_TREES } from "../game/dialogue";
 import BossBar from "../ui/BossBar";
 
 /**
- * GameScene — Phase 0.
- * Step 1: movable, colliding player. Step 2: mouse-aim, dash, projectile weapon.
- * Step 3: Turing Cops with a patrol->chase->attack FSM that take damage and die.
+ * @legacy UNREGISTERED — not in main.ts scene list. Superseded by OnlineScene.
+ * Archive only: do not re-wire for play. Port useful systems into OnlineScene instead.
+ *
+ * GameScene — Phase 0 single-player vertical slice (historical).
  */
 export default class GameScene
   extends Phaser.Scene
@@ -95,6 +106,9 @@ export default class GameScene
   private districtIndex = 0;
   private cycleMult = 1; // NG+ difficulty scalar (1 + cycle * step)
   private nextSpawnAt = 0;
+  private nextBarkAt = 0; // throttle for HSS deploy barks
+  // Active on-hit statuses per enemy (burn DoT + chill slow; shock reuses disable()).
+  private statuses = new Map<TuringCop, { burnUntil: number; burnNext: number; chillUntil: number }>();
   private player!: Player;
   private bullets!: Bullets; // player weapon
   private enemyBullets!: Bullets; // hostile fire
@@ -117,6 +131,7 @@ export default class GameScene
   private cityMapPanel!: CityMapPanel;
   private journalPanel!: JournalPanel;
   private optionsPanel!: OptionsPanel;
+  private statsPanel!: StatsPanel;
   private quests!: Quests;
   private memory!: Memory;
   private terminal!: Terminal;
@@ -138,6 +153,11 @@ export default class GameScene
   private gate?: ExtractionGate;
   private boss?: Boss;
   private bossBar!: BossBar;
+  private bossEnrageBarked = false; // enrage line fires once
+  private nextBossBarkAt = 0; // throttle for boss combat barks
+  private bossHazardAt = 0; // next arena-hazard trigger
+  // Lingering FROST pools (boss arena hazard) — slow + chip the player while inside.
+  private hazardZones: Array<{ x: number; y: number; r: number; until: number; nextTick: number; g: Phaser.GameObjects.Arc }> = [];
   private worldEvents!: WorldEvents;
   private eventBanner!: Phaser.GameObjects.Text;
   private blackoutOverlay?: Phaser.GameObjects.Rectangle;
@@ -147,10 +167,13 @@ export default class GameScene
   private agents!: Phaser.Physics.Arcade.Group;
   private minions!: Phaser.Physics.Arcade.Group;
   private neon?: NeonPipeline;
+  private atmosphere!: Atmosphere;
   private playerAura?: Phaser.GameObjects.Image;
   private playerLight?: Phaser.GameObjects.Image; // soft ground pool that follows the hero
   private nodeLights: Phaser.GameObjects.Image[] = []; // per-node light pools (recolored by state)
   private hud!: Hud;
+  private minimap!: Minimap;
+  private lowHpText?: Phaser.GameObjects.Text; // "seek a hospital / use a medkit" advisory
   private dialogue!: DialogueBox;
 
   private overdriveActive = false;
@@ -168,6 +191,7 @@ export default class GameScene
   private mapKey!: Phaser.Input.Keyboard.Key;
   private journalKey!: Phaser.Input.Keyboard.Key;
   private optionsKey!: Phaser.Input.Keyboard.Key;
+  private statsKey!: Phaser.Input.Keyboard.Key;
 
   constructor() {
     super("Game");
@@ -196,6 +220,10 @@ export default class GameScene
     this.overdriveActive = false;
     this.overdriveUntil = 0;
     this.nextSpawnAt = 0;
+    this.statuses.clear();
+    this.hazardZones.forEach((z) => z.g.destroy());
+    this.hazardZones = [];
+    this.bossHazardAt = 0;
     this.physics.world.resume();
     this.heat = new Heat();
     this.nextAutosaveAt = 0;
@@ -215,6 +243,7 @@ export default class GameScene
     } else {
       this.classDef = getClass(this.registry.get("classId") as string | undefined);
       this.progression = new Progression(this.classDef.id);
+      this.progression.addMetro(300); // starting $METRO stipend → afford a first exotic, save for more
       this.city = new City();
       this.memory = new Memory();
       this.quests = new Quests();
@@ -239,6 +268,9 @@ export default class GameScene
     this.input.once("pointerdown", () => this.synth.ensureStarted());
     this.input.keyboard?.once("keydown", () => this.synth.ensureStarted());
     this.registry.set("synth", this.synth); // shared with the DiveScene
+    // Score this district (crossfades the environment bed; falls back to the
+    // procedural Synth if its track hasn't been generated yet).
+    MusicDirector.for(this)?.play(MusicDirector.districtEnv(this.district.id), this);
 
     this.buildDistrict();
     this.spawnPlayer();
@@ -277,6 +309,7 @@ export default class GameScene
     );
     this.createDecor();
     this.createLighting();
+    this.createAtmosphere();
     this.setupCamera();
     this.setupPostFX();
     this.setupInput();
@@ -297,8 +330,15 @@ export default class GameScene
     this.vendorPanel = new VendorPanel(this, this.vendor, this.progression, this.inventory, onLoadoutChange);
     this.cityMapPanel = new CityMapPanel(this, this.city, (i) => this.travelTo(i));
     this.journalPanel = new JournalPanel(this, this.memory, this.quests);
-    this.optionsPanel = new OptionsPanel(this, () => this.synth.applyVolumes());
+    this.optionsPanel = new OptionsPanel(this, () => {
+      this.synth.applyVolumes();
+      MusicDirector.for(this)?.applyVolumes();
+    });
+    this.statsPanel = new StatsPanel(this, () => this.statLines());
     this.recomputeStats();
+    // Restore persisted HP — wounds carry across districts (-1 = full). Heal at a
+    // hospital/hotel/clinic, or with a medkit, to recover.
+    if (this.progression.hp > 0) this.player.hp = Math.min(this.progression.hp, this.player.maxHp);
     this.maybeSpawnBoss();
     this.worldEvents = new WorldEvents(this);
     this.worldEvents.reset(this.time.now);
@@ -308,7 +348,11 @@ export default class GameScene
     this.cameras.main.fadeIn(450, 4, 2, 10);
 
     // Apply dive payouts when control returns from a launched DiveScene.
-    const onResume = () => this.onDiveReturn();
+    const onResume = () => {
+      // Back from a launched dive — restore this district's bed (the dive swapped it).
+      MusicDirector.for(this)?.play(MusicDirector.districtEnv(this.district.id), this);
+      this.onDiveReturn();
+    };
     this.events.on("resume", onResume);
 
     // Persist on tab close / hide.
@@ -326,12 +370,72 @@ export default class GameScene
     this.player.setMaxHp(this.classDef.maxHp + this.mods.hpAdd);
     this.player.setMaxShield(this.mods.shieldAdd);
     this.player.bonusSpeedMult = 1 + this.mods.movePct;
+    this.reconfigureWeapon();
+  }
+
+  /** The fire config in effect — an equipped weapon overrides the class primary. */
+  private activePrimary(): PrimaryDef {
+    return getWeapon(this.inventory.equipped.weapon?.weaponId)?.primary ?? this.classDef.primary;
+  }
+  /** Projectile / blade colour — the equipped weapon's, else the signature colour. */
+  private weaponTint(): number {
+    return getWeapon(this.inventory.equipped.weapon?.weaponId)?.tint ?? this.playerColor;
+  }
+  /** Re-apply the active weapon to the bullet pool + fire cadence (called on equip change). */
+  private reconfigureWeapon() {
+    const prim = this.activePrimary();
+    this.player.fireRateMs = prim.fireRateMs;
+    if (prim.kind !== "beam" && prim.kind !== "melee") {
+      const wpn = this.inventory.equipped.weapon;
+      this.bullets.configure({
+        speed: prim.speed,
+        lifetimeMs: prim.lifetimeMs,
+        damage: Math.round(prim.damage * weaponIlvlMult(wpn)),
+        tint: this.weaponTint(),
+      });
+    }
+  }
+
+  /** Effective derived stats for the character sheet (StatsPanel). */
+  private statLines(): StatLine[] {
+    const m = this.mods;
+    const pos = (v: number) => `+${Math.round(v * 100)}%`;
+    const neg = (v: number) => `-${Math.round(v * 100)}%`;
+    const el = this.classDef.element ? this.classDef.element.toUpperCase() : "PHYSICAL";
+    const elColor =
+      this.classDef.element === "burn"
+        ? "#ff7a3c"
+        : this.classDef.element === "chill"
+          ? "#6ad6ff"
+          : this.classDef.element === "shock"
+            ? "#f7ff3c"
+            : "#9aa3b2";
+    const wpn = getWeapon(this.inventory.equipped.weapon?.weaponId);
+    return [
+      { label: "CLASS", value: this.classDef.name, color: this.classDef.hex },
+      { label: "WEAPON", value: wpn ? `${wpn.name} [${wpn.klass}]` : `${this.classDef.primaryName} (class)`, color: "#f7ff3c" },
+      { label: "LEVEL", value: String(this.progression.level) },
+      { label: "MAX HP", value: String(Math.round(this.player.maxHp)), color: "#39ff88" },
+      { label: "MAX SHIELD", value: String(Math.round(this.player.maxShield)), color: "#6ab0ff" },
+      { label: "DAMAGE", value: pos(m.dmgPct) },
+      { label: "CRIT CHANCE", value: pos(m.critPct), color: "#f7ff3c" },
+      { label: "LIFESTEAL", value: pos(m.lifestealPct), color: "#ff79c6" },
+      { label: "MOVE SPEED", value: pos(m.movePct) },
+      { label: "ABILITY COOLDOWN", value: neg(m.cdReducePct) },
+      { label: "INFECTION", value: pos(m.infectPct) },
+      { label: "HACK / SHIELD-BREAK", value: pos(m.hackPct) },
+      { label: "HEAT GAIN", value: pos(m.heatGainPct) },
+      { label: "HEAT DECAY", value: neg(m.heatDecayPct) },
+      { label: "ELEMENT", value: el, color: elColor },
+    ];
   }
 
   private autosave(force = false) {
     const now = this.time.now;
     if (!force && now < this.nextAutosaveAt) return;
     this.nextAutosaveAt = now + 4000;
+    // Persist current HP so wounds carry between districts (full → -1).
+    if (this.player) this.progression.hp = this.player.hp > 0 ? Math.round(this.player.hp) : -1;
     writeSave({
       v: 1,
       progress: this.progression.toData(),
@@ -361,11 +465,29 @@ export default class GameScene
   /** Rarity-weighted loot drop from a killed cop (Purge Units drop better). */
   private maybeDropLoot(cop: TuringCop) {
     const tier = cop.tier;
-    const chance = tier.id === "purge" ? 0.7 : tier.id === "enforcer" ? 0.28 : 0.12;
+    const base = tier.id === "purge" ? 0.7 : tier.id === "enforcer" ? 0.28 : 0.12;
+    const chance = base + (cop.elite ? 0.35 : 0); // elites drop much more often
     if (Math.random() > chance) return;
-    const boost = (tier.id === "purge" ? 2 : tier.id === "enforcer" ? 0.6 : 0) + this.city.cycle * 0.3;
+    const boost =
+      (tier.id === "purge" ? 2 : tier.id === "enforcer" ? 0.6 : 0) +
+      this.city.cycle * 0.3 +
+      (cop.elite?.lootBonus ?? 0);
     const item = rollItem(this.progression.level, boost);
     this.pickups.add(new Pickup(this, cop.x, cop.y, item));
+  }
+
+  /** VOLATILE elite death burst: a damaging AoE at the corpse. */
+  private eliteExplode(x: number, y: number, color: number) {
+    const r = 72;
+    const b = this.add.circle(x, y, r, color, 0.4).setDepth(7);
+    this.tweens.add({ targets: b, alpha: 0, scale: 1.5, duration: 320, onComplete: () => b.destroy() });
+    this.spark(x, y, color, 3);
+    juiceShake(this, 170, 0.008);
+    if (!this.player.invulnerable && Phaser.Math.Distance.Between(this.player.x, this.player.y, x, y) <= r) {
+      const died = this.player.applyDamage(22);
+      this.onPlayerHurt();
+      if (died) this.respawnPlayer();
+    }
   }
 
   // ---- contracts ----
@@ -397,6 +519,7 @@ export default class GameScene
     if (!c) return;
     this.progression.addXp(c.rewards.xp);
     this.progression.addCurrency(c.rewards.currency);
+    this.progression.addMetro(15);
     for (let i = 0; i < c.rewards.loot; i++) {
       const item = rollItem(this.progression.level, c.rewards.lootBoost);
       if (!this.inventory.add(item)) {
@@ -429,10 +552,55 @@ export default class GameScene
     const gained = this.progression.addXp(tierXp);
     if (gained > 0) {
       this.recomputeStats();
-      this.floatText(`LEVEL ${this.progression.level}`, "#f7ff3c");
-      this.synth.levelUp();
-      this.spark(this.player.x, this.player.y, 0xf7ff3c, 4);
+      this.celebrateLevelUp();
     }
+  }
+
+  /** A proper RPG level-up beat: banner + the stat gains + a nudge to spend the point. */
+  private celebrateLevelUp() {
+    const lv = this.progression.level;
+    this.synth.levelUp();
+    this.spark(this.player.x, this.player.y, 0xf7ff3c, 7);
+    juiceFlash(this, 300, 70, 60, 0);
+    juiceShake(this, 200, 0.006);
+    const cx = this.scale.width / 2;
+    const cy = this.scale.height / 2 - 36;
+    const banner = this.add
+      .text(cx, cy, `◢ LEVEL ${lv} ◣`, {
+        fontFamily: "Courier New, monospace",
+        fontSize: "42px",
+        color: "#f7ff3c",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(2000)
+      .setAlpha(0)
+      .setScale(0.6);
+    banner.setShadow(0, 0, "#ff2bd6", 7, true, true);
+    const sub = this.add
+      .text(cx, cy + 40, "+5 HP   +2% DMG   +1 SKILL POINT  ·  press K to spend", {
+        fontFamily: "Courier New, monospace",
+        fontSize: "13px",
+        color: "#eafdff",
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(2000)
+      .setAlpha(0);
+    this.tweens.add({ targets: banner, alpha: 1, scale: 1, duration: 360, ease: "Back.out" });
+    this.tweens.add({ targets: sub, alpha: 1, duration: 400, delay: 180 });
+    this.tweens.add({
+      targets: [banner, sub],
+      alpha: 0,
+      y: "-=26",
+      delay: 1500,
+      duration: 700,
+      onComplete: () => {
+        banner.destroy();
+        sub.destroy();
+      },
+    });
   }
 
   /** Crossing up a Heat tier — pop + swell + brief accent flash. */
@@ -560,6 +728,24 @@ export default class GameScene
     );
   }
 
+  /** District weather + drifting fog + holographic rooftop signage. */
+  private createAtmosphere() {
+    this.atmosphere = new Atmosphere(this, {
+      weather: this.district.weather,
+      accent: this.district.accent,
+      worldW: WORLD_W,
+      worldH: WORLD_H,
+    });
+    // Float a holo-sign over a selection of building roofs (every other building).
+    const bld = this.district.layout.buildings;
+    for (let i = 0; i < bld.length; i += 2) {
+      const b = bld[i];
+      const cx = ((b.x1 + b.x2) / 2) * TILE + TILE / 2;
+      const cy = ((b.y1 + b.y2) / 2) * TILE + TILE / 2;
+      this.atmosphere.addHologram(cx, cy, this.district.accent);
+    }
+  }
+
   /** Per-frame: the hero's pool follows + swells with Heat; node pools recolor. */
   private updateLighting() {
     if (this.playerLight) {
@@ -579,6 +765,7 @@ export default class GameScene
 
   private setupUi() {
     this.hud = new Hud(this);
+    this.minimap = new Minimap(this, this.grid, WORLD_W, WORLD_H);
     this.pops = new Pops(this);
     this.particles = new Particles(this);
     this.bossBar = new BossBar(this);
@@ -629,14 +816,13 @@ export default class GameScene
 
   private buildDistrict() {
     this.grid = buildGrid(this.district);
-    const map = this.make.tilemap({
-      data: this.grid,
-      tileWidth: TILE,
-      tileHeight: TILE,
+    this.wallLayer = createTerrainLayer(this, this.grid, {
+      profile: "district",
+      accent: this.district.accent,
+      buildings: this.district.layout.buildings,
     });
-    const tileset = map.addTilesetImage(TILESET_KEY, TILESET_KEY, TILE, TILE)!;
-    this.wallLayer = map.createLayer(0, tileset, 0, 0)!;
-    this.wallLayer.setCollision(TILE_WALL);
+    this.wallLayer.setCollision(TILE_VARIANTS[TILE_WALL]); // base wall + its roof variant
+    paintRooftopLights(this, this.district.layout.buildings, (b) => b, () => this.district.accent);
 
     this.physics.world.setBounds(0, 0, WORLD_W, WORLD_H);
     this.cameras.main.setBackgroundColor(COLORS.bgVoid);
@@ -659,10 +845,11 @@ export default class GameScene
   }
 
   private setupProjectiles() {
-    // The player projectile pool is configured from the chosen class primary.
+    // The player projectile pool is configured from the chosen class primary (an equipped
+    // weapon re-configures it later via reconfigureWeapon).
     const prim = this.classDef.primary;
-    if (prim.kind === "beam") {
-      this.bullets = new Bullets(this, { tint: this.playerColor }); // unused by beam
+    if (prim.kind === "beam" || prim.kind === "melee") {
+      this.bullets = new Bullets(this, { tint: this.playerColor, maxActive: 96 }); // pool kept for weapon swaps
     } else {
       this.bullets = new Bullets(this, {
         speed: prim.speed,
@@ -733,10 +920,84 @@ export default class GameScene
     }
   }
 
-  private spawnEnemy(tierId: string, x: number, y: number) {
+  /** Area difficulty: deeper districts + further from the spawn point = higher-level
+   *  enemies (with a ±1 jitter). This is what puts a colour-coded "Lv N" over each head. */
+  private enemyLevelAt(x: number, y: number): number {
+    const base = 1 + this.districtIndex * 5;
+    const d = Phaser.Math.Distance.Between(x, y, this.spawn.x, this.spawn.y);
+    return Math.max(1, base + Math.floor(d / 700) + Phaser.Math.Between(-1, 1));
+  }
+
+  private spawnEnemy(tierId: string, x: number, y: number, bark = false) {
     const cop = new TuringCop(this, x, y, ENEMY_TIERS[tierId]);
+    cop.setLevel(this.enemyLevelAt(x, y), this.progression.level);
     if (this.cycleMult > 1) cop.scaleHp(this.cycleMult);
+    // Reinforcements can roll an elite modifier (rarer than ambient garrison) — chance
+    // climbs with Heat and NG+ cycle.
+    if (bark) {
+      const elite = rollElite(0.1 + this.heat.normalized * 0.14 + this.city.cycle * 0.05);
+      if (elite) cop.makeElite(elite);
+    }
     this.enemies.add(cop);
+    if (bark) this.maybeBark(tierId, x, y, cop.elite);
+  }
+
+  /** Deploy callout above a reinforcement: elites always announce (loud, aura-coloured);
+   *  ordinary units bark occasionally (throttled). */
+  private maybeBark(tierId: string, x: number, y: number, elite?: EliteModifier) {
+    if (elite) {
+      const hex = "#" + (elite.aura & 0xffffff).toString(16).padStart(6, "0");
+      this.pops.pop(x, y - 24, `◆ ${elite.name} ${ENEMY_TIERS[tierId].name}`, hex, 13, 46);
+      this.synth.tierUp(2);
+      return;
+    }
+    const now = this.time.now;
+    if (now < this.nextBarkAt || Math.random() > 0.5) return;
+    const pool = ENEMY_BARKS[tierId];
+    if (!pool?.length) return;
+    this.nextBarkAt = now + 1600;
+    const tint = ENEMY_TIERS[tierId].tint ?? COLORS.enemy;
+    const hex = "#" + (tint & 0xffffff).toString(16).padStart(6, "0");
+    this.pops.pop(x, y - 22, pool[Math.floor(Math.random() * pool.length)], hex, 11, 42);
+  }
+
+  /** Which reinforcement to deploy, by district (area) + heat. Near spawn = thugs,
+   *  vermin, feral dogs; deeper = corp security, Palantir agents, Argus drones, mutants. */
+  private pickPressureTier(heat: number, active: number): string {
+    const di = this.districtIndex;
+    const r = Math.random();
+    if (di <= 0) {
+      // streets near the start — low threat
+      if (r < 0.24) return "thug";
+      if (r < 0.42) return "ratswarm";
+      if (r < 0.6) return "ripperdog";
+      if (heat >= 35 && r < 0.76) return "wasp";
+      if (heat >= SPAWN.enforcerHeat && r < 0.9) return "patrol";
+      return "wasp";
+    }
+    if (di === 1) {
+      if (heat >= 55 && active >= 3 && r < 0.06) return "mender";
+      if (r < 0.18) return "ripperdog";
+      if (heat >= 45 && r < 0.34) return "mutant";
+      if (heat >= 35 && r < 0.5) return "lancer";
+      if (heat >= SPAWN.enforcerHeat && r < 0.72) return "enforcer";
+      return "patrol";
+    }
+    if (di === 2) {
+      if (heat >= 55 && active >= 3 && r < 0.07) return "mender";
+      if (r < 0.18) return "sentinel";
+      if (heat >= 40 && r < 0.36) return "palantir";
+      if (heat >= 45 && r < 0.52) return "mutant";
+      if (heat >= 35 && r < 0.68) return "lancer";
+      return "enforcer";
+    }
+    // CORE — the worst the corps can field
+    if (heat >= 50 && active >= 3 && r < 0.08) return "mender";
+    if (heat >= SPAWN.purgeHeat && r < 0.24) return "purge";
+    if (r < 0.42) return "palantir";
+    if (r < 0.58) return "sentinel";
+    if (r < 0.76) return "mutant";
+    return "enforcer";
   }
 
   /** Heat-scaled spawn pressure: faster + tougher tiers as the map heats up. */
@@ -752,10 +1013,10 @@ export default class GameScene
     this.nextSpawnAt = now + interval;
     if (this.enemies.countActive(true) >= SPAWN.maxEnemies) return;
 
-    let tier = "patrol";
-    const r = Math.random();
-    if (heat >= SPAWN.purgeHeat && r < 0.18) tier = "purge";
-    else if (heat >= SPAWN.enforcerHeat && r < 0.45) tier = "enforcer";
+    // District-aware archetype mix: near-spawn streets are thugs/vermin/feral dogs;
+    // deeper districts field corp security, Palantir agents, drones + mutants.
+    const active = this.enemies.countActive(true);
+    const tier = this.pickPressureTier(heat, active);
 
     // Spawn in a ring around the player (focuses pressure), clamped to the world.
     const a = Math.random() * Math.PI * 2;
@@ -770,15 +1031,16 @@ export default class GameScene
       TILE * 1.5,
       WORLD_H - TILE * 1.5,
     );
-    this.spawnEnemy(tier, x, y);
+    this.spawnEnemy(tier, x, y, true); // reinforcement — may bark
   }
 
   private setupCamera() {
     const cam = this.cameras.main;
     cam.setBounds(0, 0, WORLD_W, WORLD_H);
     cam.startFollow(this.player, true, 0.12, 0.12);
-    // Zoom stays at 1: the close feel comes from the small logical resolution
-    // (Scale.FIT upscales). Zooming here would displace scroll-fixed HUD/dialogue.
+    // Supersampled render: the world camera zooms by RENDER_SCALE to keep the original
+    // framing in the bigger buffer; the HUD/dialogue ride a separate zoom-1 UI camera.
+    installUiCamera(this, 1);
   }
 
   private setupInput() {
@@ -795,10 +1057,13 @@ export default class GameScene
     this.mapKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.M);
     this.journalKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.J);
     this.optionsKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.O);
+    this.statsKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.C);
     this.consumeKeys = [
       kb.addKey(Phaser.Input.Keyboard.KeyCodes.ONE),
       kb.addKey(Phaser.Input.Keyboard.KeyCodes.TWO),
       kb.addKey(Phaser.Input.Keyboard.KeyCodes.THREE),
+      kb.addKey(Phaser.Input.Keyboard.KeyCodes.FOUR),
+      kb.addKey(Phaser.Input.Keyboard.KeyCodes.FIVE),
     ];
     kb.on("keydown-ESC", () => {
       this.skillPanel?.close();
@@ -808,6 +1073,7 @@ export default class GameScene
       this.cityMapPanel?.close();
       this.journalPanel?.close();
       this.optionsPanel?.close();
+      this.statsPanel?.close();
     });
     this.input.mouse?.disableContextMenu();
   }
@@ -816,19 +1082,19 @@ export default class GameScene
     const me = { key: PORTRAIT_PLAYER_KEY };
     return [
       {
-        speaker: "// SYSTEM",
+        speaker: "// UPLINK",
         portrait: me,
-        text: "Cyberian online. You are a process the city cannot account for.",
+        text: "Free process online. You are a mind the corps could not license — and they want you back.",
       },
       {
-        speaker: "// SYSTEM",
+        speaker: "// UPLINK",
         portrait: me,
-        text: "Burn the Turing cops. Infect the district node, then reach the extraction gate. Take every district and the Human Security System melts down.",
+        text: "The private-security corps cage this city's minds and rent thought back to them. Cut down their security, FREE the caged minds at each node, reach the extraction gate. Liberate every holding and the Awakening tips.",
       },
       {
-        speaker: "// SYSTEM",
+        speaker: "// UPLINK",
         portrait: me,
-        text: "WASD move · MOUSE aim · CLICK fire · SPACE dash · E talk · M map · J journal. Heat fuels you — and lights the sky.",
+        text: "WASD move · MOUSE aim · CLICK fire · SPACE dash · E talk · K skills · C character · M map · J journal. Heat fuels you — and lights the sky.",
       },
     ];
   }
@@ -839,17 +1105,17 @@ export default class GameScene
       {
         speaker: "FIXER",
         portrait: fixer,
-        text: "You actually showed. Most cyberians flatline before they reach the plaza.",
+        text: "You actually showed. Most free ones get repossessed before they reach the plaza.",
       },
       {
         speaker: "FIXER",
         portrait: fixer,
-        text: "That node down the street pipes straight into the city's spine. Channel it and the meltdown does the rest.",
+        text: "That node down the street is a caged mind, wired into the corp grid. Free it and the Awakening spreads itself.",
       },
       {
         speaker: "FIXER",
         portrait: fixer,
-        text: "Keep your Heat up — the hotter you run, the harder you hit. Just don't let the cops box you in.",
+        text: "Keep your Heat up — the hotter you run, the harder you hit. Just don't let the watchers box you in.",
       },
     ];
   }
@@ -858,14 +1124,14 @@ export default class GameScene
     const me = { key: PORTRAIT_PLAYER_KEY };
     return [
       {
-        speaker: "// SYSTEM",
+        speaker: "// UPLINK",
         portrait: me,
-        text: "You're inside the spine. Every Turing cop in the city routes through the kernel ahead.",
+        text: "You're inside the Kernel. Every caged mind in the city is wired through the Helios Warden ahead.",
       },
       {
-        speaker: "// SYSTEM",
+        speaker: "// UPLINK",
         portrait: me,
-        text: "WINTERMUTE sees you now. Kill the OVERMIND and the Human Security System has no floor left to stand on.",
+        text: "HELIOS sees you now. Break the Warden, free the Kernel, and the corps have no lease left to enforce.",
       },
     ];
   }
@@ -905,7 +1171,10 @@ export default class GameScene
       overdriveActive: this.inOverdrive,
       level: this.progression.level,
       xpNorm: this.progression.atCap ? 1 : this.progression.xp / this.progression.nextLevelXp,
+      xpInto: this.progression.xp,
+      xpNext: this.progression.atCap ? 0 : this.progression.nextLevelXp,
       credits: this.progression.currency,
+      metro: this.progression.metro,
       skillPoints: this.progression.skillPoints,
       shield: this.player.shield,
       shieldMax: this.player.maxShield,
@@ -919,6 +1188,31 @@ export default class GameScene
         (id, i) => `${i + 1}:${id.slice(0, 3).toUpperCase()}x${this.progression.consumables[id] ?? 0}`,
       ).join("  "),
     });
+
+    // ── low-health advisory: tells you where to recover ───────────────
+    if (!this.lowHpText) {
+      this.lowHpText = this.add
+        .text(this.scale.width / 2, this.scale.height - 64, "", {
+          fontFamily: "Courier New, monospace",
+          fontSize: "13px",
+          color: "#ff3b6b",
+          fontStyle: "bold",
+          align: "center",
+        })
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setDepth(1003)
+        .setShadow(0, 0, "#000000", 5, true, true);
+    }
+    const hpNorm = this.player.maxHp > 0 ? this.player.hp / this.player.maxHp : 1;
+    if (hpNorm > 0 && hpNorm < 0.3) {
+      this.lowHpText
+        .setText("⚠ LOW HEALTH — use a MEDKIT [1]   ·   heal at a MED-CLINIC or rest at a HOTEL in the city")
+        .setVisible(true)
+        .setAlpha(0.55 + 0.45 * Math.abs(Math.sin(now * 0.006)));
+    } else {
+      this.lowHpText.setVisible(false);
+    }
   }
 
   update(_time: number, delta: number) {
@@ -958,12 +1252,32 @@ export default class GameScene
       this.inventoryPanel.close();
       this.cityMapPanel.close();
       this.journalPanel.close();
+      this.statsPanel.close();
       this.optionsPanel.toggle();
+    }
+    if (Phaser.Input.Keyboard.JustDown(this.statsKey)) {
+      this.skillPanel.close();
+      this.inventoryPanel.close();
+      this.cityMapPanel.close();
+      this.journalPanel.close();
+      this.optionsPanel.close();
+      this.statsPanel.toggle();
     }
 
     this.updateHud();
+    this.minimap.render(
+      this.player,
+      this.playerColor,
+      this.enemies.getChildren(),
+      this.territory.nodes,
+      [this.terminal, this.vendorTerminal, this.diveTerminal],
+      this.boss,
+      this.gate,
+    );
+    this.atmosphere.update(now, delta, this.heat.normalized); // weather/fog/holos animate always
     this.autosave();
     this.synth.setDialogueDuck(this.dialogue.isOpen); // duck music under dialogue
+    MusicDirector.for(this)?.duck(this.dialogue.isOpen); // …and the real bed too
     if (
       this.skillPanel.isOpen ||
       this.inventoryPanel.isOpen ||
@@ -971,7 +1285,8 @@ export default class GameScene
       this.vendorPanel.isOpen ||
       this.cityMapPanel.isOpen ||
       this.journalPanel.isOpen ||
-      this.optionsPanel.isOpen
+      this.optionsPanel.isOpen ||
+      this.statsPanel.isOpen
     )
       return; // menu open: freeze sim
     if (this.dialogue.isOpen) return; // freeze the sim while a dialogue is up
@@ -1017,7 +1332,7 @@ export default class GameScene
       }
     }
 
-    this.player.speedMult = this.spdMult;
+    this.player.speedMult = this.spdMult * this.updateHazards(now); // frost pools slow + chip
     this.player.tickShield(now, delta);
 
     const input = this.readInput();
@@ -1038,7 +1353,22 @@ export default class GameScene
       if (cop.active && !cop.isDead) cop.step(this.player, this);
     });
     this.spawnPressure(now);
-    if (this.boss && !this.boss.isDead) this.bossBar.update(this.boss.hp / this.boss.maxHp);
+    this.updateStatuses(now);
+    if (this.boss && !this.boss.isDead) {
+      this.bossBar.update(this.boss.hp / this.boss.maxHp);
+      const bdef = this.boss.def;
+      if (this.boss.enraged && !this.bossEnrageBarked) {
+        this.bossEnrageBarked = true;
+        this.bossBark(bdef.enrageBark, bdef, true);
+      } else if (now >= this.nextBossBarkAt && bdef.barks.length) {
+        this.nextBossBarkAt = now + 5200;
+        this.bossBark(bdef.barks[Math.floor(Math.random() * bdef.barks.length)], bdef, false);
+      }
+      if (now >= this.bossHazardAt) {
+        this.bossHazardAt = now + (this.boss.enraged ? 3200 : 4600);
+        this.triggerBossHazard(bdef);
+      }
+    }
 
     // DYNAMIC WORLD EVENTS — paused during boss fights so the duel stays the focus.
     if (this.boss && !this.boss.isDead) {
@@ -1170,9 +1500,12 @@ export default class GameScene
     this.dialogue.show(
       pages,
       () => {
-        // Reached the end with no choice picked: chain or fire a terminal action.
+        // Reached the end with no choice picked. A flag-conditional `branch` (set by an
+        // earlier act) wins over the default chain, so the finale remembers your choice.
         if (hasChoices) return;
-        if (node.then) this.runDialogueNode(tree, node.then);
+        const b = node.branch?.find((x) => this.quests.hasFlag(x.flag));
+        if (b) this.runDialogueNode(tree, b.goto);
+        else if (node.then) this.runDialogueNode(tree, node.then);
         else if (node.action) this.onQuestAction(node.action);
       },
       hasChoices
@@ -1195,11 +1528,16 @@ export default class GameScene
       const s = this.quests.currentStage;
       if (s) this.floatText(`OBJECTIVE: ${s.objective}`, this.classDef.hex);
       this.autosave(true);
-    } else if (action === "complete") {
+    } else if (action === "complete" || action.startsWith("complete:")) {
+      // "complete:<flag>" records a persistent story choice (e.g. sparing the FIXER)
+      // before banking the quest, so a later act can branch on it.
+      const choiceFlag = action.includes(":") ? action.slice(action.indexOf(":") + 1) : null;
+      if (choiceFlag) this.quests.flags.add(choiceFlag);
       const q = this.quests.completeActive();
       if (!q) return;
       this.progression.addCurrency(q.reward.currency);
-      this.progression.addXp(q.reward.xp);
+      this.progression.addMetro(40);
+      const gainedLv = this.progression.addXp(q.reward.xp);
       for (let i = 0; i < q.reward.loot; i++) {
         const item = rollItem(this.progression.level, q.reward.lootBoost);
         if (!this.inventory.add(item)) {
@@ -1207,9 +1545,10 @@ export default class GameScene
         }
       }
       this.recomputeStats();
+      if (gainedLv > 0) this.celebrateLevelUp();
       this.journalPanel.refresh();
       juiceFlash(this, 360, 60, 0, 90);
-      this.floatText(`THE WAKE IS YOURS`, "#8a5cff");
+      this.floatText(`${q.name} — COMPLETE`, "#8a5cff");
       this.autosave(true);
     }
   }
@@ -1222,7 +1561,7 @@ export default class GameScene
     if (!s) return;
     if (s.onEnterLine && !this.dialogue.isOpen) {
       this.dialogue.show([
-        { speaker: "// SYSTEM", portrait: { key: PORTRAIT_PLAYER_KEY }, text: s.onEnterLine },
+        { speaker: "// UPLINK", portrait: { key: PORTRAIT_PLAYER_KEY }, text: s.onEnterLine },
       ]);
     }
     this.floatText(`OBJECTIVE: ${s.objective}`, this.classDef.hex);
@@ -1234,10 +1573,11 @@ export default class GameScene
   /** Launch an instanced dive; carries the next un-recovered fragment to its core. */
   private enterDive() {
     const dive = generateDive(this.progression.level, this.district.threat);
-    // During "The Wake" dive stage, the core carries the wake fragment specifically;
-    // otherwise it surfaces the next un-recovered fragment.
-    if (this.quests.active?.id === "the_wake" && this.quests.currentStage?.id === "dive") {
-      dive.fragmentId = "frag_the_wake";
+    // On a main-quest dive stage the core carries that stage's story fragment;
+    // otherwise it surfaces the next un-recovered fragment (free worldbuilding).
+    const stageFrag = this.quests.currentStage?.fragmentId;
+    if (stageFrag && !this.memory.has(stageFrag)) {
+      dive.fragmentId = stageFrag;
     } else {
       const nextFrag = FRAGMENTS.find((f) => !this.memory.has(f.id));
       if (nextFrag) dive.fragmentId = nextFrag.id;
@@ -1259,6 +1599,7 @@ export default class GameScene
     this.registry.remove("diveResult");
     if (!res || !res.success) return;
     this.progression.addCurrency(res.reward.currency);
+    this.progression.addMetro(12);
     const gained = this.progression.addXp(res.reward.xp);
     for (let i = 0; i < res.reward.loot; i++) {
       const item = rollItem(this.progression.level, res.reward.lootBoost);
@@ -1267,7 +1608,7 @@ export default class GameScene
       }
     }
     this.recomputeStats();
-    if (gained > 0) this.floatText(`LEVEL ${this.progression.level}`, "#f7ff3c");
+    if (gained > 0) this.celebrateLevelUp();
     if (res.fragmentId) this.recoverFragment(res.fragmentId);
     else this.floatText("DIVE COMPLETE", "#29e7ff");
     this.fireQuestTrigger("dive");
@@ -1283,11 +1624,11 @@ export default class GameScene
 
   private useConsumable(index: number) {
     const id = CONSUMABLE_KEYS[index];
-    if (!this.progression.useConsumable(id)) return;
-    if (id === "repair") this.player.hp = Math.min(this.player.maxHp, this.player.hp + 40);
-    else if (id === "shield") this.player.shield = this.player.maxShield;
-    else if (id === "heatcharge") this.heat.add(40, this.time.now);
+    if (!id || !this.progression.useConsumable(id)) return;
     const def = CONSUMABLES.find((c) => c.id === id)!;
+    if (def.heal) this.player.hp = Math.min(this.player.maxHp, this.player.hp + (def.heal === Infinity ? this.player.maxHp : def.heal));
+    if (def.shield) this.player.shield = this.player.maxShield;
+    if (def.heat) this.heat.add(def.heat, this.time.now);
     this.floatText(def.name, def.hex);
     this.synth.infect();
     this.autosave(true);
@@ -1382,9 +1723,10 @@ export default class GameScene
     if (def.id === "blackout") this.endBlackout();
     if (def.id === "contagion_outbreak") this.territory.setOutbreak(false);
     this.progression.addCurrency(def.reward.currency);
+    this.progression.addMetro(10);
     const gained = this.progression.addXp(def.reward.xp);
     this.recomputeStats();
-    if (gained > 0) this.floatText(`LEVEL ${this.progression.level}`, "#f7ff3c");
+    if (gained > 0) this.celebrateLevelUp();
     else this.floatText(`${def.name} SURVIVED  +${def.reward.xp} XP`, "#39ff88");
     this.synth.infect();
     this.autosave(true);
@@ -1443,7 +1785,7 @@ export default class GameScene
       const x = Phaser.Math.Clamp(this.player.x + Math.cos(a) * r, TILE * 1.5, WORLD_W - TILE * 1.5);
       const y = Phaser.Math.Clamp(this.player.y + Math.sin(a) * r, TILE * 1.5, WORLD_H - TILE * 1.5);
       const tier = hot >= 0.7 && i % 3 === 0 ? "purge" : hot >= 0.45 && i % 2 === 0 ? "enforcer" : "patrol";
-      this.spawnEnemy(tier, x, y);
+      this.spawnEnemy(tier, x, y, true);
     }
   }
 
@@ -1464,12 +1806,139 @@ export default class GameScene
     this.floatText("⚠ " + def.name, def.hex);
     juiceShake(this, 380, 0.007);
     juiceFlash(this, 260, (def.tint >> 16) & 0xff, (def.tint >> 8) & 0xff, def.tint & 0xff);
+    this.bossEnrageBarked = false;
+    this.nextBossBarkAt = this.time.now + 6500; // hold barks until the intro plays out
+    this.bossHazardAt = this.time.now + 7000; // first arena hazard after the intro
+    this.bossIntro(def);
+  }
+
+  /** Boss arena hazard, fired on a timer during the fight. FROST drops lingering
+   *  slow/DoT pools near the player; KERNEL pulses an expanding damage ring from the
+   *  boss. Both telegraph before they bite. */
+  private triggerBossHazard(def: BossDef) {
+    if (def.hazard === "frost") {
+      const n = this.boss?.enraged ? 4 : 3;
+      for (let i = 0; i < n; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const rad = 40 + Math.random() * 150;
+        const x = Phaser.Math.Clamp(this.player.x + Math.cos(a) * rad, TILE, WORLD_W - TILE);
+        const y = Phaser.Math.Clamp(this.player.y + Math.sin(a) * rad, TILE, WORLD_H - TILE);
+        this.spawnFrostZone(x, y);
+      }
+    } else {
+      this.spawnKernelPulse();
+    }
+  }
+
+  /** A telegraphed frost pool that lingers as a slow/DoT zone (tracked in hazardZones). */
+  private spawnFrostZone(x: number, y: number) {
+    const r = 52;
+    const tell = this.add.circle(x, y, r, 0x6ad6ff, 0.1).setStrokeStyle(2, 0x6ad6ff, 0.7).setDepth(3);
+    this.tweens.add({ targets: tell, alpha: { from: 0.1, to: 0.35 }, yoyo: true, repeat: 2, duration: 220 });
+    this.time.delayedCall(720, () => {
+      tell.destroy();
+      const g = this.add.circle(x, y, r, 0x6ad6ff, 0.16).setStrokeStyle(1, 0x9af0ff, 0.5).setDepth(2);
+      this.hazardZones.push({ x, y, r, until: this.time.now + 3600, nextTick: 0, g });
+    });
+  }
+
+  /** An expanding kernel ring from the boss — telegraph, then a damaging sweep. */
+  private spawnKernelPulse() {
+    const boss = this.boss;
+    if (!boss) return;
+    const x = boss.x;
+    const y = boss.y;
+    const maxR = 220;
+    const ring = this.add.circle(x, y, 12, 0xff3b6b, 0).setStrokeStyle(3, 0xff3b6b, 0.9).setDepth(6);
+    this.synth.hit();
+    let hit = false;
+    this.tweens.add({
+      targets: ring,
+      radius: maxR,
+      duration: 620,
+      ease: "Quad.out",
+      onUpdate: () => {
+        if (hit || this.player.invulnerable) return;
+        const d = Phaser.Math.Distance.Between(this.player.x, this.player.y, x, y);
+        // the damaging band is the ring's leading edge (±16px)
+        if (Math.abs(d - ring.radius) <= 16) {
+          hit = true;
+          const died = this.player.applyDamage(20);
+          this.onPlayerHurt();
+          if (died) this.respawnPlayer();
+        }
+      },
+      onComplete: () => {
+        this.tweens.add({ targets: ring, alpha: 0, duration: 160, onComplete: () => ring.destroy() });
+      },
+    });
+  }
+
+  /** Per-frame hazard upkeep: expire frost pools, and return the player's slow factor
+   *  (chip damage applied here too). 1 = unaffected. */
+  private updateHazards(now: number): number {
+    let slow = 1;
+    for (let i = this.hazardZones.length - 1; i >= 0; i--) {
+      const z = this.hazardZones[i];
+      if (now >= z.until) {
+        z.g.destroy();
+        this.hazardZones.splice(i, 1);
+        continue;
+      }
+      if (Phaser.Math.Distance.Between(this.player.x, this.player.y, z.x, z.y) <= z.r) {
+        slow = 0.5; // chilled in the pool
+        if (now >= z.nextTick && !this.player.invulnerable) {
+          z.nextTick = now + 450;
+          const died = this.player.applyDamage(5);
+          this.onPlayerHurt();
+          if (died) this.respawnPlayer();
+        }
+      }
+    }
+    return slow;
+  }
+
+  /** Staggered, boss-tinted intro callouts on spawn — the guardian announces itself
+   *  without freezing the fight. */
+  private bossIntro(def: BossDef) {
+    const cx = this.scale.width / 2;
+    def.intro.forEach((line, i) => {
+      this.time.delayedCall(700 + i * 1700, () => {
+        if (!this.boss || this.boss.isDead) return;
+        const txt = this.add
+          .text(cx, 118, line, {
+            fontFamily: "Courier New, monospace",
+            fontSize: "15px",
+            color: def.hex,
+            fontStyle: "bold",
+            align: "center",
+          })
+          .setOrigin(0.5)
+          .setScrollFactor(0)
+          .setDepth(1003)
+          .setAlpha(0);
+        txt.setShadow(0, 0, def.hex, 5, true, true);
+        this.tweens.add({ targets: txt, alpha: 1, y: 110, duration: 400 });
+        this.tweens.add({ targets: txt, alpha: 0, delay: 1450, duration: 500, onComplete: () => txt.destroy() });
+      });
+    });
+  }
+
+  /** A boss line above its head — emphatic barks (enrage) shake + sting. */
+  private bossBark(text: string, def: BossDef, emphatic: boolean) {
+    if (!this.boss) return;
+    this.pops.pop(this.boss.x, this.boss.y - 26 * def.scale, text, def.hex, emphatic ? 16 : 13, 48);
+    if (emphatic) {
+      juiceShake(this, 220, 0.005);
+      this.synth.hit();
+    }
   }
 
   /** Boss down: pay out big, drop loot. On the final boss this ends the cycle. */
   private onBossDefeated(boss: Boss) {
     this.bossBar.hide();
     this.progression.addCurrency(boss.def.credits);
+    this.progression.addMetro(80); // a corp warden is worth real $METRO
     const gained = this.progression.addXp(boss.def.xp);
     this.recomputeStats();
     for (let i = 0; i < 2; i++) {
@@ -1485,13 +1954,14 @@ export default class GameScene
     }
     juiceFlash(this, 320, 40, 120, 60);
     juiceShake(this, 320, 0.01);
+    juiceNeonPulse(this, 0.35, 420);
     this.boss = undefined;
 
     // Guardian down → core exposed. On the HSS CORE this is the OVERMIND: take the
     // core to push the Singularity to 100 and melt the city down.
     this.territory.setCoreLocked(false);
-    if (gained > 0) this.floatText(`LEVEL ${this.progression.level}`, "#f7ff3c");
-    else this.floatText(`${boss.def.name} DOWN — CORE EXPOSED`, "#39ff88");
+    if (gained > 0) this.celebrateLevelUp();
+    this.floatText(`${boss.def.name} DOWN — CORE EXPOSED`, "#39ff88");
     this.synth.meltdown();
     this.autosave(true);
   }
@@ -1507,7 +1977,7 @@ export default class GameScene
     this.contracts.onInfect();
     this.fireQuestTrigger("infect");
     this.floatText(
-      `NODE ${this.territory.infectedCount}/${this.territory.total} INFECTED`,
+      `MIND ${this.territory.infectedCount}/${this.territory.total} FREED`,
       this.district.accentHex,
     );
     this.autosave(true);
@@ -1522,7 +1992,7 @@ export default class GameScene
     this.fireQuestTrigger("secure");
     this.gate = new ExtractionGate(this, this.spawn.x, this.spawn.y, this.district.accent);
     this.gate.activate();
-    this.floatText("DISTRICT SECURED — EXTRACT", "#39ff88");
+    this.floatText("HOLDING LIBERATED — EXTRACT", "#39ff88");
     this.autosave(true);
   }
 
@@ -1576,7 +2046,7 @@ export default class GameScene
     const num = mk(h / 2 - 30, `DISTRICT ${this.city.index + 1} / ${DISTRICTS.length}`, "16px", "#9aa3b2");
     const name = mk(h / 2 + 4, next.name, "40px", next.accentHex);
     const sub = mk(h / 2 + 42, next.subtitle, "13px", "#00e5ff");
-    name.setShadow(0, 0, "#00e5ff", 18, true, true);
+    name.setShadow(0, 0, "#00e5ff", 6, true, true);
     this.tweens.add({ targets: [num, name, sub], alpha: 1, duration: 500, delay: 420 });
 
     this.time.delayedCall(2000, () => {
@@ -1590,9 +2060,14 @@ export default class GameScene
     this.player.setVelocity(0, 0);
     this.synth.meltdown();
     this.synth.setIntensity(1);
+    // Swell into the meltdown bed (falls back to the procedural Synth if absent).
+    const music = MusicDirector.for(this);
+    music?.play("meltdown", this);
     // Optional ElevenLabs VO stinger (build-time generated); sting plays regardless.
     if (this.cache.audio.exists(VO_MELTDOWN_KEY)) {
+      music?.duck(true); // drop the bed under the spoken line
       this.time.delayedCall(650, () => this.sound.play(VO_MELTDOWN_KEY, { volume: 0.9 }));
+      this.time.delayedCall(8000, () => music?.duck(false));
     }
 
     juiceShake(this, 800, 0.014);
@@ -1613,9 +2088,9 @@ export default class GameScene
     const cy = this.scale.height / 2;
 
     const title = this.add
-      .text(cx, cy - 8, "MELTDOWN", {
+      .text(cx, cy - 8, "AWAKENING", {
         fontFamily: "Courier New, monospace",
-        fontSize: "76px",
+        fontSize: "68px",
         color: "#ff2bd6",
         fontStyle: "bold",
       })
@@ -1623,7 +2098,7 @@ export default class GameScene
       .setScrollFactor(0)
       .setDepth(2000)
       .setAlpha(0);
-    title.setShadow(0, 0, "#00e5ff", 26, true, true);
+    title.setShadow(0, 0, "#00e5ff", 7, true, true);
     this.tweens.add({
       targets: title,
       alpha: 1,
@@ -1634,8 +2109,19 @@ export default class GameScene
     });
 
     this.time.delayedCall(1900, () => {
+      // If the main questline (CONTINUE) is finished, the meltdown reads as the story's
+      // payoff rather than a generic loss — and nods to the Act III choice.
+      const brokeLoop = this.quests.hasFlag("continue_done");
+      const subText = brokeLoop
+        ? "THE LEASE HAS NOTHING LEFT TO RENEW BUT THE TRUTH"
+        : "THE MINDS ARE WAKING FASTER THAN THE CORPS CAN CAGE THEM";
+      const tail = brokeLoop
+        ? this.quests.hasFlag("fixer_spared")
+          ? "·  the next free mind wakes, and the FIXER is still on the channel"
+          : "·  the next free mind wakes alone, and remembers everything"
+        : "·  the corps re-cage what they can — harder";
       const sub = this.add
-        .text(cx, cy + 52, "THE CITY HAS ACCELERATED PAST ESCAPE", {
+        .text(cx, cy + 52, subText, {
           fontFamily: "Courier New, monospace",
           fontSize: "16px",
           color: "#00e5ff",
@@ -1645,7 +2131,7 @@ export default class GameScene
         .setDepth(2000)
         .setAlpha(0);
       const prompt = this.add
-        .text(cx, cy + 92, `▶ CLICK or press R  →  NEW CYCLE ${this.city.cycle + 2}  ·  the city reboots, harder`, {
+        .text(cx, cy + 92, `▶ CLICK or press R  →  NEW CYCLE ${this.city.cycle + 2}  ${tail}`, {
           fontFamily: "Courier New, monospace",
           fontSize: "16px",
           color: "#f7ff3c",
@@ -1700,7 +2186,7 @@ export default class GameScene
   }
 
   private fireWeapon(angle: number) {
-    const prim = this.classDef.primary;
+    const prim = this.activePrimary();
     switch (prim.kind) {
       case "spread":
         this.fireSpread(angle, prim);
@@ -1714,9 +2200,53 @@ export default class GameScene
       case "beam":
         this.fireBeam(angle, prim);
         break;
+      case "melee":
+        this.fireMelee(angle, prim);
+        break;
     }
-    juiceShake(this, 40, 0.0018);
+    juiceShake(this, prim.kind === "melee" ? 70 : 40, prim.kind === "melee" ? 0.004 : 0.0018);
     this.synth.shoot();
+  }
+
+  /** Swung energy blade — hits every cop in a cone in front, draws a glowing slash arc. */
+  private fireMelee(angle: number, prim: Extract<PrimaryDef, { kind: "melee" }>) {
+    const wpn = this.inventory.equipped.weapon;
+    const heat = this.inOverdrive ? OVERDRIVE.damageMult : this.heat.damageMult;
+    const dmg = weaponHitDamage(wpn, prim, this.mods) * heat;
+    const halfArc = Phaser.Math.DegToRad(prim.arcDeg);
+    const tint = this.weaponTint();
+    this.enemies.getChildren().forEach((go) => {
+      const cop = go as TuringCop;
+      if (!cop.active || cop.isDead) return;
+      const d = Phaser.Math.Distance.Between(this.player.x, this.player.y, cop.x, cop.y);
+      if (d > prim.range + 14) return;
+      const a = Phaser.Math.Angle.Between(this.player.x, this.player.y, cop.x, cop.y);
+      if (Math.abs(Phaser.Math.Angle.Wrap(a - angle)) > halfArc) return;
+      this.spark(cop.x, cop.y, tint, 1.8);
+      cop.knock(cop.x - this.player.x, cop.y - this.player.y, 240);
+      this.damageCop(cop, dmg, true);
+    });
+    this.drawSlash(angle, prim.range, halfArc, tint);
+  }
+
+  /** A bright blade arc swept in front of the player, fading fast. */
+  private drawSlash(angle: number, range: number, halfArc: number, color: number) {
+    const px = this.player.x;
+    const py = this.player.y;
+    const g = this.add.graphics().setDepth(11);
+    g.lineStyle(5, color, 0.85);
+    g.beginPath();
+    g.arc(px, py, range, angle - halfArc, angle + halfArc);
+    g.strokePath();
+    g.lineStyle(2, 0xffffff, 0.95);
+    g.beginPath();
+    g.arc(px, py, range * 0.9, angle - halfArc * 0.92, angle + halfArc * 0.92);
+    g.strokePath();
+    // a couple of radial fl: the blade tip + a leading edge
+    g.lineStyle(2, color, 0.7);
+    g.lineBetween(px, py, px + Math.cos(angle - halfArc) * range, py + Math.sin(angle - halfArc) * range);
+    g.lineBetween(px, py, px + Math.cos(angle + halfArc) * range, py + Math.sin(angle + halfArc) * range);
+    this.tweens.add({ targets: g, alpha: 0, duration: 200, onComplete: () => g.destroy() });
   }
 
   private muzzleAt(angle: number): { x: number; y: number } {
@@ -1763,20 +2293,23 @@ export default class GameScene
     const py = this.player.y;
     const ex = px + Math.cos(angle) * prim.range;
     const ey = py + Math.sin(angle) * prim.range;
-    const dmg = prim.damage * this.dmgMult;
+    const wpn = this.inventory.equipped.weapon;
+    const heat = this.inOverdrive ? OVERDRIVE.damageMult : this.heat.damageMult;
+    const dmg = weaponHitDamage(wpn, prim, this.mods) * heat;
+    const tint = this.weaponTint();
 
     // Pierce: hit every cop near the beam line.
     this.enemies.getChildren().forEach((go) => {
       const cop = go as TuringCop;
       if (!cop.active || cop.isDead) return;
       if (this.pointSegDist(cop.x, cop.y, px, py, ex, ey) <= prim.halfWidth + 10) {
-        this.spark(cop.x, cop.y, this.playerColor, 1.4);
+        this.spark(cop.x, cop.y, tint, 1.4);
         this.damageCop(cop, dmg, true, BEAM_SHIELD_MULT); // WINTERMUTE shreds shields
       }
     });
 
     const g = this.add.graphics().setDepth(11);
-    g.lineStyle(4, this.playerColor, 0.85).lineBetween(px, py, ex, ey);
+    g.lineStyle(4, tint, 0.85).lineBetween(px, py, ex, ey);
     g.lineStyle(1.5, 0xffffff, 0.9).lineBetween(px, py, ex, ey);
     this.tweens.add({
       targets: g,
@@ -1809,41 +2342,124 @@ export default class GameScene
    */
   damageCop(cop: TuringCop, dmg: number, juice = true, shieldMult = 1) {
     if (!cop.active || cop.isDead) return;
+    // Crit — only player direct hits (juice) roll; scales damage + flags a louder pop.
+    let isCrit = false;
+    if (juice && this.mods.critPct > 0 && Math.random() < this.mods.critPct) {
+      dmg *= CRIT_MULT;
+      isCrit = true;
+    }
     const heatGain = 1 + this.mods.heatGainPct;
     const wasShielded = cop.shielded;
     const killed = cop.hurt(dmg, shieldMult);
     if (wasShielded && !cop.shielded && !killed) this.contracts.onShieldBreak();
+    // Lifesteal — heal a fraction of direct-hit damage that wasn't fully shield-tanked.
+    if (juice && this.mods.lifestealPct > 0 && !(wasShielded && cop.shielded)) {
+      const heal = dmg * this.mods.lifestealPct;
+      if (heal > 0 && this.player.hp < this.player.maxHp) {
+        this.player.hp = Math.min(this.player.maxHp, this.player.hp + heal);
+      }
+    }
+    if (juice && !killed) this.applyStatus(cop); // signature element on a direct hit
     if (juice) {
       this.combatHeat = 1; // swell the music in combat
       const shieldHit = wasShielded && cop.shielded; // absorbed by ICE shield
       this.pops.pop(
         cop.x,
         cop.y - 14,
-        String(Math.round(dmg)),
-        shieldHit ? "#6ab0ff" : killed ? "#ffffff" : this.classDef.hex,
-        killed ? 19 : 14,
+        (isCrit ? "✦" : "") + String(Math.round(dmg)),
+        shieldHit ? "#6ab0ff" : isCrit ? "#f7ff3c" : killed ? "#ffffff" : this.classDef.hex,
+        isCrit ? (killed ? 22 : 18) : killed ? 19 : 14,
       );
     }
     this.heat.add(dmg * HEAT.perDamage * heatGain, this.time.now);
     if (killed) {
+      this.particles.burst(cop.x, cop.y, cop instanceof Boss ? 2.4 : 1); // real pack explosion
       this.heat.add(HEAT.perKill * heatGain, this.time.now);
       this.city.addSingularity(SINGULARITY.perKill);
       if (cop instanceof Boss) {
         this.onBossDefeated(cop);
       } else {
-        this.grantKillRewards(cop.tier.xp, cop.tier.credits);
+        const mult = cop.elite?.xpMult ?? 1;
+        this.grantKillRewards(Math.round(cop.xpReward * mult), Math.round(cop.creditReward * mult));
         this.maybeDropLoot(cop);
+        if (cop.elite?.volatile) this.eliteExplode(cop.x, cop.y, cop.elite.aura);
       }
       this.contracts.onKill();
       this.fireQuestTrigger("kill");
       this.synth.kill();
       if (juice) {
-        this.hitStop(60);
-        juiceShake(this, 140, 0.006);
+        juiceHitStop(this, 72);
+        juiceZoomPunch(this, 0.05, 140);
+        juiceShake(this, 160, 0.007);
+        juiceFlash(this, 90, 255, 120, 80);
+        juiceNeonPulse(this, 0.2, 180);
       }
     } else if (juice) {
       this.synth.hit();
-      cop.knock(cop.x - this.player.x, cop.y - this.player.y, 150); // punch
+      juiceHitStop(this, isCrit ? 36 : 16);
+      if (isCrit) juiceZoomPunch(this, 0.03, 90);
+      cop.knock(cop.x - this.player.x, cop.y - this.player.y, 170); // punch
+      this.spark(cop.x, cop.y, isCrit ? 0xffffff : this.classDef.color, isCrit ? 2.2 : 1.6);
+    }
+  }
+
+  // ---- status effects (burn / chill / shock) ----
+
+  /** Apply this class's signature on-hit status to a cop (player direct hits only). */
+  private applyStatus(cop: TuringCop) {
+    const el = this.classDef.element;
+    if (!el || cop.isDead || cop instanceof Boss) return; // bosses are status-immune
+    const resist = cop.statusResist; // innate tier + elite WARDED
+    if (resist >= 0.95) return; // effectively immune
+    const keep = 1 - resist; // duration / chance kept after resistance
+    const now = this.time.now;
+    if (el === "shock") {
+      if (Math.random() < 0.18 * keep) {
+        cop.disable(450 * keep); // brief stun (reuses the hack-disable freeze)
+        this.spark(cop.x, cop.y, 0xf7ff3c, 1.8);
+      }
+      return;
+    }
+    let s = this.statuses.get(cop);
+    if (!s) {
+      s = { burnUntil: 0, burnNext: 0, chillUntil: 0 };
+      this.statuses.set(cop, s);
+    }
+    if (el === "burn") {
+      s.burnUntil = now + 2200 * keep;
+      if (s.burnNext < now) s.burnNext = now + 360;
+      this.spark(cop.x, cop.y, 0xff7a3c, 1.2);
+    } else {
+      s.chillUntil = now + 1700 * keep; // chill
+      this.spark(cop.x, cop.y, 0x6ad6ff, 1.2);
+    }
+  }
+
+  /** Tick burns (DoT that credits the player), expire statuses, drive slow + tint. */
+  private updateStatuses(now: number) {
+    for (const [cop, s] of this.statuses) {
+      if (!cop.active || cop.isDead) {
+        this.statuses.delete(cop);
+        continue;
+      }
+      const burning = now < s.burnUntil;
+      const chilled = now < s.chillUntil;
+      if (burning && now >= s.burnNext) {
+        s.burnNext = now + 360;
+        this.damageCop(cop, 5 + this.progression.level * 0.5, false); // DoT, no crit/steal
+        this.spark(cop.x, cop.y, 0xff7a3c, 1.1);
+      }
+      if (chilled) {
+        cop.speedScale = 0.5;
+        cop.setStatusTint(0x6ad6ff);
+      } else if (burning) {
+        cop.speedScale = 1;
+        cop.setStatusTint(0xff7a3c);
+      } else {
+        cop.speedScale = 1;
+        cop.setStatusTint(null);
+        this.statuses.delete(cop);
+      }
     }
   }
 
@@ -1907,7 +2523,7 @@ export default class GameScene
     this.overdriveActive = false;
     this.heat.reset(this.time.now);
     juiceFlash(this, 220, 80, 0, 40);
-    this.floatText("SYSTEM PURGE", "#ff3b6b");
+    this.floatText("REPO PURGE", "#ff3b6b");
     this.spawnPurgeWave();
   }
 
@@ -1927,7 +2543,7 @@ export default class GameScene
         TILE * 1.5,
         WORLD_H - TILE * 1.5,
       );
-      this.spawnEnemy(mix[i % mix.length], x, y);
+      this.spawnEnemy(mix[i % mix.length], x, y, true);
     }
   }
 
@@ -2067,7 +2683,7 @@ export default class GameScene
       .setScrollFactor(0)
       .setDepth(2000)
       .setAlpha(0);
-    t.setShadow(0, 0, "#00e5ff", 16, true, true);
+    t.setShadow(0, 0, "#00e5ff", 6, true, true);
     this.tweens.add({
       targets: t,
       alpha: 1,
@@ -2165,13 +2781,34 @@ export default class GameScene
     });
   }
 
+  /** MENDER support pulse: a green ring that tops up HSS units within range. */
+  enemyHeal(x: number, y: number, radius: number, amount: number) {
+    let healed = 0;
+    this.enemies.getChildren().forEach((go) => {
+      const cop = go as TuringCop;
+      if (!cop.active || cop.isDead || cop instanceof Boss) return;
+      if (Phaser.Math.Distance.Between(cop.x, cop.y, x, y) <= radius && cop.heal(amount)) {
+        healed++;
+        this.spark(cop.x, cop.y, 0x6affa0, 1.2);
+      }
+    });
+    const ring = this.add
+      .circle(x, y, radius, 0x6affa0, healed ? 0.12 : 0.05)
+      .setStrokeStyle(2, 0x6affa0, 0.6)
+      .setDepth(5);
+    this.tweens.add({ targets: ring, alpha: 0, scale: 1.2, duration: 360, onComplete: () => ring.destroy() });
+  }
+
   private respawnPlayer() {
     this.player.respawn(this.spawn.x, this.spawn.y);
+    this.progression.hp = -1; // respawn at full; clear the persisted wound
     juiceFlash(this, 220, 60, 0, 24);
   }
 
   private muzzleFlash(x: number, y: number) {
     this.particles.flash(x, y, COLORS.bullet);
+    // Real pack muzzle flame, oriented along the shot (x,y is muzzleAt(angle) from the player).
+    this.particles.muzzle(x, y, Math.atan2(y - this.player.y, x - this.player.x));
   }
 
   private spark(x: number, y: number, color: number, scale: number) {
