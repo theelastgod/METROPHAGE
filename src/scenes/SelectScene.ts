@@ -196,6 +196,9 @@ export default class SelectScene extends Phaser.Scene {
     this.preview?.destroy();
     this.preview = undefined;
     const hasWallet = walletAvailable();
+    const local = loadLocalRunner();
+    // Re-sync secret from profile (fixes partial storage clears that reminted a key).
+    if (local?.callsign) ensureGuestDeviceSecret(local.callsign);
     this.walletPanel.show({
       step: "connect",
       status: "error",
@@ -205,15 +208,26 @@ export default class SelectScene extends Phaser.Scene {
         reason +
         (/[.!?]$/.test(reason.trim()) ? " " : ". ") +
         (hasWallet
-          ? "Start a new runner on this device, or link MetaMask for a permanent identity that works everywhere."
-          : "Start a new runner to keep playing on this device."),
+          ? "Retry CONTINUE if this is your device, start a new runner, or link MetaMask for a permanent identity."
+          : "Retry CONTINUE if this is your device, or start a new runner."),
       wallet: null,
       actions: this.walletActions([
+        ...(local
+          ? [
+              {
+                label: "↻ RETRY CONTINUE",
+                sub: `reconnect as ${local.callsign} with this device key`,
+                color: COLORS.neonCyan,
+                primary: true as const,
+                fn: () => this.enterGuestReturning(),
+              },
+            ]
+          : []),
         {
           label: "◌ NEW RUNNER",
           sub: "new callsign · fresh multiplayer save on this device",
-          color: COLORS.neonCyan,
-          primary: true,
+          color: local ? 0x9aa3b2 : COLORS.neonCyan,
+          primary: !local,
           fn: () => this.startNewGuestRunner(),
         },
         ...(hasWallet
@@ -414,12 +428,15 @@ export default class SelectScene extends Phaser.Scene {
       classId ?? CLASSES.find((c) => c.color === cust.color)?.id ?? CLASSES[0].id,
     );
     this.registry.set("characterLocked", true);
-    ensureGuestDeviceSecret(cust.callsign);
+    // Reuse the profile's device secret (or restore mp_secret_* from it) — never mint a
+    // replacement for an existing server-bound callsign or CONTINUE will be rejected.
+    const deviceSecret = ensureGuestDeviceSecret(cust.callsign);
     writeLocalRunner({
       callsign: cust.callsign,
       classId: (this.registry.get("classId") as string) || "metrophage",
       customization: cust,
       lastZone: local?.lastZone,
+      deviceSecret,
     });
 
     this.syncWalletLabel(null);

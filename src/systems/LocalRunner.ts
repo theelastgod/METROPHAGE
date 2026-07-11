@@ -18,6 +18,12 @@ export interface LocalRunnerProfile {
   customization: Customization;
   /** Last online zone (best-effort resume hint). */
   lastZone?: string;
+  /**
+   * Guest multiplayer device secret (same value as `mp_secret_<id>` in localStorage).
+   * Stored here so CONTINUE still works if the mp_secret_* key was wiped but the
+   * profile wasn't — regenerating a secret was causing "callsign locked on another device".
+   */
+  deviceSecret?: string;
   updatedAt: number;
 }
 
@@ -35,6 +41,7 @@ export function loadLocalRunner(): LocalRunnerProfile | null {
       classId: s.classId,
       customization: sanitizeCustomization(s.customization, s.classId),
       lastZone: typeof s.lastZone === "string" ? s.lastZone : undefined,
+      deviceSecret: typeof s.deviceSecret === "string" && s.deviceSecret.length >= 8 ? s.deviceSecret : undefined,
       updatedAt: typeof s.updatedAt === "number" ? s.updatedAt : Date.now(),
     };
   } catch {
@@ -47,6 +54,7 @@ export function writeLocalRunner(partial: {
   classId: string;
   customization: Customization;
   lastZone?: string;
+  deviceSecret?: string;
 }): LocalRunnerProfile {
   const prev = loadLocalRunner();
   const profile: LocalRunnerProfile = {
@@ -55,6 +63,10 @@ export function writeLocalRunner(partial: {
     classId: partial.classId,
     customization: sanitizeCustomization(partial.customization, partial.classId),
     lastZone: partial.lastZone ?? prev?.lastZone,
+    // Prefer explicit secret, else keep previous when callsign matches.
+    deviceSecret:
+      partial.deviceSecret ??
+      (prev && prev.callsign.toLowerCase() === partial.callsign.toLowerCase() ? prev.deviceSecret : undefined),
     updatedAt: Date.now(),
   };
   try {

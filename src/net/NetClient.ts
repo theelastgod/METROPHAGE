@@ -16,18 +16,70 @@ export function isServerUrlMisconfigured(wsUrl: string): boolean {
   return /\/\/(127\.0\.0\.1|localhost)(:|\/|$)/i.test(wsUrl);
 }
 
-/** Guest-identity device secret — generated once per callsign on this device and bound
- *  server-side on first login. Stops anyone else logging in as your name and selling
- *  your house. Wallet sign-ins don't need it (the signature is the proof).
- *  Exported so title-screen create can mint the secret before the first WS login. */
+/** Guest id form of a callsign (must match server `onLoginInner` sanitization). */
+export function guestIdFromCallsign(name: string): string {
+  return (name || "").toLowerCase().replace(/[^a-z0-9_-]/g, "");
+}
+
+/**
+ * Guest-identity device secret — generated once per callsign on this device and bound
+ * server-side on first login. Stops anyone else logging in as your name and selling
+ * your house. Wallet sign-ins don't need it (the signature is the proof).
+ *
+ * Sources (first hit wins, then all are synced):
+ *  1. localStorage `mp_secret_<id>`
+ *  2. LocalRunner profile.deviceSecret (survives partial storage clears)
+ *  3. freshly minted UUID
+ *
+ * Exported so title-screen create can mint the secret before the first WS login.
+ */
 export function ensureGuestDeviceSecret(name: string): string | undefined {
   try {
-    const key = "mp_secret_" + (name || "").toLowerCase().replace(/[^a-z0-9_-]/g, "");
-    if (!key || key === "mp_secret_") return undefined;
-    let s = localStorage.getItem(key);
-    if (!s) {
+    const id = guestIdFromCallsign(name);
+    if (!id) return undefined;
+    const key = "mp_secret_" + id;
+
+    let s = localStorage.getItem(key) || undefined;
+
+    // Recover from LocalRunner if the dedicated key was wiped (was regenerating a NEW
+    // secret and locking the player out of their own server save).
+    if (!s || s.length < 8) {
+      try {
+        const raw = localStorage.getItem("metrophage_local_runner_v1");
+        if (raw) {
+          const prof = JSON.parse(raw) as { callsign?: string; deviceSecret?: string };
+          const profId = guestIdFromCallsign(prof?.callsign || "");
+          if (profId === id && typeof prof.deviceSecret === "string" && prof.deviceSecret.length >= 8) {
+            s = prof.deviceSecret;
+          }
+        }
+      } catch {
+        /* ignore corrupt profile */
+      }
+    }
+
+    if (!s || s.length < 8) {
       s = crypto.randomUUID();
+    }
+
+    // Sync both stores so CONTINUE + login always present the same proof.
+    try {
       localStorage.setItem(key, s);
+    } catch {
+      /* quota */
+    }
+    try {
+      const raw = localStorage.getItem("metrophage_local_runner_v1");
+      if (raw) {
+        const prof = JSON.parse(raw) as Record<string, unknown>;
+        const profId = guestIdFromCallsign(String(prof.callsign || ""));
+        if (profId === id && prof.deviceSecret !== s) {
+          prof.deviceSecret = s;
+          localStorage.setItem("metrophage_local_runner_v1", JSON.stringify(prof));
+        }
+      }
+    } catch {
+      /* ignore */
     }
     return s;
   } catch {

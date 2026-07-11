@@ -2393,12 +2393,18 @@ export class WorldDO {
       if (!presented) {
         return reject("guest save requires a device key — enable storage / cookies for this site, then retry");
       }
-      if (p.secret && p.secret !== presented) {
+      // Harness leftovers: smoke.mjs binds `smk-<name>`. Those are not real device keys —
+      // allow a real client UUID to reclaim the callsign (was locking players out of common names).
+      const harnessSecret = !!p.secret && (p.secret.startsWith("smk-") || p.secret.length < 16);
+      if (p.secret && p.secret !== presented && !harnessSecret) {
         return reject("that callsign is already saved on another device — pick a new callsign, or link a wallet to move it");
       }
-      if (!p.secret) {
-        p.secret = presented;
-        await this.env.DB.prepare("UPDATE players SET secret = ? WHERE id = ?").bind(presented, id).run();
+      if (!p.secret || harnessSecret || p.secret !== presented) {
+        // Bind on first claim, or rebind when reclaiming a harness-bound row.
+        if (!p.secret || harnessSecret) {
+          p.secret = presented;
+          await this.env.DB.prepare("UPDATE players SET secret = ? WHERE id = ?").bind(presented, id).run();
+        }
       }
     } else {
       const session = (proof?.session ?? "").slice(0, 64) || null;

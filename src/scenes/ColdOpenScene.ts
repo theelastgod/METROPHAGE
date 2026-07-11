@@ -98,20 +98,35 @@ export default class ColdOpenScene extends Phaser.Scene {
       .setOrigin(1, 0)
       .setDepth(10)
       .setInteractive({ useHandCursor: true });
-    skip.on("pointerdown", () => this.finish());
-    this.input.keyboard!.on("keydown-ESC", () => this.finish());
-    this.input.keyboard!.on("keydown-SPACE", () => this.advance());
+    skip.on("pointerdown", (ptr: Phaser.Input.Pointer) => {
+      ptr.event?.stopPropagation?.();
+      this.finish();
+    });
+    // Optional chaining — never throw if KeyboardPlugin is unavailable.
+    this.input.keyboard?.on("keydown-ESC", () => this.finish());
+    this.input.keyboard?.on("keydown-SPACE", (e: KeyboardEvent) => {
+      e?.preventDefault?.();
+      this.advance(true);
+    });
+    this.input.keyboard?.on("keydown-ENTER", (e: KeyboardEvent) => {
+      e?.preventDefault?.();
+      this.advance(true);
+    });
     this.input.on("pointerdown", (_ptr: Phaser.Input.Pointer, over: Phaser.GameObjects.GameObject[]) => {
-      if (!over.includes(skip)) this.advance();
+      if (over?.includes(skip)) return;
+      this.advance(true);
     });
 
-    this.time.delayedCall(500, () => this.advance()); // a breath of black, then the first card
+    this.time.delayedCall(500, () => this.advance(false)); // a breath of black, then the first card
   }
 
   /** Show the next text beat (or finish after the last one). Manual + timed advance share this. */
-  private advance() {
+  private advance(fromUser = false) {
     if (this.done) return;
-    this.holdTimer?.remove();
+    // Cancel any in-flight fade that would double-advance after a manual skip.
+    this.holdTimer?.remove(false);
+    this.holdTimer = undefined;
+    this.tweens.killTweensOf(this.caption);
     this.beatIndex++;
     if (this.beatIndex >= BEATS.length) {
       this.finish();
@@ -125,15 +140,21 @@ export default class ColdOpenScene extends Phaser.Scene {
       beat.font === "display"
         ? displayFont(beat.size, { color: beat.color, fontStyle: "bold" })
         : bodyFont(beat.size, { color: beat.color, align: "center", fontStyle: "bold" });
-    this.caption.setStyle(style).setText(beat.text).setAlpha(0);
+    this.caption.setStyle(style).setText(beat.text).setAlpha(fromUser ? 1 : 0);
     if (beat.glow) this.caption.setShadow(0, 0, beat.color, 18, true, true);
     else this.caption.setShadow(0, 2, "#05060f", 6, true, true);
     this.backGlow.setTint(Phaser.Display.Color.HexStringToColor(beat.color).color);
 
-    this.tweens.killTweensOf(this.caption);
-    this.tweens.add({ targets: this.caption, alpha: 1, duration: 320 });
+    if (!fromUser || this.caption.alpha < 1) {
+      this.tweens.add({ targets: this.caption, alpha: 1, duration: fromUser ? 120 : 320 });
+    }
     this.holdTimer = this.time.delayedCall(beat.holdMs, () => {
-      this.tweens.add({ targets: this.caption, alpha: 0, duration: 240, onComplete: () => this.advance() });
+      this.tweens.add({
+        targets: this.caption,
+        alpha: 0,
+        duration: 240,
+        onComplete: () => this.advance(false),
+      });
     });
   }
 

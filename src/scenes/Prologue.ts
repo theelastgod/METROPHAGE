@@ -99,10 +99,22 @@ export default class Prologue extends Phaser.Scene {
     skip.on("pointerdown", () => this.showActions());
 
     this.showBeat();
-    this.input.keyboard?.on("keydown-SPACE", () => this.advance());
-    this.input.keyboard?.on("keydown-ENTER", () => this.advance());
+    // Prefer addKey + JustDown-style handlers via keydown events; optional chaining so a
+    // missing KeyboardPlugin never kills the scene (click still advances).
+    this.input.keyboard?.on("keydown-SPACE", (e: KeyboardEvent) => {
+      e?.preventDefault?.();
+      this.advance();
+    });
+    this.input.keyboard?.on("keydown-ENTER", (e: KeyboardEvent) => {
+      e?.preventDefault?.();
+      this.advance();
+    });
     this.input.keyboard?.on("keydown-ESC", () => this.showActions());
-    this.input.on("pointerdown", () => this.advance());
+    // Ignore UI-only clicks on the skip chip (it has its own handler).
+    this.input.on("pointerdown", (_ptr: Phaser.Input.Pointer, over: Phaser.GameObjects.GameObject[]) => {
+      if (over?.length && over.some((o) => o === skip)) return;
+      this.advance();
+    });
     pinMenuUiLayer(this);
   }
 
@@ -117,7 +129,7 @@ export default class Prologue extends Phaser.Scene {
 
   private showBeat() {
     const b = this.beats[this.beat];
-    this.typeTimer?.remove(false);
+    this.clearTypeTimer();
     this.drawAccent(b.color);
     this.accentG.setAlpha(1);
     this.speaker.setText(b.speaker).setColor(b.color).setAlpha(1);
@@ -130,7 +142,9 @@ export default class Prologue extends Phaser.Scene {
       callback: () => {
         i += 1;
         this.body.setText(this.fullText.slice(0, i));
-        if (i >= this.fullText.length) this.typeTimer?.remove(false);
+        // Must null the field — remove() alone left a dead TimerEvent reference, so
+        // every later SPACE/click thought typewriter was still running and never advanced.
+        if (i >= this.fullText.length) this.clearTypeTimer();
       },
     });
     this.tweens.add({
@@ -141,10 +155,16 @@ export default class Prologue extends Phaser.Scene {
     });
   }
 
+  private clearTypeTimer() {
+    this.typeTimer?.remove(false);
+    this.typeTimer = undefined;
+  }
+
   private advance() {
     if (this.acting) return;
+    // First press: finish the typewriter. Second press: next beat / actions.
     if (this.typeTimer) {
-      this.typeTimer.remove(false);
+      this.clearTypeTimer();
       this.body.setText(this.fullText);
       return;
     }
@@ -153,6 +173,7 @@ export default class Prologue extends Phaser.Scene {
       return;
     }
     this.beat++;
+    this.tweens.killTweensOf([this.body, this.speaker]);
     this.tweens.add({
       targets: [this.body, this.speaker],
       alpha: 0,
@@ -164,7 +185,7 @@ export default class Prologue extends Phaser.Scene {
   private showActions() {
     if (this.acting) return;
     this.acting = true;
-    this.typeTimer?.remove(false);
+    this.clearTypeTimer();
     this.input.removeAllListeners();
     this.input.keyboard?.removeAllListeners();
     this.tweens.add({

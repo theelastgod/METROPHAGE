@@ -785,12 +785,13 @@ export default class CustomizeScene extends Phaser.Scene {
     this.registry.set("characterLocked", true);
     this.registry.set("guestPlay", true);
     // Mint guest device secret now so the first multiplayer login binds this runner.
-    ensureGuestDeviceSecret(this.cust.callsign);
-    // Local profile = CONTINUE key; server guest row = real multiplayer save.
+    // Persist it on the local profile so CONTINUE never regenerates a mismatched key.
+    const deviceSecret = ensureGuestDeviceSecret(this.cust.callsign);
     writeLocalRunner({
       callsign: this.cust.callsign,
       classId: this.classDef.id,
       customization: this.cust,
+      deviceSecret,
     });
     transitionTo(this, "Prologue", undefined, { style: "deploy", accent: this.classDef.color });
   }

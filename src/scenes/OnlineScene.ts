@@ -131,7 +131,7 @@ import { ESTATES, ESTATES_ZONE, buildHomeRoom, parseEstateInterior, FURNITURE, f
 import { drawFurniture } from "../render/furnitureArt";
 import { paintCityEnvWash, paintCityStorefrontReflections } from "../render/cityTerrainPolish";
 import { paintCityBuildingFacades, buildingExteriorAccent } from "../render/buildingFacades";
-import NetClient, { type NetEnemy } from "../net/NetClient";
+import NetClient, { ensureGuestDeviceSecret, type NetEnemy } from "../net/NetClient";
 import NeonPipeline from "../render/NeonPipeline";
 import { campaignHud, Campaign } from "../net/campaign";
 import OnlineCosmetics from "../ui/OnlineCosmetics";
@@ -153,7 +153,7 @@ import {
   PLAYER_CUSTOM_KEY,
   type Customization,
 } from "../game/customization";
-import { touchLocalRunnerZone, writeLocalRunner, hasLocalRunner } from "../systems/LocalRunner";
+import { writeLocalRunner } from "../systems/LocalRunner";
 import { prefersMobileUx } from "../systems/Mobile";
 import MobileControls from "../ui/MobileControls";
 
@@ -1894,16 +1894,15 @@ export default class OnlineScene extends Phaser.Scene {
     const cust = this.registry.get("customization") as Customization | undefined;
     if (!cust?.callsign) return;
     const classId = (this.registry.get("classId") as string) || "metrophage";
-    if (hasLocalRunner()) {
-      touchLocalRunnerZone(this.zone);
-    } else {
-      writeLocalRunner({
-        callsign: cust.callsign,
-        classId,
-        customization: cust,
-        lastZone: this.zone,
-      });
-    }
+    // Keep device secret on the profile every time we touch it (CONTINUE must never mint a new one).
+    const deviceSecret = ensureGuestDeviceSecret(cust.callsign);
+    writeLocalRunner({
+      callsign: cust.callsign,
+      classId,
+      customization: cust,
+      lastZone: this.zone,
+      deviceSecret,
+    });
   }
 
   /**
