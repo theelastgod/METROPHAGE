@@ -2396,15 +2396,24 @@ export class WorldDO {
       // Harness leftovers: smoke.mjs binds `smk-<name>`. Those are not real device keys —
       // allow a real client UUID to reclaim the callsign (was locking players out of common names).
       const harnessSecret = !!p.secret && (p.secret.startsWith("smk-") || p.secret.length < 16);
-      if (p.secret && p.secret !== presented && !harnessSecret) {
-        return reject("that callsign is already saved on another device — pick a new callsign, or link a wallet to move it");
-      }
-      if (!p.secret || harnessSecret || p.secret !== presented) {
-        // Bind on first claim, or rebind when reclaiming a harness-bound row.
-        if (!p.secret || harnessSecret) {
-          p.secret = presented;
-          await this.env.DB.prepare("UPDATE players SET secret = ? WHERE id = ?").bind(presented, id).run();
+      const mismatch = !!p.secret && p.secret !== presented && !harnessSecret;
+      if (mismatch) {
+        // The device-secret lock exists ONLY to stop someone hijacking an established
+        // guest's assets (house / credits / loot). A fresh or barely-started save has
+        // nothing to steal, so a mismatch there is almost always the SAME player after a
+        // storage wipe — new browser, cleared cookies, incognito, or the embedded webview
+        // that doesn't persist localStorage. Bricking a no-wallet newcomer at the tutorial
+        // door is pure downside, so only keep the hard lock when the save is worth
+        // protecting; otherwise let the new device rebind and take over.
+        if (await this.guestSaveHasAssets(p)) {
+          return reject("that callsign is already saved on another device — pick a new callsign, or link a wallet to move it");
         }
+      }
+      if (!p.secret || harnessSecret || mismatch) {
+        // Bind on first claim, rebind a harness row, or rebind an empty save onto the
+        // presenting device (the returning-after-wipe case cleared above).
+        p.secret = presented;
+        await this.env.DB.prepare("UPDATE players SET secret = ? WHERE id = ?").bind(presented, id).run();
       }
     } else {
       const session = (proof?.session ?? "").slice(0, 64) || null;
@@ -2618,6 +2627,31 @@ export class WorldDO {
     await this.markDiscovered(ws, id, organic);
     this.ensureTick();
     await this.ensureSupervisor();
+  }
+
+  /**
+   * True when a guest save holds real, hijackable value worth keeping the device lock on.
+   * Fresh or barely-started saves return false so a returning device can rebind the callsign
+   * after a storage wipe (new browser / cleared cookies / non-persistent webview) instead of
+   * being locked out forever — the exact wall a no-wallet newcomer hits at the tutorial door.
+   *
+   * Signals are progression state, NOT balances: every new guest is handed a starter kit
+   * (~100₵, a few cores, two starter items), so credits/cores/inventory counts can't tell a
+   * newcomer from an investor. What can: finishing the tutorial (you must graduate the drill
+   * yard to reach the city where estates + wealth live), leveling up, banking real credits, or
+   * owning a home. Only consulted on a secret mismatch, so the estates lookup is off the hot path.
+   */
+  private async guestSaveHasAssets(p: PlayerState): Promise<boolean> {
+    if (p.tutorialDone) return true; // left the drill yard — a committed runner in the live city
+    if ((p.level ?? 1) >= 2) return true; // real grind, not a first-kill fluke
+    if ((p.credits ?? 0) >= 1000) return true; // banked wealth well beyond the ~100₵ starter grant
+    try {
+      const est = await this.env.DB.prepare("SELECT 1 FROM estates WHERE owner = ? LIMIT 1").bind(p.id).first();
+      if (est) return true; // owns a home — the exact thing the lock protects
+    } catch {
+      /* estates table absent in some test DBs — treat as no property */
+    }
+    return false;
   }
 
   /** Build a player's runtime state, loading durable fields (pos/credits/xp/cores/
