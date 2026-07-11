@@ -1660,13 +1660,27 @@ export default class OnlineScene extends Phaser.Scene {
         this.options?.toggle();
         return;
       }
-      // Talk-briefings: SPACE is a fallback so players aren't stuck if they skip the NPC.
-      // Primary path is E-talk on the matching instructor (see talkInstructor).
-      if (e.key === " " && this.isTutorial) {
+      // SPACE near the current instructor (or for soft-clear lessons) advances the drill
+      // without dashing. Kit still needs a real dash — only skip dash when it would
+      // soft-clear a non-kit lesson, or when standing next to the matching instructor.
+      if (e.key === " " && this.isTutorial && this.net?.connected) {
         const step = tutorialStepAt(this.net.tutorialStep, this.net.tutorialMode);
-        if (step && isTutorialTalkKind(step.kind)) {
-          this.net.reportTutorial(step.kind);
-          return;
+        if (step) {
+          const nearMatch =
+            this.nearNpc?.kind === "instructor" && this.nearNpc.lessonKind === step.kind;
+          // Kit lesson: SPACE must dash (count includes dash). All other instructor
+          // lessons can soft-clear with SPACE when near the right trainer.
+          if (nearMatch && step.kind !== "kit") {
+            const need = Math.max(1, step.count - (this.net.tutorialProgress || 0));
+            this.net.reportTutorial(step.kind, need);
+            return;
+          }
+          if (!nearMatch && isTutorialTalkKind(step.kind) && step.kind !== "kit" && step.kind !== "fire" && step.kind !== "kill") {
+            // Briefings / systems: SPACE anywhere is a fallback if the player misses the NPC.
+            const need = Math.max(1, step.count - (this.net.tutorialProgress || 0));
+            this.net.reportTutorial(step.kind, need);
+            return;
+          }
         }
       }
       if (e.key === "i" || e.key === "I") {
@@ -2463,11 +2477,13 @@ export default class OnlineScene extends Phaser.Scene {
   /**
    * RS click-to-walk: opt-in on desktop; on mobile, tap still paths when the
    * D-pad is idle (phones also get directional arrows + action buttons).
-   * Desktop tutorial stays pure action mode.
+   * Tutorial also allows click/tap pathing so runners can walk chamber-to-chamber
+   * without fighting pure-WASD (was a soft-lock between instructors on trackpads).
    */
   private usingRsControls(): boolean {
     if (prefersMobileUx()) return true;
-    return !this.isTutorial && getSettings().rsControls;
+    if (this.isTutorial) return true; // drill yard: click-walk between instructors
+    return getSettings().rsControls;
   }
 
   private beginLongPress(pointer: Phaser.Input.Pointer) {
@@ -2698,10 +2714,13 @@ export default class OnlineScene extends Phaser.Scene {
       const line = npc.lines[npc.lineIdx % npc.lines.length];
       npc.lineIdx++;
       this.showBubble(npc.x, npc.y, `${npc.name}: ${line}`, face);
-      // Briefing lessons clear by talking to the authored instructor (playable, not pure text).
-      // Action lessons (fire/kill/equip/…) still require the real mechanic — talk is flavour only.
-      if (isTutorialTalkKind(step.kind)) {
-        this.net.reportTutorial(step.kind);
+      // Talking to the CURRENT lesson's instructor clears that lesson (full count).
+      // Action paths (swing / dash / kill) still work in parallel — either unlocks the next trainer.
+      if (this.net.connected) {
+        const need = Math.max(1, step.count - (this.net.tutorialProgress || 0));
+        this.net.reportTutorial(step.kind, need);
+      } else {
+        this.showBubble(npc.x, npc.y - 18, "…link the drill server — lessons need the live grid.", face);
       }
       return;
     }

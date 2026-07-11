@@ -38,10 +38,13 @@ describe("tutorial curricula", () => {
     expect(fire.count).toBe(3);
   });
 
-  it("talk briefings are only the non-action full lessons", () => {
+  it("instructor talk clears main-path lessons so runners never soft-lock between trainers", () => {
     expect(isTutorialTalkKind("faction")).toBe(true);
     expect(isTutorialTalkKind("campaign")).toBe(true);
-    expect(isTutorialTalkKind("kill")).toBe(false);
+    expect(isTutorialTalkKind("move")).toBe(true);
+    expect(isTutorialTalkKind("kill")).toBe(true);
+    expect(isTutorialTalkKind("chat")).toBe(true);
+    // craft is systems-court action-only (no dedicated quick-path instructor)
     expect(isTutorialTalkKind("craft")).toBe(false);
   });
 

@@ -3,7 +3,7 @@ import { PLAYER } from "../config";
 import type { TileGrid } from "../world/district";
 import type { ClientMsg, ServerMsg, InputCmd, PlayerLook, Item, EstateFurniture } from "./protocol";
 import { PROTOCOL_VERSION } from "./protocol";
-import { tutorialStepAt } from "./tutorial";
+import { tutorialReadyForPortal, tutorialStepAt } from "./tutorial";
 import { walletSessionSecret } from "../economy/wallet";
 
 /** True when the page is on a public host but the WS URL still points at loopback —
@@ -650,6 +650,9 @@ export default class NetClient {
               this.tutorialTeach = def.teach;
               this.tutorialHint = def.hint;
             }
+            // Derive portal gate from step table when only a snapshot arrives
+            // (welcome/tutorial msgs set it explicitly; snapshots used to leave it stale).
+            this.tutorialPortalOpen = tutorialReadyForPortal(this.tutorialStep, this.tutorialMode);
           } else {
             this.tutorialStep = sp.tutorialStep;
             this.tutorialProgress = sp.tutorialProgress;
@@ -910,8 +913,13 @@ export default class NetClient {
     this.tutorialMode = mode;
     if (this.connected) this.sendMsg({ t: "tutorial", action: "mode", mode });
   }
-  reportTutorial(kind: string) {
-    this.sendMsg({ t: "tutorial", action: "progress", kind });
+  /**
+   * Report drill progress. `n` lets instructor talk clear multi-count lessons
+   * (e.g. fire needs 3) in a single E press without spam-swinging.
+   */
+  reportTutorial(kind: string, n = 1) {
+    if (!this.connected) return; // server owns progress — silent no-op while offline
+    this.sendMsg({ t: "tutorial", action: "progress", kind, n: Math.max(1, Math.min(8, n | 0)) });
   }
 
   tradeRequest(to: string) {

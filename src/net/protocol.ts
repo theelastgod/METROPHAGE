@@ -120,7 +120,7 @@ export type ClientMsg =
   // personal campaign — accept a quest from THE FIXER or resolve a talk beat
   | { t: "quest"; action: "accept"; id?: string }
   | { t: "quest"; action: "talk" }
-  | { t: "tutorial"; action: "skip" | "graduate" | "progress" | "mode"; kind?: string; mode?: "quick" | "full" }
+  | { t: "tutorial"; action: "skip" | "graduate" | "progress" | "mode"; kind?: string; mode?: "quick" | "full"; n?: number }
   | { t: "buy"; sku: string } // vendor purchase (heal / gear cache), priced + validated server-side
   | { t: "emote"; kind: number; ping: boolean; x: number; y: number } // emote (above avatar) or world ping
   // player housing (THE ESTATES) — buy/resell/furnish/sign an est{K} home; server owns ownership in D1

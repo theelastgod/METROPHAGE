@@ -40,8 +40,24 @@ export interface TutorialStepDef {
   count: number;
 }
 
-/** Lessons advanced by talking to the matching instructor (E) or SPACE as fallback. */
+/**
+ * Lessons that clear by talking to the matching drill instructor (E) or SPACE.
+ * Includes systems briefings AND the main path lessons that have an authored
+ * instructor — talking used to only clear faction/campaign/pvp/trade/travel,
+ * so runners walking instructor→instructor never advanced (stuck forever).
+ * Combat actions (fire/kit/kill/pickup/capture) still also advance via the real
+ * mechanic; either path works so nobody gets soft-locked.
+ */
 export const TUTORIAL_TALK_KINDS: readonly TutorialKind[] = [
+  "move",
+  "fire",
+  "kit",
+  "kill",
+  "pickup",
+  "capture",
+  "equip",
+  "chat",
+  "panel",
   "faction",
   "campaign",
   "pvp",
@@ -51,6 +67,11 @@ export const TUTORIAL_TALK_KINDS: readonly TutorialKind[] = [
 
 export function isTutorialTalkKind(kind: TutorialKind): boolean {
   return (TUTORIAL_TALK_KINDS as readonly string[]).includes(kind);
+}
+
+/** True when talking to the matching instructor should count as lesson progress. */
+export function instructorClearsKind(kind: TutorialKind): boolean {
+  return isTutorialTalkKind(kind);
 }
 
 // Named step defs — FULL and QUICK compose by reference so index drift never breaks curricula.

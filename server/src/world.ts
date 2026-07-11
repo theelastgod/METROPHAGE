@@ -3282,7 +3282,9 @@ export class WorldDO {
       return;
     }
     if (msg.action === "progress" && msg.kind) {
-      this.tutorialEvent(p, msg.kind as TutorialKind);
+      // Optional n: instructor talk sends enough to clear multi-count lessons in one E.
+      const n = Number.isFinite(msg.n) ? Math.max(1, Math.min(8, Math.floor(msg.n!))) : 1;
+      this.tutorialEvent(p, msg.kind as TutorialKind, n);
     }
   }
 
