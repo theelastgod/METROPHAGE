@@ -52,6 +52,8 @@ import {
   buildVenueRoom,
   districtBuildings,
   VENUE_MAT_TILE,
+  VENUE_ROOM_W,
+  VENUE_ROOM_H,
   venueLayoutFor,
   venueSpawnFor,
   buildSubway,
@@ -127,7 +129,7 @@ import { scatterWorldProps } from "../render/propScatter";
 import OnlineMinimap from "../ui/OnlineMinimap";
 import RsQuestLog from "../ui/RsQuestLog";
 import { CITY_HUB_SPAWN, ENV_IDENTITY, envAt, ONLINE_CITY } from "../world/city";
-import { ESTATES, ESTATES_ZONE, buildHomeRoom, parseEstateInterior, FURNITURE, furnitureKind, type FurniturePiece } from "../world/estates";
+import { ESTATES, ESTATES_ZONE, buildHomeRoom, parseEstateInterior, FURNITURE, furnitureKind, furnitureFits, occupiedTiles, pieceAt, type FurniturePiece } from "../world/estates";
 import { drawFurniture } from "../render/furnitureArt";
 import { paintCityEnvWash, paintCityStorefrontReflections } from "../render/cityTerrainPolish";
 import { paintCityBuildingFacades, buildingExteriorAccent } from "../render/buildingFacades";
@@ -3680,9 +3682,19 @@ export default class OnlineScene extends Phaser.Scene {
     if (!k) return;
     const tx = Math.floor(pointer.worldX / TILE);
     const ty = Math.floor(pointer.worldY / TILE);
-    if (tx < 1 || tx > 13 || ty < 1 || ty > 9) return;
-    const blocked = (tx === VENUE_MAT_TILE[0] && ty === VENUE_MAT_TILE[1]) || this.homeDraft.some((p) => p.x === tx && p.y === ty);
-    const c = blocked ? 0xff3b6b : k.color;
+    if (tx < 1 || tx > VENUE_ROOM_W - 2 || ty < 1 || ty > VENUE_ROOM_H - 2) return;
+    // Hovering an existing piece → red "remove" cursor over its full footprint; otherwise the
+    // green/red placement footprint tells you exactly whether the whole piece fits here.
+    const overIdx = pieceAt(this.homeDraft, tx, ty);
+    if (overIdx >= 0) {
+      const pc = this.homeDraft[overIdx];
+      const pk = furnitureKind(pc.k)!;
+      this.homeGhostG.fillStyle(0xff3b6b, 0.22).fillRoundedRect(pc.x * TILE + 2, pc.y * TILE + 2, pk.w * TILE - 4, pk.h * TILE - 4, 4);
+      this.homeGhostG.lineStyle(1.5, 0xff3b6b, 0.95).strokeRoundedRect(pc.x * TILE + 2, pc.y * TILE + 2, pk.w * TILE - 4, pk.h * TILE - 4, 4);
+      return;
+    }
+    const fits = furnitureFits(tx, ty, k, occupiedTiles(this.homeDraft));
+    const c = fits ? k.color : 0xff3b6b;
     this.homeGhostG.fillStyle(c, 0.25).fillRoundedRect(tx * TILE + 2, ty * TILE + 2, k.w * TILE - 4, k.h * TILE - 4, 4);
     this.homeGhostG.lineStyle(1.5, c, 0.9).strokeRoundedRect(tx * TILE + 2, ty * TILE + 2, k.w * TILE - 4, k.h * TILE - 4, 4);
   }
@@ -3693,6 +3705,14 @@ export default class OnlineScene extends Phaser.Scene {
     const e = this.net.estate;
     const pieces = this.homeEditing ? this.homeDraft : e?.furniture ?? [];
     this.homeFurnLayer.removeAll(true);
+    // While editing, lay a faint tile grid over the floor so placement snaps read clearly.
+    if (this.homeEditing) {
+      const grid = this.add.graphics().setDepth(2.2);
+      grid.lineStyle(1, 0x8dfff0, 0.12);
+      for (let gx = 1; gx <= VENUE_ROOM_W - 1; gx++) grid.lineBetween(gx * TILE, 1 * TILE, gx * TILE, (VENUE_ROOM_H - 1) * TILE);
+      for (let gy = 1; gy <= VENUE_ROOM_H - 1; gy++) grid.lineBetween(1 * TILE, gy * TILE, (VENUE_ROOM_W - 1) * TILE, gy * TILE);
+      this.homeFurnLayer.add(grid);
+    }
     // rugs draw first so everything else sits ON them
     const ordered = [...pieces].sort((a, b) => (a.k === "rug" ? -1 : 0) - (b.k === "rug" ? -1 : 0));
     for (const pc of ordered) {
@@ -3742,30 +3762,72 @@ export default class OnlineScene extends Phaser.Scene {
       return;
     }
     if (this.homeEditing) {
-      push(this.add.text(16, 14, "FURNISH — pick an item, click a tile to place · click a piece to remove", bodyFont(11, { color: "#ffcf8a" })).setScrollFactor(0).setDepth(1200));
-      FURNITURE.forEach((f, i) => {
-        const col = 16 + (i % 6) * 120;
-        const row = 36 + Math.floor(i / 6) * 28;
-        const sel = this.homeSelKind === f.id;
-        const c = push(this.add.text(col, row, `${sel ? "▸ " : ""}${f.name} ₵${f.price}`, bodyFont(11, { color: sel ? "#ffffff" : hexColor(f.color) })))
+      const mobile = prefersMobileUx();
+      // Responsive swatch palette: colour chips sized to the screen, wrapping to as many rows
+      // as it takes — never the old fixed 6×120px grid that ran off the right of a phone.
+      const pad = 12;
+      const paletteX = pad;
+      const paletteW = W - pad * 2;
+      const sw = mobile ? 42 : 52; // swatch size
+      const gap = mobile ? 6 : 8;
+      const cols = Math.max(4, Math.floor((paletteW + gap) / (sw + gap)));
+      const headY = mobile ? 10 : 12;
+      const gridTop = headY + (mobile ? 40 : 44);
+      // backdrop behind the palette so swatches read over the room art
+      const rowsN = Math.ceil(FURNITURE.length / cols);
+      const bg = push(this.add.graphics().setScrollFactor(0).setDepth(1198));
+      const bgH = gridTop + rowsN * (sw + gap) + 6;
+      bg.fillStyle(0x07061a, 0.9).fillRoundedRect(paletteX - 4, headY - 6, paletteW + 8, bgH, 8);
+      bg.lineStyle(1.5, 0xffb13c, 0.35).strokeRoundedRect(paletteX - 4, headY - 6, paletteW + 8, bgH, 8);
+
+      const sel = furnitureKind(this.homeSelKind ?? "");
+      push(this.add.text(paletteX + 2, headY, "FURNISH YOUR HOME", displayFont(mobile ? 12 : 14, { color: "#ffcf8a", fontStyle: "bold" })).setScrollFactor(0).setDepth(1200));
+      const selLine = sel ? `▸ ${sel.name}  ·  ${sel.w}×${sel.h}  ·  +₵${sel.price} value` : "pick an item below";
+      push(this.add.text(paletteX + 2, headY + (mobile ? 18 : 20), selLine, bodyFont(mobile ? 10 : 11, { color: "#eafdff" })).setScrollFactor(0).setDepth(1200));
+      push(
+        this.add
+          .text(paletteX + paletteW, headY + 2, mobile ? "tap floor: place · tap piece: remove" : "click floor to place · click a piece to remove", bodyFont(mobile ? 8 : 10, { color: "#9aa3b2" }))
+          .setOrigin(1, 0)
           .setScrollFactor(0)
-          .setDepth(1200)
-          .setPadding(6, 3, 6, 3)
-          .setInteractive({ useHandCursor: true });
-        c.setBackgroundColor(sel ? "#3a2a10ee" : "#0a0e18cc");
-        c.on("pointerdown", () => {
+          .setDepth(1200),
+      );
+
+      FURNITURE.forEach((f, i) => {
+        const cx = paletteX + (i % cols) * (sw + gap);
+        const cy = gridTop + Math.floor(i / cols) * (sw + gap);
+        const isSel = this.homeSelKind === f.id;
+        const g = push(this.add.graphics().setScrollFactor(0).setDepth(1200));
+        g.fillStyle(f.color, isSel ? 0.4 : 0.16).fillRoundedRect(cx, cy, sw, sw, 6);
+        g.lineStyle(isSel ? 2.5 : 1.5, isSel ? 0xffffff : f.color, isSel ? 1 : 0.7).strokeRoundedRect(cx, cy, sw, sw, 6);
+        // footprint pips (top-left) so 2×1 / 2×2 pieces are obvious before you place them
+        if (f.w > 1 || f.h > 1) push(this.add.text(cx + 4, cy + 3, `${f.w}×${f.h}`, bodyFont(8, { color: "#eafdff" })).setScrollFactor(0).setDepth(1201));
+        push(this.add.text(cx + sw / 2, cy + sw / 2 - 4, f.glyph, displayFont(mobile ? 13 : 15, { color: hexColor(f.color), fontStyle: "bold" })).setOrigin(0.5).setScrollFactor(0).setDepth(1201));
+        push(this.add.text(cx + sw / 2, cy + sw - 8, `₵${f.price}`, bodyFont(8, { color: "#9aa3b2" })).setOrigin(0.5).setScrollFactor(0).setDepth(1201));
+        const z = push(this.add.zone(cx, cy, sw, sw).setOrigin(0).setScrollFactor(0).setInteractive({ useHandCursor: true }).setDepth(1202));
+        z.on("pointerdown", () => {
           this.homeSelKind = f.id;
+          this.synth?.footstep();
           this.renderHomeControls();
         });
       });
-      push(this.add.text(16, H - 62, `placed: ${this.homeDraft.length} / 40`, bodyFont(11, { color: "#9aa3b2" })).setScrollFactor(0).setDepth(1200));
-      btn(W - 230, H - 40, "SAVE LAYOUT", 0x39ff88, () => {
+
+      // Action bar pinned to the bottom edge (thumb-reachable on mobile).
+      const barY = H - (mobile ? 44 : 40);
+      push(this.add.text(paletteX, barY - (mobile ? 20 : 22), `placed ${this.homeDraft.length} / 40`, bodyFont(mobile ? 10 : 11, { color: "#9aa3b2" })).setScrollFactor(0).setDepth(1200));
+      btn(paletteX, barY, "✓ SAVE", 0x39ff88, () => {
         this.net.estateFurnish(this.homeDraft);
+        this.homeEditing = false;
+        this.synth?.pickup();
+        this.refreshHome();
+      });
+      btn(paletteX + (mobile ? 96 : 108), barY, "✕ CANCEL", 0xff3b6b, () => {
         this.homeEditing = false;
         this.refreshHome();
       });
-      btn(W - 96, H - 40, "CANCEL", 0xff3b6b, () => {
-        this.homeEditing = false;
+      btn(W - pad - (mobile ? 92 : 104), barY, "⌫ CLEAR ALL", 0xff9d3c, () => {
+        if (this.homeDraft.length === 0) return;
+        this.homeDraft = [];
+        this.synth?.footstep();
         this.refreshHome();
       });
       return;
@@ -3832,11 +3894,27 @@ export default class OnlineScene extends Phaser.Scene {
     if (!this.homeEditing || !this.homeSelKind || this.homeIdx < 0) return;
     const tx = Math.floor(pointer.worldX / TILE);
     const ty = Math.floor(pointer.worldY / TILE);
-    if (tx < 1 || tx > 13 || ty < 1 || ty > 9) return; // inside the 15×11 room walls
-    if (tx === VENUE_MAT_TILE[0] && ty === VENUE_MAT_TILE[1]) return; // never bury the exit mat
-    const i = this.homeDraft.findIndex((p) => p.x === tx && p.y === ty);
-    if (i >= 0) this.homeDraft.splice(i, 1);
-    else if (this.homeDraft.length < 40) this.homeDraft.push({ k: this.homeSelKind, x: tx, y: ty });
+    if (tx < 1 || tx > VENUE_ROOM_W - 2 || ty < 1 || ty > VENUE_ROOM_H - 2) return; // inside the room walls
+    // Click any tile of an existing piece to remove it (not just its anchor corner).
+    const overIdx = pieceAt(this.homeDraft, tx, ty);
+    if (overIdx >= 0) {
+      this.homeDraft.splice(overIdx, 1);
+      this.synth?.footstep();
+      this.refreshHome();
+      return;
+    }
+    const k = furnitureKind(this.homeSelKind);
+    if (!k) return;
+    if (this.homeDraft.length >= 40) {
+      this.rsExamine("Home is full — 40 pieces max. Remove something first.");
+      return;
+    }
+    if (!furnitureFits(tx, ty, k, occupiedTiles(this.homeDraft))) {
+      this.rsExamine(k.w > 1 || k.h > 1 ? `${k.name} needs a clear ${k.w}×${k.h} space here.` : "Something's already there.");
+      return;
+    }
+    this.homeDraft.push({ k: this.homeSelKind, x: tx, y: ty });
+    this.synth?.pickup();
     this.refreshHome();
   }
 

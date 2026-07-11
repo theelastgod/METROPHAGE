@@ -199,21 +199,78 @@ export function sanitizeGuestbook(raw: unknown): GuestEntry[] {
   return out;
 }
 
-/** Validate + clamp a furniture layout coming off the wire (owner-supplied, so bound it). */
+/**
+ * Validate + clamp a furniture layout coming off the wire (owner-supplied, so bound it).
+ *
+ * Footprint-aware: a piece of size w×h at (x,y) occupies every tile in x..x+w-1 / y..y+h-1.
+ * The WHOLE footprint must sit inside the walls, clear of the exit mat, and clear of every
+ * tile already claimed by an accepted piece. Rugs (walk-on floor cover) are the one exception
+ * — anything may sit on top of a rug — so their tiles never block later pieces. Earlier this
+ * only checked the single anchor tile, so 2-wide pieces poked through walls and any two pieces
+ * could overlap into an unreadable pile. Shared by the server and the client editor's preview.
+ */
+const FLOOR_COVER = new Set(["rug"]);
 export function sanitizeFurniture(raw: unknown): FurniturePiece[] {
   if (!Array.isArray(raw)) return [];
   const out: FurniturePiece[] = [];
+  const claimed = new Set<number>(); // packed tile keys occupied by non-floor pieces
+  const key = (tx: number, ty: number) => ty * VENUE_ROOM_W + tx;
   for (const p of raw) {
     if (out.length >= 40) break; // cap pieces per home
     if (!p || typeof p !== "object") continue;
     const k = (p as FurniturePiece).k;
     const x = Math.round((p as FurniturePiece).x);
     const y = Math.round((p as FurniturePiece).y);
-    if (!furnitureKind(k)) continue;
+    const kind = furnitureKind(k);
+    if (!kind) continue;
     if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-    if (x < 1 || x > VENUE_ROOM_W - 2 || y < 1 || y > VENUE_ROOM_H - 2) continue; // inside the walls
-    if (x === VENUE_MAT_TILE[0] && y === VENUE_MAT_TILE[1]) continue; // never bury the exit mat
+    if (!furnitureFits(x, y, kind, claimed)) continue;
+    if (!FLOOR_COVER.has(k)) for (let dy = 0; dy < kind.h; dy++) for (let dx = 0; dx < kind.w; dx++) claimed.add(key(x + dx, y + dy));
     out.push({ k, x, y });
   }
   return out;
+}
+
+/**
+ * True when a w×h piece anchored at (x,y) fits: whole footprint inside the walls, off the exit
+ * mat, and not overlapping any tile in `claimed`. The single source of truth for placement —
+ * the client editor calls it for the cursor ghost + click-to-place so what you see is exactly
+ * what the server keeps. `claimed` holds packed keys (ty*VENUE_ROOM_W+tx) of blocked tiles.
+ */
+export function furnitureFits(x: number, y: number, kind: FurnitureKind, claimed?: Set<number>): boolean {
+  if (x < 1 || y < 1) return false;
+  if (x + kind.w - 1 > VENUE_ROOM_W - 2) return false; // right edge stays off the wall
+  if (y + kind.h - 1 > VENUE_ROOM_H - 2) return false; // bottom edge stays off the wall
+  for (let dy = 0; dy < kind.h; dy++) {
+    for (let dx = 0; dx < kind.w; dx++) {
+      const tx = x + dx;
+      const ty = y + dy;
+      if (tx === VENUE_MAT_TILE[0] && ty === VENUE_MAT_TILE[1]) return false; // never bury the exit mat
+      if (claimed?.has(ty * VENUE_ROOM_W + tx)) return false; // no overlap with a placed piece
+    }
+  }
+  return true;
+}
+
+/** Packed-key footprint of every non-floor piece — the editor's occupancy set for hit-testing. */
+export function occupiedTiles(pieces: readonly FurniturePiece[]): Set<number> {
+  const claimed = new Set<number>();
+  for (const p of pieces) {
+    const kind = furnitureKind(p.k);
+    if (!kind || FLOOR_COVER.has(p.k)) continue;
+    for (let dy = 0; dy < kind.h; dy++) for (let dx = 0; dx < kind.w; dx++) claimed.add((p.y + dy) * VENUE_ROOM_W + (p.x + dx));
+  }
+  return claimed;
+}
+
+/** Index of the piece whose footprint covers (tx,ty), or -1 — so a click anywhere on a
+ *  multi-tile piece removes it, not just its anchor corner. */
+export function pieceAt(pieces: readonly FurniturePiece[], tx: number, ty: number): number {
+  for (let i = pieces.length - 1; i >= 0; i--) {
+    const p = pieces[i];
+    const kind = furnitureKind(p.k);
+    if (!kind) continue;
+    if (tx >= p.x && tx < p.x + kind.w && ty >= p.y && ty < p.y + kind.h) return i;
+  }
+  return -1;
 }
