@@ -12,8 +12,13 @@ export function drawMenuBackdrop(scene: Phaser.Scene, depth = 0): Phaser.GameObj
   // dimmed so menu text keeps contrast; the art is authored dark in the center.
   const hasArt = scene.textures.exists(MENU_BG_KEY);
   if (hasArt) {
+    const tex = scene.textures.get(MENU_BG_KEY);
+    tex.setFilter(Phaser.Textures.FilterMode.LINEAR);
     const img = scene.add.image(VIEW_W / 2, VIEW_H / 2, MENU_BG_KEY).setDepth(depth);
-    img.setScale(Math.max(VIEW_W / img.width, VIEW_H / img.height)).setAlpha(0.85);
+    // Cover-fit: scale so the art always fills the design viewport (title + customize + prologue).
+    const sx = VIEW_W / Math.max(1, img.width);
+    const sy = VIEW_H / Math.max(1, img.height);
+    img.setScale(Math.max(sx, sy)).setAlpha(0.88);
   }
 
   const g = scene.add.graphics().setDepth(depth);

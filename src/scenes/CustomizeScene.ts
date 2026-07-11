@@ -142,7 +142,8 @@ export default class CustomizeScene extends Phaser.Scene {
     const py = uiDim(128);
     const ph = VIEW_H - py - uiDim(104);
     const pg = asMenuUi(this.add.graphics().setDepth(8));
-    drawPanelFrame(pg, this.previewX, py, this.previewW, ph);
+    // Painted HUD panel behind the character preview (title create flow).
+    drawPanelFrame(pg, this.previewX, py, this.previewW, ph, this.classDef.color, this);
     // label chrome rides above the preview model (depth 12) so the sprite can't cover it
     const previewLabelY = py + uiDim(13);
     const previewLabelG = asMenuUi(this.add.graphics().setDepth(13));

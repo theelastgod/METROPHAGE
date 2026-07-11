@@ -53,6 +53,7 @@ export default class WalletSignInPanel {
   private g: Phaser.GameObjects.Graphics;
   private animG: Phaser.GameObjects.Graphics;
   private glow?: Phaser.GameObjects.Image;
+  private panelArt: Phaser.GameObjects.NineSlice | Phaser.GameObjects.Image | null = null;
   private backdrop: Phaser.GameObjects.Container;
   private objs: Phaser.GameObjects.GameObject[] = [];
   private frame = { x: 0, y: 0, w: 0, h: 0 };
@@ -100,6 +101,9 @@ export default class WalletSignInPanel {
     this.root.setAlpha(0).setScale(0.97);
     this.glow?.destroy();
     this.glow = undefined;
+    if (this.panelArt) {
+      this.panelArt.setVisible(false);
+    }
     this.clearDynamic();
   }
 
@@ -258,7 +262,13 @@ export default class WalletSignInPanel {
 
     const g = this.g;
     g.clear();
-    drawPanelFrame(g, x, y, w, h);
+    // Painted Higgsfield panel art when loaded; procedural chrome otherwise.
+    this.panelArt = drawPanelFrame(g, x, y, w, h, COLORS.neonCyan, this.scene, this.panelArt);
+    if (this.panelArt) {
+      // Keep art behind text/buttons in the modal stack.
+      this.root.addAt(this.panelArt, 0);
+      this.panelArt.setDepth?.(this.root.depth);
+    }
     this.glow?.destroy();
     const glowTint = state.status === "error" ? 0xff3b6b : state.status === "ready" ? 0x39ff88 : COLORS.neonCyan;
     this.glow = addPanelGlow(this.scene, x, y, w, h, glowTint, 0.1);

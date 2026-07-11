@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { VIEW_W, VIEW_H, COLORS, UI_SCALE, uiDim } from "../config";
-import { classArtKey, playerKeyFor } from "../assets/manifest";
+import { classArtKey, playerKeyFor, UI_PANEL_KEY, UI_FRAME_KEY } from "../assets/manifest";
 import { CLASSES, classIdFromLook } from "../game/classes";
 import OptionsPanel from "../ui/OptionsPanel";
 import { applyMenuNeon } from "../render/ensureNeon";
@@ -786,9 +786,27 @@ export default class SelectScene extends Phaser.Scene {
     const cardH = uiDim(332);
     const cardY = Math.round(VIEW_H * 0.48 - cardH / 2);
 
+    const trayX = margin - uiGap("sm");
+    const trayY = cardY - uiGap("md");
+    const trayW = VIEW_W - margin * 2 + uiGap("lg");
+    const trayH = cardH + uiGap("xl");
     const backdrop = this.add.graphics();
-    backdrop.fillStyle(0x04030c, 0.97).fillRect(margin - uiGap("sm"), cardY - uiGap("md"), VIEW_W - margin * 2 + uiGap("lg"), cardH + uiGap("xl"));
-    backdrop.lineStyle(uiDim(1), 0x1b2740, 0.55).strokeRect(margin - uiGap("sm"), cardY - uiGap("md"), VIEW_W - margin * 2 + uiGap("lg"), cardH + uiGap("xl"));
+    // Painted HUD panel under the class tray when available (same kit as in-game HUD).
+    if (this.textures.exists(UI_PANEL_KEY)) {
+      try {
+        const tray = this.add
+          .nineslice(trayX + trayW / 2, trayY + trayH / 2, UI_PANEL_KEY, undefined, trayW, trayH, 40, 40, 40, 40)
+          .setAlpha(0.9);
+        this.classLayer.add(tray);
+        backdrop.fillStyle(0x04030c, 0.55).fillRect(trayX + uiDim(12), trayY + uiDim(12), trayW - uiDim(24), trayH - uiDim(24));
+      } catch {
+        backdrop.fillStyle(0x04030c, 0.97).fillRect(trayX, trayY, trayW, trayH);
+        backdrop.lineStyle(uiDim(1), 0x1b2740, 0.55).strokeRect(trayX, trayY, trayW, trayH);
+      }
+    } else {
+      backdrop.fillStyle(0x04030c, 0.97).fillRect(trayX, trayY, trayW, trayH);
+      backdrop.lineStyle(uiDim(1), 0x1b2740, 0.55).strokeRect(trayX, trayY, trayW, trayH);
+    }
     this.classLayer.add(backdrop);
 
     CLASSES.forEach((c, i) => {
@@ -802,6 +820,22 @@ export default class SelectScene extends Phaser.Scene {
       bg.fillStyle(0x12102a, 0.98).fillRect(x + uiGap("xs"), cardY + uiGap("xs"), cardW - uiGap("sm"), cardH - uiGap("sm"));
       bg.lineStyle(uiDim(2), c.color, 0.9).strokeRect(x, cardY, cardW, cardH);
       card.add(bg);
+      // Diamond skill frame accents at card corners when the HUD kit is loaded.
+      if (this.textures.exists(UI_FRAME_KEY)) {
+        const corner = uiDim(22);
+        for (const [ox, oy] of [
+          [x + uiDim(10), cardY + uiDim(10)],
+          [x + cardW - uiDim(10), cardY + uiDim(10)],
+        ] as const) {
+          card.add(
+            this.add
+              .image(ox, oy, UI_FRAME_KEY)
+              .setDisplaySize(corner, corner)
+              .setTint(c.color)
+              .setAlpha(0.85),
+          );
+        }
+      }
       if (this.textures.exists(classArtKey(c.id))) {
         // painted class art fills the card; a gradient into the panel colour keeps
         // the name/loadout text legible over it (art is pre-cropped to card aspect)

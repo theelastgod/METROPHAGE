@@ -34,15 +34,23 @@ const LINEAR_KEYS = new Set([
 
 /**
  * Apply consistent sampling filters after manifest load + procedural bake.
- * Pixel sheets and the photo tileset stay NEAREST (crisp at downscale); glows and
- * gradient FX stay LINEAR (smooth when scaled / tinted).
+ * Pixel sheets and the photo tileset stay NEAREST (crisp at downscale); glows,
+ * painted presentation art, and gradient FX stay LINEAR.
  */
 export function applyTextureFilters(scene: Phaser.Scene): void {
   for (const key of scene.textures.getTextureKeys()) {
     if (key.startsWith("__") || !scene.textures.exists(key)) continue;
-    const mode = LINEAR_KEYS.has(key)
-      ? Phaser.Textures.FilterMode.LINEAR
-      : Phaser.Textures.FilterMode.NEAREST;
+    // Painted presentation art (class cards, portrait sheets, menu key art, HF props)
+    // is photographic — LINEAR avoids blocky scaling on title menus and dialogue.
+    const painted =
+      LINEAR_KEYS.has(key) ||
+      key.startsWith("classart_") ||
+      key.startsWith("portraits_") ||
+      key.startsWith("portrait_") ||
+      key.startsWith("ability_") ||
+      key.startsWith("hf_prop_") ||
+      key.startsWith("gun_hf_");
+    const mode = painted ? Phaser.Textures.FilterMode.LINEAR : Phaser.Textures.FilterMode.NEAREST;
     scene.textures.get(key).setFilter(mode);
   }
 }

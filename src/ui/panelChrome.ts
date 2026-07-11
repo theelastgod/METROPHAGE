@@ -38,15 +38,34 @@ export function drawCornerBrackets(
   g.strokePath();
 }
 
-/** Shared menu-panel frame — glass depth, header wash, dual rim. */
+/**
+ * Shared menu-panel frame — glass depth, header wash, dual rim.
+ * When the painted Higgsfield HUD panel texture is loaded, a NineSlice copy is
+ * placed behind the graphics chrome so title / options / wallet modals share the
+ * same art as the in-game HUD (desktop + mobile sizes).
+ *
+ * Pass `scene` + optional `existing` to reuse/resize the NineSlice across redraws.
+ */
 export function drawPanelFrame(
   g: Phaser.GameObjects.Graphics,
   x: number,
   y: number,
   w: number,
   h: number,
-  accent = COLORS.neonCyan,
-) {
+  accent: number = COLORS.neonCyan,
+  scene?: Phaser.Scene,
+  existing?: Phaser.GameObjects.NineSlice | Phaser.GameObjects.Image | null,
+): Phaser.GameObjects.NineSlice | Phaser.GameObjects.Image | null {
+  let art: Phaser.GameObjects.NineSlice | Phaser.GameObjects.Image | null = null;
+  if (scene) {
+    art = ensureHudPanelImage(scene, existing ?? null, x, y, w, h, (g.depth || 0) - 0.1, 0xffffff);
+    if (art) {
+      // Dark glass fill under the neon frame so text stays readable.
+      g.fillStyle(0x04030c, 0.82).fillRect(x + uiDim(10), y + uiDim(10), w - uiDim(20), h - uiDim(20));
+      g.fillStyle(accent, 0.05).fillRect(x + uiDim(12), y + uiDim(12), w - uiDim(24), uiDim(28));
+      return art;
+    }
+  }
   const inset = uiDim(6);
   g.fillStyle(0x04030c, 0.97).fillRect(x, y, w, h);
   g.fillStyle(0x0c1224, 0.42).fillRect(x + inset, y + inset, w - inset * 2, h - inset * 2);
@@ -56,6 +75,7 @@ export function drawPanelFrame(
   g.lineStyle(uiDim(1), COLORS.neonMagenta, 0.32).strokeRect(x + inset, y + inset, w - inset * 2, h - inset * 2);
   g.lineStyle(1, 0xffffff, 0.06).strokeRect(x + uiDim(2), y + uiDim(2), w - uiDim(4), h - uiDim(4));
   drawCornerBrackets(g, x, y, w, h, accent, 0.88);
+  return art;
 }
 
 /** Compact HUD panel with brackets + inner scanline accent. */

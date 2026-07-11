@@ -3,6 +3,7 @@ import { effectiveGraphicsQuality, getSettings, updateSettings, type GraphicsQua
 import { prefersMobileUx } from "../systems/Mobile";
 import { drawPanelFrame } from "./panelChrome";
 import { dimBackdrop, modalRect, panelPad, uiDim, uiFont, uiGap } from "./uiLayout";
+import { COLORS } from "../config";
 
 interface Row {
   key: keyof SettingsData;
@@ -26,6 +27,7 @@ export default class OptionsPanel {
   private onChange?: () => void;
 
   private g: Phaser.GameObjects.Graphics;
+  private panelArt: Phaser.GameObjects.NineSlice | Phaser.GameObjects.Image | null = null;
   private backdrop: Phaser.GameObjects.Container;
   private statics: Phaser.GameObjects.Text[] = [];
   private zones: Phaser.GameObjects.Zone[] = [];
@@ -191,12 +193,14 @@ export default class OptionsPanel {
   close() {
     this.open = false;
     this.setVisible(false);
+    if (this.panelArt) this.panelArt.setVisible(false);
   }
 
   refresh() {
     const g = this.g;
     g.clear();
-    drawPanelFrame(g, this.x, this.y, this.w, this.h);
+    this.panelArt = drawPanelFrame(g, this.x, this.y, this.w, this.h, COLORS.neonCyan, this.scene, this.panelArt);
+    if (this.panelArt) this.panelArt.setVisible(this.open).setDepth(1799);
     const s = getSettings();
     const trackH = uiDim(8);
     for (const row of this.rows) {
