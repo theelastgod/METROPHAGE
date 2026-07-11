@@ -2625,8 +2625,8 @@ export default class OnlineScene extends Phaser.Scene {
       });
     }
 
-    // ── drifting motes: dust/fireflies in the corridor air ──
-    for (let i = 0; i < 6; i++) {
+    // ── drifting motes: dust/fireflies in the corridor air (garnish — skip on low) ──
+    for (let i = 0; i < (effectiveLowFx() ? 0 : 6); i++) {
       const t = px(pick(61 + i * 7));
       const mote = this.add.image(t.x, t.y - 10, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(i % 2 ? 0x9dff3c : b.accent).setDepth(7).setScale(0.08 + (i % 3) * 0.03).setAlpha(0.14);
       this.tweens.add({
@@ -2977,12 +2977,15 @@ export default class OnlineScene extends Phaser.Scene {
     const env = MusicDirector.districtEnv(DISTRICTS[this.districtIndex]?.id ?? "downtown");
     const W = this.scale.width;
     const H = this.scale.height;
+    // Low tier: half-density weather (it's screen-space additive overdraw).
+    const dens = effectiveLowFx() ? 0.5 : 1;
+    const n = (full: number) => Math.max(3, Math.round(full * dens));
     const seeded = (i: number, m: number) => (i * 73 + 29) % m;
     const mk = (tint: number, alpha: number, sx: number, sy: number, depth = 900) =>
       this.add.image(0, 0, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(tint).setAlpha(alpha).setScale(sx, sy).setScrollFactor(0).setDepth(depth);
     if (env === "district_downtown") {
       // neon rain — thin streaks angling down-left
-      for (let i = 0; i < 26; i++) {
+      for (let i = 0; i < n(26); i++) {
         const s = mk(0xbfe8ff, 0.13 + (i % 3) * 0.03, 0.035, 0.5 + (i % 4) * 0.12);
         const x0 = (seeded(i, 97) / 97) * W;
         s.setPosition(x0, -40 - seeded(i, 41) * 8);
@@ -2990,14 +2993,14 @@ export default class OnlineScene extends Phaser.Scene {
       }
     } else if (env === "district_stacks") {
       // industrial smog wisps crawling across the screen
-      for (let i = 0; i < 7; i++) {
+      for (let i = 0; i < n(7); i++) {
         const s = mk(0xa8a06a, 0.05, 2.6 + (i % 3) * 0.7, 1.1);
         s.setPosition(-240, (seeded(i, 89) / 89) * H);
         this.tweens.add({ targets: s, x: W + 260, duration: 26000 + seeded(i, 9) * 3000, repeat: -1, delay: seeded(i, 11) * 1800, ease: "Sine.inOut" });
       }
     } else if (env === "district_spire") {
       // cold drizzle + a slow surveillance scan band sweeping the screen
-      for (let i = 0; i < 14; i++) {
+      for (let i = 0; i < n(14); i++) {
         const s = mk(0x9fe8ff, 0.09, 0.03, 0.4);
         const x0 = (seeded(i, 83) / 83) * W;
         s.setPosition(x0, -30);
@@ -3008,7 +3011,7 @@ export default class OnlineScene extends Phaser.Scene {
       this.tweens.add({ targets: band, y: H + 20, duration: 7000, repeat: -1, repeatDelay: 5200, ease: "Sine.inOut" });
     } else if (env === "district_core") {
       // embers rising off the meltdown floor
-      for (let i = 0; i < 16; i++) {
+      for (let i = 0; i < n(16); i++) {
         const s = mk(i % 3 ? 0xff8a1f : 0xff3b6b, 0.16, 0.07 + (i % 3) * 0.02, 0.07 + (i % 3) * 0.02);
         const x0 = (seeded(i, 79) / 79) * W;
         s.setPosition(x0, H + 20 + seeded(i, 31) * 4);
@@ -3047,6 +3050,9 @@ export default class OnlineScene extends Phaser.Scene {
    *  looping tweens. Vibrancy that lives ABOVE the play space: zero ground clutter,
    *  zero per-frame draw cost. */
   private spawnSkyTraffic() {
+    // Ambient sky layers are pure garnish — skip them all on the low tier so the
+    // hard-won iGPU hub frame-rate keeps its budget (additive overdraw isn't free).
+    if (effectiveLowFx()) return;
     // Landmark searchlights: two slow beams sweeping from the city's marquee roofs.
     const marquees = ONLINE_CITY.buildings.filter((b) => b.kind === "citycenter" || b.kind === "stadium").slice(0, 2);
     marquees.forEach((b, i) => {
@@ -4545,7 +4551,13 @@ export default class OnlineScene extends Phaser.Scene {
       this.minimapRefreshAcc = 0;
       const blips: Array<{ x: number; y: number; color: number; r?: number }> = [];
       for (const e of this.net.enemies.values()) {
-        blips.push({ x: e.x, y: e.y, color: e.boss ? 0xf7ff3c : 0xff5a6b, r: e.boss ? uiDim(3.2) : uiDim(2) });
+        // today's HVT burns hot orange on the radar — the 25× bounty is findable
+        blips.push({
+          x: e.x,
+          y: e.y,
+          color: e.hvt ? 0xff8a1f : e.boss ? 0xf7ff3c : 0xff5a6b,
+          r: e.hvt ? uiDim(3.4) : e.boss ? uiDim(3.2) : uiDim(2),
+        });
       }
       for (const n of this.npcs) blips.push({ x: n.x, y: n.y, color: 0x00e5ff, r: uiDim(1.8) });
       // other runners — party members pop gold so groups can regroup at a glance
