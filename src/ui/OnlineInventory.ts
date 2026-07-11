@@ -39,6 +39,7 @@ export default class OnlineInventory {
   private items: Item[] = [];
   private equipped: Item[] = [];
   private selectedBag = -1;
+  private bagPage = 0;
 
   private barG: Phaser.GameObjects.Graphics;
   private barIcons: Phaser.GameObjects.Image[] = [];
@@ -129,6 +130,7 @@ export default class OnlineInventory {
     this.open = !this.open;
     if (this.open) {
       this.selectedBag = -1;
+      this.bagPage = 0;
       this.buildPanel();
     } else this.clearPanel();
   }
@@ -431,12 +433,42 @@ export default class OnlineInventory {
     const cardH = uiDim(96);
     const rows = Math.max(1, Math.floor((bagY + bagH - gridY - pad) / (cardH + cardGap)));
 
+    // Paginate so EVERY bag item is reachable — the grid used to truncate to the visible
+    // rows and silently hide (and lock out) anything past the fold on shorter screens.
+    const perPage = Math.max(1, cols * rows);
+    const pageCount = Math.max(1, Math.ceil(this.items.length / perPage));
+    if (this.bagPage >= pageCount) this.bagPage = pageCount - 1;
+    if (this.bagPage < 0) this.bagPage = 0;
+    const pageStart = this.bagPage * perPage;
+    const pageItems = this.items.slice(pageStart, pageStart + perPage);
+
+    if (pageCount > 1) {
+      // ◀  page X/Y  ▶  — pinned to the BAG header's right edge
+      const navY = bagY + uiDim(9);
+      const arrow = (label: string, ax: number, enabled: boolean, delta: number) => {
+        const t = tx(label, ax, navY, 14, enabled ? "#8dfff0" : "#3a3350", true, 0.5);
+        if (enabled) {
+          const z = add(scene.add.zone(ax - uiDim(11), navY - uiDim(2), uiDim(22), uiDim(22)).setOrigin(0).setScrollFactor(0).setInteractive({ useHandCursor: true }).setDepth(D + 3));
+          z.on("pointerdown", () => {
+            this.bagPage += delta;
+            this.buildPanel();
+          });
+        }
+        return t;
+      };
+      const rightX = bagX + bagW - uiDim(12);
+      arrow("▶", rightX, this.bagPage < pageCount - 1, 1);
+      tx(`${this.bagPage + 1}/${pageCount}`, rightX - uiDim(22), navY, 11, "#9aa3b2", false, 1);
+      arrow("◀", rightX - uiDim(58), this.bagPage > 0, -1);
+    }
+
     if (this.items.length === 0) {
       tx("bag empty — salvage from the HSS or buy caches", bagX + bagW / 2, gridY + uiDim(60), 13, "#5a6172", false, 0.5);
     }
-    this.items.slice(0, cols * rows).forEach((it, i) => {
-      const cx = gridX + (i % cols) * (cardW + cardGap);
-      const cy = gridY + Math.floor(i / cols) * (cardH + cardGap);
+    pageItems.forEach((it, pi) => {
+      const i = pageStart + pi; // absolute bag index — move/equip must use this, not the page-local one
+      const cx = gridX + (pi % cols) * (cardW + cardGap);
+      const cy = gridY + Math.floor(pi / cols) * (cardH + cardGap);
       const r = RARITIES[it.rarity];
       const picked = this.selectedBag === i;
       g.fillStyle(picked ? 0x1a2440 : 0x12102a, 0.92).fillRect(cx, cy, cardW, cardH);

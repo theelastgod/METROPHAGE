@@ -20,6 +20,8 @@ export default class OnlineStash {
   private stash: Item[] = [];
   private bag: Item[] = [];
   private objs: Phaser.GameObjects.GameObject[] = [];
+  private stashPage = 0;
+  private bagPage = 0;
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
@@ -87,20 +89,46 @@ export default class OnlineStash {
     const colMid = x + w * 0.5;
     g.lineStyle(uiDim(1), 0x2a2440, 0.9).lineBetween(colMid, y + uiDim(66), colMid, y + h - uiDim(18));
 
+    // How many rows fit one column — used to paginate so nothing gets stranded past the fold.
+    const listTop = y + uiDim(88);
+    const listBottom = y + h - uiDim(30);
+    const perCol = Math.max(1, Math.floor((listBottom - listTop) / rowH));
+
     const column = (
       title: string,
       items: Item[],
+      page: number,
+      setPage: (p: number) => void,
       cx: number,
       cw: number,
       emptyLine: string,
       onPick: (it: Item) => void,
     ) => {
+      const pageCount = Math.max(1, Math.ceil(items.length / perCol));
+      const p = Math.min(Math.max(0, page), pageCount - 1);
+      if (p !== page) setPage(p);
       tx(`${title}  ${items.length}/${CAP}`, cx, y + uiDim(66), 13, "#f7ff3c", true);
-      let ry = y + uiDim(88);
+      // ◀ X/Y ▶ pager at the column's right edge (only when it overflows one page)
+      if (pageCount > 1) {
+        const py = y + uiDim(68);
+        const rightX = cx + cw;
+        const pager = (label: string, ax: number, enabled: boolean, delta: number) => {
+          tx(label, ax, py, 13, enabled ? "#8dfff0" : "#3a3350", true, 0.5);
+          if (enabled) {
+            const z = add(scene.add.zone(ax - uiDim(10), py - uiDim(2), uiDim(20), uiDim(20)).setOrigin(0).setScrollFactor(0).setInteractive({ useHandCursor: true }).setDepth(D + 4));
+            z.on("pointerdown", () => {
+              setPage(p + delta);
+              this.build();
+            });
+          }
+        };
+        pager("▶", rightX, p < pageCount - 1, 1);
+        tx(`${p + 1}/${pageCount}`, rightX - uiDim(20), py, 10, "#9aa3b2", false, 1);
+        pager("◀", rightX - uiDim(52), p > 0, -1);
+      }
+      let ry = listTop;
       if (items.length === 0) tx(emptyLine, cx, ry + uiDim(4), 11, "#5a6172");
-      let shown = 0;
-      for (const it of items) {
-        if (ry + rowH > y + h - uiDim(30)) break; // leave room for the "+N more" footer
+      for (const it of items.slice(p * perCol, p * perCol + perCol)) {
         const col = hexStr(RARITIES[it.rarity].color);
         g.fillStyle(0x12102a, 0.9).fillRect(cx, ry, cw, rowH - uiDim(3));
         g.lineStyle(uiDim(1), RARITIES[it.rarity].color, 0.55).strokeRect(cx, ry, cw, rowH - uiDim(3));
@@ -111,12 +139,10 @@ export default class OnlineStash {
         );
         z.on("pointerdown", () => onPick(it));
         ry += rowH;
-        shown++;
       }
-      if (shown < items.length) tx(`+${items.length - shown} more…`, cx, ry + uiDim(2), 10, "#6b7184");
     };
 
-    column("STASH", this.stash, x + uiDim(22), w * 0.5 - uiDim(40), "nothing stashed yet", (it) => this.onWithdraw?.(it.id));
-    column("BAG", this.bag, colMid + uiDim(18), w * 0.5 - uiDim(40), "your bag is empty", (it) => this.onDeposit?.(it.id));
+    column("STASH", this.stash, this.stashPage, (p) => (this.stashPage = p), x + uiDim(22), w * 0.5 - uiDim(40), "nothing stashed yet", (it) => this.onWithdraw?.(it.id));
+    column("BAG", this.bag, this.bagPage, (p) => (this.bagPage = p), colMid + uiDim(18), w * 0.5 - uiDim(40), "your bag is empty", (it) => this.onDeposit?.(it.id));
   }
 }
