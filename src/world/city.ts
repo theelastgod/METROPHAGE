@@ -180,9 +180,13 @@ export function roofTileForKind(kind: BuildingKind, env: Env): number {
     case "subway":
       return TILE_WALL_IND;
     case "shop":
-      return TILE_MARKET;
+      // NOT TILE_MARKET / TILE_NEON — those are walkable GROUND tiles; as roofs they
+      // let players stroll on top of every shop and bar in the city (both the client
+      // and the server share this grid, so collision agreed with the stroll). The
+      // facade paint + rooftop lights carry each kind's look — the roof must be wall.
+      return ENV[env].wall;
     case "bar":
-      return TILE_NEON;
+      return TILE_WALL_SLUM;
     case "clinic":
       return TILE_WALL_CORP;
     case "stadium":
