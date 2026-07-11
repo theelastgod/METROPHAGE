@@ -113,6 +113,21 @@ export default class OnlineMinimap {
     return this.oy + y * this.sy;
   }
 
+  private poiG?: Phaser.GameObjects.Graphics;
+
+  /** Static points of interest (building doors, transit) — small gold ticks drawn
+   *  once over the baked terrain, under the live blips. Turns the radar into an
+   *  actual navigation tool: you can SEE where the enterable doors are. */
+  setPois(pois: Array<{ x: number; y: number; color?: number }>, scene: Phaser.Scene) {
+    this.poiG?.destroy();
+    this.poiG = scene.add.graphics().setScrollFactor(0).setDepth(1400.5);
+    for (const p of pois) {
+      const mx = this.px(p.x);
+      const my = this.py(p.y);
+      this.poiG.fillStyle(p.color ?? 0xf7ff3c, 0.9).fillRect(mx - 1, my - 1, 2.5, 2.5);
+    }
+  }
+
   render(player: MiniBlip, extras: MiniBlip[] = [], dest?: { x: number; y: number } | null) {
     const g = this.g;
     g.clear();
@@ -133,5 +148,6 @@ export default class OnlineMinimap {
     this.zone.destroy();
     this.title.destroy();
     this.hint.destroy();
+    this.poiG?.destroy();
   }
 }

@@ -1433,6 +1433,13 @@ export default class OnlineScene extends Phaser.Scene {
     };
     this.tileCursor = new TileCursor(this);
     this.zoneMinimap = new OnlineMinimap(this, this.zoneGrid, this.worldW, this.worldH);
+    // Enterable doors read on the radar as gold ticks (districts, hub, estates street).
+    if (this.districtDoors.length) {
+      this.zoneMinimap.setPois(
+        this.districtDoors.map((d) => ({ x: d.tx * TILE + TILE / 2, y: d.ty * TILE + TILE / 2 })),
+        this,
+      );
+    }
     this.zoneMinimap.onWalk = (wx, wy) => {
       if (!this.usingRsControls() || this.blockRsInput()) return;
       this.attackTargetId = null;
@@ -3040,6 +3047,22 @@ export default class OnlineScene extends Phaser.Scene {
    *  looping tweens. Vibrancy that lives ABOVE the play space: zero ground clutter,
    *  zero per-frame draw cost. */
   private spawnSkyTraffic() {
+    // Landmark searchlights: two slow beams sweeping from the city's marquee roofs.
+    const marquees = ONLINE_CITY.buildings.filter((b) => b.kind === "citycenter" || b.kind === "stadium").slice(0, 2);
+    marquees.forEach((b, i) => {
+      const bx = ((b.rect.x1 + b.rect.x2) / 2) * TILE;
+      const by = ((b.rect.y1 + b.rect.y2) / 2) * TILE;
+      const beam = this.add
+        .image(bx, by, GLOW_KEY)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setTint(i ? 0xff2bd6 : 0x29e7ff)
+        .setOrigin(0.05, 0.5)
+        .setDepth(29)
+        .setScale(2.4, 0.3)
+        .setAlpha(0.1)
+        .setAngle(i ? 140 : -40);
+      this.tweens.add({ targets: beam, angle: `+=${i ? -80 : 80}`, duration: 9000 + i * 2600, yoyo: true, repeat: -1, ease: "Sine.inOut" });
+    });
     const lanes = [0.18, 0.34, 0.55, 0.74];
     const tints = [0x00e5ff, 0xff2bd6, 0xf7ff3c, 0x9dff3c];
     lanes.forEach((laneN, i) => {
@@ -5121,11 +5144,15 @@ export default class OnlineScene extends Phaser.Scene {
     this.positionCoach();
   }
 
-  /** Mobile: the coach line rides directly under the objective tracker — its authored
-   *  y=44 slot is the phone hotbar band. Desktop keeps the authored spot. */
+  /** The coach line rides the top-centre chain — below the objective tracker AND any
+   *  boss/event banners. Its old fixed y=44 slot collided with the boss locator on
+   *  desktop ("GO TO THE FIXER" printed through "THE GUTTER KING — ALIVE"). */
   private positionCoach() {
-    if (!this.mobileUx() || !this.coachText) return;
-    this.coachText.setY(this.trackerBottomY + uiGap("sm"));
+    if (!this.coachText) return;
+    let y = this.trackerBottomY + uiGap("sm");
+    if (this.bossBanner?.visible) y = Math.max(y, this.bossBanner.y + this.bossBanner.height + uiGap("xs"));
+    if (this.eventBanner?.visible) y = Math.max(y, this.eventBanner.y + this.eventBanner.height + uiGap("xs"));
+    this.coachText.setY(y);
   }
 
   /** Floating HSS deploy bark above a newly-seen online enemy (throttled), tinted to
@@ -5168,6 +5195,7 @@ export default class OnlineScene extends Phaser.Scene {
       return;
     }
     this.bossBanner.setVisible(true).setY(this.trackerBottomY + uiGap("xs"));
+    this.positionCoach();
     // first time you close with a living boss this visit: the title card plays
     if (b.alive && this.bossIntroShown !== b.name && this.me && Math.hypot(b.x - this.me.x, b.y - this.me.y) < 640) {
       this.bossIntroShown = b.name;
@@ -5726,6 +5754,7 @@ export default class OnlineScene extends Phaser.Scene {
       .setText(
         ev.phase === "telegraph" ? `⚠ ${ev.name} in ${secs}s — ${ev.tagline}` : `◆ ${ev.name} — ${ev.tagline} · ${secs}s`,
       );
+    this.positionCoach(); // after setText — the chain math needs the final banner height
     this.updateEventAmbience(ev.phase === "active" ? ev.id : null);
   }
 
