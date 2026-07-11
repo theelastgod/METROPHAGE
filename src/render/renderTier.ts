@@ -4,6 +4,7 @@
 
 import { setRenderResolution } from "../config";
 import { effectiveGraphicsQuality } from "../systems/Settings";
+import { prefersMobileUx, landscapeAspect } from "../systems/Mobile";
 
 const TIER_RESOLUTION: Record<"low" | "medium" | "high", { w: number; h: number }> = {
   low: { w: 1280, h: 720 },
@@ -14,7 +15,12 @@ const TIER_RESOLUTION: Record<"low" | "medium" | "high", { w: number; h: number 
 /** Apply graphics-quality tier to the backing buffer before Phaser.Game init. */
 export function applyRenderTier(): void {
   const { w, h } = TIER_RESOLUTION[effectiveGraphicsQuality()];
-  setRenderResolution(w, h);
+  // On phones, keep the tier HEIGHT but widen the buffer to the device's landscape
+  // aspect. FIT (see main.ts) then fills the whole browser window edge-to-edge —
+  // no pillar-box bars — while RENDER_SCALE (height-based) keeps the vertical
+  // framing and just shows more world left↔right. Even width for clean scaling.
+  const bufW = prefersMobileUx() ? Math.round((h * landscapeAspect()) / 2) * 2 : w;
+  setRenderResolution(bufW, h);
 }
 
 // Run at import time: several UI modules capture uiDim()-derived constants at module

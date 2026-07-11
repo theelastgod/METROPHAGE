@@ -114,6 +114,35 @@ export function needsLandscape(): boolean {
   return prefersMobileUx() && isPortrait();
 }
 
+/**
+ * This device's landscape aspect ratio (long edge ÷ short edge), clamped sane.
+ *
+ * Orientation-independent (uses max/min of the screen + window edges) so it is
+ * correct even when the page is still portrait at boot — play is landscape-gated,
+ * so the long edge is always horizontal in-game. We use this to widen the backing
+ * buffer to the phone's real shape: FIT then fills the whole window edge-to-edge
+ * instead of pillar-boxing a fixed 16:9 image. Clamped to [16:9, 21:9] — never
+ * narrower than the design (would crop), never so wide the FOV gets silly.
+ */
+export function landscapeAspect(): number {
+  if (typeof window === "undefined") return 16 / 9;
+  // Prefer the live window (matches emulated viewports and the real visible area);
+  // fall back to the physical screen only if window dims are unavailable. Using
+  // long/short keeps it correct whether we boot in portrait or landscape.
+  let long = Math.max(window.innerWidth || 0, window.innerHeight || 0);
+  let short = Math.min(window.innerWidth || 0, window.innerHeight || 0);
+  if (!(long > 0 && short > 0)) {
+    try {
+      long = Math.max(window.screen?.width || 0, window.screen?.height || 0);
+      short = Math.min(window.screen?.width || 0, window.screen?.height || 0);
+    } catch {
+      /* screen may be blocked in some privacy modes */
+    }
+  }
+  if (!(long > 0 && short > 0)) return 16 / 9;
+  return Math.min(Math.max(long / short, 16 / 9), 21 / 9);
+}
+
 /** Bottom-left thumb region for the floating movement stick. */
 export function mobileStickSafeRegion(width: number, height: number) {
   const shortSide = Math.min(width, height);

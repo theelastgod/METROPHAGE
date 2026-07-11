@@ -56,8 +56,14 @@ export const DESIGN_H = 540;
 /** Backing buffer (exact integers — these are the real canvas dimensions). */
 export let VIEW_W = 2560;
 export let VIEW_H = 1440;
-/** Supersample factor: each world camera zooms by this to keep the 960×540 framing. */
-export let RENDER_SCALE = VIEW_W / DESIGN_W; // 8/3
+/**
+ * Supersample factor: each world camera zooms by this to keep the 960×540 framing.
+ * Derived from HEIGHT, not width, so a wider-than-16:9 backing buffer (phones —
+ * see render/renderTier.ts) preserves the vertical framing and simply reveals more
+ * world horizontally, rather than over-zooming and cropping top/bottom. For every
+ * 16:9 tier VIEW_H/DESIGN_H === VIEW_W/DESIGN_W, so desktop is unchanged.
+ */
+export let RENDER_SCALE = VIEW_H / DESIGN_H; // 8/3 at 16:9
 /** Screen-space UI scale — keeps typography/layout proportional at higher backing resolution. */
 export let UI_SCALE = RENDER_SCALE;
 
@@ -65,7 +71,7 @@ export let UI_SCALE = RENDER_SCALE;
 export function setRenderResolution(w: number, h: number): void {
   VIEW_W = w;
   VIEW_H = h;
-  RENDER_SCALE = VIEW_W / DESIGN_W;
+  RENDER_SCALE = VIEW_H / DESIGN_H;
   UI_SCALE = RENDER_SCALE;
 }
 /** Scale a design-space pixel dimension to the current backing buffer. */
