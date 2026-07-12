@@ -34,3 +34,52 @@ export function bodyFont(px: number, extra: Phaser.Types.GameObjects.Text.TextSt
 export function hudFont(px: number, extra: Phaser.Types.GameObjects.Text.TextStyle = {}) {
   return withLeading({ fontFamily: FONT_HUD, fontSize: uiFont(px) }, extra, false);
 }
+
+export interface FitTextOptions {
+  minScale?: number;
+  ellipsis?: string;
+}
+
+/** Keep single-line UI labels inside fixed chrome without surprising layout shifts. */
+export function setFittedText<T extends Phaser.GameObjects.Text>(
+  text: T,
+  value: string,
+  maxWidth: number,
+  opts: FitTextOptions = {},
+): T {
+  const width = Math.max(0, maxWidth);
+  const minScale = opts.minScale ?? 0.78;
+  const ellipsis = opts.ellipsis ?? "...";
+  text.setScale(1, 1).setText(value);
+  if (!Number.isFinite(width) || width <= 0 || text.width <= width) return text;
+
+  const scale = Math.max(minScale, Math.min(1, width / Math.max(1, text.width)));
+  text.setScale(scale, scale);
+  if (text.width * scale <= width || !ellipsis) return text;
+
+  const allowedSourceWidth = width / scale;
+  let lo = 0;
+  let hi = value.length;
+  let best = ellipsis;
+  while (lo <= hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    const candidate = value.slice(0, mid).trimEnd() + ellipsis;
+    text.setText(candidate);
+    if (text.width <= allowedSourceWidth) {
+      best = candidate;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  text.setText(best);
+  return text;
+}
+
+export function fitTextToWidth<T extends Phaser.GameObjects.Text>(
+  text: T,
+  maxWidth: number,
+  opts: FitTextOptions = {},
+): T {
+  return setFittedText(text, String(text.text), maxWidth, opts);
+}

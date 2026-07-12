@@ -107,6 +107,7 @@ export function ensureHudPanelImage(
   tint = 0xffffff,
 ): Phaser.GameObjects.NineSlice | Phaser.GameObjects.Image | null {
   if (!scene.textures.exists(UI_PANEL_KEY)) return null;
+  if (existing && (!existing.scene || !existing.active)) existing = null;
   const min = Math.max(w, h, 1);
   // NineSlice needs a source large enough for left/right/top/bottom slices.
   const slice = Math.min(48, Math.floor(Math.min(w, h) * 0.28));

@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { drawHudPanel, ensureHudPanelImage } from "./panelChrome";
-import { bodyFont, displayFont } from "./typography";
+import { bodyFont, displayFont, fitTextToWidth } from "./typography";
 import { onlineHudStack, uiDim, uiGap } from "./uiLayout";
 import { mobileStickSafeRegion, prefersMobileUx } from "../systems/Mobile";
 
@@ -99,6 +99,7 @@ export default class RsActionBar {
         .setOrigin(0.5, 0)
         .setScrollFactor(0)
         .setDepth(1051);
+      fitTextToWidth(label, slotW - uiDim(8));
       this.texts.push(label);
       if (slot.sub) {
         const sub = this.scene.add
@@ -106,6 +107,7 @@ export default class RsActionBar {
           .setOrigin(0.5, 0)
           .setScrollFactor(0)
           .setDepth(1051);
+        fitTextToWidth(sub, slotW - uiDim(8));
         this.texts.push(sub);
       }
 

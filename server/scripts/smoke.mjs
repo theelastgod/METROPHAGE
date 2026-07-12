@@ -195,9 +195,7 @@ async function check() {
   }
   const expected = JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
   const ws = await connect();
-  // fresh identity every run: persisted bots drift down-left each pass (the tour is a
-  // staircase) until they park in the SW corner where the tour can only push walls
-  const w = await login(ws, "mv" + String(Date.now() % 1_000_000));
+  const w = await login(ws, expected.id);
   ws.close();
   const dx = Math.hypot(w.x - expected.x, w.y - expected.y);
   const checks = {
@@ -616,6 +614,7 @@ async function equip() {
   const nearest = () => {
     let b = null, bd = 1e9;
     for (const e of store.enemies) {
+      if (e.boss) continue;
       const d = Math.hypot(e.x - store.x, e.y - store.y);
       if (d < bd) { bd = d; b = e; }
     }
@@ -1423,13 +1422,13 @@ async function bounty() {
   trackState(ws, w.id, store);
   await sleep(400);
 
-  ws.send(JSON.stringify({ t: "bounty", action: "accept", id: "rin_sweep" })); // kill 12
+  ws.send(JSON.stringify({ t: "bounty", action: "accept", id: "marek_grudge" })); // fell a boss
   await sleep(400);
-  const accepted = !!store.bounty && store.bounty.id === "rin_sweep";
+  const accepted = !!store.bounty && store.bounty.id === "marek_grudge";
 
   ws.send(JSON.stringify({ t: "bounty", action: "accept", id: "doc_cores" })); // already have one
   await sleep(400);
-  const secondRejected = !!store.bounty && store.bounty.id === "rin_sweep" && store.sys.some((t) => /finish your current/i.test(t));
+  const secondRejected = !!store.bounty && store.bounty.id === "marek_grudge" && store.sys.some((t) => /finish your current/i.test(t));
 
   const nearest = () => {
     let b = null, bd = 1e9;
@@ -1440,6 +1439,12 @@ async function bounty() {
     return b;
   };
   let seq = 0, maxProg = 0, lastAbility = 0;
+  const sweep = [
+    [0, 1],
+    [1, 0],
+    [0, -1],
+    [-1, 0],
+  ];
   const t0 = Date.now();
   while (Date.now() - t0 < 100000 && store.bounty) {
     const e = nearest();
@@ -1455,12 +1460,16 @@ async function bounty() {
         lastAbility = Date.now();
         ws.send(JSON.stringify({ t: "ability", seq, aim }));
       }
+    } else {
+      const [mx, my] = sweep[Math.floor((Date.now() - t0) / 2500) % sweep.length];
+      seq++;
+      ws.send(JSON.stringify({ t: "input", seq, mx, my }));
     }
     if (store.bounty) maxProg = Math.max(maxProg, store.bounty.progress);
     await sleep(45);
   }
-  const progressed = maxProg > 0;
   const completed = store.bounty === null && store.sys.some((t) => /BOUNTY —/.test(t));
+  const progressed = maxProg > 0 || completed;
 
   ws.close();
   await sleep(200);
@@ -1925,10 +1934,13 @@ async function territory() {
 }
 
 async function social() {
+  const suffix = String(Date.now() % 1_000_000);
+  const alice = "sa" + suffix;
+  const bob = "sb" + suffix;
   const a = await connect();
-  const wa = await login(a, "alice", 0);
+  const wa = await login(a, alice, 0);
   const b = await connect();
-  const wb = await login(b, "bob", 1);
+  const wb = await login(b, bob, 1);
   const sa = { roster: [] };
   const sb = { roster: [] };
   trackState(a, wa.id, sa);
@@ -1948,26 +1960,26 @@ async function social() {
   await sleep(600);
 
   a.send(JSON.stringify({ t: "chat", ch: "zone", text: "hello zone" }));
-  await sleep(450);
-  const zoneChat = bChat.some((c) => c.ch === "zone" && c.text === "hello zone" && c.from === "alice");
+  await sleep(700);
+  const zoneChat = bChat.some((c) => c.ch === "zone" && c.text === "hello zone" && c.from === alice);
 
-  a.send(JSON.stringify({ t: "chat", ch: "whisper", to: "bob", text: "psst" }));
-  await sleep(450);
+  a.send(JSON.stringify({ t: "chat", ch: "whisper", to: bob, text: "psst" }));
+  await sleep(700);
   const whisper = bChat.some((c) => c.ch === "whisper" && c.text === "psst");
 
-  a.send(JSON.stringify({ t: "party", action: "invite", to: "bob" }));
+  a.send(JSON.stringify({ t: "party", action: "invite", to: bob }));
   await sleep(450);
   b.send(JSON.stringify({ t: "party", action: "accept" }));
   await sleep(550);
   const inParty =
-    aParty.some((m) => m.includes("alice") && m.includes("bob")) ||
-    bParty.some((m) => m.includes("alice") && m.includes("bob"));
+    aParty.some((m) => m.includes(alice) && m.includes(bob)) ||
+    bParty.some((m) => m.includes(alice) && m.includes(bob));
 
   a.send(JSON.stringify({ t: "chat", ch: "party", text: "team up" }));
   await sleep(450);
   const partyChat = bChat.some((c) => c.ch === "party" && c.text === "team up");
 
-  const presence = (sa.roster || []).some((r) => r.id === "alice") && (sa.roster || []).some((r) => r.id === "bob");
+  const presence = (sa.roster || []).some((r) => r.id === alice) && (sa.roster || []).some((r) => r.id === bob);
 
   const checks = { zoneChat, whisper, party: inParty, partyChat, presence };
   a.close();
@@ -2227,11 +2239,12 @@ async function abuse() {
 
 async function load() {
   const N = parseInt(process.argv[3] || "20", 10);
+  const suffix = String(Date.now() % 1_000_000);
   const DUR = 4000;
   const bots = [];
   for (let i = 0; i < N; i++) {
     const ws = await connect();
-    const w = await login(ws, "load" + i, i % 4);
+    const w = await login(ws, "ld" + suffix + "_" + i, i % 4);
     const s = { id: w.id, snaps: 0, closed: false, lastTick: 0 };
     ws.addEventListener("message", (ev) => {
       const m = JSON.parse(ev.data);

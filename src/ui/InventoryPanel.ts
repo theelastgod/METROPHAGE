@@ -6,6 +6,7 @@ import { iconKey } from "../assets/itemIcons";
 import { ModBag } from "../game/stats";
 import { drawPanelFrame } from "./panelChrome";
 import { overlayRect, uiDim, uiFont } from "./uiLayout";
+import { setFittedText } from "./typography";
 
 const COLS = 6;
 const ROWS = 4;
@@ -164,6 +165,7 @@ export default class InventoryPanel {
     this.detail
       .setText(`${item.name}\n${itemStatLines(item).join("   ")}`)
       .setColor(RARITIES[item.rarity].hex);
+    setFittedText(this.detail, this.detail.text, this.w - uiDim(32), { minScale: 0.72 });
   }
 
   private refresh() {
@@ -171,8 +173,8 @@ export default class InventoryPanel {
     g.clear();
     drawPanelFrame(g, this.x, this.y, this.w, this.h);
 
-    this.header.setText(`INVENTORY   (${this.inv.items.length}/${this.inv.cap})`);
-    this.summary.setText(this.modSummary(this.inv.mods()));
+    setFittedText(this.header, `INVENTORY   (${this.inv.items.length}/${this.inv.cap})`, this.w - uiDim(160));
+    setFittedText(this.summary, this.modSummary(this.inv.mods()), this.w - uiDim(32), { minScale: 0.68 });
 
     SLOTS.forEach((slot, i) => {
       const by = this.slotY(i);
@@ -188,6 +190,7 @@ export default class InventoryPanel {
       this.slotTexts[i]
         .setText(it ? it.name : "—")
         .setColor(it ? RARITIES[it.rarity].hex : "#5a6172");
+      setFittedText(this.slotTexts[i], it ? it.name : "—", this.slotW - uiDim(60), { minScale: 0.72 });
     });
 
     for (let i = 0; i < COLS * ROWS; i++) {

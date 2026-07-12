@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { bodyFont } from "./typography";
+import { bodyFont, fitTextToWidth } from "./typography";
 import { uiDim } from "./uiLayout";
 
 export interface ContextAction {
@@ -77,6 +77,7 @@ export default class ContextMenu {
       .text(x + pad, y + pad, this.title, bodyFont(11, { color: "#f7ff3c", fontStyle: "bold" }))
       .setScrollFactor(0)
       .setDepth(2101);
+    fitTextToWidth(titleT, w - pad * 2);
     this.objs.push(titleT);
 
     let ay = y + pad + uiDim(20);
@@ -87,6 +88,7 @@ export default class ContextMenu {
         .text(x + pad + uiDim(4), ay + uiDim(3), `${prefix}${act.label}`, bodyFont(11, { color: act.color ?? "#ffff00" }))
         .setScrollFactor(0)
         .setDepth(2101);
+      fitTextToWidth(label, w - pad * 2 - uiDim(8));
       this.objs.push(label);
       const zone = this.scene.add
         .zone(x + pad, ay, w - pad * 2, rowH)

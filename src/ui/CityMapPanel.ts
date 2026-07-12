@@ -3,6 +3,7 @@ import City from "../systems/City";
 import { DISTRICTS } from "../game/districts";
 import { drawPanelFrame } from "./panelChrome";
 import { overlayRect, uiDim, uiFont } from "./uiLayout";
+import { fitTextToWidth, setFittedText } from "./typography";
 
 /**
  * City map overlay (M) — the fast-travel hub. The districts are stations on a
@@ -112,10 +113,12 @@ export default class CityMapPanel {
     drawPanelFrame(g, this.x, this.y, this.w, this.h);
 
     const cleared = this.city.cleared.length;
-    this.contagionText.setText(
+    setFittedText(
+      this.contagionText,
       `CONTAGION ${Math.round(this.city.contagion)}%   ·   DISTRICTS ${cleared}/${DISTRICTS.length}`,
+      this.w - uiDim(180),
     );
-    this.cycleText.setText(this.city.cycle > 0 ? `CYCLE ${this.city.cycle + 1}` : "");
+    setFittedText(this.cycleText, this.city.cycle > 0 ? `CYCLE ${this.city.cycle + 1}` : "", uiDim(140));
 
     const barX = this.x + uiDim(18);
     const barY = this.y + uiDim(54);
@@ -151,10 +154,9 @@ export default class CityMapPanel {
         g.lineStyle(uiDim(2), d.accent, unlocked ? 0.9 : 0.35).strokeCircle(sx, this.routeY, r);
       }
 
-      this.threatTexts[i].setText(d.isFinal ? "◆ CORE" : "THREAT " + "▮".repeat(d.threat + 1));
-      this.nameTexts[i]
-        .setText(d.name)
-        .setColor(unlocked || isCurrent ? "#eafdff" : "#6b7184");
+      setFittedText(this.threatTexts[i], d.isFinal ? "◆ CORE" : "THREAT " + "▮".repeat(d.threat + 1), uiDim(112), { minScale: 0.72 });
+      this.nameTexts[i].setColor(unlocked || isCurrent ? "#eafdff" : "#6b7184");
+      setFittedText(this.nameTexts[i], d.name, uiDim(112), { minScale: 0.7 });
 
       let label: string;
       let color: string;
@@ -171,7 +173,8 @@ export default class CityMapPanel {
         label = "LOCKED";
         color = "#5a6172";
       }
-      this.stateTexts[i].setText(label).setColor(color);
+      this.stateTexts[i].setColor(color);
+      setFittedText(this.stateTexts[i], label, uiDim(112), { minScale: 0.7 });
     });
   }
 
@@ -199,6 +202,7 @@ export default class CityMapPanel {
       .setScrollFactor(0)
       .setDepth(depth);
     this.statics.push(t);
+    fitTextToWidth(t, uiDim(112), { minScale: 0.7 });
     return t;
   }
 

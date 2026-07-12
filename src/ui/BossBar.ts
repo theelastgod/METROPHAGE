@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { VIEW_W } from "../config";
 import { uiDim, uiFont } from "./uiLayout";
+import { setFittedText } from "./typography";
 
 /**
  * Boss health bar — a wide framed meter near the top of the screen, with the
@@ -49,8 +50,9 @@ export default class BossBar {
   show(name: string, title: string, hex: string) {
     this.accent = Phaser.Display.Color.HexStringToColor(hex).color;
     this.frac = 1;
-    this.nameText.setText("⚠  " + name).setColor(hex);
-    this.titleText.setText(title);
+    this.nameText.setColor(hex);
+    setFittedText(this.nameText, "⚠  " + name, this.w + uiDim(40), { minScale: 0.72 });
+    setFittedText(this.titleText, title, this.w + uiDim(40), { minScale: 0.72 });
     this.shown = true;
     this.setVisible(true);
     this.draw();

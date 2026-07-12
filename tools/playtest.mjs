@@ -3,7 +3,7 @@
  * Run: node tools/playtest.mjs
  */
 import { chromium } from "playwright";
-import { mkdir } from "fs/promises";
+import { mkdir, writeFile } from "fs/promises";
 import path from "path";
 
 const BASE = process.env.PLAYTEST_URL ?? "http://127.0.0.1:5188/";
@@ -17,7 +17,9 @@ const issue = (sev, area, msg) => {
 };
 
 async function shot(page, name) {
-  await page.screenshot({ path: path.join(OUT, `${name}.png`), fullPage: false });
+  const cdp = await page.context().newCDPSession(page);
+  const png = await cdp.send("Page.captureScreenshot", { format: "png", fromSurface: true });
+  await writeFile(path.join(OUT, `${name}.png`), Buffer.from(png.data, "base64"));
   log(`screenshot ${name}.png`);
 }
 

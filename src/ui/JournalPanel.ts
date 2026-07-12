@@ -4,6 +4,7 @@ import Quests from "../systems/Quests";
 import { FRAGMENTS } from "../game/fragments";
 import { drawPanelFrame } from "./panelChrome";
 import { overlayRect, uiDim, uiFont } from "./uiLayout";
+import { setFittedText } from "./typography";
 
 /**
  * Journal (J) — the active quest + its objective/log, plus recovered memory
@@ -78,26 +79,28 @@ export default class JournalPanel {
     const g = this.g;
     g.clear();
     drawPanelFrame(g, this.x, this.y, this.w, this.h);
-    this.countText.setText(`FRAGMENTS ${this.memory.count} / ${this.memory.total}`);
+    setFittedText(this.countText, `FRAGMENTS ${this.memory.count} / ${this.memory.total}`, uiDim(180));
 
     const q = this.quests.active;
     const s = this.quests.currentStage;
     if (q && s) {
-      this.questTitle.setText(`◆ ${q.name} — ${s.objective}`).setColor("#39ff88");
+      this.questTitle.setColor("#39ff88");
+      setFittedText(this.questTitle, `◆ ${q.name} — ${s.objective}`, this.w - uiDim(44), { minScale: 0.72 });
       this.questBody.setText(s.journal).setColor("#c8d2e0");
     } else if (this.quests.completed.length) {
-      this.questTitle.setText("◆ (no active contract)").setColor("#9aa3b2");
+      this.questTitle.setColor("#9aa3b2");
+      setFittedText(this.questTitle, "◆ (no active contract)", this.w - uiDim(44));
       this.questBody.setText(`Completed: ${this.quests.completed.length}`).setColor("#5a6172");
     } else {
-      this.questTitle.setText("◆ (no active contract)").setColor("#9aa3b2");
+      this.questTitle.setColor("#9aa3b2");
+      setFittedText(this.questTitle, "◆ (no active contract)", this.w - uiDim(44));
       this.questBody.setText("Find a contact in the plaza.").setColor("#5a6172");
     }
 
     FRAGMENTS.forEach((f, i) => {
       const known = this.memory.has(f.id);
-      this.fragTitles[i]
-        .setText(known ? `◆ ${f.title}` : "◇ ??? — [ENCRYPTED]")
-        .setColor(known ? "#39ff88" : "#5a6172");
+      this.fragTitles[i].setColor(known ? "#39ff88" : "#5a6172");
+      setFittedText(this.fragTitles[i], known ? `◆ ${f.title}` : "◇ ??? — [ENCRYPTED]", this.w - uiDim(44), { minScale: 0.72 });
       this.fragBodies[i].setText(known ? f.lines.join(" ") : "").setColor("#9aa3b2");
     });
   }

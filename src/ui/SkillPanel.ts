@@ -4,6 +4,7 @@ import Progression, { RESPEC_COST } from "../systems/Progression";
 import { ClassDef } from "../game/classes";
 import { drawPanelFrame } from "./panelChrome";
 import { overlayRect, uiDim, uiFont } from "./uiLayout";
+import { setFittedText } from "./typography";
 
 const BRANCHES = ["ASSAULT", "CHASSIS", "SYSTEMS"];
 
@@ -117,8 +118,11 @@ export default class SkillPanel {
     g.clear();
     drawPanelFrame(g, this.x, this.y, this.w, this.h);
 
-    this.header.setText(
+    setFittedText(
+      this.header,
       `SKILL TREE   LV ${this.prog.level}   POINTS ${this.prog.skillPoints}   ₵ ${this.prog.currency}`,
+      this.w - uiDim(220),
+      { minScale: 0.72 },
     );
 
     for (const node of treeFor(this.prog.classId)) {
@@ -133,18 +137,16 @@ export default class SkillPanel {
       g.fillStyle(rank > 0 ? 0x14102a : 0x0c0a18, 0.92).fillRect(bx, by, this.nodeW, this.nodeH);
       g.lineStyle(can ? uiDim(2) : uiDim(1), border, locked ? 0.5 : 1).strokeRect(bx, by, this.nodeW, this.nodeH);
 
-      this.nodeTexts
-        .get(node.id)!
-        .setText(`${node.name}  ${rank}/${node.maxRank}\n${node.desc}`)
-        .setColor(locked ? "#6a6488" : "#eafdff")
-        .setAlpha(locked ? 0.7 : 1);
+      const nodeText = this.nodeTexts.get(node.id)!;
+      nodeText.setColor(locked ? "#6a6488" : "#eafdff").setAlpha(locked ? 0.7 : 1);
+      setFittedText(nodeText, `${node.name}  ${rank}/${node.maxRank}\n${node.desc}`, this.nodeW - uiDim(20), { minScale: 0.68 });
     }
 
     const respecW = uiDim(160);
     const respecH = uiDim(26);
     g.fillStyle(0x1a1206, 0.9).fillRect(this.x + uiDim(18), this.y + this.h - uiDim(34), respecW, respecH);
     g.lineStyle(uiDim(1), 0xf7ff3c, 0.8).strokeRect(this.x + uiDim(18), this.y + this.h - uiDim(34), respecW, respecH);
-    this.respecText.setText(`RESPEC  (₵${RESPEC_COST})`);
+    setFittedText(this.respecText, `RESPEC  (₵${RESPEC_COST})`, respecW - uiDim(16));
   }
 
   private setVisible(v: boolean) {

@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { VIEW_H } from "../config";
 import { drawPanelFrame } from "./panelChrome";
 import { uiDim, uiFont } from "./uiLayout";
+import { setFittedText } from "./typography";
 
 /** A row in the stats sheet: label + formatted value (+ optional value colour). */
 export interface StatLine {
@@ -72,11 +73,14 @@ export default class StatsPanel {
     const g = this.g;
     g.clear();
     drawPanelFrame(g, this.x, this.y, this.w, this.h);
-    this.header.setText("RUNNER — CHARACTER");
+    setFittedText(this.header, "RUNNER — CHARACTER", this.w - uiDim(180));
     const lines = this.provider();
     lines.forEach((ln, i) => {
-      this.labelTexts[i]?.setText(ln.label);
-      this.valueTexts[i]?.setText(ln.value).setColor(ln.color ?? "#eafdff");
+      if (this.labelTexts[i]) setFittedText(this.labelTexts[i], ln.label, this.w * 0.55 - uiDim(30), { minScale: 0.72 });
+      if (this.valueTexts[i]) {
+        this.valueTexts[i].setColor(ln.color ?? "#eafdff");
+        setFittedText(this.valueTexts[i], ln.value, this.w * 0.38, { minScale: 0.72 });
+      }
       const ry = this.y + uiDim(54) + i * this.rowH;
       g.lineStyle(uiDim(1), 0x2a2440, 0.5).lineBetween(
         this.x + uiDim(26),

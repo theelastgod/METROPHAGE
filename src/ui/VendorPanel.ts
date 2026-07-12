@@ -6,6 +6,7 @@ import { itemValue, sellValue, RARITIES } from "../game/items";
 import { CONSUMABLES } from "../game/consumables";
 import { drawPanelFrame } from "./panelChrome";
 import { overlayRect, uiDim, uiFont } from "./uiLayout";
+import { setFittedText } from "./typography";
 
 const BUY_ROWS = 8; // 5 gear + 3 consumables
 const SELL_ROWS = 13;
@@ -148,19 +149,21 @@ export default class VendorPanel {
       this.y + this.h - uiDim(36),
     );
 
-    this.header.setText(`FIXER          ₵ ${this.prog.currency}`);
+    setFittedText(this.header, `FIXER          ₵ ${this.prog.currency}`, this.w - uiDim(32));
 
     const gear = this.vendor.gearStock;
     for (let i = 0; i < BUY_ROWS; i++) {
       const txt = this.buyTexts[i];
       if (i < gear.length) {
         const it = gear[i];
-        txt.setText(`${it.name}  —  ₵${itemValue(it)}`).setColor(RARITIES[it.rarity].hex);
+        txt.setColor(RARITIES[it.rarity].hex);
+        setFittedText(txt, `${it.name}  —  ₵${itemValue(it)}`, this.colW - uiDim(44), { minScale: 0.7 });
       } else {
         const c = CONSUMABLES[i - gear.length];
         if (c) {
           const have = this.prog.consumables[c.id] ?? 0;
-          txt.setText(`${c.name} (${c.desc})  —  ₵${c.price}   x${have}`).setColor(c.hex);
+          txt.setColor(c.hex);
+          setFittedText(txt, `${c.name} (${c.desc})  —  ₵${c.price}   x${have}`, this.colW - uiDim(44), { minScale: 0.7 });
         } else txt.setText("");
       }
     }
@@ -168,11 +171,11 @@ export default class VendorPanel {
     for (let i = 0; i < SELL_ROWS; i++) {
       const it = this.inv.items[i];
       this.sellTexts[i]
-        .setText(it ? `${it.name}  —  +₵${sellValue(it)}` : "")
         .setColor(it ? RARITIES[it.rarity].hex : "#5a6172");
+      setFittedText(this.sellTexts[i], it ? `${it.name}  —  +₵${sellValue(it)}` : "", this.colW - uiDim(44), { minScale: 0.7 });
     }
 
-    this.respecText.setText(`RESPEC SKILLS  (₵${this.vendor.respecCost})`);
+    setFittedText(this.respecText, `RESPEC SKILLS  (₵${this.vendor.respecCost})`, uiDim(160));
   }
 
   private setVisible(v: boolean) {

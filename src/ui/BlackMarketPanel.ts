@@ -5,6 +5,7 @@ import { fmtMetro } from "../economy/metro";
 import { iconKey } from "../assets/itemIcons";
 import { drawPanelFrame } from "./panelChrome";
 import { overlayRect, uiDim, uiFont } from "./uiLayout";
+import { fitTextToWidth, setFittedText } from "./typography";
 
 /** What the host scene must provide — the panel never touches the save/inventory itself. */
 export interface BlackMarketHooks {
@@ -65,14 +66,14 @@ export default class BlackMarketPanel {
     this.g = scene.add.graphics().setScrollFactor(0).setDepth(1600);
     const D = 1601;
     this.header = this.text(this.x + uiDim(18), this.y + uiDim(14), "", "#eafdff", 15, D);
-    this.text(
+    fitTextToWidth(this.text(
       this.x + uiDim(18),
       this.y + uiDim(40),
       "ARMS + MEDS · paid in $METRO · 1B fixed supply · scroll ▲▼ · click to buy",
       "#9aa3b2",
       11,
       D,
-    );
+    ), this.w - uiDim(36));
 
     for (let r = 0; r < this.visible; r++) {
       const ry = this.listTop + r * this.rowH;
@@ -96,7 +97,7 @@ export default class BlackMarketPanel {
     }
 
     this.status = this.text(this.x + uiDim(18), this.y + this.h - uiDim(30), "", "#f7ff3c", 12, D + 1);
-    this.text(this.x + this.w - uiDim(134), this.y + this.h - uiDim(30), "B / E / ESC to close", "#9aa3b2", 11, D);
+    fitTextToWidth(this.text(this.x + this.w - uiDim(134), this.y + this.h - uiDim(30), "B / E / ESC to close", "#9aa3b2", 11, D), uiDim(120));
 
     scene.input.on("wheel", (_p: unknown, _o: unknown, _dx: number, dy: number) => {
       if (!this.open) return;
@@ -153,7 +154,8 @@ export default class BlackMarketPanel {
   }
 
   private flash(msg: string, color: string) {
-    this.status.setText(msg).setColor(color).setAlpha(1);
+    this.status.setColor(color).setAlpha(1);
+    setFittedText(this.status, msg, this.w - uiDim(190), { minScale: 0.7 });
     this.scene.tweens.killTweensOf(this.status);
     this.scene.tweens.add({ targets: this.status, alpha: 0.6, duration: 1600 });
   }
@@ -163,7 +165,7 @@ export default class BlackMarketPanel {
     g.clear();
     drawPanelFrame(g, this.x, this.y, this.w, this.h);
     const metro = this.hooks.getMetro();
-    this.header.setText(`◈ THE BLACK MARKET          BALANCE:  ◈ ${fmtMetro(metro)} $METRO`);
+    setFittedText(this.header, `◈ THE BLACK MARKET          BALANCE:  ◈ ${fmtMetro(metro)} $METRO`, this.w - uiDim(36), { minScale: 0.72 });
 
     for (let r = 0; r < this.visible; r++) {
       const e = this.entries[this.offset + r];
@@ -173,15 +175,16 @@ export default class BlackMarketPanel {
       const sub = this.subs[r];
       if (!e) {
         icon.setVisible(false);
-        title.setText("");
-        sub.setText("");
+        setFittedText(title, "", this.w - uiDim(92));
+        setFittedText(sub, "", this.w - uiDim(92));
         continue;
       }
       if (e.kind === "header") {
         icon.setVisible(false);
         g.fillStyle(0x14102a, 0.9).fillRect(this.x + uiDim(12), ry + uiDim(2), this.w - uiDim(24), this.rowH - uiDim(4));
-        title.setText(`— ${e.label} —`).setColor("#00e5ff");
-        sub.setText("");
+        title.setColor("#00e5ff");
+        setFittedText(title, `— ${e.label} —`, this.w - uiDim(92));
+        setFittedText(sub, "", this.w - uiDim(92));
         continue;
       }
       g.lineStyle(uiDim(1), 0x2a2440, 0.6).lineBetween(
@@ -194,14 +197,18 @@ export default class BlackMarketPanel {
         const w = e.w;
         const afford = metro >= w.metro;
         icon.setVisible(true).setTexture(iconKey(w.klass)).setTint(0xffffff).setAlpha(afford ? 1 : 0.4);
-        title.setText(`${w.name}   ·   ${w.klass}`).setColor(afford ? TIER_HEX[w.tier] : "#5a6172");
-        sub.setText(`${w.desc}   ⚔ ${w.primary.damage}            ◈ ${fmtMetro(w.metro)}`).setColor("#7a8295");
+        title.setColor(afford ? TIER_HEX[w.tier] : "#5a6172");
+        sub.setColor("#7a8295");
+        setFittedText(title, `${w.name}   ·   ${w.klass}`, this.w - uiDim(92), { minScale: 0.72 });
+        setFittedText(sub, `${w.desc}   ⚔ ${w.primary.damage}            ◈ ${fmtMetro(w.metro)}`, this.w - uiDim(92), { minScale: 0.68 });
       } else {
         const c = e.c;
         const afford = metro >= c.metro;
         icon.setVisible(true).setTexture(iconKey(c.klass)).setTint(0xffffff).setAlpha(afford ? 1 : 0.4);
-        title.setText(`${c.name}`).setColor(afford ? c.hex : "#5a6172");
-        sub.setText(`${c.desc}            ◈ ${fmtMetro(c.metro)}`).setColor("#7a8295");
+        title.setColor(afford ? c.hex : "#5a6172");
+        sub.setColor("#7a8295");
+        setFittedText(title, `${c.name}`, this.w - uiDim(92), { minScale: 0.72 });
+        setFittedText(sub, `${c.desc}            ◈ ${fmtMetro(c.metro)}`, this.w - uiDim(92), { minScale: 0.68 });
       }
     }
   }

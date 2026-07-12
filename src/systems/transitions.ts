@@ -43,6 +43,21 @@ export function transitionTo(
   const { r, g, b } = accentRgb(accent);
   const cam = scene.cameras.main;
   const neon = neonOf(scene);
+  let handedOff = false;
+
+  const handOff = () => {
+    if (handedOff) return;
+    handedOff = true;
+    try {
+      opts.onMid?.();
+    } catch (err) {
+      console.error("[transition] midpoint hook failed", err);
+    }
+    globalThis.setTimeout(() => {
+      if (target === scene.scene.key) scene.scene.restart(data);
+      else scene.scene.start(target, data);
+    }, 0);
+  };
 
   if (style === "glitch" || style === "deploy") {
     if (neon) {
@@ -50,15 +65,20 @@ export function transitionTo(
     }
   }
 
-  cam.fadeOut(duration, r, g, b);
-  cam.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
-    opts.onMid?.();
-    scene.scene.start(target, data);
-  });
+  cam.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, handOff);
+  // Arena/venue exits can happen during other camera effects; keep the fade forced
+  // and add a watchdog so a dropped completion event cannot strand a black frame.
+  cam.fade(duration, r, g, b, true);
+  scene.time.delayedCall(duration + 180, handOff);
 }
 
 /** Soft entrance used in scene create(). */
 export function fadeInScene(scene: Phaser.Scene, accent = 0x04020a, duration = 360): void {
   const { r, g, b } = accentRgb(accent);
-  scene.cameras.main.fadeIn(duration, r, g, b);
+  const cam = scene.cameras.main;
+  cam.fadeFrom(duration, r, g, b, true);
+  globalThis.setTimeout(() => {
+    const fade = cam.fadeEffect;
+    if (fade.isRunning && !fade.direction) fade.reset();
+  }, duration + 240);
 }
