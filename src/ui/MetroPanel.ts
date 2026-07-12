@@ -263,7 +263,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
         phasePill.classList.add("warn");
         phasePill.textContent = "POOL EMPTY";
         phaseEl.textContent =
-          "Pool EMPTY — cash-outs closed until someone deposits $METRO on Robinhood Chain. Earn ₵ now; withdraw when the pool fills. Not a faucet.";
+          "Insufficient $METRO in the treasury — cash-outs paused. Come back and try later: it refills as runners deposit on Robinhood Chain. Earn ₵ meanwhile. Not a faucet.";
       } else if (p.settlement === "sim") {
         phasePill.textContent = "SIM";
         phaseEl.textContent = "REHEARSAL (sim) — not real chain value. OK for local smoke only.";
@@ -464,7 +464,8 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
     if (!wallet) return status("connect MetaMask");
     if (!(credits > 0)) return status("enter a credit amount");
     if (pool?.dangerousSim) return status("bridge locked (sim+mint)");
-    if (pool && pool.poolMetro <= 0) return status("pool empty — deposit $METRO first");
+    if (pool && pool.poolMetro <= 0)
+      return status("✗ insufficient $METRO in the treasury — come back and try again later (it refills as runners deposit)");
     status("requesting cash-out…");
     try {
       const auth = await walletAuth(wallet);

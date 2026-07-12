@@ -246,8 +246,8 @@ export async function withdraw(
       ok: false,
       reason:
         pool <= 0
-          ? "cash-out pool is empty — it is player-funded and fills as runners deposit $METRO"
-          : `cash-out pool only holds ${pool} $METRO right now — try a smaller amount`,
+          ? "insufficient $METRO in the treasury — come back and try again later (it refills as runners deposit)"
+          : `insufficient $METRO in the treasury for that amount (${pool} $METRO available) — try a smaller amount or come back later`,
       poolMetro: pool,
     };
   }

@@ -2360,7 +2360,7 @@ async function metro() {
 
   const checks = {
     poolStartsEmpty: p0.ok && p0.poolMetro === 0 && p0.phase === "bootstrap",
-    emptyPoolRejected: wEmpty.ok === false && /pool/.test(wEmpty.reason || ""),
+    emptyPoolRejected: wEmpty.ok === false && /treasury|pool/i.test(wEmpty.reason || ""),
     emptyPoolRefunded: aAfterEmpty.credits === start,
     depositCredited: d.ok && d.credits === 2000,
     poolFilledByDeposit: p1.ok && p1.poolMetro === 20 && p1.phase === "open",
