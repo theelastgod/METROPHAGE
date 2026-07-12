@@ -90,12 +90,14 @@ export function stepMove(
 }
 
 // ── Combat constants (server-authoritative; client renders + sends fire intent) ──
-export const PLAYER_HP = 100;
-export const COP_HP = 75;
-export const PLAYER_DMG = 25;
-export const ENEMY_DMG = 10;
+// 2026-07-11 difficulty pass: player up (hp 100→140, dmg 25→32), patrols down
+// (hp 75→60, dmg 10→7, slower fire) — deaths should be mistakes, not attrition.
+export const PLAYER_HP = 140;
+export const COP_HP = 60;
+export const PLAYER_DMG = 32;
+export const ENEMY_DMG = 7;
 export const PLAYER_FIRE_MS = 170; // min gap between player shots
-export const COP_FIRE_MS = 1100;
+export const COP_FIRE_MS = 1400;
 export const PROJ_SPEED = 540; // player projectile px/s
 export const ENEMY_PROJ_SPEED = 300;
 export const PROJ_TTL_MS = 900;
@@ -110,7 +112,7 @@ export const RESPAWN_MS = 2600;
 export const XP_PER_KILL = 20; // early levels should feel — first-hour progression
 export const levelForXp = (xp: number) => 1 + Math.floor(xp / 100);
 export const xpIntoLevel = (xp: number) => xp % 100; // 0..99 toward the next level
-export const CREDITS_PER_KILL = 18; // +50% over the original 12 — early grind felt slow
+export const CREDITS_PER_KILL = 22; // kills pay visibly (12→18→22) — progress should feel earned, not ground
 export const LOOT_DROP_CHANCE = 0.55; // chance a cop drops a pickup
 export const PICKUP_RADIUS = 18; // walk within this to collect
 export const PICKUP_TTL_MS = 15000;

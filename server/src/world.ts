@@ -459,21 +459,25 @@ interface EnemyArch {
   projSpeed: number;
   loot: { chance: number; boost: number }; // drop chance + rarity boost — the loot table
 }
+// 2026-07-11 difficulty pass: the game skewed punishing — trash melts faster
+// (hp ↓ ~20%) and everything hits softer (dmg ↓ ~30%), while elites keep MOST
+// of their hp so set-piece fights still feel earned. Loot untouched; bosses
+// inherit the softer dmg via BOSS_DMG_MULT so the whole curve shifts together.
 const ENEMY_ARCHES: EnemyArch[] = [
-  // 0 PATROL — baseline (imported constants, identical to the pre-archetype behavior)
+  // 0 PATROL — baseline (imported constants — see src/net/sim.ts for the tuned values)
   { hp: COP_HP, speed: ENEMY_SPEED, fireRange: ENEMY_FIRE_RANGE, fireMs: COP_FIRE_MS, dmg: ENEMY_DMG, projSpeed: ENEMY_PROJ_SPEED, loot: { chance: 0.5, boost: 0 } },
   // 1 WASP — fragile, fast, short-range, rapid weak shots; little loot
-  { hp: 30, speed: 168, fireRange: 180, fireMs: 620, dmg: 5, projSpeed: 360, loot: { chance: 0.35, boost: 0 } },
+  { hp: 24, speed: 168, fireRange: 180, fireMs: 680, dmg: 3, projSpeed: 360, loot: { chance: 0.35, boost: 0 } },
   // 2 LANCER — sturdy, slow, long-range, heavy aimed shots; decent loot
-  { hp: 60, speed: 88, fireRange: 430, fireMs: 1850, dmg: 24, projSpeed: 520, loot: { chance: 0.55, boost: 0.35 } },
+  { hp: 50, speed: 88, fireRange: 430, fireMs: 2000, dmg: 16, projSpeed: 520, loot: { chance: 0.55, boost: 0.35 } },
   // 3 HOUND — fast rusher, gets point-blank then hammers
-  { hp: 80, speed: 200, fireRange: 95, fireMs: 1000, dmg: 16, projSpeed: 300, loot: { chance: 0.5, boost: 0.2 } },
+  { hp: 64, speed: 200, fireRange: 95, fireMs: 1100, dmg: 11, projSpeed: 300, loot: { chance: 0.5, boost: 0.2 } },
   // 4 ENFORCER — heavy riot tank: slow, very durable, heavy shots; reliably good loot
-  { hp: 200, speed: 72, fireRange: 260, fireMs: 1300, dmg: 26, projSpeed: 320, loot: { chance: 0.85, boost: 1.2 } },
+  { hp: 170, speed: 72, fireRange: 260, fireMs: 1400, dmg: 18, projSpeed: 320, loot: { chance: 0.85, boost: 1.2 } },
   // 5 SNIPER — extreme range, slow heavy aimed shots, fragile
-  { hp: 55, speed: 70, fireRange: 540, fireMs: 2400, dmg: 40, projSpeed: 560, loot: { chance: 0.7, boost: 1.0 } },
+  { hp: 46, speed: 70, fireRange: 540, fireMs: 2600, dmg: 28, projSpeed: 560, loot: { chance: 0.7, boost: 1.0 } },
   // 6 WRAITH — fast elite skirmisher: rushes + harries; the best grunt loot
-  { hp: 130, speed: 220, fireRange: 150, fireMs: 700, dmg: 14, projSpeed: 360, loot: { chance: 0.8, boost: 1.6 } },
+  { hp: 110, speed: 220, fireRange: 150, fireMs: 760, dmg: 10, projSpeed: 360, loot: { chance: 0.8, boost: 1.6 } },
 ];
 
 /** World bosses: tough, named HSS commanders (real surveillance corps). One per zone,
