@@ -1484,7 +1484,11 @@ export default class OnlineScene extends Phaser.Scene {
             { key: "map", label: "Map", sub: mobile ? "tap" : "M", color: 0x39ff88, onClick: () => this.mapPanel?.toggle(this.net.discovered, this.net.unlocked, this.zone) },
             { key: "quests", label: "Quests", sub: mobile ? "tap" : "J", color: 0xb06bff, onClick: () => this.refreshQuestLog(true) },
             ...(mobile
-              ? [{ key: "chat", label: "Chat", sub: "tap", color: 0x9aa3b2, onClick: () => this.openChat() }]
+              ? [
+                  { key: "chat", label: "Chat", sub: "tap", color: 0x9aa3b2, onClick: () => this.openChat() },
+                  // Touch has no 'O' key — Settings needs an on-screen entry point.
+                  { key: "opts", label: "Opts", sub: "tap", color: 0x8dfff0, onClick: () => this.options?.toggle() },
+                ]
               : []),
           ]
         : [
@@ -1494,7 +1498,11 @@ export default class OnlineScene extends Phaser.Scene {
             { key: "market", label: "Market", sub: mobile ? "tap" : "K", color: 0xff2bd6, onClick: () => this.market?.toggle(this.net.marketListings, this.net.inventory, this.net.id, this.net.credits, this.net.metro) },
             { key: "quests", label: "Quests", sub: mobile ? "tap" : "J", color: 0xb06bff, onClick: () => this.refreshQuestLog(true) },
             ...(mobile
-              ? [{ key: "chat", label: "Chat", sub: "tap", color: 0x9aa3b2, onClick: () => this.openChat() }]
+              ? [
+                  { key: "chat", label: "Chat", sub: "tap", color: 0x9aa3b2, onClick: () => this.openChat() },
+                  // Touch has no 'O' key — Settings needs an on-screen entry point.
+                  { key: "opts", label: "Opts", sub: "tap", color: 0x8dfff0, onClick: () => this.options?.toggle() },
+                ]
               : []),
           ],
     );

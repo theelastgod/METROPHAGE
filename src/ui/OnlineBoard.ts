@@ -1,7 +1,7 @@
 import Phaser from "phaser";
 import { COLORS } from "../config";
 import { ACHIEVEMENTS, BOARD_STATS, STAT_LABELS, type StatKey } from "../game/achievements";
-import { dimBackdrop, modalRect, uiDim, uiFont } from "./uiLayout";
+import { closeHint, dimBackdrop, modalRect, uiDim, uiFont } from "./uiLayout";
 
 interface Row {
   player: string;
@@ -73,7 +73,7 @@ export default class OnlineBoard {
     const tabH = uiDim(22);
     const rankRowH = uiDim(28);
 
-    add(dimBackdrop(scene, D, 0.66));
+    add(dimBackdrop(scene, D, 0.66, () => this.close()));
     const g = add(scene.add.graphics().setScrollFactor(0).setDepth(D + 1));
     g.fillStyle(0x0a0818, 0.97).fillRect(x, y, w, h);
     g.lineStyle(uiDim(2), COLORS.neonCyan, 0.85).strokeRect(x, y, w, h);
@@ -92,7 +92,7 @@ export default class OnlineBoard {
           .setDepth(D + 3),
       );
     tx("◈ DOSSIER — ACHIEVEMENTS + LEADERBOARDS", x + uiDim(22), y + uiDim(16), 17, "#00e5ff", true);
-    tx("L / ESC close", x + w - uiDim(20), y + uiDim(18), 12, "#9aa3b2", false, 1);
+    tx(closeHint("L / ESC close"), x + w - uiDim(20), y + uiDim(18), 12, "#9aa3b2", false, 1);
 
     const colMid = x + w * 0.5;
     g.lineStyle(uiDim(1), 0x2a2440, 0.9).lineBetween(colMid, y + uiDim(48), colMid, y + h - uiDim(18));

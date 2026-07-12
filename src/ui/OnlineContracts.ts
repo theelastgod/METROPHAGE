@@ -1,7 +1,7 @@
 import Phaser from "phaser";
 import { COLORS } from "../config";
 import { repProgress } from "../game/dailies";
-import { dimBackdrop, modalRect, uiDim, uiFont } from "./uiLayout";
+import { closeHint, dimBackdrop, modalRect, uiDim, uiFont } from "./uiLayout";
 
 interface DailyView {
   id: string;
@@ -62,7 +62,7 @@ export default class OnlineContracts {
     const bountyH = uiDim(80);
     const bountyGap = uiDim(4);
 
-    add(dimBackdrop(scene, D, 0.64));
+    add(dimBackdrop(scene, D, 0.64, () => this.close()));
     const g = add(scene.add.graphics().setScrollFactor(0).setDepth(D + 1));
     g.fillStyle(0x0a0818, 0.97).fillRect(x, y, w, h);
     g.lineStyle(uiDim(2), COLORS.neonCyan, 0.85).strokeRect(x, y, w, h);
@@ -82,7 +82,7 @@ export default class OnlineContracts {
       );
 
     tx("◎ DAILY CONTRACTS", x + uiDim(22), y + uiDim(16), 17, "#00e5ff", true);
-    tx("J / ESC close · resets daily", x + w - uiDim(20), y + uiDim(18), 12, "#9aa3b2", false, 1);
+    tx(`${closeHint("J / ESC close")} · resets daily`, x + w - uiDim(20), y + uiDim(18), 12, "#9aa3b2", false, 1);
 
     const rp = repProgress(this.rep);
     tx(`REPUTATION — ${rp.name}  (tier ${rp.tier})`, x + uiDim(22), y + uiDim(50), 13, "#f7ff3c", true);

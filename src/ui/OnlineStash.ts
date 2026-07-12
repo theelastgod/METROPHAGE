@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { Item, RARITIES } from "../game/items";
-import { dimBackdrop, modalRect, uiDim, uiFont } from "./uiLayout";
+import { closeHint, dimBackdrop, modalRect, uiDim, uiFont } from "./uiLayout";
+import { fitTextToWidth } from "./typography";
 
 /** Both sides are capped server-side; mirrored here for the header counts. */
 const CAP = 24;
@@ -63,13 +64,13 @@ export default class OnlineStash {
     const { x, y, w, h } = modalRect(820, 480);
     const rowH = uiDim(21);
 
-    add(dimBackdrop(scene, D, 0.66));
+    add(dimBackdrop(scene, D, 0.66, () => this.close()));
     const g = add(scene.add.graphics().setScrollFactor(0).setDepth(D + 1));
     g.fillStyle(0x0a0818, 0.97).fillRect(x, y, w, h);
     g.lineStyle(uiDim(2), 0xffb13c, 0.85).strokeRect(x, y, w, h);
 
-    const tx = (s: string, fx: number, fy: number, size: number, color: string, bold = false, origin = 0) =>
-      add(
+    const tx = (s: string, fx: number, fy: number, size: number, color: string, bold = false, origin = 0, maxWidth?: number) => {
+      const t = add(
         scene.add
           .text(fx, fy, s, {
             fontFamily: "Courier New, monospace",
@@ -81,10 +82,13 @@ export default class OnlineStash {
           .setScrollFactor(0)
           .setDepth(D + 3),
       );
+      if (maxWidth !== undefined) fitTextToWidth(t, maxWidth);
+      return t;
+    };
 
     tx("▣ LOCKBOX — PERSONAL STASH", x + uiDim(22), y + uiDim(16), 17, "#ffb13c", true);
-    tx("ESC close", x + w - uiDim(20), y + uiDim(18), 12, "#9aa3b2", false, 1);
-    tx("safe from death · click a stashed item to take it · click a bag item to stash it", x + uiDim(22), y + uiDim(42), 11, "#9aa3b2");
+    tx(closeHint("ESC close"), x + w - uiDim(20), y + uiDim(18), 12, "#9aa3b2", false, 1);
+    tx("safe from death · click a stashed item to take it · click a bag item to stash it", x + uiDim(22), y + uiDim(42), 11, "#9aa3b2", false, 0, w - uiDim(44));
 
     const colMid = x + w * 0.5;
     g.lineStyle(uiDim(1), 0x2a2440, 0.9).lineBetween(colMid, y + uiDim(66), colMid, y + h - uiDim(18));
@@ -132,7 +136,7 @@ export default class OnlineStash {
         const col = hexStr(RARITIES[it.rarity].color);
         g.fillStyle(0x12102a, 0.9).fillRect(cx, ry, cw, rowH - uiDim(3));
         g.lineStyle(uiDim(1), RARITIES[it.rarity].color, 0.55).strokeRect(cx, ry, cw, rowH - uiDim(3));
-        tx(`${it.name}${(it.ilvl ?? 0) > 0 ? ` +${it.ilvl}` : ""}`, cx + uiDim(8), ry + uiDim(3), 10, col, true);
+        tx(`${it.name}${(it.ilvl ?? 0) > 0 ? ` +${it.ilvl}` : ""}`, cx + uiDim(8), ry + uiDim(3), 10, col, true, 0, cw - uiDim(74));
         tx(it.slot.toUpperCase(), cx + cw - uiDim(8), ry + uiDim(4), 8, "#6b7184", false, 1);
         const z = add(
           scene.add.zone(cx, ry, cw, rowH - uiDim(3)).setOrigin(0).setScrollFactor(0).setInteractive({ useHandCursor: true }).setDepth(D + 4),

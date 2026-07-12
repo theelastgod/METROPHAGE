@@ -2,8 +2,8 @@ import Phaser from "phaser";
 import { getQuest } from "../game/quests";
 import { FRAGMENTS } from "../game/fragments";
 import { drawPanelFrame } from "./panelChrome";
-import { dimBackdrop, modalRect, uiDim } from "./uiLayout";
-import { bodyFont, displayFont } from "./typography";
+import { closeHint, dimBackdrop, modalRect, uiDim } from "./uiLayout";
+import { bodyFont, displayFont, fitTextToWidth } from "./typography";
 import { addPanelGlow, animatePanelIn, drawScanlines, STUDIO } from "./studioChrome";
 
 interface ContractRow {
@@ -82,7 +82,7 @@ export default class RsQuestLog {
     };
     const D = 1760;
     const { x, y, w, h } = modalRect(520, 460);
-    add(dimBackdrop(scene, D, 0.66));
+    add(dimBackdrop(scene, D, 0.66, () => this.close()));
     const glow = addPanelGlow(scene, x, y, w, h, 0xb06bff, 0.09);
     glow.setScrollFactor(0).setDepth(D);
     const g = add(scene.add.graphics().setScrollFactor(0).setDepth(D + 1));
@@ -97,7 +97,7 @@ export default class RsQuestLog {
     );
     add(
       scene.add
-        .text(x + w - uiDim(22), y + uiDim(16), "J / ESC close", bodyFont(10, { color: STUDIO.dim }))
+        .text(x + w - uiDim(22), y + uiDim(16), closeHint("J / ESC close"), bodyFont(10, { color: STUDIO.dim }))
         .setOrigin(1, 0)
         .setScrollFactor(0)
         .setDepth(D + 2),
@@ -114,12 +114,13 @@ export default class RsQuestLog {
     ry += uiDim(22);
 
     if (q) {
-      add(
+      const questName = add(
         scene.add
           .text(x + uiDim(22), ry, q.name, displayFont(14, { color: "#eafdff", fontStyle: "bold" }))
           .setScrollFactor(0)
           .setDepth(D + 2),
       );
+      fitTextToWidth(questName, w - uiDim(44), { minScale: 0.72 });
       ry += uiDim(22);
       q.stages.forEach((st, i) => {
         const done = i < this.state.campaignStage;
@@ -205,12 +206,13 @@ export default class RsQuestLog {
           .setDepth(D + 2),
       );
       ry += uiDim(18);
-      add(
+      const bountyText = add(
         scene.add
           .text(x + uiDim(28), ry, `► ${b.name}  (${Math.min(b.progress, b.count)}/${b.count})`, bodyFont(11, { color: STUDIO.metro }))
           .setScrollFactor(0)
           .setDepth(D + 2),
       );
+      fitTextToWidth(bountyText, w - uiDim(56), { minScale: 0.72 });
       ry += uiDim(18);
     }
 

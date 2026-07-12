@@ -4,8 +4,8 @@ import { Item, RARITIES, SLOT_NAMES, itemStatLines } from "../game/items";
 import { suggestedPrice, listingFee, suggestedMetroPrice, metroListingFee } from "../game/market";
 import { fmtMetro } from "../economy/metro";
 import { drawPanelFrame } from "./panelChrome";
-import { dimBackdrop, modalRect, uiDim } from "./uiLayout";
-import { bodyFont, displayFont } from "./typography";
+import { closeHint, dimBackdrop, modalRect, uiDim } from "./uiLayout";
+import { bodyFont, displayFont, fitTextToWidth } from "./typography";
 import {
   STUDIO,
   addPanelGlow,
@@ -100,20 +100,23 @@ export default class OnlineMarket {
     const stallRowH = uiDim(38);
     const btnH = uiDim(26);
 
-    add(dimBackdrop(scene, D, 0.68).setAlpha(0));
+    add(dimBackdrop(scene, D, 0.68, () => this.close()).setAlpha(0));
     add(addPanelGlow(scene, x, y, w, h, COLORS.neonMagenta, 0.1).setScrollFactor(0).setDepth(D + 1).setAlpha(0));
     const g = add(scene.add.graphics().setScrollFactor(0).setDepth(D + 2).setAlpha(0));
     drawPanelFrame(g, x, y, w, h);
     drawScanlines(g, x + uiDim(12), y + uiDim(60), w - uiDim(24), h - uiDim(72));
 
-    const tx = (s: string, fx: number, fy: number, size: number, color: string, bold = false, origin = 0) =>
-      add(
+    const tx = (s: string, fx: number, fy: number, size: number, color: string, bold = false, origin = 0, maxWidth?: number) => {
+      const t = add(
         scene.add
           .text(fx, fy, s, bold ? displayFont(size, { color, fontStyle: "bold" }) : bodyFont(size, { color }))
           .setOrigin(origin, 0)
           .setScrollFactor(0)
           .setDepth(D + 4),
       );
+      if (maxWidth !== undefined) fitTextToWidth(t, maxWidth);
+      return t;
+    };
 
     const itemLine = (it: Item) => `${RARITIES[it.rarity].name} · ${SLOT_NAMES[it.slot]}${(it.ilvl ?? 0) > 0 ? ` +${it.ilvl}` : ""}`;
     const priceLabel = (l: Listing) => (l.currency === "metro" ? `◈${fmtMetro(l.price)}` : `₵${l.price}`);
@@ -126,7 +129,7 @@ export default class OnlineMarket {
       y,
       w,
       "▦ WORLD MARKET",
-      { subtitle: "cross-zone player exchange · premium $METRO listings", accent: COLORS.neonYellow, rightLabel: "K / ESC close" },
+      { subtitle: "cross-zone player exchange · premium $METRO listings", accent: COLORS.neonYellow, rightLabel: closeHint("K / ESC close") },
       add,
     );
 
@@ -135,13 +138,13 @@ export default class OnlineMarket {
     const chipW = uiDim(168);
     g.fillStyle(0x0a1020, 0.9).fillRoundedRect(x + uiDim(22), chipY, chipW, uiDim(30), 5);
     g.lineStyle(1, COLORS.neonYellow, 0.7).strokeRoundedRect(x + uiDim(22), chipY, chipW, uiDim(30), 5);
-    tx(`₵ ${this.credits.toLocaleString()}`, x + uiDim(22) + chipW / 2, chipY + uiDim(8), 12, STUDIO.credits, true, 0.5);
+    tx(`₵ ${this.credits.toLocaleString()}`, x + uiDim(22) + chipW / 2, chipY + uiDim(8), 12, STUDIO.credits, true, 0.5, chipW - uiDim(12));
 
     g.fillStyle(0x120a24, 0.9).fillRoundedRect(x + uiDim(22) + chipW + uiDim(10), chipY, chipW, uiDim(30), 5);
     g.lineStyle(1, COLORS.neonMagenta, 0.75).strokeRoundedRect(x + uiDim(22) + chipW + uiDim(10), chipY, chipW, uiDim(30), 5);
-    tx(`◈ ${fmtMetro(this.metro)} $METRO`, x + uiDim(22) + chipW + uiDim(10) + chipW / 2, chipY + uiDim(8), 12, STUDIO.metro, true, 0.5);
+    tx(`◈ ${fmtMetro(this.metro)} $METRO`, x + uiDim(22) + chipW + uiDim(10) + chipW / 2, chipY + uiDim(8), 12, STUDIO.metro, true, 0.5, chipW - uiDim(12));
 
-    tx("/list <slot> <price> [metro]", x + w - uiDim(22), chipY + uiDim(8), 10, STUDIO.dim, false, 1);
+    tx("/list <slot> <price> [metro]", x + w - uiDim(22), chipY + uiDim(8), 10, STUDIO.dim, false, 1, w - uiDim(392));
 
     const tabY = headerEnd + uiDim(36);
     const tabW = uiDim(108);
@@ -179,16 +182,20 @@ export default class OnlineMarket {
         ly + uiDim(12),
         11,
         STUDIO.dim,
+        false,
+        0,
+        lw,
       );
     }
     for (const l of others.slice(0, 8)) {
       const r = RARITIES[l.item.rarity];
       const isMetro = l.currency === "metro";
       drawStudioListCard(g, x + uiDim(22), ly, lw, listCardH, r.color, isMetro);
-      tx(l.item.name, x + uiDim(32), ly + uiDim(8), 12, r.hex, true);
-      tx(itemLine(l.item), x + uiDim(32), ly + uiDim(24), 9, STUDIO.muted);
-      tx(itemStatLines(l.item).filter((s) => !s.startsWith("◈")).join("  ") || "—", x + uiDim(32), ly + uiDim(38), 9, STUDIO.ink);
-      tx(`by ${l.sellerName}`, x + uiDim(32), ly + uiDim(49), 8, STUDIO.dim);
+      const listingTextW = lw - uiDim(134);
+      tx(l.item.name, x + uiDim(32), ly + uiDim(8), 12, r.hex, true, 0, listingTextW);
+      tx(itemLine(l.item), x + uiDim(32), ly + uiDim(24), 9, STUDIO.muted, false, 0, listingTextW);
+      tx(itemStatLines(l.item).filter((s) => !s.startsWith("◈")).join("  ") || "—", x + uiDim(32), ly + uiDim(38), 9, STUDIO.ink, false, 0, listingTextW);
+      tx(`by ${l.sellerName}`, x + uiDim(32), ly + uiDim(49), 8, STUDIO.dim, false, 0, listingTextW);
       const afford = isMetro ? this.metro >= l.price : this.credits >= l.price;
       const buyLabel = isMetro ? `BUY ◈${fmtMetro(l.price)}` : `BUY ₵${l.price}`;
       drawStudioBtn(g, scene, {
@@ -214,8 +221,8 @@ export default class OnlineMarket {
       const r = RARITIES[l.item.rarity];
       const isMetro = l.currency === "metro";
       drawStudioListCard(g, rx, my, rw, stallRowH, r.color, isMetro);
-      tx(l.item.name, rx + uiDim(12), my + uiDim(6), 11, r.hex, true);
-      tx(priceLabel(l), rx + uiDim(12), my + uiDim(21), 10, isMetro ? STUDIO.metro : STUDIO.credits);
+      tx(l.item.name, rx + uiDim(12), my + uiDim(6), 11, r.hex, true, 0, rw - uiDim(112));
+      tx(priceLabel(l), rx + uiDim(12), my + uiDim(21), 10, isMetro ? STUDIO.metro : STUDIO.credits, false, 0, rw - uiDim(112));
       drawStudioBtn(g, scene, {
         x: rx + rw - uiDim(92),
         y: my + uiDim(6),
@@ -242,8 +249,8 @@ export default class OnlineMarket {
       const mFee = metroListingFee(mPrice);
       const cardH = stallRowH + uiDim(4);
       drawStudioListCard(g, rx, sy, rw, cardH, r.color);
-      tx(`${it.name}${(it.ilvl ?? 0) > 0 ? ` +${it.ilvl}` : ""}`, rx + uiDim(12), sy + uiDim(6), 11, r.hex, true);
-      tx(itemLine(it), rx + uiDim(12), sy + uiDim(21), 9, STUDIO.muted);
+      tx(`${it.name}${(it.ilvl ?? 0) > 0 ? ` +${it.ilvl}` : ""}`, rx + uiDim(12), sy + uiDim(6), 11, r.hex, true, 0, rw - uiDim(24));
+      tx(itemLine(it), rx + uiDim(12), sy + uiDim(21), 9, STUDIO.muted, false, 0, rw - uiDim(24));
       drawStudioBtn(g, scene, {
         x: rx + rw - uiDim(310),
         y: sy + uiDim(30),
@@ -269,7 +276,7 @@ export default class OnlineMarket {
     }
 
     g.fillStyle(0x0e1830, 0.45).fillRect(x + uiDim(18), y + h - uiDim(30), w - uiDim(36), uiDim(20));
-    tx("premium $METRO listings cross every combat zone · credits stay local", x + w / 2, y + h - uiDim(24), 9, STUDIO.dim, false, 0.5);
+    tx("premium $METRO listings cross every combat zone · credits stay local", x + w / 2, y + h - uiDim(24), 9, STUDIO.dim, false, 0.5, w - uiDim(48));
 
     const animTargets = this.objs.filter((o) => "setAlpha" in o);
     animatePanelIn(scene, animTargets);

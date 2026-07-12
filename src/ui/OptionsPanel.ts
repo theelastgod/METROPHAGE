@@ -2,8 +2,9 @@ import Phaser from "phaser";
 import { effectiveGraphicsQuality, getSettings, updateSettings, type GraphicsQuality, type SettingsData } from "../systems/Settings";
 import { prefersMobileUx } from "../systems/Mobile";
 import { drawPanelFrame } from "./panelChrome";
-import { dimBackdrop, modalRect, panelPad, uiDim, uiFont, uiGap } from "./uiLayout";
+import { closeHint, dimBackdrop, modalRect, panelPad, uiDim, uiFont, uiGap } from "./uiLayout";
 import { COLORS } from "../config";
+import { fitTextToWidth, setFittedText } from "./typography";
 
 interface Row {
   key: keyof SettingsData;
@@ -12,6 +13,7 @@ interface Row {
   y: number;
   trackX: number;
   trackW: number;
+  valueW: number;
   valueText: Phaser.GameObjects.Text;
 }
 
@@ -55,7 +57,8 @@ export default class OptionsPanel {
       new Phaser.Geom.Rectangle(0, 0, scene.scale.width, scene.scale.height),
       Phaser.Geom.Rectangle.Contains,
     );
-    this.backdrop.on("pointerdown", () => {});
+    // Tap the dimmed area outside the card to dismiss (touch has no ESC key).
+    this.backdrop.on("pointerdown", () => this.close());
     this.g = scene.add.graphics().setScrollFactor(0).setDepth(1800);
     const D = 1801;
 
@@ -102,8 +105,9 @@ export default class OptionsPanel {
       "#9aa3b2",
       10,
       D,
+      this.w - uiDim(150),
     );
-    this.text(this.x + this.w - uiDim(100), this.y + this.h - uiDim(30), "O / ESC close", "#9aa3b2", 10, D);
+    this.text(this.x + this.w - uiDim(100), this.y + this.h - uiDim(30), closeHint("O / ESC close"), "#9aa3b2", 10, D, uiDim(90));
     this.setVisible(false);
   }
 
@@ -115,9 +119,10 @@ export default class OptionsPanel {
     depth: number,
     labelColor = "#eafdff",
   ) {
-    this.text(this.x + uiDim(20), y, label, labelColor, 12, depth);
-    const valueText = this.text(this.x + this.w - uiDim(68), y, "", "#f7ff3c", 12, depth);
-    const row: Row = { key, toggle, y, trackX: this.trackX, trackW: this.trackW, valueText };
+    this.text(this.x + uiDim(20), y, label, labelColor, 12, depth, this.trackX - this.x - uiDim(32));
+    const valueW = uiDim(48);
+    const valueText = this.text(this.x + this.w - uiDim(68), y, "", "#f7ff3c", 12, depth, valueW);
+    const row: Row = { key, toggle, y, trackX: this.trackX, trackW: this.trackW, valueW, valueText };
     this.rows.push(row);
 
     const z = this.scene.add
@@ -161,9 +166,10 @@ export default class OptionsPanel {
     depth: number,
     labelColor = "#eafdff",
   ) {
-    this.text(this.x + uiDim(20), y, label, labelColor, 12, depth);
-    const valueText = this.text(this.x + this.w - uiDim(108), y, "", "#f7ff3c", 12, depth);
-    const row: Row = { key, toggle: false, cycle, y, trackX: this.trackX, trackW: this.trackW, valueText };
+    this.text(this.x + uiDim(20), y, label, labelColor, 12, depth, this.trackX - this.x - uiDim(32));
+    const valueW = uiDim(88);
+    const valueText = this.text(this.x + this.w - uiDim(108), y, "", "#f7ff3c", 12, depth, valueW);
+    const row: Row = { key, toggle: false, cycle, y, trackX: this.trackX, trackW: this.trackW, valueW, valueText };
     this.rows.push(row);
     const z = this.scene.add
       .zone(this.trackX, y - uiDim(4), uiDim(120), this.zoneH)
@@ -214,22 +220,26 @@ export default class OptionsPanel {
                 ? "SIMPLE"
                 : "FULL"
               : cur.toUpperCase();
-        row.valueText.setText(eff).setColor("#f7ff3c");
+        row.valueText.setColor("#f7ff3c");
+        setFittedText(row.valueText, eff, row.valueW, { minScale: 0.72 });
       } else if (row.toggle) {
         const on = !!s[row.key];
-        row.valueText.setText(on ? "[ ON ]" : "[ OFF ]").setColor(on ? "#39ff88" : "#5a6172");
+        row.valueText.setColor(on ? "#39ff88" : "#5a6172");
+        setFittedText(row.valueText, on ? "[ ON ]" : "[ OFF ]", row.valueW);
       } else if (row.key === "uiScale") {
         const v = (s.uiScale - 0.85) / 0.5;
         g.fillStyle(0x140a1e, 0.95).fillRect(row.trackX, row.y + uiDim(2), row.trackW, trackH);
         g.fillStyle(0x29e7ff, 1).fillRect(row.trackX + uiDim(1), row.y + uiDim(3), (row.trackW - uiDim(2)) * v, trackH - uiDim(2));
         g.lineStyle(uiDim(1), 0x3a4a66, 0.8).strokeRect(row.trackX, row.y + uiDim(2), row.trackW, trackH);
-        row.valueText.setText(`${Math.round(s.uiScale * 100)}%`).setColor("#eafdff");
+        row.valueText.setColor("#eafdff");
+        setFittedText(row.valueText, `${Math.round(s.uiScale * 100)}%`, row.valueW);
       } else {
         const v = s[row.key] as number;
         g.fillStyle(0x140a1e, 0.95).fillRect(row.trackX, row.y + uiDim(2), row.trackW, trackH);
         g.fillStyle(0x29e7ff, 1).fillRect(row.trackX + uiDim(1), row.y + uiDim(3), (row.trackW - uiDim(2)) * v, trackH - uiDim(2));
         g.lineStyle(uiDim(1), 0x3a4a66, 0.8).strokeRect(row.trackX, row.y + uiDim(2), row.trackW, trackH);
-        row.valueText.setText(`${Math.round(v * 100)}%`).setColor("#eafdff");
+        row.valueText.setColor("#eafdff");
+        setFittedText(row.valueText, `${Math.round(v * 100)}%`, row.valueW);
       }
     }
   }
@@ -245,12 +255,13 @@ export default class OptionsPanel {
     });
   }
 
-  private text(x: number, y: number, s: string, color: string, sizePx: number, depth: number) {
+  private text(x: number, y: number, s: string, color: string, sizePx: number, depth: number, maxWidth?: number) {
     const t = this.scene.add
       .text(x, y, s, { fontFamily: "Courier New, monospace", fontSize: uiFont(sizePx), color })
       .setScrollFactor(0)
       .setDepth(depth);
     this.statics.push(t);
+    if (maxWidth !== undefined) fitTextToWidth(t, maxWidth);
     return t;
   }
 }

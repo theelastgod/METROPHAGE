@@ -4,10 +4,11 @@ import { Item, Slot, SLOTS, RARITIES, SLOT_NAMES, itemStatLines } from "../game/
 import { getWeapon } from "../game/weapons";
 import { iconKey, ensureItemIcons } from "../assets/itemIcons";
 import { UI_FRAME_KEY, UI_GUN_KEY } from "../assets/manifest";
-import { dimBackdrop, onlineHudStack, overlayRect, uiDim, uiFont } from "./uiLayout";
+import { closeHint, dimBackdrop, onlineHudStack, overlayRect, uiDim, uiFont } from "./uiLayout";
 import ContextMenu from "./ContextMenu";
 import { getSettings } from "../systems/Settings";
 import { mobileStickSafeRegion, prefersMobileUx } from "../systems/Mobile";
+import { fitTextToWidth, setFittedText } from "./typography";
 
 const SLOT_ICON: Record<Slot, string> = {
   weapon: "WEAPON-MOD",
@@ -278,9 +279,8 @@ export default class OnlineInventory {
     const overflow = Math.max(0, this.items.length - (HOTBAR_SLOTS - 1));
     const wpn = eq.weapon;
     const wpnLabel = wpn ? (wpn.weaponId ? getWeapon(wpn.weaponId)?.klass ?? "WEAPON" : "WEAPON") : "no weapon";
-    this.barHint.setText(
-      overflow > 0 ? `I ▸ ${wpnLabel}  +${overflow} bag · right-click slots` : `I ▸ ${wpnLabel} · right-click slots`,
-    );
+    const hint = overflow > 0 ? `I ▸ ${wpnLabel}  +${overflow} bag · right-click slots` : `I ▸ ${wpnLabel} · right-click slots`;
+    setFittedText(this.barHint, hint, this.scene.scale.width - this.barHint.x - uiDim(10), { minScale: 0.72 });
   }
 
   private clearPanel() {
@@ -313,7 +313,7 @@ export default class OnlineInventory {
     const D = 1700;
     const { x, y, w, h } = overlayRect(16);
 
-    add(dimBackdrop(scene, D));
+    add(dimBackdrop(scene, D, 0.62, () => this.close()));
     const g = add(scene.add.graphics().setScrollFactor(0).setDepth(D + 1));
     g.fillStyle(0x0a0818, 0.96).fillRect(x, y, w, h);
     g.lineStyle(uiDim(2), COLORS.neonCyan, 0.85).strokeRect(x, y, w, h);
@@ -325,8 +325,8 @@ export default class OnlineInventory {
     g.lineTo(x + corner, y);
     g.strokePath();
 
-    const tx = (s: string, fx: number, fy: number, size: number, color: string, bold = false, origin = 0) =>
-      add(
+    const tx = (s: string, fx: number, fy: number, size: number, color: string, bold = false, origin = 0, maxWidth?: number) => {
+      const t = add(
         scene.add
           .text(fx, fy, s, {
             fontFamily: "Courier New, monospace",
@@ -338,6 +338,9 @@ export default class OnlineInventory {
           .setScrollFactor(0)
           .setDepth(D + 2),
       );
+      if (maxWidth !== undefined) fitTextToWidth(t, maxWidth);
+      return t;
+    };
     const icon = (it: Item | undefined, ix: number, iy: number, size: number, fallback = "CHIP", tint = 0x3a3350) => {
       if (it) {
         const ic = itemIcon(it);
@@ -374,7 +377,7 @@ export default class OnlineInventory {
     const eq = this.eqBySlot();
     const selHint = this.selectedBag >= 0 ? `moving slot ${this.selectedBag + 1} — click destination` : "click bag item to move · click gear to equip";
     tx("◧ OPERATOR LOADOUT", x + uiDim(20), y + uiDim(14), 20, "#00e5ff", true);
-    tx(`bag ${this.items.length}/${CAP}  ·  ${selHint}`, x + w - uiDim(20), y + uiDim(16), 11, "#9aa3b2", false, 1);
+    tx(`bag ${this.items.length}/${CAP}  ·  ${selHint}`, x + w - uiDim(20), y + uiDim(16), 11, "#9aa3b2", false, 1, w - uiDim(340));
 
     const charW = uiDim(220);
     const charX = x + uiDim(20);
@@ -396,8 +399,8 @@ export default class OnlineInventory {
     icon(weapon, wpnX + uiDim(36), wpnY + uiDim(52), uiDim(44), "BLADE", 0x29e7ff);
     if (weapon) {
       const wdef = weapon.weaponId ? getWeapon(weapon.weaponId) : undefined;
-      tx(weapon.name, wpnX + uiDim(68), wpnY + uiDim(34), 13, RARITIES[weapon.rarity].hex, true);
-      tx(wdef ? `${wdef.klass} · ${wdef.primary.kind}` : SLOT_NAMES.weapon, wpnX + uiDim(68), wpnY + uiDim(54), 10, "#9aa3b2");
+      tx(weapon.name, wpnX + uiDim(68), wpnY + uiDim(34), 13, RARITIES[weapon.rarity].hex, true, 0, wpnW - uiDim(78));
+      tx(wdef ? `${wdef.klass} · ${wdef.primary.kind}` : SLOT_NAMES.weapon, wpnX + uiDim(68), wpnY + uiDim(54), 10, "#9aa3b2", false, 0, wpnW - uiDim(78));
       hit(
         wpnX,
         wpnY,
@@ -422,7 +425,7 @@ export default class OnlineInventory {
       tx(SLOT_NAMES[slot], wpnX + uiDim(10), sy + uiDim(6), 10, "#6b7184");
       if (it) {
         icon(it, wpnX + uiDim(28), sy + uiDim(34), uiDim(30));
-        tx(it.name, wpnX + uiDim(52), sy + uiDim(22), 12, RARITIES[it.rarity].hex, true);
+        tx(it.name, wpnX + uiDim(52), sy + uiDim(22), 12, RARITIES[it.rarity].hex, true, 0, wpnW - uiDim(62));
         hit(
           wpnX,
           sy,
@@ -484,7 +487,7 @@ export default class OnlineInventory {
     }
 
     if (this.items.length === 0) {
-      tx("bag empty — salvage from the HSS or buy caches", bagX + bagW / 2, gridY + uiDim(60), 13, "#5a6172", false, 0.5);
+      tx("bag empty — salvage from the HSS or buy caches", bagX + bagW / 2, gridY + uiDim(60), 13, "#5a6172", false, 0.5, bagW - pad * 2);
     }
     pageItems.forEach((it, pi) => {
       const i = pageStart + pi; // absolute bag index — move/equip must use this, not the page-local one
@@ -496,8 +499,8 @@ export default class OnlineInventory {
       g.lineStyle(uiDim(picked ? 2.5 : 1.5), picked ? COLORS.neonMagenta : r.color, 1).strokeRect(cx, cy, cardW, cardH);
       icon(it, cx + uiDim(28), cy + uiDim(34), uiDim(38));
       tx(`#${i + 1}`, cx + uiDim(8), cy + uiDim(6), 9, picked ? "#ff79c6" : "#6b7184");
-      tx(it.name, cx + uiDim(52), cy + uiDim(10), 12, r.hex, true);
-      tx(`${r.name} · ${SLOT_NAMES[it.slot]}`, cx + uiDim(52), cy + uiDim(28), 10, "#9aa3b2");
+      tx(it.name, cx + uiDim(52), cy + uiDim(10), 12, r.hex, true, 0, cardW - uiDim(60));
+      tx(`${r.name} · ${SLOT_NAMES[it.slot]}`, cx + uiDim(52), cy + uiDim(28), 10, "#9aa3b2", false, 0, cardW - uiDim(60));
       add(
         scene.add
           .text(cx + uiDim(8), cy + cardH - uiDim(28), itemStatLines(it).slice(0, 2).join("  ") || "—", {
@@ -523,9 +526,9 @@ export default class OnlineInventory {
       hit(cx + cardW - uiDim(34), cy + uiDim(4), uiDim(30), uiDim(22), () => this.bagClick(i));
     });
 
-    add(
+    const footer = add(
       scene.add
-        .text(x + w / 2, y + h - uiDim(18), "left-click equip · right-click examine/wear/drop · I/ESC close", {
+        .text(x + w / 2, y + h - uiDim(18), prefersMobileUx() ? "tap to equip · long-press to examine/wear/drop · tap ✕ to close" : "left-click equip · right-click examine/wear/drop · I/ESC close", {
           fontFamily: "Courier New, monospace",
           fontSize: uiFont(11),
           color: "#6b7184",
@@ -534,6 +537,7 @@ export default class OnlineInventory {
         .setScrollFactor(0)
         .setDepth(D + 2),
     );
+    fitTextToWidth(footer, w - uiDim(40));
   }
 
   destroy() {

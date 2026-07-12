@@ -4,7 +4,8 @@ import { Item, Slot, RARITIES, SLOT_NAMES, itemStatLines } from "../game/items";
 import { getWeapon } from "../game/weapons";
 import { iconKey, ensureItemIcons } from "../assets/itemIcons";
 import { upgradeCost, reforgeCost, salvageYield, fuseCost, canUpgrade, canFuse, UPGRADE_MAX } from "../game/crafting";
-import { dimBackdrop, modalRect, uiDim, uiFont } from "./uiLayout";
+import { closeHint, dimBackdrop, modalRect, uiDim, uiFont } from "./uiLayout";
+import { fitTextToWidth, setFittedText } from "./typography";
 
 const SLOT_ICON: Record<Slot, string> = { weapon: "WEAPON-MOD", implant: "IMPLANT", armor: "ARMOR", chip: "CHIP" };
 function itemIcon(it: Item): { key: string; tint: number } {
@@ -43,7 +44,7 @@ export default class OnlineForge {
   setWallet(credits: number, cores: number) {
     this.credits = credits;
     this.cores = cores;
-    this.hdr?.setText(`₵ ${credits}    ◈ ${cores}`);
+    if (this.hdr) setFittedText(this.hdr, `₵ ${credits}    ◈ ${cores}`, uiDim(260));
   }
 
   toggle() {
@@ -76,13 +77,13 @@ export default class OnlineForge {
     const shown = rows.slice(0, 9);
     const { x, y, w, h } = modalRect(680, 100 + shown.length * 62);
 
-    add(dimBackdrop(scene, D));
+    add(dimBackdrop(scene, D, 0.62, () => this.close()));
     const g = add(scene.add.graphics().setScrollFactor(0).setDepth(D + 1));
     g.fillStyle(0x0a0818, 0.97).fillRect(x, y, w, h);
     g.lineStyle(uiDim(2), COLORS.neonMagenta, 0.85).strokeRect(x, y, w, h);
 
-    const tx = (s: string, fx: number, fy: number, size: number, color: string, bold = false, origin = 0) =>
-      add(
+    const tx = (s: string, fx: number, fy: number, size: number, color: string, bold = false, origin = 0, maxWidth?: number) => {
+      const t = add(
         scene.add
           .text(fx, fy, s, {
             fontFamily: "Courier New, monospace",
@@ -94,11 +95,14 @@ export default class OnlineForge {
           .setScrollFactor(0)
           .setDepth(D + 3),
       );
+      if (maxWidth !== undefined) fitTextToWidth(t, maxWidth);
+      return t;
+    };
     const btnH = uiDim(24);
     const btn = (bx: number, by: number, bw: number, label: string, color: number, enabled: boolean, fn: () => void) => {
       g.fillStyle(enabled ? 0x161232 : 0x0e0c1c, 0.95).fillRect(bx, by, bw, btnH);
       g.lineStyle(uiDim(1.2), color, enabled ? 0.95 : 0.3).strokeRect(bx, by, bw, btnH);
-      tx(label, bx + bw / 2, by + uiDim(6), 11, enabled ? "#cfe8ff" : "#4a5266", false, 0.5);
+      tx(label, bx + bw / 2, by + uiDim(6), 11, enabled ? "#cfe8ff" : "#4a5266", false, 0.5, bw - uiDim(8));
       if (enabled) {
         const z = add(
           scene.add.zone(bx, by, bw, btnH).setOrigin(0).setScrollFactor(0).setInteractive({ useHandCursor: true }).setDepth(D + 4),
@@ -108,13 +112,16 @@ export default class OnlineForge {
     };
 
     tx("⚒ GEAR FORGE", x + uiDim(20), y + uiDim(14), 17, "#ff2bd6", true);
-    this.hdr = tx(`₵ ${this.credits}    ◈ ${this.cores}`, x + w - uiDim(20), y + uiDim(16), 15, "#f7ff3c", true, 1);
+    this.hdr = tx(`₵ ${this.credits}    ◈ ${this.cores}`, x + w - uiDim(20), y + uiDim(16), 15, "#f7ff3c", true, 1, w - uiDim(230));
     tx(
-      this.fuseSel ? "FUSE: pick a second item of the same rarity (✦)" : "▲ upgrade · ↻ reforge · ✂ salvage · ✦ fuse · G/ESC close",
+      this.fuseSel ? "FUSE: pick a second item of the same rarity (✦)" : `▲ upgrade · ↻ reforge · ✂ salvage · ✦ fuse · ${closeHint("G/ESC close")}`,
       x + uiDim(20),
       y + uiDim(40),
       12,
       this.fuseSel ? "#39ff88" : "#9aa3b2",
+      false,
+      0,
+      w - uiDim(40),
     );
 
     if (shown.length === 0) tx("nothing to forge — loot or buy gear first", x + w / 2, y + h / 2, 13, "#5a6172", false, 0.5);
@@ -133,9 +140,12 @@ export default class OnlineForge {
       const ic = itemIcon(it);
       add(scene.add.image(x + uiDim(42), ry + cardH / 2, ic.key).setDisplaySize(iconSize, iconSize).setTint(ic.tint).setScrollFactor(0).setDepth(D + 2));
       const lvl = it.ilvl ?? 0;
-      tx(`${it.name}${lvl ? ` +${lvl}` : ""}${eq ? "  [E]" : ""}`, x + uiDim(66), ry + uiDim(8), 13, r.hex, true);
-      tx(itemStatLines(it).filter((l) => !l.startsWith("◈")).join("  ") || "—", x + uiDim(66), ry + uiDim(26), 10, "#9aa3b2");
-      tx(`${r.name} · ${SLOT_NAMES[it.slot]}`, x + uiDim(66), ry + uiDim(40), 10, "#5a6172");
+      const leftTextX = x + uiDim(66);
+      const buttonLeftX = eq ? x + w - uiDim(18) - bw : x + w - uiDim(18) - bw * 2 - gap;
+      const rowTextW = buttonLeftX - leftTextX - uiDim(8);
+      tx(`${it.name}${lvl ? ` +${lvl}` : ""}${eq ? "  [E]" : ""}`, leftTextX, ry + uiDim(8), 13, r.hex, true, 0, rowTextW);
+      tx(itemStatLines(it).filter((l) => !l.startsWith("◈")).join("  ") || "—", leftTextX, ry + uiDim(26), 10, "#9aa3b2", false, 0, rowTextW);
+      tx(`${r.name} · ${SLOT_NAMES[it.slot]}`, leftTextX, ry + uiDim(40), 10, "#5a6172", false, 0, rowTextW);
 
       let bx = x + w - uiDim(18) - bw;
       const by = ry + uiDim(8);

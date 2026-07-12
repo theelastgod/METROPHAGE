@@ -5,7 +5,7 @@ import { BRIDGES } from "../game/bridges";
 import { dailyDistrictMod } from "../game/districtMods";
 import { getSettings } from "../systems/Settings";
 import { dimBackdrop, modalRect, uiDim, uiFont } from "./uiLayout";
-import { bodyFont } from "./typography";
+import { bodyFont, fitTextToWidth } from "./typography";
 import { addPanelGlow, animatePanelIn, drawScanlines, STUDIO } from "./studioChrome";
 import ContextMenu, { type ContextAction } from "./ContextMenu";
 
@@ -216,7 +216,7 @@ export default class OnlineMap {
     const graphH = uiDim(88);
     const { x, y, w, h } = modalRect(580, 116 + graphH + this.nodes.length * 52);
 
-    add(dimBackdrop(scene, D, 0.66));
+    add(dimBackdrop(scene, D, 0.66, () => this.close()));
     const glow = addPanelGlow(scene, x, y, w, h, 0x39ff88, 0.1);
     glow.setScrollFactor(0).setDepth(D);
 
@@ -225,8 +225,8 @@ export default class OnlineMap {
     g.lineStyle(uiDim(2), COLORS.neonCyan, 0.85).strokeRect(x, y, w, h);
     drawScanlines(g, x, y, w, h);
 
-    const tx = (s: string, fx: number, fy: number, size: number, color: string, bold = false, origin = 0) =>
-      add(
+    const tx = (s: string, fx: number, fy: number, size: number, color: string, bold = false, origin = 0, maxWidth?: number) => {
+      const t = add(
         scene.add
           .text(fx, fy, s, {
             fontFamily: "Courier New, monospace",
@@ -238,6 +238,9 @@ export default class OnlineMap {
           .setScrollFactor(0)
           .setDepth(D + 3),
       );
+      if (maxWidth !== undefined) fitTextToWidth(t, maxWidth);
+      return t;
+    };
 
     const found = this.nodes.filter((n) => this.isKnown(n.zone)).length;
     const routes = this.nodes.filter((n) => this.canFastTravel(n.zone)).length;
@@ -248,7 +251,7 @@ export default class OnlineMap {
         .setScrollFactor(0)
         .setDepth(D + 3),
     );
-    tx(`seen ${found}/${this.nodes.length}  ·  routes ${routes}  ·  M / ESC`, x + w - uiDim(20), y + uiDim(18), 11, STUDIO.muted, false, 1);
+    tx(`seen ${found}/${this.nodes.length}  ·  routes ${routes}  ·  M / ESC`, x + w - uiDim(20), y + uiDim(18), 11, STUDIO.muted, false, 1, w - uiDim(210));
 
     const gx0 = x + uiDim(22);
     const gy0 = y + uiDim(52);
@@ -311,20 +314,21 @@ export default class OnlineMap {
       if (!known) {
         g.fillStyle(0x050409, 0.95).fillRect(x + uiDim(18), ry, w - uiDim(36), cardH);
         g.lineStyle(uiDim(1.4), 0x1a1726, 1).strokeRect(x + uiDim(18), ry, w - uiDim(36), cardH);
-        tx("■ ??? — undiscovered", x + uiDim(32), ry + uiDim(14), 14, "#3a3550", true);
+        tx("■ ??? — undiscovered", x + uiDim(32), ry + uiDim(14), 14, "#3a3550", true, 0, w - uiDim(64));
         return;
       }
       g.fillStyle(here ? 0x231a3a : 0x12102a, 0.95).fillRect(x + uiDim(18), ry, w - uiDim(36), cardH);
       g.lineStyle(here ? uiDim(2) : uiDim(1.4), here ? COLORS.neonMagenta : n.color, 1).strokeRect(x + uiDim(18), ry, w - uiDim(36), cardH);
-      tx(n.label, x + uiDim(32), ry + uiDim(8), 15, hex, true);
+      const rowTextW = w - uiDim(190);
+      tx(n.label, x + uiDim(32), ry + uiDim(8), 15, hex, true, 0, rowTextW);
       if (here) {
-        tx("you are here", x + uiDim(32), ry + uiDim(27), 10, "#ff79c6");
+        tx("you are here", x + uiDim(32), ry + uiDim(27), 10, "#ff79c6", false, 0, rowTextW);
         tx("◉ HERE", x + w - uiDim(32), ry + uiDim(14), 13, "#ff2bd6", true, 1);
       } else if (!route) {
-        tx("seen — walk via deploy gate / transit", x + uiDim(32), ry + uiDim(27), 10, "#ff7a3c");
+        tx("seen — walk via deploy gate / transit", x + uiDim(32), ry + uiDim(27), 10, "#ff7a3c", false, 0, rowTextW);
         tx("◇ WALK", x + w - uiDim(32), ry + uiDim(14), 12, "#39ff88", true, 1);
       } else {
-        tx(rs ? "click row — fast travel" : "fast travel unlocked", x + uiDim(32), ry + uiDim(27), 10, "#9aa3b2");
+        tx(rs ? "click row — fast travel" : "fast travel unlocked", x + uiDim(32), ry + uiDim(27), 10, "#9aa3b2", false, 0, rowTextW);
         tx("▸ GO", x + w - uiDim(32), ry + uiDim(14), 12, "#cfe8ff", true, 1);
       }
 

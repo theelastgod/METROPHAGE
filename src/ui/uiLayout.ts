@@ -2,6 +2,16 @@ import Phaser from "phaser";
 import { VIEW_W, VIEW_H, uiDim, uiFont } from "../config";
 import { GLOW_KEY } from "../assets/manifest";
 import { bodyFont } from "./typography";
+import { prefersMobileUx } from "../systems/Mobile";
+
+/**
+ * Close-instruction text for a modal footer/header.
+ * Touch has no ESC key, so on phones we point at the on-screen affordances
+ * (the floating ✕ and tap-outside) instead of naming a keyboard shortcut.
+ */
+export function closeHint(desktopKeys: string): string {
+  return prefersMobileUx() ? "tap ✕ or outside to close" : desktopKeys;
+}
 
 export { uiDim, uiFont, UI_SCALE } from "../config";
 export {
@@ -29,8 +39,21 @@ export function modalRect(designW: number, designH: number) {
   return { x: (VIEW_W - w) / 2, y: (VIEW_H - h) / 2, w, h };
 }
 
-/** Dim full-screen backdrop behind modal panels — radial bloom + vignette. */
-export function dimBackdrop(scene: Phaser.Scene, depth: number, alpha = 0.62, accent = 0x00e5ff) {
+/**
+ * Dim full-screen backdrop behind modal panels — radial bloom + vignette.
+ *
+ * When `onClose` is supplied the container itself becomes an interactive
+ * full-screen catcher at the backdrop's own depth. Panel content is drawn ABOVE
+ * it (depth+1…+3) so buttons hit first; only a tap on the empty dimmed area
+ * outside the card dismisses — native tap-outside-to-close on touch.
+ */
+export function dimBackdrop(
+  scene: Phaser.Scene,
+  depth: number,
+  alpha = 0.62,
+  onClose?: () => void,
+  accent = 0x00e5ff,
+) {
   const g = scene.add.graphics().setScrollFactor(0).setDepth(depth);
   g.fillStyle(0x020108, alpha).fillRect(0, 0, VIEW_W, VIEW_H);
   g.fillStyle(0x000000, 0.28).fillRect(0, 0, VIEW_W, uiDim(80));
@@ -43,7 +66,20 @@ export function dimBackdrop(scene: Phaser.Scene, depth: number, alpha = 0.62, ac
     .setAlpha(0.045)
     .setScrollFactor(0)
     .setDepth(depth + 0.1);
-  return scene.add.container(0, 0, [g, bloom]).setScrollFactor(0).setDepth(depth);
+  const container = scene.add.container(0, 0, [g, bloom]).setScrollFactor(0).setDepth(depth);
+  if (onClose) {
+    container.setSize(VIEW_W, VIEW_H);
+    // Hit area is in the container's local space; container sits at (0,0) so local == world.
+    container.setInteractive(
+      new Phaser.Geom.Rectangle(0, 0, VIEW_W, VIEW_H),
+      Phaser.Geom.Rectangle.Contains,
+    );
+    container.on("pointerdown", (_p: Phaser.Input.Pointer, _x: number, _y: number, ev?: Phaser.Types.Input.EventData) => {
+      ev?.stopPropagation?.();
+      onClose();
+    });
+  }
+  return container;
 }
 
 /** Scaled panel text helper for modal builders. */

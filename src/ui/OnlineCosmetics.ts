@@ -2,7 +2,7 @@ import Phaser from "phaser";
 import { COLORS } from "../config";
 import { COSMETICS } from "../game/cosmetics";
 import { METRO_MAINNET_ARMED } from "../economy/metro";
-import { dimBackdrop, modalRect, uiDim, uiFont } from "./uiLayout";
+import { closeHint, dimBackdrop, modalRect, uiDim, uiFont } from "./uiLayout";
 
 export default class OnlineCosmetics {
   open = false;
@@ -54,7 +54,7 @@ export default class OnlineCosmetics {
     const btnH = uiDim(26);
     const { x, y, w, h } = modalRect(740, 126 + COSMETICS.length * 58);
 
-    add(dimBackdrop(scene, D, 0.64));
+    add(dimBackdrop(scene, D, 0.64, () => this.close()));
     const g = add(scene.add.graphics().setScrollFactor(0).setDepth(D + 1));
     g.fillStyle(0x0a0818, 0.97).fillRect(x, y, w, h);
     g.lineStyle(uiDim(2), COLORS.neonMagenta, 0.85).strokeRect(x, y, w, h);
@@ -86,7 +86,7 @@ export default class OnlineCosmetics {
 
     tx("✦ WARDROBE — TRANSMOG", x + uiDim(22), y + uiDim(16), 17, "#ff2bd6", true);
     tx(`₵ ${this.credits}`, x + w / 2, y + uiDim(18), 14, "#f7ff3c", true, 0.5);
-    tx("Y / ESC close · cosmetic only — no power", x + w - uiDim(20), y + uiDim(18), 12, "#9aa3b2", false, 1);
+    tx(`${closeHint("Y / ESC close")} · cosmetic only — no power`, x + w - uiDim(20), y + uiDim(18), 12, "#9aa3b2", false, 1);
 
     const chip = uiDim(26);
     const iconSize = uiDim(24);

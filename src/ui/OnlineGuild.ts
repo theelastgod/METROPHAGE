@@ -1,7 +1,7 @@
 import Phaser from "phaser";
 import { COLORS } from "../config";
 import { GUILD_CREATE_COST, guildXpForLevel } from "../game/guilds";
-import { dimBackdrop, modalRect, uiDim, uiFont } from "./uiLayout";
+import { closeHint, dimBackdrop, modalRect, uiDim, uiFont } from "./uiLayout";
 
 interface GuildState {
   id: number;
@@ -61,7 +61,7 @@ export default class OnlineGuild {
     const btnH = uiDim(28);
     const rosterH = uiDim(24);
 
-    add(dimBackdrop(scene, D, 0.64));
+    add(dimBackdrop(scene, D, 0.64, () => this.close()));
     const g = add(scene.add.graphics().setScrollFactor(0).setDepth(D + 1));
     g.fillStyle(0x0a0818, 0.97).fillRect(x, y, w, h);
     g.lineStyle(uiDim(2), COLORS.neonGreen, 0.85).strokeRect(x, y, w, h);
@@ -90,7 +90,7 @@ export default class OnlineGuild {
     };
 
     tx("⬡ CELL", x + uiDim(20), y + uiDim(14), 17, "#39ff88", true);
-    tx("C / ESC close", x + w - uiDim(20), y + uiDim(16), 12, "#9aa3b2", false, 1);
+    tx(closeHint("C / ESC close"), x + w - uiDim(20), y + uiDim(16), 12, "#9aa3b2", false, 1);
 
     if (!this.guild) {
       tx("You're not in a Cell.", x + uiDim(26), y + uiDim(60), 14, "#cfe8ff", true);

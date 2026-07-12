@@ -47,7 +47,7 @@ export default class RsSkillsPanel {
     };
     const D = 1750;
     const { x, y, w, h } = modalRect(420, 380);
-    add(dimBackdrop(scene, D, 0.65));
+    add(dimBackdrop(scene, D, 0.65, () => this.close()));
     const g = add(scene.add.graphics().setScrollFactor(0).setDepth(D + 1));
     drawPanelFrame(g, x, y, w, h);
     add(
