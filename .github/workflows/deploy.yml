@@ -1,0 +1,54 @@
+name: Deploy
+
+# Manual-only: production deploys stay a deliberate act.
+# Required repo secrets (Settings → Secrets → Actions):
+#   CLOUDFLARE_API_TOKEN   — token with Workers Scripts:Edit + Pages:Edit + D1:Edit
+#   CLOUDFLARE_ACCOUNT_ID  — the account id (dash → Workers & Pages → overview)
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "What to deploy"
+        type: choice
+        options: [client, server, both]
+        default: client
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Install server deps
+        if: ${{ inputs.target == 'server' || inputs.target == 'both' }}
+        working-directory: server
+        run: npm ci
+
+      - name: Deploy server (Worker + DO)
+        if: ${{ inputs.target == 'server' || inputs.target == 'both' }}
+        working-directory: server
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler deploy
+
+      - name: Build client (prod server URL baked)
+        if: ${{ inputs.target == 'client' || inputs.target == 'both' }}
+        env:
+          VITE_SERVER_URL: wss://metrophage-server.wendellphillips.workers.dev/ws
+        run: npm run build
+
+      - name: Deploy client (Pages)
+        if: ${{ inputs.target == 'client' || inputs.target == 'both' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler pages deploy dist --project-name=metrophagev1 --branch=main

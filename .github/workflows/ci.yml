@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Unit tests
+        run: npx vitest run
+
+      - name: Typecheck + production build
+        # VITE_SERVER_URL is BUILD-TIME — a bundle built without it silently
+        # targets localhost (the recurring prod footgun this step exists to kill).
+        env:
+          VITE_SERVER_URL: wss://metrophage-server.wendellphillips.workers.dev/ws
+        run: npm run build
+
+      - name: Assert prod server URL baked into bundle
+        run: |
+          BUNDLE=$(ls dist/assets/index-*.js | grep -v browser | head -1)
+          grep -q "metrophage-server.wendellphillips.workers.dev" "$BUNDLE" \
+            || { echo "::error::bundle does not reference the prod server URL"; exit 1; }
+          ! grep -q "localhost:5188" "$BUNDLE" \
+            || { echo "::error::bundle still references localhost"; exit 1; }
+
+      - name: Upload dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist
+          retention-days: 7
