@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { COLORS } from "../config";
 import { repProgress } from "../game/dailies";
+import Modal from "./Modal";
 import { closeHint, dimBackdrop, modalRect, uiDim, uiFont } from "./uiLayout";
 
 interface DailyView {
@@ -17,16 +18,9 @@ interface DailyView {
 
 const OBJ_LABEL: Record<string, string> = { kill: "PURGE", capture: "CAPTURE", boss: "BOSS" };
 
-export default class OnlineContracts {
-  open = false;
-  private scene: Phaser.Scene;
+export default class OnlineContracts extends Modal {
   private list: DailyView[] = [];
   private rep = 0;
-  private objs: Phaser.GameObjects.GameObject[] = [];
-
-  constructor(scene: Phaser.Scene) {
-    this.scene = scene;
-  }
 
   setState(list: DailyView[], rep: number) {
     this.list = list ?? [];
@@ -34,23 +28,12 @@ export default class OnlineContracts {
     if (this.open) this.build();
   }
   toggle(list: DailyView[], rep: number) {
-    this.open = !this.open;
     this.list = list ?? [];
     this.rep = rep;
-    if (this.open) this.build();
-    else this.clear();
-  }
-  close() {
-    if (!this.open) return;
-    this.open = false;
-    this.clear();
-  }
-  private clear() {
-    for (const o of this.objs) o.destroy();
-    this.objs = [];
+    this.toggleOpen();
   }
 
-  private build() {
+  protected build() {
     this.clear();
     const scene = this.scene;
     const add = <T extends Phaser.GameObjects.GameObject>(o: T): T => {
@@ -62,7 +45,7 @@ export default class OnlineContracts {
     const bountyH = uiDim(80);
     const bountyGap = uiDim(4);
 
-    add(dimBackdrop(scene, D, 0.64, () => this.close()));
+    add(dimBackdrop(scene, D, 0.64, () => this.close(), { x, y, w, h }));
     const g = add(scene.add.graphics().setScrollFactor(0).setDepth(D + 1));
     g.fillStyle(0x0a0818, 0.97).fillRect(x, y, w, h);
     g.lineStyle(uiDim(2), COLORS.neonCyan, 0.85).strokeRect(x, y, w, h);
@@ -126,7 +109,4 @@ export default class OnlineContracts {
     }
   }
 
-  destroy() {
-    this.clear();
-  }
 }

@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { COLORS } from "../config";
 import { ACHIEVEMENTS, BOARD_STATS, STAT_LABELS, type StatKey } from "../game/achievements";
+import Modal from "./Modal";
 import { closeHint, dimBackdrop, modalRect, uiDim, uiFont } from "./uiLayout";
 
 interface Row {
@@ -9,39 +10,24 @@ interface Row {
   v: number;
 }
 
-export default class OnlineBoard {
-  open = false;
-  private scene: Phaser.Scene;
+export default class OnlineBoard extends Modal {
   private httpBase: string;
   private achievements = new Set<string>();
   private selfId = "";
   private statSel: StatKey = "kills";
   private rows: Row[] = [];
   private loading = false;
-  private objs: Phaser.GameObjects.GameObject[] = [];
 
   constructor(scene: Phaser.Scene, httpBase: string) {
-    this.scene = scene;
+    super(scene);
     this.httpBase = httpBase;
   }
 
   toggle(achievements: Set<string>, selfId: string) {
-    this.open = !this.open;
-    if (this.open) {
-      this.achievements = achievements;
-      this.selfId = selfId;
-      this.build();
-      void this.fetchBoard();
-    } else this.clear();
-  }
-  close() {
-    if (!this.open) return;
-    this.open = false;
-    this.clear();
-  }
-  private clear() {
-    for (const o of this.objs) o.destroy();
-    this.objs = [];
+    this.achievements = achievements;
+    this.selfId = selfId;
+    this.toggleOpen();
+    if (this.open) void this.fetchBoard();
   }
 
   private async fetchBoard() {
@@ -58,7 +44,7 @@ export default class OnlineBoard {
     if (this.open) this.build();
   }
 
-  private build() {
+  protected build() {
     this.clear();
     const scene = this.scene;
     const add = <T extends Phaser.GameObjects.GameObject>(o: T): T => {
@@ -73,7 +59,7 @@ export default class OnlineBoard {
     const tabH = uiDim(22);
     const rankRowH = uiDim(28);
 
-    add(dimBackdrop(scene, D, 0.66, () => this.close()));
+    add(dimBackdrop(scene, D, 0.66, () => this.close(), { x, y, w, h }));
     const g = add(scene.add.graphics().setScrollFactor(0).setDepth(D + 1));
     g.fillStyle(0x0a0818, 0.97).fillRect(x, y, w, h);
     g.lineStyle(uiDim(2), COLORS.neonCyan, 0.85).strokeRect(x, y, w, h);
@@ -170,7 +156,4 @@ export default class OnlineBoard {
     }
   }
 
-  destroy() {
-    this.clear();
-  }
 }

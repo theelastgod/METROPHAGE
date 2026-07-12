@@ -4,6 +4,7 @@ import { DISTRICTS } from "../game/districts";
 import { BRIDGES } from "../game/bridges";
 import { dailyDistrictMod } from "../game/districtMods";
 import { getSettings } from "../systems/Settings";
+import Modal from "./Modal";
 import { dimBackdrop, modalRect, uiDim, uiFont } from "./uiLayout";
 import { bodyFont, fitTextToWidth } from "./typography";
 import { addPanelGlow, animatePanelIn, drawScanlines, STUDIO } from "./studioChrome";
@@ -70,21 +71,18 @@ const GRAPH_EDGES: Array<[string, string]> = [
   ["w6", "d7"],
 ];
 
-export default class OnlineMap {
-  open = false;
+export default class OnlineMap extends Modal {
   onTravel?: (zone: string) => void;
   onWalkToZone?: (zone: string) => void;
   onExamine?: (text: string) => void;
-  private scene: Phaser.Scene;
   private contextMenu: ContextMenu;
   private nodes: MapNode[];
   private discovered = new Set<string>();
   private unlocked = new Set<string>();
   private current = "";
-  private objs: Phaser.GameObjects.GameObject[] = [];
 
   constructor(scene: Phaser.Scene, contextMenu?: ContextMenu) {
-    this.scene = scene;
+    super(scene);
     this.contextMenu = contextMenu ?? new ContextMenu(scene);
     this.nodes = [
       { zone: "safe", label: "METRO CITY", color: 0x39ff88 },
@@ -109,22 +107,12 @@ export default class OnlineMap {
   }
 
   toggle(discovered: string[], unlocked: string[], current: string) {
-    this.open = !this.open;
-    if (this.open) {
-      this.setState(discovered, unlocked, current);
-      this.build();
-    } else this.clear();
-  }
-
-  close() {
-    if (!this.open) return;
-    this.open = false;
-    this.clear();
-  }
-
-  private clear() {
-    for (const o of this.objs) o.destroy();
-    this.objs = [];
+    if (!this.open) {
+      this.open = true;
+      this.setState(discovered, unlocked, current); // builds (open is set)
+    } else {
+      this.close();
+    }
   }
 
   private canFastTravel(zone: string): boolean {
@@ -202,7 +190,7 @@ export default class OnlineMap {
     this.onWalkToZone?.(n.zone);
   }
 
-  private build() {
+  protected build() {
     this.clear();
     const scene = this.scene;
     const rs = getSettings().rsControls;
@@ -216,7 +204,7 @@ export default class OnlineMap {
     const graphH = uiDim(88);
     const { x, y, w, h } = modalRect(580, 116 + graphH + this.nodes.length * 52);
 
-    add(dimBackdrop(scene, D, 0.66, () => this.close()));
+    add(dimBackdrop(scene, D, 0.66, () => this.close(), { x, y, w, h }));
     const glow = addPanelGlow(scene, x, y, w, h, 0x39ff88, 0.1);
     glow.setScrollFactor(0).setDepth(D);
 
@@ -353,7 +341,4 @@ export default class OnlineMap {
     animatePanelIn(scene, this.objs);
   }
 
-  destroy() {
-    this.clear();
-  }
 }

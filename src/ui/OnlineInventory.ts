@@ -4,7 +4,7 @@ import { Item, Slot, SLOTS, RARITIES, SLOT_NAMES, itemStatLines } from "../game/
 import { getWeapon } from "../game/weapons";
 import { iconKey, ensureItemIcons } from "../assets/itemIcons";
 import { UI_FRAME_KEY, UI_GUN_KEY } from "../assets/manifest";
-import { closeHint, dimBackdrop, onlineHudStack, overlayRect, uiDim, uiFont } from "./uiLayout";
+import { dimBackdrop, onlineHudStack, overlayRect, uiDim, uiFont } from "./uiLayout";
 import ContextMenu from "./ContextMenu";
 import { getSettings } from "../systems/Settings";
 import { mobileStickSafeRegion, prefersMobileUx } from "../systems/Mobile";
@@ -313,7 +313,7 @@ export default class OnlineInventory {
     const D = 1700;
     const { x, y, w, h } = overlayRect(16);
 
-    add(dimBackdrop(scene, D, 0.62, () => this.close()));
+    add(dimBackdrop(scene, D, 0.62, () => this.close(), { x, y, w, h }));
     const g = add(scene.add.graphics().setScrollFactor(0).setDepth(D + 1));
     g.fillStyle(0x0a0818, 0.96).fillRect(x, y, w, h);
     g.lineStyle(uiDim(2), COLORS.neonCyan, 0.85).strokeRect(x, y, w, h);

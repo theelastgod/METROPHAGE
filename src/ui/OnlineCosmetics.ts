@@ -2,20 +2,14 @@ import Phaser from "phaser";
 import { COLORS } from "../config";
 import { COSMETICS } from "../game/cosmetics";
 import { METRO_MAINNET_ARMED } from "../economy/metro";
+import Modal from "./Modal";
 import { closeHint, dimBackdrop, modalRect, uiDim, uiFont } from "./uiLayout";
 
-export default class OnlineCosmetics {
-  open = false;
+export default class OnlineCosmetics extends Modal {
   onAction?: (action: "buy" | "equip" | "unequip", id?: string) => void;
-  private scene: Phaser.Scene;
   private owned: string[] = [];
   private equipped: string | null = null;
   private credits = 0;
-  private objs: Phaser.GameObjects.GameObject[] = [];
-
-  constructor(scene: Phaser.Scene) {
-    this.scene = scene;
-  }
 
   setState(owned: string[], equipped: string | null, credits: number) {
     this.owned = owned ?? [];
@@ -24,24 +18,13 @@ export default class OnlineCosmetics {
     if (this.open) this.build();
   }
   toggle(owned: string[], equipped: string | null, credits: number) {
-    this.open = !this.open;
     this.owned = owned ?? [];
     this.equipped = equipped;
     this.credits = credits;
-    if (this.open) this.build();
-    else this.clear();
-  }
-  close() {
-    if (!this.open) return;
-    this.open = false;
-    this.clear();
-  }
-  private clear() {
-    for (const o of this.objs) o.destroy();
-    this.objs = [];
+    this.toggleOpen();
   }
 
-  private build() {
+  protected build() {
     this.clear();
     const scene = this.scene;
     const add = <T extends Phaser.GameObjects.GameObject>(o: T): T => {
@@ -54,7 +37,7 @@ export default class OnlineCosmetics {
     const btnH = uiDim(26);
     const { x, y, w, h } = modalRect(740, 126 + COSMETICS.length * 58);
 
-    add(dimBackdrop(scene, D, 0.64, () => this.close()));
+    add(dimBackdrop(scene, D, 0.64, () => this.close(), { x, y, w, h }));
     const g = add(scene.add.graphics().setScrollFactor(0).setDepth(D + 1));
     g.fillStyle(0x0a0818, 0.97).fillRect(x, y, w, h);
     g.lineStyle(uiDim(2), COLORS.neonMagenta, 0.85).strokeRect(x, y, w, h);
@@ -126,7 +109,4 @@ export default class OnlineCosmetics {
     });
   }
 
-  destroy() {
-    this.clear();
-  }
 }

@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { getQuest } from "../game/quests";
 import { FRAGMENTS } from "../game/fragments";
 import { drawPanelFrame } from "./panelChrome";
+import Modal from "./Modal";
 import { closeHint, dimBackdrop, modalRect, uiDim } from "./uiLayout";
 import { bodyFont, displayFont, fitTextToWidth } from "./typography";
 import { addPanelGlow, animatePanelIn, drawScanlines, STUDIO } from "./studioChrome";
@@ -33,10 +34,7 @@ export interface QuestLogState {
 }
 
 /** RuneScape-style quest journal — campaign steps, dailies, bounty with checkmarks. */
-export default class RsQuestLog {
-  open = false;
-  private scene: Phaser.Scene;
-  private objs: Phaser.GameObjects.GameObject[] = [];
+export default class RsQuestLog extends Modal {
   private state: QuestLogState = {
     campaignId: null,
     campaignStage: 0,
@@ -47,10 +45,6 @@ export default class RsQuestLog {
     fragments: [],
   };
 
-  constructor(scene: Phaser.Scene) {
-    this.scene = scene;
-  }
-
   setState(s: QuestLogState) {
     this.state = s;
     if (this.open) this.build();
@@ -58,22 +52,10 @@ export default class RsQuestLog {
 
   toggle(state?: QuestLogState) {
     if (state) this.state = state;
-    this.open = !this.open;
-    if (this.open) this.build();
-    else this.clear();
+    this.toggleOpen();
   }
 
-  close() {
-    this.open = false;
-    this.clear();
-  }
-
-  private clear() {
-    for (const o of this.objs) o.destroy();
-    this.objs = [];
-  }
-
-  private build() {
+  protected build() {
     this.clear();
     const scene = this.scene;
     const add = <T extends Phaser.GameObjects.GameObject>(o: T) => {
@@ -82,7 +64,7 @@ export default class RsQuestLog {
     };
     const D = 1760;
     const { x, y, w, h } = modalRect(520, 460);
-    add(dimBackdrop(scene, D, 0.66, () => this.close()));
+    add(dimBackdrop(scene, D, 0.66, () => this.close(), { x, y, w, h }));
     const glow = addPanelGlow(scene, x, y, w, h, 0xb06bff, 0.09);
     glow.setScrollFactor(0).setDepth(D);
     const g = add(scene.add.graphics().setScrollFactor(0).setDepth(D + 1));

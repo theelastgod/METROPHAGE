@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { COLORS } from "../config";
-import { closeHint, dimBackdrop, modalRect, uiDim, uiFont } from "./uiLayout";
+import Modal from "./Modal";
+import { dimBackdrop, modalRect, uiDim, uiFont } from "./uiLayout";
 import { prefersMobileUx } from "../systems/Mobile";
 import { fitTextToWidth } from "./typography";
 
@@ -15,17 +16,10 @@ const SKUS: { sku: string; label: string; price: number; desc: string; color: st
   { sku: "cache_singular", label: "SINGULAR CACHE", price: 1200, desc: "a Singular gear roll", color: "#ff2bd6", repReq: 2 },
 ];
 
-export default class OnlineShop {
-  open = false;
+export default class OnlineShop extends Modal {
   onBuy?: (sku: string) => void;
-  private scene: Phaser.Scene;
-  private objs: Phaser.GameObjects.GameObject[] = [];
   private creditsText?: Phaser.GameObjects.Text;
   private repTier = 0;
-
-  constructor(scene: Phaser.Scene) {
-    this.scene = scene;
-  }
 
   setRep(tier: number) {
     this.repTier = tier;
@@ -33,28 +27,19 @@ export default class OnlineShop {
   }
 
   toggle() {
-    this.open = !this.open;
-    if (this.open) this.build();
-    else this.clear();
-  }
-
-  close() {
-    if (!this.open) return;
-    this.open = false;
-    this.clear();
+    this.toggleOpen();
   }
 
   setCredits(n: number) {
     this.creditsText?.setText(`₵ ${n}`);
   }
 
-  private clear() {
-    for (const o of this.objs) o.destroy();
-    this.objs = [];
+  protected clear() {
+    super.clear();
     this.creditsText = undefined;
   }
 
-  private build() {
+  protected build() {
     this.clear();
     const scene = this.scene;
     const add = <T extends Phaser.GameObjects.GameObject>(o: T): T => {
@@ -65,7 +50,7 @@ export default class OnlineShop {
     const rowH = uiDim(56);
     const { x, y, w, h } = modalRect(580, 88 + SKUS.length * 56);
 
-    add(dimBackdrop(scene, D, 0.62, () => this.close()));
+    add(dimBackdrop(scene, D, 0.62, () => this.close(), { x, y, w, h }));
     const g = add(scene.add.graphics().setScrollFactor(0).setDepth(D + 1));
     g.fillStyle(0x0a0818, 0.97).fillRect(x, y, w, h);
     g.lineStyle(uiDim(2), COLORS.neonYellow, 0.85).strokeRect(x, y, w, h);
@@ -172,7 +157,4 @@ export default class OnlineShop {
     fitTextToWidth(footer, w - uiDim(40));
   }
 
-  destroy() {
-    this.clear();
-  }
 }

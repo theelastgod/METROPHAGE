@@ -51,14 +51,10 @@ export default class OptionsPanel {
     this.onChange = onChange;
     this.trackX = this.x + uiDim(180);
     this.trackW = this.w - uiDim(200);
-    this.backdrop = dimBackdrop(scene, 1799);
-    // full-screen hit area — a Container needs an explicit shape to swallow clicks
-    this.backdrop.setInteractive(
-      new Phaser.Geom.Rectangle(0, 0, scene.scale.width, scene.scale.height),
-      Phaser.Geom.Rectangle.Contains,
-    );
-    // Tap the dimmed area outside the card to dismiss (touch has no ESC key).
-    this.backdrop.on("pointerdown", () => this.close());
+    // Tap-outside-to-close + click swallowing comes from dimBackdrop's internal
+    // catcher Zone. (Container-level setInteractive silently fails to hit-test
+    // under the dual-camera rig in OnlineScene — Zones are the reliable path.)
+    this.backdrop = dimBackdrop(scene, 1799, 0.62, () => this.close(), this.frame);
     this.g = scene.add.graphics().setScrollFactor(0).setDepth(1800);
     const D = 1801;
 
@@ -246,7 +242,12 @@ export default class OptionsPanel {
 
   private setVisible(v: boolean) {
     this.backdrop.setVisible(v);
-    if (this.backdrop.input) this.backdrop.input.enabled = v;
+    // The tap-outside catcher is a Zone (renderless) — visibility alone may not
+    // gate its hit-testing, so switch its input off explicitly while hidden.
+    for (const child of this.backdrop.list) {
+      const z = child as Phaser.GameObjects.Zone;
+      if (z.type === "Zone" && z.input) z.input.enabled = v;
+    }
     this.g.setVisible(v);
     this.statics.forEach((t) => t.setVisible(v));
     this.zones.forEach((z) => {

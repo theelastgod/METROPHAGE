@@ -52,6 +52,7 @@ export function dimBackdrop(
   depth: number,
   alpha = 0.62,
   onClose?: () => void,
+  exclude?: { x: number; y: number; w: number; h: number },
   accent = 0x00e5ff,
 ) {
   const g = scene.add.graphics().setScrollFactor(0).setDepth(depth);
@@ -66,20 +67,26 @@ export function dimBackdrop(
     .setAlpha(0.045)
     .setScrollFactor(0)
     .setDepth(depth + 0.1);
-  const container = scene.add.container(0, 0, [g, bloom]).setScrollFactor(0).setDepth(depth);
+  const kids: Phaser.GameObjects.GameObject[] = [g, bloom];
   if (onClose) {
-    container.setSize(VIEW_W, VIEW_H);
-    // Hit area is in the container's local space; container sits at (0,0) so local == world.
-    container.setInteractive(
-      new Phaser.Geom.Rectangle(0, 0, VIEW_W, VIEW_H),
-      Phaser.Geom.Rectangle.Contains,
-    );
-    container.on("pointerdown", (_p: Phaser.Input.Pointer, _x: number, _y: number, ev?: Phaser.Types.Input.EventData) => {
+    // A Zone (not container-level setInteractive — containers don't hit-test
+    // reliably under the dual-camera rig) catches taps on the dim area. Panel
+    // content lives at depth+1…+3 above it, so its own buttons win the tap.
+    const catcher = scene.add
+      .zone(0, 0, VIEW_W, VIEW_H)
+      .setOrigin(0)
+      .setScrollFactor(0)
+      .setInteractive();
+    catcher.on("pointerdown", (_p: Phaser.Input.Pointer, lx: number, ly: number, ev?: Phaser.Types.Input.EventData) => {
+      // Taps on the panel card itself (its non-button body) must not dismiss —
+      // only the dim area outside `exclude` closes. Zone local == screen coords.
+      if (exclude && lx >= exclude.x && lx <= exclude.x + exclude.w && ly >= exclude.y && ly <= exclude.y + exclude.h) return;
       ev?.stopPropagation?.();
       onClose();
     });
+    kids.push(catcher);
   }
-  return container;
+  return scene.add.container(0, 0, kids).setScrollFactor(0).setDepth(depth);
 }
 
 /** Scaled panel text helper for modal builders. */

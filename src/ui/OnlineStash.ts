@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import { Item, RARITIES } from "../game/items";
+import Modal from "./Modal";
 import { closeHint, dimBackdrop, modalRect, uiDim, uiFont } from "./uiLayout";
 import { fitTextToWidth } from "./typography";
 
@@ -13,25 +14,18 @@ const hexStr = (n: number) => "#" + (n & 0xffffff).toString(16).padStart(6, "0")
  * take it, click a bag item to stash it. The server owns the move (venue gate, caps,
  * ownership); this panel just renders NetClient state and emits intents.
  */
-export default class OnlineStash {
-  open = false;
+export default class OnlineStash extends Modal {
   onDeposit?: (itemId: string) => void;
   onWithdraw?: (itemId: string) => void;
-  private scene: Phaser.Scene;
   private stash: Item[] = [];
   private bag: Item[] = [];
-  private objs: Phaser.GameObjects.GameObject[] = [];
   private stashPage = 0;
   private bagPage = 0;
 
-  constructor(scene: Phaser.Scene) {
-    this.scene = scene;
-  }
-
   toggle(stash: Item[], bag: Item[]) {
-    this.open = !this.open;
-    if (this.open) this.refresh(stash, bag);
-    else this.clear();
+    this.stash = stash;
+    this.bag = bag;
+    this.toggleOpen();
   }
 
   /** Re-render with fresh server state (no-op when closed). */
@@ -41,18 +35,7 @@ export default class OnlineStash {
     if (this.open) this.build();
   }
 
-  close() {
-    if (!this.open) return;
-    this.open = false;
-    this.clear();
-  }
-
-  private clear() {
-    for (const o of this.objs) o.destroy();
-    this.objs = [];
-  }
-
-  private build() {
+  protected build() {
     this.clear();
     const scene = this.scene;
     const add = <T extends Phaser.GameObjects.GameObject>(o: T): T => {
@@ -64,7 +47,7 @@ export default class OnlineStash {
     const { x, y, w, h } = modalRect(820, 480);
     const rowH = uiDim(21);
 
-    add(dimBackdrop(scene, D, 0.66, () => this.close()));
+    add(dimBackdrop(scene, D, 0.66, () => this.close(), { x, y, w, h }));
     const g = add(scene.add.graphics().setScrollFactor(0).setDepth(D + 1));
     g.fillStyle(0x0a0818, 0.97).fillRect(x, y, w, h);
     g.lineStyle(uiDim(2), 0xffb13c, 0.85).strokeRect(x, y, w, h);

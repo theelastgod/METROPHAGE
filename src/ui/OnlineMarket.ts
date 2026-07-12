@@ -4,6 +4,7 @@ import { Item, RARITIES, SLOT_NAMES, itemStatLines } from "../game/items";
 import { suggestedPrice, listingFee, suggestedMetroPrice, metroListingFee } from "../game/market";
 import { fmtMetro } from "../economy/metro";
 import { drawPanelFrame } from "./panelChrome";
+import Modal from "./Modal";
 import { closeHint, dimBackdrop, modalRect, uiDim } from "./uiLayout";
 import { bodyFont, displayFont, fitTextToWidth } from "./typography";
 import {
@@ -29,24 +30,17 @@ interface Listing {
   currency: string;
 }
 
-export default class OnlineMarket {
-  open = false;
+export default class OnlineMarket extends Modal {
   onBuy?: (id: number) => void;
   onCancel?: (id: number) => void;
   onList?: (itemId: string, price: number, currency: Currency) => void;
   onRefresh?: () => void;
-  private scene: Phaser.Scene;
   private listings: Listing[] = [];
   private bag: Item[] = [];
   private selfId = "";
   private credits = 0;
   private metro = 0;
   private filter: Filter = "all";
-  private objs: Phaser.GameObjects.GameObject[] = [];
-
-  constructor(scene: Phaser.Scene) {
-    this.scene = scene;
-  }
 
   setState(listings: Listing[], bag: Item[], selfId: string, credits: number, metro = 0) {
     this.listings = listings ?? [];
@@ -65,26 +59,16 @@ export default class OnlineMarket {
   }
 
   toggle(listings: Listing[], bag: Item[], selfId: string, credits: number, metro = 0) {
-    this.open = !this.open;
-    if (this.open) {
-      this.setState(listings, bag, selfId, credits, metro);
+    if (!this.open) {
+      this.open = true;
+      this.setState(listings, bag, selfId, credits, metro); // builds (open is set)
       this.onRefresh?.();
-      this.build();
-    } else this.clear();
+    } else {
+      this.close();
+    }
   }
 
-  close() {
-    if (!this.open) return;
-    this.open = false;
-    this.clear();
-  }
-
-  private clear() {
-    for (const o of this.objs) o.destroy();
-    this.objs = [];
-  }
-
-  private build() {
+  protected build() {
     this.clear();
     const scene = this.scene;
     const add = <T extends Phaser.GameObjects.GameObject>(o: T): T => {
@@ -100,7 +84,7 @@ export default class OnlineMarket {
     const stallRowH = uiDim(38);
     const btnH = uiDim(26);
 
-    add(dimBackdrop(scene, D, 0.68, () => this.close()).setAlpha(0));
+    add(dimBackdrop(scene, D, 0.68, () => this.close(), { x, y, w, h }).setAlpha(0));
     add(addPanelGlow(scene, x, y, w, h, COLORS.neonMagenta, 0.1).setScrollFactor(0).setDepth(D + 1).setAlpha(0));
     const g = add(scene.add.graphics().setScrollFactor(0).setDepth(D + 2).setAlpha(0));
     drawPanelFrame(g, x, y, w, h);
@@ -282,7 +266,4 @@ export default class OnlineMarket {
     animatePanelIn(scene, animTargets);
   }
 
-  destroy() {
-    this.clear();
-  }
 }

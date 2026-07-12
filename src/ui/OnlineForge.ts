@@ -4,6 +4,7 @@ import { Item, Slot, RARITIES, SLOT_NAMES, itemStatLines } from "../game/items";
 import { getWeapon } from "../game/weapons";
 import { iconKey, ensureItemIcons } from "../assets/itemIcons";
 import { upgradeCost, reforgeCost, salvageYield, fuseCost, canUpgrade, canFuse, UPGRADE_MAX } from "../game/crafting";
+import Modal from "./Modal";
 import { closeHint, dimBackdrop, modalRect, uiDim, uiFont } from "./uiLayout";
 import { fitTextToWidth, setFittedText } from "./typography";
 
@@ -16,20 +17,17 @@ function itemIcon(it: Item): { key: string; tint: number } {
 
 type CraftAction = "upgrade" | "reforge" | "salvage" | "fuse";
 
-export default class OnlineForge {
-  open = false;
+export default class OnlineForge extends Modal {
   onCraft?: (action: CraftAction, itemId: string, itemId2?: string) => void;
-  private scene: Phaser.Scene;
   private items: Item[] = [];
   private equipped: Item[] = [];
   private credits = 0;
   private cores = 0;
   private fuseSel: string | null = null;
-  private objs: Phaser.GameObjects.GameObject[] = [];
   private hdr?: Phaser.GameObjects.Text;
 
   constructor(scene: Phaser.Scene) {
-    this.scene = scene;
+    super(scene);
     ensureItemIcons(scene);
   }
 
@@ -48,23 +46,18 @@ export default class OnlineForge {
   }
 
   toggle() {
-    this.open = !this.open;
-    if (this.open) this.build();
-    else this.clear();
+    this.toggleOpen();
   }
   close() {
-    if (!this.open) return;
-    this.open = false;
-    this.fuseSel = null;
-    this.clear();
+    this.fuseSel = null; // fuse selection must not survive a dismissal
+    super.close();
   }
-  private clear() {
-    for (const o of this.objs) o.destroy();
-    this.objs = [];
+  protected clear() {
+    super.clear();
     this.hdr = undefined;
   }
 
-  private build() {
+  protected build() {
     this.clear();
     const scene = this.scene;
     const add = <T extends Phaser.GameObjects.GameObject>(o: T): T => {
@@ -77,7 +70,7 @@ export default class OnlineForge {
     const shown = rows.slice(0, 9);
     const { x, y, w, h } = modalRect(680, 100 + shown.length * 62);
 
-    add(dimBackdrop(scene, D, 0.62, () => this.close()));
+    add(dimBackdrop(scene, D, 0.62, () => this.close(), { x, y, w, h }));
     const g = add(scene.add.graphics().setScrollFactor(0).setDepth(D + 1));
     g.fillStyle(0x0a0818, 0.97).fillRect(x, y, w, h);
     g.lineStyle(uiDim(2), COLORS.neonMagenta, 0.85).strokeRect(x, y, w, h);
@@ -190,7 +183,4 @@ export default class OnlineForge {
     }
   }
 
-  destroy() {
-    this.clear();
-  }
 }

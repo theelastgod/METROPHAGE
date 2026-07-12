@@ -1,19 +1,17 @@
 import Phaser from "phaser";
 import { drawPanelFrame } from "./panelChrome";
+import Modal from "./Modal";
 import { dimBackdrop, modalRect, uiDim } from "./uiLayout";
 import { bodyFont, displayFont } from "./typography";
 import { RS_SKILLS, xpProgress, type RsSkillXp } from "../game/rsSkills";
 import { animatePanelIn } from "./studioChrome";
 
 /** RuneScape-style skill list — levels, XP bars, grind visibility. */
-export default class RsSkillsPanel {
-  open = false;
-  private scene: Phaser.Scene;
-  private objs: Phaser.GameObjects.GameObject[] = [];
+export default class RsSkillsPanel extends Modal {
   private skills: RsSkillXp;
 
   constructor(scene: Phaser.Scene, skills: RsSkillXp) {
-    this.scene = scene;
+    super(scene);
     this.skills = skills;
   }
 
@@ -23,22 +21,10 @@ export default class RsSkillsPanel {
   }
 
   toggle() {
-    this.open = !this.open;
-    if (this.open) this.build();
-    else this.clear();
+    this.toggleOpen();
   }
 
-  close() {
-    this.open = false;
-    this.clear();
-  }
-
-  private clear() {
-    for (const o of this.objs) o.destroy();
-    this.objs = [];
-  }
-
-  private build() {
+  protected build() {
     this.clear();
     const scene = this.scene;
     const add = <T extends Phaser.GameObjects.GameObject>(o: T) => {
@@ -47,7 +33,7 @@ export default class RsSkillsPanel {
     };
     const D = 1750;
     const { x, y, w, h } = modalRect(420, 380);
-    add(dimBackdrop(scene, D, 0.65, () => this.close()));
+    add(dimBackdrop(scene, D, 0.65, () => this.close(), { x, y, w, h }));
     const g = add(scene.add.graphics().setScrollFactor(0).setDepth(D + 1));
     drawPanelFrame(g, x, y, w, h);
     add(

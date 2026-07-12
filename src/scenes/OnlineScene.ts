@@ -138,6 +138,7 @@ import NeonPipeline from "../render/NeonPipeline";
 import { campaignHud, Campaign } from "../net/campaign";
 import OnlineCosmetics from "../ui/OnlineCosmetics";
 import OnlineMap from "../ui/OnlineMap";
+import PanelRouter from "./online/PanelRouter";
 import { applyCosmetic } from "../game/cosmetics";
 import { npcDef, AMBIENT_NPCS, INTERIOR_PLAN, keeperFor, districtResident, hubResident, campaignAllyLines, STORY_ALLIES } from "../game/cityNpcs";
 import { portraitFor, portraitForName, type PortraitRef } from "../game/portraits";
@@ -546,9 +547,8 @@ export default class OnlineScene extends Phaser.Scene {
   // HOUSING REGISTRY — the estates street's featured-homes board
   private registryObjs: Phaser.GameObjects.GameObject[] = [];
   private registryOpen = false;
-  // Mobile: floating ✕ that appears over any open overlay (touch has no ESC key).
-  private mobileCloseBtn?: Phaser.GameObjects.Container;
-  private mobileCloseShown = false;
+  // Overlay orchestration (open-state, ESC routing, mobile ✕) — see online/PanelRouter.
+  private panelRouter!: PanelRouter;
 
   private isTutorial = false;
   private tutorialPanel!: Phaser.GameObjects.Text;
@@ -1506,8 +1506,35 @@ export default class OnlineScene extends Phaser.Scene {
               : []),
           ],
     );
+    // Overlay orchestration: registration order = close-priority order (the ESC path).
+    // Closures read live fields, so panels constructed later are still covered.
+    this.panelRouter = new PanelRouter(this);
+    const reg = (open: () => boolean, close: () => void) => this.panelRouter.register({ open, close });
+    reg(() => !!this.options?.isOpen, () => this.options!.close());
+    reg(() => !!this.shop?.open, () => this.shop.close());
+    reg(() => !!this.forge?.open, () => this.forge.close());
+    reg(() => !!this.market?.open, () => this.market.close());
+    reg(() => !!this.stashPanel?.open, () => this.stashPanel.close());
+    reg(() => !!this.contracts?.open, () => this.contracts.close());
+    reg(() => !!this.board?.open, () => this.board.close());
+    reg(() => !!this.guildPanel?.open, () => this.guildPanel.close());
+    reg(() => !!this.cosmetics?.open, () => this.cosmetics.close());
+    reg(() => !!this.rsSkillsPanel?.open, () => this.rsSkillsPanel.close());
+    reg(() => !!this.questLog?.open, () => this.questLog.close());
+    reg(() => !!this.mapPanel?.open, () => this.mapPanel.close());
+    reg(() => this.registryOpen, () => this.toggleRegistry());
+    reg(() => !!this.inv?.open, () => this.inv.close());
     // Touchscreens have no ESC key — give every overlay a universal tap-to-close.
-    if (mobile) this.buildMobileCloseButton();
+    if (mobile) this.panelRouter.buildMobileCloseButton();
+    // DEV: testability probe for the E2E panel smoke (tools/panel-smoke.mjs).
+    if (import.meta.env.DEV) {
+      (window as unknown as { __panelProbe?: unknown }).__panelProbe = {
+        anyOpen: () => this.anyPanelOpen(),
+        closeTop: () => this.closeTopPanel(),
+        closeBtnShown: () => this.panelRouter.closeButtonShown(),
+        closeBtnXY: () => this.panelRouter.closeButtonXY(),
+      };
+    }
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
       if (this.contextMenu.isOpen()) {
         if (!pointer.rightButtonDown()) this.contextMenu.hide();
@@ -2244,7 +2271,7 @@ export default class OnlineScene extends Phaser.Scene {
     const n = this.net;
     // FIXER / contracts is the first-hour north star — never lock it. Everything else waits.
     if (svc !== "contracts" && svc !== "stash" && firstHourSystemsLocked() && !this.isTutorial) {
-      this.showBubble(this.me?.x ?? 0, this.me?.y ?? 0, "Talk to THE FIXER first — accept THE WAKE, then deploy.");
+      this.pointBlockedPlayerToFixer();
       return;
     }
     switch (svc) {
@@ -2496,11 +2523,32 @@ export default class OnlineScene extends Phaser.Scene {
       return true;
     }
     if (firstHourSystemsLocked()) {
-      this.showBubble(this.me?.x ?? 0, this.me?.y ?? 0, "Talk to THE FIXER first — accept THE WAKE, then deploy.");
+      this.pointBlockedPlayerToFixer();
       return false;
     }
     open();
     return true;
+  }
+
+  /** A first-hour lock fired — don't just say "talk to THE FIXER", point there.
+   *  In the hub the green waypoint can mark him directly; anywhere else the map
+   *  (never locked) opens so travelling to the hub is one tap, not a scavenger hunt. */
+  private pointBlockedPlayerToFixer() {
+    if (this.isCityHub) {
+      const fixer = CITY_HUB_NPCS.find((n) => n.svc === "contracts");
+      if (fixer) {
+        this.questTarget = {
+          x: fixer.tile[0] * TILE + TILE / 2,
+          y: fixer.tile[1] * TILE + TILE / 2,
+          label: "THE FIXER",
+        };
+      }
+      this.showBubble(this.me?.x ?? 0, this.me?.y ?? 0, "Locked until you take a job. Follow the green ◆ to THE FIXER.");
+      return;
+    }
+    this.showBubble(this.me?.x ?? 0, this.me?.y ?? 0, "Locked until you take a job from THE FIXER — he's in METRO HUB.");
+    // Surface the travel tool instead of leaving the player to find it.
+    if (!this.mapPanel?.open) this.mapPanel?.toggle(this.net.discovered, this.net.unlocked, this.zone);
   }
 
   /** Phone / tablet primary UX — do NOT use Phaser's touch flag (true on most desktops). */
@@ -3475,92 +3523,14 @@ export default class OnlineScene extends Phaser.Scene {
 
   /** HOUSING REGISTRY — every home at a glance: owner, price, furnishings, signatures.
    *  The most-furnished owned home gets a ✦ FEATURED badge; click a row to walk there. */
-  /** True while any full-screen overlay is open (drives the mobile ✕ button). */
+  /** True while any full-screen overlay is open — delegates to the PanelRouter. */
   private anyPanelOpen(): boolean {
-    return !!(
-      this.options?.isOpen ||
-      this.inv?.open ||
-      this.shop?.open ||
-      this.forge?.open ||
-      this.market?.open ||
-      this.stashPanel?.open ||
-      this.contracts?.open ||
-      this.board?.open ||
-      this.guildPanel?.open ||
-      this.cosmetics?.open ||
-      this.rsSkillsPanel?.open ||
-      this.questLog?.open ||
-      this.mapPanel?.open ||
-      this.registryOpen
-    );
+    return this.panelRouter?.anyOpen() ?? false;
   }
 
-  /** Close the one open overlay (only ever one at a time). Returns true if it closed one. */
+  /** Close the one open overlay (the ESC path) — delegates to the PanelRouter. */
   private closeTopPanel(): boolean {
-    const steps: Array<[boolean, () => void]> = [
-      [!!this.options?.isOpen, () => this.options!.close()],
-      [!!this.shop?.open, () => this.shop.close()],
-      [!!this.forge?.open, () => this.forge.close()],
-      [!!this.market?.open, () => this.market.close()],
-      [!!this.stashPanel?.open, () => this.stashPanel.close()],
-      [!!this.contracts?.open, () => this.contracts.close()],
-      [!!this.board?.open, () => this.board.close()],
-      [!!this.guildPanel?.open, () => this.guildPanel.close()],
-      [!!this.cosmetics?.open, () => this.cosmetics.close()],
-      [!!this.rsSkillsPanel?.open, () => this.rsSkillsPanel.close()],
-      [!!this.questLog?.open, () => this.questLog.close()],
-      [!!this.mapPanel?.open, () => this.mapPanel.close()],
-      [this.registryOpen, () => this.toggleRegistry()],
-      [!!this.inv?.open, () => this.inv.close()],
-    ];
-    for (const [isOpen, close] of steps) {
-      if (isOpen) {
-        close();
-        return true;
-      }
-    }
-    return false;
-  }
-
-  /** Floating red ✕ in the top-right — visible only while an overlay is open on touch. */
-  private buildMobileCloseButton() {
-    const r = uiDim(19);
-    const g = this.add.graphics().setScrollFactor(0);
-    g.fillStyle(0x140a1c, 0.94).fillCircle(0, 0, r);
-    g.lineStyle(uiDim(2), 0xff4d6d, 0.95).strokeCircle(0, 0, r);
-    const a = r * 0.42;
-    g.lineStyle(uiDim(2.5), 0xffe0e6, 0.98);
-    g.beginPath();
-    g.moveTo(-a, -a);
-    g.lineTo(a, a);
-    g.strokePath();
-    g.beginPath();
-    g.moveTo(a, -a);
-    g.lineTo(-a, a);
-    g.strokePath();
-    const hit = this.add
-      .zone(0, 0, r * 2 + uiDim(16), r * 2 + uiDim(16))
-      .setOrigin(0.5)
-      .setInteractive({ useHandCursor: true });
-    hit.on("pointerdown", (_p: Phaser.Input.Pointer, _lx: number, _ly: number, ev: Phaser.Types.Input.EventData) => {
-      ev.stopPropagation?.();
-      this.closeTopPanel();
-    });
-    this.mobileCloseBtn = this.add
-      .container(this.scale.width - uiDim(30), uiDim(30), [g, hit])
-      .setScrollFactor(0)
-      .setDepth(6000)
-      .setVisible(false);
-  }
-
-  /** Show/hide the mobile ✕ to match overlay state — called cheaply each frame. */
-  private syncMobileCloseButton() {
-    if (!this.mobileCloseBtn) return;
-    const show = this.anyPanelOpen();
-    if (show !== this.mobileCloseShown) {
-      this.mobileCloseShown = show;
-      this.mobileCloseBtn.setVisible(show);
-    }
+    return this.panelRouter?.closeTop() ?? false;
   }
 
   private toggleRegistry() {
@@ -4516,7 +4486,7 @@ export default class OnlineScene extends Phaser.Scene {
 
   update(_t: number, dt: number) {
     if (!this.net) return;
-    this.syncMobileCloseButton(); // show the touch ✕ whenever an overlay is open
+    this.panelRouter?.syncMobileCloseButton(); // show the touch ✕ whenever an overlay is open
     if (this.isCityHub || this.isEstates) this.updateWanderers(dt); // ambient pedestrians
     const k = this.keys;
     const dn = (key?: Phaser.Input.Keyboard.Key) => (!this.chatOpen && key?.isDown ? 1 : 0);

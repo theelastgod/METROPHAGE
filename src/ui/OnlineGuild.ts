@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { COLORS } from "../config";
 import { GUILD_CREATE_COST, guildXpForLevel } from "../game/guilds";
+import Modal from "./Modal";
 import { closeHint, dimBackdrop, modalRect, uiDim, uiFont } from "./uiLayout";
 
 interface GuildState {
@@ -15,17 +16,10 @@ interface GuildState {
   members: Array<{ id: string; rank: string }>;
 }
 
-export default class OnlineGuild {
-  open = false;
+export default class OnlineGuild extends Modal {
   onAction?: (action: "deposit" | "withdraw" | "leave" | "info", credits?: number, cores?: number) => void;
-  private scene: Phaser.Scene;
   private guild: GuildState | null = null;
   private selfId = "";
-  private objs: Phaser.GameObjects.GameObject[] = [];
-
-  constructor(scene: Phaser.Scene) {
-    this.scene = scene;
-  }
 
   setGuild(g: GuildState | null, selfId: string) {
     this.guild = g;
@@ -33,23 +27,12 @@ export default class OnlineGuild {
     if (this.open) this.build();
   }
   toggle(g: GuildState | null, selfId: string) {
-    this.open = !this.open;
     this.guild = g;
     this.selfId = selfId;
-    if (this.open) this.build();
-    else this.clear();
-  }
-  close() {
-    if (!this.open) return;
-    this.open = false;
-    this.clear();
-  }
-  private clear() {
-    for (const o of this.objs) o.destroy();
-    this.objs = [];
+    this.toggleOpen();
   }
 
-  private build() {
+  protected build() {
     this.clear();
     const scene = this.scene;
     const add = <T extends Phaser.GameObjects.GameObject>(o: T): T => {
@@ -61,7 +44,7 @@ export default class OnlineGuild {
     const btnH = uiDim(28);
     const rosterH = uiDim(24);
 
-    add(dimBackdrop(scene, D, 0.64, () => this.close()));
+    add(dimBackdrop(scene, D, 0.64, () => this.close(), { x, y, w, h }));
     const g = add(scene.add.graphics().setScrollFactor(0).setDepth(D + 1));
     g.fillStyle(0x0a0818, 0.97).fillRect(x, y, w, h);
     g.lineStyle(uiDim(2), COLORS.neonGreen, 0.85).strokeRect(x, y, w, h);
@@ -158,9 +141,5 @@ export default class OnlineGuild {
       tx(m.rank.toUpperCase(), x + w - uiDim(38), ry + uiDim(5), 11, rankColor, false, 1);
       ry += rosterH + uiDim(3);
     }
-  }
-
-  destroy() {
-    this.clear();
   }
 }
