@@ -547,6 +547,11 @@ export class WorldDO {
   private shots: Shot[] = [];
   private tick = 0;
   private timer: ReturnType<typeof setInterval> | null = null;
+  // ── ops metrics (in-memory only, exposed via /stats — reset on DO recycle) ──
+  private bootMs = Date.now();
+  private tickMsAvg = 0; // EMA (α=0.05) of step() wall time
+  private tickMsMax = 0; // worst tick since boot/recycle
+  private snapBytesAvg = 0; // EMA of total snapshot bytes broadcast per tick
   private grid: TileGrid;
   private spawn: { x: number; y: number };
   private pickups = new Map<number, Pickup>();
@@ -4388,6 +4393,7 @@ export class WorldDO {
   private getStats() {
     let liveEnemies = 0;
     for (const e of this.enemies.values()) if (e.hp > 0) liveEnemies++;
+    const n = Math.max(1, this.sessions.size);
     return {
       zone: this.zoneName,
       players: this.sessions.size,
@@ -4397,10 +4403,18 @@ export class WorldDO {
       nodes: this.nodes.length,
       tick: this.tick,
       running: this.timer !== null,
+      // ops: tick health + broadcast weight (see step()) — EMA, resets on recycle
+      uptimeSec: Math.round((Date.now() - this.bootMs) / 1000),
+      tickMsAvg: Math.round(this.tickMsAvg * 10) / 10,
+      tickMsMax: this.tickMsMax,
+      tickBudgetMs: NET_TICK_MS,
+      snapBytesPerTick: Math.round(this.snapBytesAvg),
+      snapBytesPerPlayer: Math.round(this.snapBytesAvg / n),
     };
   }
 
   private step() {
+    const stepT0 = Date.now();
     const dt = NET_TICK_MS / 1000;
 
     // 1) players — movement + respawn
@@ -4812,11 +4826,14 @@ export class WorldDO {
     const factions = Array.from({ length: FACTION_COUNT }, (_, i) => Math.round(this.meta["f" + i] ?? 0));
     const control = this.districtControl();
     const roster = [...this.players.values()].map((p) => ({ id: p.id, faction: p.faction, level: p.level }));
+    let snapBytes = 0;
     for (const [ws, id] of this.sessions) {
       const viewer = this.players.get(id);
       if (!viewer) continue;
       try {
-        ws.send(this.snapshotFor(viewer, factions, control, roster));
+        const snap = this.snapshotFor(viewer, factions, control, roster);
+        snapBytes += snap.length;
+        ws.send(snap);
       } catch {
         /* dropped */
       }
@@ -4824,6 +4841,11 @@ export class WorldDO {
 
     this.tick++;
     if (this.tick % PERSIST_EVERY_TICKS === 0) void this.persistDirty();
+    // ops metrics: EMA smoothing keeps this O(1) per tick with no storage writes
+    const stepMs = Date.now() - stepT0;
+    this.tickMsAvg += 0.05 * (stepMs - this.tickMsAvg);
+    if (stepMs > this.tickMsMax) this.tickMsMax = stepMs;
+    this.snapBytesAvg += 0.05 * (snapBytes - this.snapBytesAvg);
     if (this.sessions.size === 0 && this.timer) {
       clearInterval(this.timer);
       this.timer = null;
