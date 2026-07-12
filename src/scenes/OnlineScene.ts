@@ -546,6 +546,9 @@ export default class OnlineScene extends Phaser.Scene {
   // HOUSING REGISTRY — the estates street's featured-homes board
   private registryObjs: Phaser.GameObjects.GameObject[] = [];
   private registryOpen = false;
+  // Mobile: floating ✕ that appears over any open overlay (touch has no ESC key).
+  private mobileCloseBtn?: Phaser.GameObjects.Container;
+  private mobileCloseShown = false;
 
   private isTutorial = false;
   private tutorialPanel!: Phaser.GameObjects.Text;
@@ -639,6 +642,8 @@ export default class OnlineScene extends Phaser.Scene {
     this.homeFurnLayer = undefined;
     this.homeGhostG = undefined;
     this.homeDraft = [];
+    this.hudPanelImg = null;
+    this.trackerPanelImg = null;
     this.estatePlateObjs = [];
     this.wanderers = []; // scene restart destroyed the sprites — drop the stale refs
     this.wandererGrid = null;
@@ -1493,6 +1498,8 @@ export default class OnlineScene extends Phaser.Scene {
               : []),
           ],
     );
+    // Touchscreens have no ESC key — give every overlay a universal tap-to-close.
+    if (mobile) this.buildMobileCloseButton();
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
       if (this.contextMenu.isOpen()) {
         if (!pointer.rightButtonDown()) this.contextMenu.hide();
@@ -3460,6 +3467,94 @@ export default class OnlineScene extends Phaser.Scene {
 
   /** HOUSING REGISTRY — every home at a glance: owner, price, furnishings, signatures.
    *  The most-furnished owned home gets a ✦ FEATURED badge; click a row to walk there. */
+  /** True while any full-screen overlay is open (drives the mobile ✕ button). */
+  private anyPanelOpen(): boolean {
+    return !!(
+      this.options?.isOpen ||
+      this.inv?.open ||
+      this.shop?.open ||
+      this.forge?.open ||
+      this.market?.open ||
+      this.stashPanel?.open ||
+      this.contracts?.open ||
+      this.board?.open ||
+      this.guildPanel?.open ||
+      this.cosmetics?.open ||
+      this.rsSkillsPanel?.open ||
+      this.questLog?.open ||
+      this.mapPanel?.open ||
+      this.registryOpen
+    );
+  }
+
+  /** Close the one open overlay (only ever one at a time). Returns true if it closed one. */
+  private closeTopPanel(): boolean {
+    const steps: Array<[boolean, () => void]> = [
+      [!!this.options?.isOpen, () => this.options!.close()],
+      [!!this.shop?.open, () => this.shop.close()],
+      [!!this.forge?.open, () => this.forge.close()],
+      [!!this.market?.open, () => this.market.close()],
+      [!!this.stashPanel?.open, () => this.stashPanel.close()],
+      [!!this.contracts?.open, () => this.contracts.close()],
+      [!!this.board?.open, () => this.board.close()],
+      [!!this.guildPanel?.open, () => this.guildPanel.close()],
+      [!!this.cosmetics?.open, () => this.cosmetics.close()],
+      [!!this.rsSkillsPanel?.open, () => this.rsSkillsPanel.close()],
+      [!!this.questLog?.open, () => this.questLog.close()],
+      [!!this.mapPanel?.open, () => this.mapPanel.close()],
+      [this.registryOpen, () => this.toggleRegistry()],
+      [!!this.inv?.open, () => this.inv.close()],
+    ];
+    for (const [isOpen, close] of steps) {
+      if (isOpen) {
+        close();
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Floating red ✕ in the top-right — visible only while an overlay is open on touch. */
+  private buildMobileCloseButton() {
+    const r = uiDim(19);
+    const g = this.add.graphics().setScrollFactor(0);
+    g.fillStyle(0x140a1c, 0.94).fillCircle(0, 0, r);
+    g.lineStyle(uiDim(2), 0xff4d6d, 0.95).strokeCircle(0, 0, r);
+    const a = r * 0.42;
+    g.lineStyle(uiDim(2.5), 0xffe0e6, 0.98);
+    g.beginPath();
+    g.moveTo(-a, -a);
+    g.lineTo(a, a);
+    g.strokePath();
+    g.beginPath();
+    g.moveTo(a, -a);
+    g.lineTo(-a, a);
+    g.strokePath();
+    const hit = this.add
+      .zone(0, 0, r * 2 + uiDim(16), r * 2 + uiDim(16))
+      .setOrigin(0.5)
+      .setInteractive({ useHandCursor: true });
+    hit.on("pointerdown", (_p: Phaser.Input.Pointer, _lx: number, _ly: number, ev: Phaser.Types.Input.EventData) => {
+      ev.stopPropagation?.();
+      this.closeTopPanel();
+    });
+    this.mobileCloseBtn = this.add
+      .container(this.scale.width - uiDim(30), uiDim(30), [g, hit])
+      .setScrollFactor(0)
+      .setDepth(6000)
+      .setVisible(false);
+  }
+
+  /** Show/hide the mobile ✕ to match overlay state — called cheaply each frame. */
+  private syncMobileCloseButton() {
+    if (!this.mobileCloseBtn) return;
+    const show = this.anyPanelOpen();
+    if (show !== this.mobileCloseShown) {
+      this.mobileCloseShown = show;
+      this.mobileCloseBtn.setVisible(show);
+    }
+  }
+
   private toggleRegistry() {
     if (this.registryOpen) {
       for (const o of this.registryObjs) o.destroy();
@@ -4413,6 +4508,7 @@ export default class OnlineScene extends Phaser.Scene {
 
   update(_t: number, dt: number) {
     if (!this.net) return;
+    this.syncMobileCloseButton(); // show the touch ✕ whenever an overlay is open
     if (this.isCityHub || this.isEstates) this.updateWanderers(dt); // ambient pedestrians
     const k = this.keys;
     const dn = (key?: Phaser.Input.Keyboard.Key) => (!this.chatOpen && key?.isDown ? 1 : 0);
