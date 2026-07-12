@@ -40,10 +40,18 @@ export function juiceHitStop(scene: Phaser.Scene, ms = 56): void {
   });
 }
 
-/** Micro zoom punch toward the action. */
+/** Micro zoom punch toward the action.
+ *
+ *  Combat fires these constantly (kills/streaks/pickups/hits) and they overlap.
+ *  Reading cam.zoom as the restore point let punch B capture punch A's
+ *  punched-IN zoom as its "base" — every overlap ratcheted the camera further
+ *  in, permanently ("screen zooms in too hard and won't zoom back out").
+ *  The resting zoom stamped by installUiCamera is the only truth: kill any
+ *  in-flight punch and always settle back to it. */
 export function juiceZoomPunch(scene: Phaser.Scene, amount = 0.055, duration = 140): void {
-  const cam = scene.cameras.main;
-  const base = cam.zoom;
+  const cam = scene.cameras.main as Phaser.Cameras.Scene2D.Camera & { __baseZoom?: number };
+  const base = cam.__baseZoom ?? cam.zoom;
+  scene.tweens.killTweensOf(cam); // an overlapping punch must not ratchet the baseline
   scene.tweens.add({
     targets: cam,
     zoom: base * (1 + amount),

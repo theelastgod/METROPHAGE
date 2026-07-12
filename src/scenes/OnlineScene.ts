@@ -1533,6 +1533,9 @@ export default class OnlineScene extends Phaser.Scene {
         closeTop: () => this.closeTopPanel(),
         closeBtnShown: () => this.panelRouter.closeButtonShown(),
         closeBtnXY: () => this.panelRouter.closeButtonXY(),
+        // camera-juice hook for tools/zoom-ratchet-probe.mjs (overlap regression)
+        zoomPunch: () => juiceZoomPunch(this, 0.07, 160),
+        camZoom: () => this.cameras.main.zoom,
       };
     }
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {

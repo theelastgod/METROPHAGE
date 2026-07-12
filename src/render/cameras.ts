@@ -22,6 +22,10 @@ import { RENDER_SCALE } from "../config";
 export function installUiCamera(scene: Phaser.Scene, designZoom = 1): Phaser.Cameras.Scene2D.Camera {
   const main = scene.cameras.main;
   main.setZoom(designZoom * RENDER_SCALE);
+  // Authoritative resting zoom — juiceZoomPunch tweens the camera and MUST settle
+  // back here. Reading cam.zoom live let overlapping punches capture each other's
+  // punched-in value as "base" and ratchet the zoom in permanently.
+  (main as Phaser.Cameras.Scene2D.Camera & { __baseZoom?: number }).__baseZoom = designZoom * RENDER_SCALE;
 
   const ui = scene.cameras.add(0, 0, scene.scale.width, scene.scale.height);
   ui.setName("ui");
