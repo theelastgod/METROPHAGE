@@ -5402,9 +5402,11 @@ export default class OnlineScene extends Phaser.Scene {
     const cx = this.scale.width / 2;
     const rightLaneW = Math.max(0, this.scale.width - statusRight - uiGap("md") - screenPad);
     const centeredFrameMaxW = this.scale.width - screenPad * 2;
+    // Mobile: a compact card hugging the LEFT edge under the status panel — a wide
+    // centered banner sat in the middle of the short landscape screen, over the action.
     const textMaxW = Math.max(
       uiDim(180),
-      Math.min(uiDim(mobile ? 520 : 640), (mobile ? centeredFrameMaxW : Math.max(rightLaneW, centeredFrameMaxW * 0.52)) - pad * 2),
+      Math.min(uiDim(mobile ? 300 : 640), (mobile ? centeredFrameMaxW : Math.max(rightLaneW, centeredFrameMaxW * 0.52)) - pad * 2),
     );
     const rows = [this.questText, this.dailyText, this.bountyText].filter(
       (t) => t.visible && t.text.length > 0,
@@ -5428,7 +5430,7 @@ export default class OnlineScene extends Phaser.Scene {
     const frameH = y - uiGap("xs") + pad - trackerTop;
     // Never let the tracker frame lap the status panel. Desktop uses the right lane
     // when it fits; otherwise the tracker moves underneath the status stack.
-    let left = cx - frameW / 2;
+    let left = mobile ? screenPad : cx - frameW / 2; // mobile: left-anchored, not mid-screen
     const overlapsStatusBand = trackerTop < statusBottom + uiGap("sm");
     if (!mobile && overlapsStatusBand) {
       const rightLaneLeft = statusRight + uiGap("md");
@@ -5470,11 +5472,14 @@ export default class OnlineScene extends Phaser.Scene {
    *  desktop ("GO TO THE FIXER" printed through "THE GUTTER KING — ALIVE"). */
   private positionCoach() {
     if (!this.coachText) return;
-    this.coachText.setWordWrapWidth(Math.min(this.scale.width - uiDim(48), uiDim(this.mobileUx() ? 560 : 640)));
+    const mobile = this.mobileUx();
+    this.coachText.setWordWrapWidth(Math.min(this.scale.width - uiDim(48), uiDim(mobile ? 300 : 640)));
     let y = this.trackerBottomY + uiGap("sm");
     if (this.bossBanner?.visible) y = Math.max(y, this.bossBanner.y + this.bossBanner.height + uiGap("xs"));
     if (this.eventBanner?.visible) y = Math.max(y, this.eventBanner.y + this.eventBanner.height + uiGap("xs"));
     this.coachText.setY(y);
+    // Mobile: ride the same left-anchored chain as the tracker card (origin 0.5).
+    if (mobile) this.coachText.setX(uiDim(12) + this.coachText.width / 2);
   }
 
   /** Floating HSS deploy bark above a newly-seen online enemy (throttled), tinted to
