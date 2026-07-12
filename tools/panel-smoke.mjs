@@ -1,0 +1,249 @@
+#!/usr/bin/env node
+/**
+ * E2E panel smoke — proves every online overlay OPENS and CLOSES in a real
+ * browser, on desktop (hotkey + ESC + tap-outside) and mobile (?mobile=1,
+ * floating ✕). This is the regression net the pure-logic vitest suite lacks.
+ *
+ * Self-contained: spawns wrangler dev (:8787) + vite dev (:5177 with
+ * VITE_SERVER_URL pointed at it), runs both passes, kills them, exits 0/1.
+ *
+ * Run: node tools/panel-smoke.mjs            (assumes deps installed)
+ *      node tools/panel-smoke.mjs --keep     (leave servers running after)
+ */
+import { chromium } from "playwright";
+import { spawn } from "node:child_process";
+import path from "node:path";
+
+const ROOT = path.resolve(new URL(".", import.meta.url).pathname, "..");
+const VITE_PORT = 5177;
+const WS_PORT = 8787;
+const KEEP = process.argv.includes("--keep");
+
+const failures = [];
+const log = (m) => console.log(`[panel-smoke] ${m}`);
+const check = (ok, what) => {
+  console.log(`  ${ok ? "PASS" : "FAIL"}  ${what}`);
+  if (!ok) failures.push(what);
+};
+
+function spawnServer(name, cmd, args, cwd, readyMatch) {
+  const child = spawn(cmd, args, { cwd, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env } });
+  const ready = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${name} not ready in 60s`)), 60000);
+    const onData = (buf) => {
+      if (String(buf).match(readyMatch)) {
+        clearTimeout(timer);
+        resolve();
+      }
+    };
+    child.stdout.on("data", onData);
+    child.stderr.on("data", onData);
+    child.on("exit", (code) => reject(new Error(`${name} exited ${code} before ready`)));
+  });
+  return { name, child, ready };
+}
+
+async function httpUp(url, tries = 30) {
+  for (let i = 0; i < tries; i++) {
+    try {
+      const r = await fetch(url);
+      if (r.ok || r.status === 426) return true; // 426 = worker answering (expects WS)
+    } catch {
+      /* not yet */
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  return false;
+}
+
+/** Boot the game to the connected Online scene. Returns the canvas bounding box. */
+async function enterCity(page, base) {
+  await page.addInitScript(() => {
+    // Lift the first-hour funnel locks (the smoke exercises panels, not onboarding)
+    localStorage.setItem(
+      "metrophage_first_session_v3",
+      JSON.stringify({ step: "done", kills: 99, talkedFixer: true, deployed: true, heatCoached: true, dismissed: true }),
+    );
+  });
+  await page.goto(base, { waitUntil: "domcontentloaded", timeout: 30000 });
+  await page.waitForFunction(
+    () => {
+      const c = document.querySelector("#game-root canvas");
+      return c && c.width > 0;
+    },
+    { timeout: 20000 },
+  );
+  await page.waitForFunction(() => typeof window.__enterCity === "function", { timeout: 20000 });
+  await page.waitForTimeout(2500); // let Boot finish asset load
+  await page.evaluate(() => window.__enterCity());
+  const connected = await page
+    .waitForFunction(
+      () => {
+        const s = window.__game?.scene?.getScene?.("Online");
+        return s?.net?.connected === true && !!window.__panelProbe;
+      },
+      { timeout: 20000 },
+    )
+    .then(() => true)
+    .catch(() => false);
+  if (!connected) throw new Error("Online scene never connected — is wrangler dev healthy?");
+  await page.waitForTimeout(1000);
+  return await (await page.$("#game-root canvas")).boundingBox();
+}
+
+const anyOpen = (page) => page.evaluate(() => window.__panelProbe.anyOpen());
+
+/** Convert game-canvas coords → CSS page coords (canvas is FIT-scaled). */
+async function gameToPage(page, box, gx, gy) {
+  const s = await page.evaluate(() => ({ w: window.__game.scale.width, h: window.__game.scale.height }));
+  return { x: box.x + (gx / s.w) * box.width, y: box.y + (gy / s.h) * box.height };
+}
+
+async function desktopPass(browser, base) {
+  log("── desktop pass (hotkeys, ESC, tap-outside)");
+  const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+  const box = await enterCity(page, base);
+  // Panels reachable by hotkey in the hub. J = contracts (first hour) / quest log.
+  const panels = [
+    ["i", "Bag"],
+    ["b", "Vendor"],
+    ["g", "Forge"],
+    ["k", "Market"],
+    ["j", "Quests/Contracts"],
+    ["m", "Map"],
+    ["'", "Skills"],
+    ["l", "Board"],
+    ["c", "Guild"],
+    ["y", "Cosmetics"],
+  ];
+  for (const [key, name] of panels) {
+    await page.keyboard.press(key);
+    await page.waitForTimeout(450);
+    const opened = await anyOpen(page);
+    check(opened, `${name} opens on '${key}'`);
+    if (opened) {
+      await page.keyboard.press("Escape");
+      await page.waitForTimeout(350);
+      check(!(await anyOpen(page)), `${name} closes on ESC`);
+    }
+    await page.waitForTimeout(150);
+  }
+  // Tap-outside: vendor is a centered 580-wide modal — click the far-left dim area.
+  await page.keyboard.press("b");
+  await page.waitForTimeout(450);
+  if (await anyOpen(page)) {
+    // First: a click on the card BODY (header strip — no buttons there) must NOT close.
+    const hdr = await page.evaluate(() => {
+      const g = window.__game;
+      const s = g.scale.height / 540; // uiDim scale (height-derived)
+      const w = 580 * s;
+      const h = (88 + 8 * 56) * s;
+      return { x: (g.scale.width - w) / 2 + w / 2, y: (g.scale.height - h) / 2 + 12 * s };
+    });
+    const hp = await gameToPage(page, box, hdr.x, hdr.y);
+    await page.mouse.click(hp.x, hp.y);
+    await page.waitForTimeout(350);
+    check(await anyOpen(page), "click on card body does NOT close");
+    // Then: the dim area outside the card dismisses.
+    const p = await gameToPage(page, box, 40, 700); // left edge, mid-height (game coords)
+    await page.mouse.click(p.x, p.y);
+    await page.waitForTimeout(350);
+    check(!(await anyOpen(page)), "Vendor closes on tap-outside");
+  } else {
+    check(false, "Vendor reopens for tap-outside test");
+  }
+  await page.close();
+}
+
+async function mobilePass(browser, base) {
+  log("── mobile pass (?mobile=1, floating ✕)");
+  const page = await browser.newPage({ viewport: { width: 844, height: 390 } });
+  const url = base + (base.includes("?") ? "&" : "?") + "mobile=1";
+  const box = await enterCity(page, url);
+  // Open the Bag (keyboard still fires in the emulated mobile UX) → ✕ appears.
+  await page.keyboard.press("i");
+  await page.waitForTimeout(450);
+  check(await anyOpen(page), "Bag opens (mobile)");
+  const btnShown = await page.evaluate(() => window.__panelProbe.closeBtnShown());
+  check(btnShown, "floating ✕ appears while panel open");
+  if (btnShown) {
+    const xy = await page.evaluate(() => window.__panelProbe.closeBtnXY());
+    const p = await gameToPage(page, box, xy.x, xy.y);
+    await page.mouse.click(p.x, p.y);
+    await page.waitForTimeout(400);
+    check(!(await anyOpen(page)), "tap ✕ closes the panel");
+    const hidden = await page.evaluate(() => !window.__panelProbe.closeBtnShown());
+    check(hidden, "✕ hides once nothing is open");
+  }
+  // Tap-outside on mobile too (vendor modal).
+  await page.keyboard.press("b");
+  await page.waitForTimeout(450);
+  if (await anyOpen(page)) {
+    const p = await gameToPage(page, box, 40, 700);
+    await page.mouse.click(p.x, p.y);
+    await page.waitForTimeout(350);
+    check(!(await anyOpen(page)), "tap-outside closes on mobile");
+  }
+  await page.close();
+}
+
+async function main() {
+  process.env.VITE_SERVER_URL ??= `ws://127.0.0.1:${WS_PORT}/ws`; // must precede the vite spawn
+  const servers = [];
+  // Reuse an already-running wrangler dev (leftover sessions often hold :8787).
+  const wranglerUp = await httpUp(`http://127.0.0.1:${WS_PORT}/health`, 1);
+  if (wranglerUp) {
+    log(`reusing running server on :${WS_PORT}`);
+  } else {
+    log("starting wrangler dev…");
+    servers.push(
+      spawnServer(
+        "wrangler",
+        "node",
+        ["node_modules/.bin/wrangler", "dev", "--port", String(WS_PORT)],
+        path.join(ROOT, "server"),
+        /Ready on|Listening on|wrangler dev now uses local/i,
+      ),
+    );
+  }
+  log("starting vite dev…");
+  servers.push(
+    spawnServer("vite", "node", ["node_modules/.bin/vite", "--port", String(VITE_PORT), "--strictPort"], ROOT, /Local:.*:5177/i),
+  );
+  const kill = () => {
+    if (KEEP) return;
+    for (const s of servers) {
+      try {
+        s.child.kill("SIGTERM");
+      } catch {
+        /* gone */
+      }
+    }
+  };
+  try {
+    await Promise.all(servers.map((s) => s.ready));
+    check(await httpUp(`http://127.0.0.1:${WS_PORT}/health`), "wrangler /health answers");
+    check(await httpUp(`http://127.0.0.1:${VITE_PORT}/`), "vite answers");
+    const browser = await chromium.launch({ headless: true });
+    const base = `http://127.0.0.1:${VITE_PORT}/`;
+    try {
+      await desktopPass(browser, base);
+      await mobilePass(browser, base);
+    } finally {
+      await browser.close();
+    }
+  } finally {
+    kill();
+  }
+  console.log("");
+  if (failures.length) {
+    log(`❌ ${failures.length} failure(s)`);
+    process.exit(1);
+  }
+  log("✅ all panel open/close paths verified");
+}
+
+main().catch((e) => {
+  console.error(`[panel-smoke] fatal: ${e.message}`);
+  process.exit(1);
+});

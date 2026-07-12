@@ -13,6 +13,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "smoke:trusted": "cd server && node scripts/smoke.mjs move && node scripts/smoke.mjs combat && node scripts/smoke.mjs kit && node scripts/smoke.mjs quest && node scripts/smoke.mjs abuse",
+    "smoke:panels": "node tools/panel-smoke.mjs",
+    "scan:dead": "node tools/dead-code-scan.mjs",
+    "sim:economy": "node tools/economy-sim.mjs",
     "gen:music": "node tools/gen-music.mjs",
     "gen:music:local": "node tools/gen-music-local.mjs"
   },
