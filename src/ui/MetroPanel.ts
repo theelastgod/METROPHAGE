@@ -153,6 +153,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
       </div>
       <div class="notice" id="m-phase">Loading pool status…</div>
       <div class="notice" id="m-treasury-health" style="display:none"></div>
+      <div class="notice" id="m-economy" style="display:none"></div>
 
       <div class="metrics">
         <div class="metric"><span>Deposit</span><b id="m-rate-in">—</b></div>
@@ -291,6 +292,27 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
 
       if (p.mint && METRO_MINT) {
         ($("m-get") as HTMLAnchorElement).href = `${explorer}/token/${METRO_MINT}`;
+      }
+
+      // Economy dashboard strip: how well the treasury covers the circulating
+      // credit supply + the deposit forecast (see server /economy).
+      try {
+        const e = await fetch(`${metroApiBase()}/economy`).then((x) => x.json());
+        if (e?.ok) {
+          const cov = e.token.coverageRatio;
+          const covPct = cov === null ? "∞" : `${Math.round(cov * 100)}%`;
+          const eco = $("m-economy");
+          if (eco) {
+            eco.style.display = "block";
+            eco.classList.toggle("warn", cov !== null && cov < 0.5);
+            eco.textContent =
+              `Treasury covers ${covPct} of the ${e.credits.circulating.toLocaleString()}₵ in circulation · ` +
+              `deposits ~◈${e.forecast.depositsPerDayMetro}/day · rewards minted ~${e.forecast.emittedCreditsPerDay}₵/day` +
+              (e.forecast.daysUntilDry !== null ? ` · ⚠ pool dry in ~${e.forecast.daysUntilDry}d at current flow` : "");
+          }
+        }
+      } catch {
+        /* dashboard is best-effort — never block the pool panel */
       }
     } catch {
       status("pool unreachable");

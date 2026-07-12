@@ -437,6 +437,12 @@ export default {
 
     if (url.pathname === "/leaderboard") return handleLeaderboard(url, env);
 
+    // Economy dashboard: emissions vs sinks, treasury coverage, deposit forecast.
+    if (url.pathname === "/economy") {
+      const { handleEconomy } = await import("./economy");
+      return handleEconomy(env);
+    }
+
     if (url.pathname === "/identity" && req.method === "POST") return handleIdentity(req, env);
 
     if (url.pathname.startsWith("/metro/")) return handleMetro(url, req, env);

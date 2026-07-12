@@ -556,6 +556,10 @@ export class WorldDO {
   private tickMsAvg = 0; // EMA (α=0.05) of step() wall time
   private tickMsMax = 0; // worst tick since boot/recycle
   private snapBytesAvg = 0; // EMA of total snapshot bytes broadcast per tick
+  // ── economy ledger: credits created/destroyed since the last flush, keyed
+  // "flow:kind" — flushed to D1 economy_daily on the persist cadence. Powers
+  // /economy (emissions vs sinks vs the $METRO pool). Transfers not recorded.
+  private ecoLedger = new Map<string, number>();
   private grid: TileGrid;
   private spawn: { x: number; y: number };
   private pickups = new Map<number, Pickup>();
@@ -1760,6 +1764,7 @@ export class WorldDO {
         if (p.credits < GUILD_CREATE_COST) return sys(`founding a cell costs ₵${GUILD_CREATE_COST}`);
         if (await DB.prepare("SELECT id FROM guilds WHERE name = ?").bind(name).first()) return sys("that cell name is taken");
         p.credits -= GUILD_CREATE_COST;
+        this.eco("burn", "guild_found", GUILD_CREATE_COST);
         p.dirty = true;
         const now = Date.now();
         const res = await DB.prepare("INSERT INTO guilds (name, tag, leader, created_at) VALUES (?,?,?,?)").bind(name, tag, p.id, now).run();
@@ -1968,6 +1973,7 @@ export class WorldDO {
           if (p.credits < fee) return sys(`listing fee is ₵${fee}`);
           p.inventory.splice(idx, 1);
           p.credits -= fee;
+          this.eco("burn", "market_fee", fee);
           p.dirty = true;
           await DB.prepare("INSERT INTO auctions (seller, seller_name, item, price, currency, status, created_at) VALUES (?,?,?,?,?,'open',?)")
             .bind(p.id, p.name, JSON.stringify(item), price, currency, Date.now())
@@ -2070,6 +2076,7 @@ export class WorldDO {
         ids.push(r.id);
       }
       p.credits += dc;
+      this.eco("emit", "pickup", dc);
       p.cores += dk;
       p.metro += dm;
       for (const it of items) {
@@ -2116,6 +2123,7 @@ export class WorldDO {
         if (c.price > 0 && p.credits < c.price) return sys(`need ₵${c.price} for ${c.name}`);
         if (c.price > 0) {
           p.credits -= c.price;
+          this.eco("burn", "estates", c.price);
           p.dirty = true;
         }
         p.cosmeticsOwned.add(c.id);
@@ -2962,6 +2970,7 @@ export class WorldDO {
     p.xp += reward.xp;
     p.level = levelForXp(p.xp);
     p.credits += reward.currency;
+    this.eco("emit", "quest", reward.currency);
     p.dirty = true;
     this.sendTo(p.id, { t: "sys", text: `◈ quest complete — +${reward.xp} XP  ₵${reward.currency}` });
   }
@@ -3063,6 +3072,7 @@ export class WorldDO {
           p.xp += ev.def.reward.xp;
           p.level = levelForXp(p.xp);
           p.credits += ev.def.reward.currency;
+          this.eco("emit", "event", ev.def.reward.currency);
           p.dirty = true;
           this.campaignEvent(p, "event"); // SKYLINK BREAK's storm beat — survived together
           this.sendTo(p.id, { t: "sys", text: `◈ ${ev.def.name} weathered — +${ev.def.reward.xp} XP  ₵${ev.def.reward.currency}` });
@@ -3140,6 +3150,7 @@ export class WorldDO {
     if (isNew) {
       p.fragments.push(fid);
       p.credits += 150;
+      this.eco("emit", "fragment", 150);
       p.xp += 60;
       p.level = levelForXp(p.xp);
       p.dirty = true;
@@ -3165,6 +3176,7 @@ export class WorldDO {
       if (!p.campaign.hasFlag(flag)) {
         p.campaign.flags.add(flag);
         p.credits += 750;
+        this.eco("emit", "quest", 750);
         p.xp += 220;
         p.level = levelForXp(p.xp);
         p.dirty = true;
@@ -3357,6 +3369,32 @@ export class WorldDO {
     this.checkAchv(p, stat as StatKey);
   }
 
+  /** Tally a credit flow for the economy ledger (see economy_daily / /economy).
+   *  flow 'emit' = the game created credits; 'burn' = a sink destroyed them. */
+  private eco(flow: "emit" | "burn", kind: string, credits: number) {
+    if (!(credits > 0)) return;
+    const k = flow + ":" + kind;
+    this.ecoLedger.set(k, (this.ecoLedger.get(k) ?? 0) + Math.round(credits));
+  }
+
+  /** Flush the in-memory ledger to D1 (idempotent upsert; day is UTC). */
+  private async flushEconomy() {
+    if (this.ecoLedger.size === 0) return;
+    const rows = [...this.ecoLedger];
+    this.ecoLedger.clear();
+    const day = new Date().toISOString().slice(0, 10);
+    try {
+      const stmt = this.env.DB.prepare(
+        `INSERT INTO economy_daily (day, zone, flow, kind, credits) VALUES (?,?,?,?,?)
+         ON CONFLICT(day, zone, flow, kind) DO UPDATE SET credits = credits + excluded.credits`,
+      );
+      await this.env.DB.batch(rows.map(([k, c]) => stmt.bind(day, this.zoneName, k.split(":")[0], k.split(":")[1], c)));
+    } catch {
+      // Telemetry must never break gameplay (e.g. migration not yet applied) —
+      // re-queue nothing; a lost interval of counters is acceptable.
+    }
+  }
+
   /** Record the deepest district this player has reached (a MAX, not a sum). */
   private noteDeepest(p: PlayerState) {
     if (this.districtIndex + 1 > p.deepest) {
@@ -3374,6 +3412,7 @@ export class WorldDO {
         p.achv.add(a.id);
         p.achvNew.push(a.id);
         p.credits += a.reward; // server-authoritative reward (rides the next snapshot)
+        this.eco("emit", "achievement", a.reward);
         p.dirty = true;
         this.sendTo(p.id, { t: "ach", id: a.id, name: a.name, reward: a.reward });
       }
@@ -3419,6 +3458,7 @@ export class WorldDO {
       if (d.progress >= c.count) {
         d.done = true;
         p.credits += c.rewardCredits; // server-authoritative reward
+        this.eco("emit", "daily", c.rewardCredits);
         this.bumpStat(p, "credits", c.rewardCredits);
         this.bumpStat(p, "rep", c.rewardRep); // reputation track (cross-zone, persisted)
         p.dirty = true;
@@ -3481,6 +3521,7 @@ export class WorldDO {
       changed = true;
     }
     if (p.credits < 100) {
+      this.eco("emit", "floor", 100 - p.credits);
       p.credits = Math.max(p.credits, 100);
       changed = true;
     }
@@ -3521,6 +3562,7 @@ export class WorldDO {
     p.bounty.progress += n;
     if (p.bounty.progress >= b.count) {
       p.credits += b.rewardCredits; // server-authoritative reward
+      this.eco("emit", "bounty", b.rewardCredits);
       this.bumpStat(p, "credits", b.rewardCredits);
       this.bumpStat(p, "rep", b.rewardRep);
       p.dirty = true;
@@ -3680,6 +3722,7 @@ export class WorldDO {
       const price = e.owner ? e.price : ESTATE_BASE_PRICE;
       if (p.credits < price) return sys(`not enough credits — this home costs ₵${price}`);
       p.credits -= price;
+      if (!e.owner) this.eco("burn", "estates", price); // resale is a transfer (mailbox), not a burn
       p.dirty = true;
       if (e.owner) {
         // resale: the proceeds go to the previous owner via the cross-zone mailbox
@@ -3791,6 +3834,7 @@ export class WorldDO {
       return;
     }
     p.credits -= sku.price;
+    this.eco("burn", "vendor", sku.price);
     if (sku.heal) {
       p.hp = p.maxHp;
       this.send(ws, { t: "sys", text: `bought ${sku.label} — patched to full` });
@@ -3805,6 +3849,7 @@ export class WorldDO {
     }
     if (sku.creditsGrant) {
       p.credits += sku.creditsGrant;
+      this.eco("emit", "vendor_grant", sku.creditsGrant);
       this.send(ws, { t: "sys", text: `+₵${sku.creditsGrant} supply credits` });
     }
     p.dirty = true;
@@ -3850,6 +3895,7 @@ export class WorldDO {
       if (drill) return;
       p.credits -= c.credits;
       p.cores -= c.cores;
+      this.eco("burn", "forge", c.credits);
     };
 
     if (msg.action === "upgrade") {
@@ -3880,6 +3926,7 @@ export class WorldDO {
       else {
         const y = salvageYield(it);
         p.credits += y.credits;
+        this.eco("emit", "salvage", y.credits);
         p.cores += y.cores;
         fail(`✂ salvaged ${it.name} → +${y.cores}◈ +₵${y.credits}`);
       }
@@ -4306,6 +4353,7 @@ export class WorldDO {
       const dmod = /^d\d+$/.test(this.zoneName) ? dailyDistrictMod(this.districtIndex) : null;
       const gained = Math.round(CREDITS_PER_KILL * mult * (dmod?.creditMult ?? 1) * (1 + (killer.guildBonus || 0)));
       killer.credits += gained;
+      this.eco("emit", "kill", gained);
       killer.xp += Math.round(XP_PER_KILL * mult);
       killer.level = levelForXp(killer.xp);
       killer.dirty = true;
@@ -4753,6 +4801,7 @@ export class WorldDO {
             this.bountyEvent(p, "collect", 1);
           } else {
             p.credits += 6;
+            this.eco("emit", "pickup", 6);
           }
           if (!this.inTutorial()) p.dirty = true;
           this.pickups.delete(pid);
@@ -4844,7 +4893,10 @@ export class WorldDO {
     }
 
     this.tick++;
-    if (this.tick % PERSIST_EVERY_TICKS === 0) void this.persistDirty();
+    if (this.tick % PERSIST_EVERY_TICKS === 0) {
+      void this.persistDirty();
+      void this.flushEconomy();
+    }
     // ops metrics: EMA smoothing keeps this O(1) per tick with no storage writes
     const stepMs = Date.now() - stepT0;
     this.tickMsAvg += 0.05 * (stepMs - this.tickMsAvg);
@@ -5073,6 +5125,7 @@ export class WorldDO {
             shooter.dirty = true;
           }
           shooter.credits += CREDITS_PER_KILL * 3; // an arena kill pays a bounty
+        this.eco("emit", "arena", CREDITS_PER_KILL * 3);
           shooter.xp += XP_PER_KILL * 2;
           shooter.level = levelForXp(shooter.xp);
           shooter.dirty = true;
