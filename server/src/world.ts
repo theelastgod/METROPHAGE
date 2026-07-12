@@ -608,17 +608,18 @@ export class WorldDO {
   /** Spread logins across plazas/parks so 500+ runners don't stack on one tile. */
   private spreadSpawn(base: { x: number; y: number }, id: string): { x: number; y: number } {
     // Fan players out in a TIGHT ring around the hub spawn — enough that a crowd
-    // doesn't stack on one tile, close enough that everyone stays inside one AOI
-    // (1040px) and new runners land looking at each other + THE FIXER's plaza.
+    // doesn't stack on one tile, close enough that fresh runners stay inside one
+    // AOI and land looking at each other + THE FIXER's plaza.
     // (Scattering across the city's far-flung plazas made arrivals feel single-player:
     // fresh players spawned out of AOI range of one another.)
     let h = 0;
     for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
     const slot = (h ^ (this.sessions.size * 131)) % 512;
     const baseAngle = (slot / 512) * Math.PI * 2;
+    const maxRad = Math.max(56, AOI_RADIUS * 0.42);
     for (let ring = 0; ring < 48; ring++) {
       const angle = baseAngle + ring * 0.42;
-      const rad = 56 + ring * 18; // 56..~900px — always within one AOI of the hub
+      const rad = Math.min(maxRad, 56 + ring * 10);
       const x = base.x + Math.cos(angle) * rad;
       const y = base.y + Math.sin(angle) * rad;
       if (!tileIsWall(x, y, this.grid)) return { x: round2(x), y: round2(y) };
@@ -4910,8 +4911,7 @@ export class WorldDO {
     }
     const nodes = [];
     for (const n of this.nodes) {
-      if (near(n.x, n.y))
-        nodes.push({ id: n.id, x: round2(n.x), y: round2(n.y), owner: n.owner, progress: round2(n.progress), by: n.by });
+      nodes.push({ id: n.id, x: round2(n.x), y: round2(n.y), owner: n.owner, progress: round2(n.progress), by: n.by });
     }
     // Zone-wide boss status (NOT AOI-culled) so every player can locate it + see its
     // respawn countdown — the "find" half of find-and-fight.
