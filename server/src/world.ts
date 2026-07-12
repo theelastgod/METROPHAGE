@@ -4905,6 +4905,8 @@ export class WorldDO {
     if (this.sessions.size === 0 && this.timer) {
       clearInterval(this.timer);
       this.timer = null;
+      // Zone going to sleep — don't strand the ledger tail (in-memory; lost on recycle).
+      void this.flushEconomy();
     }
   }
 
