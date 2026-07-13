@@ -491,11 +491,13 @@ export default class NetClient {
 
   private scheduleReconnect() {
     if (this.manualClose || this.protocolBlocked) return;
-    if (this.reconnectAttempts >= 8) {
+    // More attempts + faster backoff — free-tier DO hibernation can take 10–20s;
+    // giving up after 8 tries left players stuck on "cold start" forever.
+    if (this.reconnectAttempts >= 16) {
       this.onConnectionState?.("offline");
       return;
     }
-    const delay = Math.min(16000, Math.round(800 * Math.pow(1.6, this.reconnectAttempts)));
+    const delay = Math.min(8000, Math.round(400 * Math.pow(1.45, this.reconnectAttempts)));
     this.reconnectAttempts++;
     this.onConnectionState?.("reconnecting");
     this.reconnectTimer = setTimeout(() => {

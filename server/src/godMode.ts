@@ -25,7 +25,11 @@ export function isGodPlayerId(id: string | null | undefined): boolean {
   }
 }
 
-/** Every zone the map / fast-travel graph can reference. */
+/**
+ * Zones the map graph cares about for fast travel.
+ * Keep this tight — used for client unlock AND optional D1 seeding.
+ * (Avoid hundreds of sequential D1 writes on login.)
+ */
 export function allDiscoverableZones(): string[] {
   const zones = new Set<string>([
     "safe",
@@ -35,18 +39,9 @@ export function allDiscoverableZones(): string[] {
     "den",
     "subway",
     "estates",
-    "guild",
-    "home",
-    "tutorial",
   ]);
   for (let i = 0; i < DISTRICTS.length; i++) zones.add("d" + i);
   for (const b of BRIDGES) zones.add(b.id);
   for (const v of DIVE_ZONE_IDS) zones.add(v);
-  // Hub building interiors + estate homes (wide net so travel never 404s).
-  for (let i = 0; i < 40; i++) {
-    zones.add("h" + i);
-    zones.add("est" + i);
-    zones.add("b" + i);
-  }
   return [...zones];
 }

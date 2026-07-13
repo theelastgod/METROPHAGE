@@ -1466,55 +1466,52 @@ export default class OnlineScene extends Phaser.Scene {
     // laid out in refreshHudPanels() as rows appear and disappear
     this.trackerG = this.add.graphics().setScrollFactor(0).setDepth(999);
     this.questText = this.add
-      .text(this.scale.width / 2, uiDim(12), "", hudFont(9, { color: "#b06bff", align: "center", fontStyle: "bold" }))
-      .setOrigin(0.5, 0)
+      .text(this.scale.width / 2, uiDim(12), "", hudFont(8, { color: "#c9a0ff", align: "left", fontStyle: "bold" }))
+      .setOrigin(0, 0)
       .setScrollFactor(0)
       .setDepth(1000);
     this.dailyText = this.add
-      .text(this.scale.width / 2, 0, "", hudFont(8, { color: "#39ff88", align: "center" }))
-      .setOrigin(0.5, 0)
+      .text(this.scale.width / 2, 0, "", hudFont(7, { color: "#39ff88", align: "left" }))
+      .setOrigin(0, 0)
       .setScrollFactor(0)
       .setDepth(1000);
     this.bountyText = this.add
-      .text(this.scale.width / 2, 0, "", hudFont(8, { color: "#f7ff3c", align: "center" }))
-      .setOrigin(0.5, 0)
+      .text(this.scale.width / 2, 0, "", hudFont(7, { color: "#f7ff3c", align: "left" }))
+      .setOrigin(0, 0)
       .setScrollFactor(0)
       .setDepth(1000);
-    // Story beats read as a top banner, NOT a modal over the play area — the old
-    // dead-centre box blanketed the whole screen and made the game feel dialog-heavy.
+    // Compact story toast (was a large mid-screen banner).
     this.storyPanel = this.add
-      // Mobile: the 0.16 band belongs to the hotbar/actions/tracker stack — beats
-      // read lower, still above the interact prompt.
-      .text(this.scale.width / 2, this.scale.height * (this.mobileUx() ? 0.34 : 0.18), "", hudFont(13, {
+      .text(this.scale.width / 2, this.scale.height * (this.mobileUx() ? 0.28 : 0.14), "", hudFont(10, {
         color: "#eafdff",
         align: "center",
-        backgroundColor: "#0b0716f2",
-        padding: { x: uiDim(18), y: uiDim(12) },
-        wordWrap: { width: uiDim(560) },
+        backgroundColor: "#0b0716f0",
+        padding: { x: uiDim(12), y: uiDim(8) },
+        wordWrap: { width: uiDim(380) },
       }))
       .setOrigin(0.5)
       .setScrollFactor(0)
       .setDepth(1900)
       .setVisible(false)
       .setInteractive({ useHandCursor: true });
-    this.storyPanel.setWordWrapWidth(Math.min(this.scale.width - uiDim(64), uiDim(560)));
+    this.storyPanel.setWordWrapWidth(Math.min(this.scale.width - uiDim(80), uiDim(380)));
     this.storyPanel.on("pointerdown", () => {
       this.storyHoldUntil = 0;
       this.storyPanel.setVisible(false);
     });
-    // First-session coach + core loop — always above the action so "what next" is obvious.
+    // First-session coach — one slim line.
     this.coachText = this.add
-      .text(this.scale.width / 2, uiDim(44), "", hudFont(11, {
+      .text(this.scale.width / 2, uiDim(44), "", hudFont(9, {
         color: "#39ff88",
         fontStyle: "bold",
         align: "center",
         backgroundColor: "#05070fe8",
-        padding: { x: uiDim(12), y: uiDim(6) },
+        padding: { x: uiDim(10), y: uiDim(4) },
       }))
       .setOrigin(0.5, 0)
       .setScrollFactor(0)
       .setDepth(1001);
-    this.coachText.setWordWrapWidth(Math.min(this.scale.width - uiDim(48), uiDim(640)));
+    this.coachText.setWordWrapWidth(Math.min(this.scale.width - uiDim(64), uiDim(420)));
     this.killFeedText = this.add
       .text(this.scale.width - uiDim(14), this.scale.height * 0.42, "", hudFont(10, {
         color: "#ff8a9a",
@@ -2872,14 +2869,15 @@ export default class OnlineScene extends Phaser.Scene {
     this.net.questEngage();
   }
 
-  /** Surface campaign / fragment / bounty dialogue above gameplay for a long readable hold. */
+  /** Surface campaign / fragment / bounty dialogue as a compact toast. */
   private presentStoryBeat() {
     const story = this.net.story;
     if (!story) return;
-    // ~22s hold — enough to read a journal beat; click the panel to dismiss early.
-    this.storyHoldUntil = performance.now() + 22_000;
+    // Short hold — full journal is in the objective strip / log, not a wall of text.
+    this.storyHoldUntil = performance.now() + 10_000;
     this.contracts?.close();
-    const body = `◢ ${story.quest} — ${story.title} ◣\n\n${story.text}\n\n▸ ${story.objective}${story.done ? "" : "\n· tap banner to dismiss"}`;
+    const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
+    const body = `◢ ${clip(story.quest, 28)} · ${clip(story.title, 36)}\n${clip(story.text.replace(/\n+/g, " "), 140)}\n▸ ${clip(story.objective, 42)} · tap`;
     this.storyPanel
       .setText(body)
       .setVisible(true)
@@ -5215,36 +5213,35 @@ export default class OnlineScene extends Phaser.Scene {
     const st = this.net.stats();
     const ctrl = this.net.control === NEUTRAL ? "—" : FACTION_NAMES[this.net.control];
     const waitMs = Date.now() - this.connectStartedAt;
-    // Free-tier Durable Object cold start — copy after 2s so hangs feel intentional.
-    if (!st.connected && (this.connectionState === "connecting" || this.connectionState === "reconnecting") && waitMs > 2000 && waitMs < 24000) {
+    // Free-tier Durable Object wake — brief status, never a permanent wall.
+    if (!st.connected && (this.connectionState === "connecting" || this.connectionState === "reconnecting") && waitMs > 1500 && waitMs < 18000) {
       this.hud.setColor("#f7ff3c");
       this.hud.setText(
         this.isTutorial
           ? [
-              this.connectionState === "reconnecting" ? "⏳ RECONNECTING…" : "⏳ WAKING DRILL YARD…",
-              "Cold start can take a few seconds — walk around while it links.",
-              "Or hit SKIP TO CITY (top-right) to enter the game now.",
+              this.connectionState === "reconnecting" ? "⏳ RECONNECTING…" : "⏳ LINKING…",
+              "Server waking — usually under 10s. Walk freely.",
+              "SKIP TO CITY (top-right) works anytime.",
             ]
           : [
-              this.connectionState === "reconnecting" ? "⏳ RECONNECTING…" : "⏳ WAKING DISTRICT…",
-              "Free-tier cold start can take a few seconds. Walk around while it links.",
-              "R to retry · ESC menu",
+              this.connectionState === "reconnecting" ? "⏳ RECONNECTING…" : "⏳ LINKING…",
+              "Server waking — usually under 10s. Walk freely.",
+              "R retry · ESC menu",
             ],
       );
       return;
     }
-    if (!st.connected && (this.connectionState === "offline" || waitMs > 24000)) {
+    if (!st.connected && (this.connectionState === "offline" || waitMs > 18000)) {
       this.hud.setColor("#ff6a6a");
       if (this.isTutorial) {
         this.hud.setText([
-          "⚠  DRILL SERVER OFFLINE — preview movement only",
-          "Hit SKIP TO CITY (top-right) to enter the live city anyway.",
-          "Or R to retry · ESC for menu.",
+          "⚠  STILL OFFLINE — preview only",
+          "SKIP TO CITY (top-right) · or R to retry link",
+          "ESC menu",
         ]);
       } else {
         this.hud.setText([
           "⚠  LINK LOST",
-          "Can't reach the shared city — preview mode is still walkable.",
           "R retry · ESC menu · check connection",
         ]);
       }
@@ -5339,12 +5336,22 @@ export default class OnlineScene extends Phaser.Scene {
         completed: [],
         flags: [],
       });
-      const hudLine = campaignHud(camp);
       const hasActive = !!(camp.active && camp.currentStage);
-      // Always show a compact objective strip in the hub — new runners need the FIXER
-      // pointer. Only hide once the campaign is fully done.
+      // Single compact line — strip "MISSION //" chrome that ballooned the top rail.
       const showQuest = this.isCityHub ? !camp.done : hasActive;
-      this.questText.setText(showQuest ? `MISSION // ${hudLine}` : "").setVisible(showQuest);
+      let line = "";
+      if (showQuest) {
+        if (hasActive && camp.currentStage) {
+          const n = camp.currentStage.on.count ?? 1;
+          const prog =
+            camp.currentStage.on.type === "talk" ? "" : ` ${camp.progress}/${n}`;
+          line = `◈ ${camp.currentStage.objective}${prog}`;
+        } else {
+          line = campaignHud(camp); // short "talk to THE FIXER — …" when no active stage
+          if (line.length > 48) line = line.slice(0, 46) + "…";
+        }
+      }
+      this.questText.setText(line).setVisible(!!line);
       // Waypoint always tracks the next physical beat (FIXER / gate / estates).
       this.questTarget = this.resolveQuestTarget(camp);
     }
@@ -5352,20 +5359,27 @@ export default class OnlineScene extends Phaser.Scene {
       const active = this.net.contracts.find((c) => !c.done);
       // Hide "contracts complete" noise — only surface in-progress work.
       if (active) {
-        this.dailyText.setVisible(true).setText(`DAILY // ${active.name}  ${Math.min(active.progress, active.count)}/${active.count}`);
+        this.dailyText
+          .setVisible(true)
+          .setText(`D ${active.name} ${Math.min(active.progress, active.count)}/${active.count}`);
       } else {
         this.dailyText.setVisible(false);
       }
       const bty = this.net.bounty;
-      if (bty) this.bountyText.setVisible(true).setText(`BOUNTY // ${bty.name}  ${Math.min(bty.progress, bty.count)}/${bty.count}`);
-      else this.bountyText.setVisible(false);
+      if (bty) {
+        this.bountyText
+          .setVisible(true)
+          .setText(`B ${bty.name} ${Math.min(bty.progress, bty.count)}/${bty.count}`);
+      } else this.bountyText.setVisible(false);
     }
     const story = this.net.story;
-    const hold = this.storyHoldUntil > 0 ? this.storyHoldUntil : story ? story.at + 8_000 : 0;
+    const hold = this.storyHoldUntil > 0 ? this.storyHoldUntil : story ? story.at + 6_000 : 0;
     if (story && performance.now() < hold) {
       if (!this.storyPanel.visible) {
-        // Late paint if presentStoryBeat raced ahead of panel init.
-        this.storyPanel.setText(`◢ ${story.quest} — ${story.title} ◣\n\n${story.text}\n\n▸ ${story.objective}`);
+        const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
+        this.storyPanel.setText(
+          `◢ ${clip(story.quest, 28)} · ${clip(story.title, 36)}\n${clip(story.text.replace(/\n+/g, " "), 140)}\n▸ ${clip(story.objective, 42)} · tap`,
+        );
       }
       this.storyPanel.setVisible(true).setDepth(1900);
     } else {
@@ -5431,15 +5445,14 @@ export default class OnlineScene extends Phaser.Scene {
       laneGap,
       fallbackGap: uiGap("sm"),
       minTopWidth: uiDim(220),
-      maxWidth: uiDim(mobile ? 560 : 640),
+      maxWidth: uiDim(mobile ? 320 : 300),
     });
     const trackerTop = rail.y;
     const left = rail.x;
-    // Compact rail: tight padding + a small ceiling, and the panel hugs its actual
-    // content instead of always painting a wide box across the top of the screen.
-    const railPad = uiGap("sm");
-    const capW = Math.max(uiDim(140), Math.min(rail.w, uiDim(mobile ? 340 : 400)));
-    const railMaxInner = Math.max(uiDim(120), capW - railPad * 2);
+    // Slim objective chip — never a wide multi-line billboard.
+    const railPad = uiDim(6);
+    const capW = Math.max(uiDim(120), Math.min(rail.w, uiDim(mobile ? 260 : 280)));
+    const railMaxInner = Math.max(uiDim(100), capW - railPad * 2);
     this.intelRailX = left;
     this.intelRailW = capW;
     this.intelEventMaxW = railMaxInner;

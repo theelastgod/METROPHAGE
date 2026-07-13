@@ -2754,7 +2754,8 @@ export class WorldDO {
       god: p.godMode || undefined,
     });
     if (p.godMode) {
-      void this.grantGodPrivileges(ws, p);
+      // Sync and non-blocking — must not delay the rest of login / first snapshots.
+      this.grantGodPrivileges(ws, p);
     }
     if (p.pvpRecovered > 0) {
       this.send(ws, {
@@ -3822,8 +3823,8 @@ export class WorldDO {
   /** Mark zone on the map; organic arrivals also unlock fast travel. */
   private async markDiscovered(ws: WebSocket, id: string, organic: boolean) {
     if (isGodPlayerId(id)) {
-      // God: every zone known + fast-travel unlocked from the first login.
-      await this.grantGodMapUnlock(ws, id);
+      // God: instant full unlock (D1 seed is async — never await hundreds of writes).
+      this.grantGodMapUnlock(ws, id);
       return;
     }
     try {
@@ -3845,27 +3846,43 @@ export class WorldDO {
     }
   }
 
-  /** Persist full map discovery/unlock for an operator account and push to client. */
-  private async grantGodMapUnlock(ws: WebSocket, id: string) {
+  /**
+   * Instant client unlock for operators. D1 seeding is fire-and-forget in one
+   * batch — never block login on N sequential writes (was causing "cold start" hangs).
+   */
+  private grantGodMapUnlock(ws: WebSocket, id: string) {
     const zones = allDiscoverableZones();
-    const now = Date.now();
-    try {
-      for (const z of zones) {
-        await this.env.DB.prepare("INSERT OR IGNORE INTO player_discovered (player, zone, at, organic) VALUES (?,?,?,?)")
-          .bind(id, z, now, 1)
-          .run();
-        await this.env.DB.prepare("UPDATE player_discovered SET organic = 1 WHERE player = ? AND zone = ?")
-          .bind(id, z)
-          .run();
-      }
-    } catch {
-      /* D1 optional — still push full unlock client-side */
-    }
     this.send(ws, { t: "discovered", zones, unlocked: zones });
+    // Background persist — do not await. Batch via Promise.all with a hard cap.
+    const now = Date.now();
+    void (async () => {
+      try {
+        const stmts = zones.flatMap((z) => [
+          this.env.DB.prepare(
+            "INSERT OR IGNORE INTO player_discovered (player, zone, at, organic) VALUES (?,?,?,?)",
+          ).bind(id, z, now, 1),
+          this.env.DB.prepare(
+            "UPDATE player_discovered SET organic = 1 WHERE player = ? AND zone = ?",
+          ).bind(id, z),
+        ]);
+        // D1 batch API if available; otherwise chunked parallel.
+        const db = this.env.DB as D1Database & { batch?: (s: D1PreparedStatement[]) => Promise<unknown> };
+        if (typeof db.batch === "function") {
+          await db.batch(stmts);
+        } else {
+          const chunk = 20;
+          for (let i = 0; i < stmts.length; i += chunk) {
+            await Promise.all(stmts.slice(i, i + chunk).map((s) => s.run()));
+          }
+        }
+      } catch {
+        /* still unlocked client-side */
+      }
+    })();
   }
 
-  /** Operator login: invuln flag, full map, skip drill, generous wallet. */
-  private async grantGodPrivileges(ws: WebSocket, p: PlayerState) {
+  /** Operator login: invuln flag, full map, skip drill, generous wallet. Never blocks the socket. */
+  private grantGodPrivileges(ws: WebSocket, p: PlayerState) {
     p.godMode = true;
     p.tutorialDone = true;
     p.hp = p.maxHp;
@@ -3876,7 +3893,7 @@ export class WorldDO {
     if (p.cores < 500) p.cores = 500;
     if ((p.metro ?? 0) < 1000) p.metro = 1000;
     p.dirty = true;
-    await this.grantGodMapUnlock(ws, p.id);
+    this.grantGodMapUnlock(ws, p.id);
     // Own every cosmetic so wardrobe / transmog is unrestricted.
     for (const c of COSMETICS) p.cosmeticsOwned.add(c.id);
     this.sendCosmetics(ws, p);
@@ -3884,12 +3901,13 @@ export class WorldDO {
       t: "sys",
       text: "◆ GOD MODE — invulnerable · full map · all zones unlocked · unrestricted access",
     });
-    // Persist tutorial_done so drill never re-traps the operator.
-    try {
-      await this.env.DB.prepare("UPDATE players SET tutorial_done = 1 WHERE id = ?").bind(p.id).run();
-    } catch {
-      /* ignore */
-    }
+    // Persist tutorial_done so drill never re-traps the operator (background).
+    void this.env.DB.prepare("UPDATE players SET tutorial_done = 1 WHERE id = ?")
+      .bind(p.id)
+      .run()
+      .catch(() => {
+        /* ignore */
+      });
   }
 
   /** Apply damage to a player. God accounts ignore all damage sources. */
