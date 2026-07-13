@@ -1,13 +1,14 @@
-// Full-screen Cloudflare Stream intro for the cold open.
+// Full-screen cold-open trailer.
 //
-// Autoplay strategy (muted is required by every major mobile browser):
-//  1) Native <video playsinline muted autoplay> + HLS (best on iOS/Safari)
-//  2) hls.js attach for Chromium/Firefox when native HLS is missing
-//  3) Stream iframe last-resort on desktop only
-//  4) Mobile: if still not playing within a short window, skip the video
-//     entirely (text cold-open continues) — never trap phones on a black screen.
+// Prefer progressive MP4 (`public/assets/video/intro.mp4`) — best autoplay on
+// mobile when muted + playsinline. Fall back to Cloudflare Stream HLS / iframe
+// only if the local file fails. Mobile still fails closed (skips video) if
+// nothing is playing within a short deadline.
 
 import { prefersMobileUx } from "../systems/Mobile";
+
+/** Same-origin progressive file (vite/public → /assets/video/intro.mp4). */
+export const INTRO_MP4_URL = "/assets/video/intro.mp4";
 
 const STREAM_CUSTOMER = "2swsyytnxr5altxg";
 const STREAM_UID = "78916355232e5968ea12d04a08a74f5a";
@@ -23,9 +24,9 @@ export const INTRO_STREAM_IFRAME_URL =
 const HLS_JS_SRC = "https://cdn.jsdelivr.net/npm/hls.js@1.5.18/dist/hls.min.js";
 const STREAM_SDK_SRC = "https://embed.cloudflarestream.com/embed/sdk.latest.js";
 
-/** Mobile must confirm playback quickly or we skip; desktop can wait longer for HLS. */
-const PLAYING_DEADLINE_MS_MOBILE = 3200;
-const PLAYING_DEADLINE_MS_DESKTOP = 10_000;
+/** Local MP4 should start almost immediately; keep mobile deadline tight. */
+const PLAYING_DEADLINE_MS_MOBILE = 4000;
+const PLAYING_DEADLINE_MS_DESKTOP = 12_000;
 const HARD_CEILING_MS = 5 * 60_000;
 
 type StreamPlayer = {
@@ -95,7 +96,6 @@ function forceMuted(video: HTMLVideoElement) {
   video.muted = true;
   video.defaultMuted = true;
   video.volume = 0;
-  // Attribute form matters for iOS autoplay policy checks.
   video.setAttribute("muted", "");
   video.setAttribute("autoplay", "");
   video.setAttribute("playsinline", "");
@@ -106,7 +106,7 @@ function forceMuted(video: HTMLVideoElement) {
 }
 
 /**
- * Mount the cold-open Stream intro. Always attempts muted autoplay.
+ * Mount the cold-open trailer. Prefers local progressive MP4 for autoplay.
  * On mobile, fails closed (skips video) if autoplay cannot start.
  */
 export function playIntroVideo(opts: {
@@ -117,6 +117,7 @@ export function playIntroVideo(opts: {
   const mobile = prefersMobileUx();
   let finished = false;
   let didPlay = false;
+  let usingFallback = false;
   let overlay: HTMLDivElement | null = null;
   let video: HTMLVideoElement | null = null;
   let iframe: HTMLIFrameElement | null = null;
@@ -216,7 +217,6 @@ export function playIntroVideo(opts: {
           .play()
           .then(markPlaying)
           .catch(() => {
-            // Mobile browsers that block muted autoplay: skip the intro entirely.
             if (mobile && !didPlay) void dismiss();
           });
       });
@@ -232,15 +232,84 @@ export function playIntroVideo(opts: {
       void dismiss();
     });
     v.addEventListener("error", () => {
-      if (mobile) {
-        void dismiss();
+      if (finished || didPlay) return;
+      // Local MP4 failed → Stream fallback (desktop + mobile try once).
+      if (!usingFallback) {
+        usingFallback = true;
+        mountStreamFallback();
         return;
       }
-      if (!didPlay && !iframe) mountIframeFallback();
+      if (mobile) void dismiss();
+      else if (!iframe) mountIframeFallback();
     });
     v.addEventListener("loadedmetadata", tryPlayVideo);
     v.addEventListener("canplay", tryPlayVideo);
     v.addEventListener("loadeddata", tryPlayVideo);
+  };
+
+  const mountStreamHls = () => {
+    if (finished || !video) return;
+    if (canNativeHls(video)) {
+      video.src = INTRO_HLS_URL;
+      tryPlayVideo();
+      return;
+    }
+    void loadScript(HLS_JS_SRC)
+      .then(() => {
+        if (finished || !video) return;
+        const Hls = window.Hls;
+        if (Hls && Hls.isSupported()) {
+          hls = new Hls({
+            enableWorker: true,
+            lowLatencyMode: false,
+            startLevel: -1,
+            maxBufferLength: 20,
+          });
+          hls.loadSource(INTRO_HLS_URL);
+          hls.attachMedia(video);
+          hls.on(Hls.Events.MANIFEST_PARSED, () => tryPlayVideo());
+          hls.on(Hls.Events.ERROR, (_evt, data) => {
+            const d = data as { fatal?: boolean } | undefined;
+            if (!d?.fatal || finished) return;
+            try {
+              hls?.destroy();
+            } catch {
+              /* ignore */
+            }
+            hls = null;
+            if (mobile) void dismiss();
+            else mountIframeFallback();
+          });
+          tryPlayVideo();
+        } else if (mobile) {
+          void dismiss();
+        } else {
+          mountIframeFallback();
+        }
+      })
+      .catch(() => {
+        if (finished) return;
+        if (mobile) void dismiss();
+        else mountIframeFallback();
+      });
+  };
+
+  const mountStreamFallback = () => {
+    if (finished || !video) return;
+    try {
+      hls?.destroy();
+    } catch {
+      /* ignore */
+    }
+    hls = null;
+    try {
+      video.removeAttribute("src");
+      while (video.firstChild) video.removeChild(video.firstChild);
+      video.load();
+    } catch {
+      /* ignore */
+    }
+    mountStreamHls();
   };
 
   const mountIframeFallback = () => {
@@ -316,6 +385,8 @@ export function playIntroVideo(opts: {
   video.setAttribute("disablepictureinpicture", "");
   video.setAttribute("controlslist", "nodownload nofullscreen noremoteplayback");
   video.style.pointerEvents = "none";
+  // Hint browser we want progressive MP4 first (widest autoplay support).
+  video.setAttribute("type", "video/mp4");
   wireVideoEvents(video);
 
   const skipBtn = document.createElement("button");
@@ -338,7 +409,6 @@ export function playIntroVideo(opts: {
 
   overlay.addEventListener("pointerdown", (e) => {
     if (e.target === skipBtn || skipBtn.contains(e.target as Node)) return;
-    // First tap while blocked: retry muted play; if still dead, skip.
     if (!didPlay && video) {
       e.preventDefault();
       tryPlayVideo();
@@ -361,49 +431,9 @@ export function playIntroVideo(opts: {
     });
   });
 
-  if (canNativeHls(video)) {
-    video.src = INTRO_HLS_URL;
-    tryPlayVideo();
-  } else {
-    void loadScript(HLS_JS_SRC)
-      .then(() => {
-        if (finished || !video) return;
-        const Hls = window.Hls;
-        if (Hls && Hls.isSupported()) {
-          hls = new Hls({
-            enableWorker: true,
-            lowLatencyMode: false,
-            startLevel: -1,
-            maxBufferLength: 20,
-          });
-          hls.loadSource(INTRO_HLS_URL);
-          hls.attachMedia(video);
-          hls.on(Hls.Events.MANIFEST_PARSED, () => tryPlayVideo());
-          hls.on(Hls.Events.ERROR, (_evt, data) => {
-            const d = data as { fatal?: boolean } | undefined;
-            if (!d?.fatal || finished) return;
-            try {
-              hls?.destroy();
-            } catch {
-              /* ignore */
-            }
-            hls = null;
-            if (mobile) void dismiss();
-            else mountIframeFallback();
-          });
-          tryPlayVideo();
-        } else if (mobile) {
-          void dismiss();
-        } else {
-          mountIframeFallback();
-        }
-      })
-      .catch(() => {
-        if (finished) return;
-        if (mobile) void dismiss();
-        else mountIframeFallback();
-      });
-  }
+  // Primary path: same-origin progressive MP4 (from Desktop trailer, compressed).
+  video.src = INTRO_MP4_URL;
+  tryPlayVideo();
 
   playDeadline = window.setTimeout(() => {
     if (!didPlay && !finished) void dismiss();
