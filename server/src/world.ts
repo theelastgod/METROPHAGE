@@ -2735,7 +2735,12 @@ export class WorldDO {
     // Persist identity + look on the socket so a hibernation wake can re-attach it (above).
     ws.serializeAttachment({ id, name: p.name, faction: fac, look: p.look } satisfies SessionAttach);
     // God accounts re-assert on every login (fresh player row or rejoin).
-    if (isGodPlayerId(id)) {
+    // Match by player id AND optional proof.wallet (session resume still carries id w:0x…).
+    const god =
+      isGodPlayerId(id) ||
+      isGodPlayerId(proof?.wallet ? `w:${proof.wallet}` : null) ||
+      isGodPlayerId(proof?.wallet);
+    if (god) {
       p.godMode = true;
       p.tutorialDone = true;
     }
@@ -2751,11 +2756,25 @@ export class WorldDO {
       look: p.look,
       lookLocked: lookLocked || !!p.look,
       fragments: p.fragments,
-      god: p.godMode || undefined,
+      // Always send boolean so clients can distinguish missing field vs false.
+      god: !!p.godMode,
     });
     if (p.godMode) {
       // Sync and non-blocking — must not delay the rest of login / first snapshots.
-      this.grantGodPrivileges(ws, p);
+      try {
+        this.grantGodPrivileges(ws, p);
+      } catch (e) {
+        console.error("grantGodPrivileges failed", e);
+        this.send(ws, {
+          t: "sys",
+          text: "◆ GOD MODE armed (partial) — invulnerable. Map unlock retrying…",
+        });
+        try {
+          this.grantGodMapUnlock(ws, p.id);
+        } catch {
+          /* ignore */
+        }
+      }
     }
     if (p.pvpRecovered > 0) {
       this.send(ws, {
@@ -3903,6 +3922,7 @@ export class WorldDO {
     p.hp = p.maxHp;
     p.dead = false;
     p.iframeUntilTick = this.tick + 1_000_000;
+    p.pvpSafeUntil = this.tick + 1_000_000;
     // Generous operating capital (not infinite print each login — only top-up).
     if (p.credits < 250_000) p.credits = 250_000;
     if (p.cores < 500) p.cores = 500;
@@ -3910,12 +3930,20 @@ export class WorldDO {
     p.dirty = true;
     this.grantGodMapUnlock(ws, p.id);
     // Own every cosmetic so wardrobe / transmog is unrestricted.
-    for (const c of COSMETICS) p.cosmeticsOwned.add(c.id);
-    this.sendCosmetics(ws, p);
+    try {
+      for (const c of COSMETICS) p.cosmeticsOwned.add(c.id);
+      this.sendCosmetics(ws, p);
+    } catch (e) {
+      console.error("god cosmetics failed", e);
+    }
+    // Include id so the operator can verify the server saw the wallet form.
     this.send(ws, {
       t: "sys",
-      text: "◆ GOD MODE — invulnerable · full map · all zones unlocked · unrestricted access",
+      text: `◆ GOD MODE — invulnerable · full map · unlocked · id ${p.id}`,
     });
+    // Also push money/loadout so the client HUD updates immediately.
+    this.send(ws, { t: "inv", items: p.inventory });
+    this.sendLoadout(ws, p);
     // Persist tutorial_done so drill never re-traps the operator (background).
     void this.env.DB.prepare("UPDATE players SET tutorial_done = 1 WHERE id = ?")
       .bind(p.id)

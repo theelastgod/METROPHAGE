@@ -5,6 +5,7 @@ import type { ClientMsg, ServerMsg, InputCmd, PlayerLook, Item, EstateFurniture 
 import { PROTOCOL_VERSION } from "./protocol";
 import { tutorialReadyForPortal, tutorialStepAt } from "./tutorial";
 import { walletSessionSecret } from "../economy/wallet";
+import { isGodAccount } from "./godAccounts";
 
 /** True when the page is on a public host but the WS URL still points at loopback —
  *  the classic "forgot VITE_SERVER_URL" Pages footgun. */
@@ -767,13 +768,30 @@ export default class NetClient {
       this.seq = 0;
       this.lastAck = 0;
       this.fragments = msg.fragments ?? [];
-      this.godMode = !!msg.god;
+      // Server flag OR local allowlist on player id (covers older servers / missed field).
+      this.godMode = !!msg.god || isGodAccount(msg.id);
       if (this.godMode) {
         this.tutorialDone = true;
+        // Client-side map unlock immediately (server also sends discovered).
+        const allZones = [
+          "safe",
+          "clinic",
+          "shop",
+          "bar",
+          "den",
+          "subway",
+          "estates",
+          ...Array.from({ length: 8 }, (_, i) => "d" + i),
+          ...Array.from({ length: 7 }, (_, i) => "w" + i),
+          ...Array.from({ length: 8 }, (_, i) => "v" + i),
+        ];
+        this.discovered = Array.from(new Set([...this.discovered, ...allZones]));
+        this.unlocked = Array.from(new Set([...this.unlocked, ...allZones]));
+        this.onDiscovered?.();
         this.pushChat({
           from: "",
           ch: "sys",
-          text: "◆ GOD MODE active — invulnerable · full map · unrestricted",
+          text: `◆ GOD MODE active — invulnerable · full map · id ${msg.id}${msg.god ? "" : " (client allowlist)"}`,
           faction: -1,
           sys: true,
         });

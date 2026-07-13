@@ -1073,11 +1073,17 @@ export default class OnlineScene extends Phaser.Scene {
       if (this.isTutorial) this.net.setTutorialMode(tutorialMode);
       if (this.net.godMode) {
         setGodSessionUnlock(true);
-        this.mapPanel.godMode = true;
+        if (this.mapPanel) this.mapPanel.godMode = true;
         // Skip drill yard entirely for operators.
         if (this.isTutorial) {
           this.time.delayedCall(200, () => this.forceClientDeployToCity());
         }
+        // Visible HUD cue so god is obvious.
+        this.time.delayedCall(400, () => {
+          if (!this.sys.isActive() || !this.net?.godMode) return;
+          this.hud?.setColor("#f7ff3c");
+          this.showBubble(this.me?.x ?? 0, this.me?.y ?? 0, "◆ GOD MODE — full access");
+        });
       }
       this.initCombatTracking();
       juiceFlash(this, 180, 40, 200, 80);
@@ -5304,13 +5310,13 @@ export default class OnlineScene extends Phaser.Scene {
         ]);
       }
     } else if (this.isTutorial) {
-      this.hud.setColor("#39ff88");
+      this.hud.setColor(this.net.godMode ? "#f7ff3c" : "#39ff88");
       const lesson = this.net.tutorialStep + 1;
       const dots = ".".repeat(this.connectDots);
       // the lesson card carries the teaching — this panel stays a two-line status strip
       this.hud.setText([
         st.connected
-          ? `◢ DRILL YARD  ${this.callsign}  ·  ${this.net.tutorialMode === "full" ? "FULL" : "QUICK"}  ·  lesson ${Math.min(lesson, this.net.tutorialTotal)}/${this.net.tutorialTotal}`
+          ? `◢ DRILL YARD  ${this.callsign}  ·  ${this.net.tutorialMode === "full" ? "FULL" : "QUICK"}  ·  lesson ${Math.min(lesson, this.net.tutorialTotal)}/${this.net.tutorialTotal}${this.net.godMode ? "  ·  GOD" : ""}`
           : this.connectionState === "reconnecting"
             ? `reconnecting to drill yard${dots}`
             : `connecting to drill yard${dots}`,
@@ -5319,7 +5325,7 @@ export default class OnlineScene extends Phaser.Scene {
           : `₵ ${this.net.credits}  ◈ ${this.net.cores}  (drill only — not saved)`,
       ]);
     } else {
-      this.hud.setColor("#39ff88");
+      this.hud.setColor(this.net.godMode ? "#f7ff3c" : "#39ff88");
       const dots = ".".repeat(this.connectDots);
       const zoneTitle = this.isCityHub
         ? "METRO CITY (shared)"
@@ -5332,7 +5338,7 @@ export default class OnlineScene extends Phaser.Scene {
       // two compact lines — cell/war detail lives in the L leaderboard, HP is the bar
       this.hud.setText([
         st.connected
-          ? `◢ ${this.callsign}  ·  ${zoneTitle}  ·  ${st.players} online${ctrl !== "—" ? `  ·  CTRL ${ctrl}` : ""}`
+          ? `◢ ${this.callsign}  ·  ${zoneTitle}  ·  ${st.players} online${ctrl !== "—" ? `  ·  CTRL ${ctrl}` : ""}${this.net.godMode ? "  ·  ◆ GOD" : ""}`
           : soloWander
             ? `◢ ${this.isCityHub ? "CITY PREVIEW" : "SOLO PREVIEW"}  ${this.callsign}${this.connectionState === "reconnecting" ? `  ·  ${t("online.reconnecting")}${dots}` : `  ·  ${t("online.connecting")}${dots}`}`
             : this.connectionState === "reconnecting"
@@ -5340,7 +5346,7 @@ export default class OnlineScene extends Phaser.Scene {
               : `${t("online.connecting")}${dots}`,
         soloWander && !st.connected
           ? "walk the city while the server links · R retry · ESC menu"
-          : `LV ${this.net.level}  XP ${xpIntoLevel(this.net.xp)}/100   ₵ ${this.net.credits}  ◈ ${this.net.cores}`,
+          : `LV ${this.net.level}  XP ${xpIntoLevel(this.net.xp)}/100   ₵ ${this.net.credits}  ◈ ${this.net.cores}${this.net.godMode ? "  ·  invuln" : ""}`,
       ].filter(Boolean));
     }
 
