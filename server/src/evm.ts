@@ -181,11 +181,36 @@ export function makeEvmSettlement(cfg: EvmConfig): Settlement {
             gasLimit,
           };
           const signed = await wallet.signTransaction(tx);
-          return { ok: true, claimTx: signed };
+          return { ok: true, claimTx: signed, nonce };
         });
       } catch (e) {
         return { ok: false, reason: String((e as Error)?.message ?? e).slice(0, 160) };
       }
+    },
+
+    /** Burn a pre-signed claim's treasury nonce with a 0-value self-transfer so an
+     *  abandoned claimTx can never be broadcast after TTL refund. */
+    async invalidateNonce(nonce: number) {
+      await withWithdrawLock(cfg.db, async () => {
+        const fee = await provider.getFeeData();
+        const network = await provider.getNetwork();
+        const chainId = cfg.chainId ?? Number(network.chainId);
+        const maxFee = fee.maxFeePerGas ?? fee.gasPrice ?? 1_000_000_000n;
+        const maxPrio = fee.maxPriorityFeePerGas ?? 100_000_000n;
+        const tx = {
+          to: wallet.address,
+          value: 0n,
+          data: "0x",
+          nonce,
+          chainId,
+          type: 2 as const,
+          maxFeePerGas: maxFee,
+          maxPriorityFeePerGas: maxPrio,
+          gasLimit: 21_000n,
+        };
+        const signed = await wallet.signTransaction(tx);
+        await provider.broadcastTransaction(signed);
+      });
     },
 
     async verifyClaim(txSig, walletAddr, metro) {

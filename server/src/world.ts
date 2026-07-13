@@ -170,7 +170,6 @@ import {
   parseCampaign,
   serializeCampaign,
   CAMPAIGN_DONE_TEXT,
-  type CampaignData,
 } from "../../src/net/campaign";
 import type { QuestTriggerType, QuestReward } from "../../src/game/quests";
 import { rollElite, type EliteModifier } from "../../src/game/elites";
@@ -314,8 +313,15 @@ interface PlayerState {
   pvpSafeX: number;
   pvpSafeY: number;
   credits: number;
+  /** Last credits value known to be on D1 (or applied via relative delta). Bridge HTTP
+   *  mutates D1 with relative SQL; the DO must never absolute-overwrite those fields. */
+  creditsBase: number;
   cores: number;
   metro: number; // in-game $METRO balance (world marketplace + custodial bridge)
+  /** Last metro value known to be on D1 — see creditsBase. */
+  metroBase: number;
+  /** Wall-clock of the login that claimed session_zone on D1 (cross-zone last-writer guard). */
+  sessionAt: number;
   inventory: Item[]; // server-authoritative loot, persisted as JSON (capped FIFO)
   stash: Item[]; // personal safe storage (TENEMENT lockbox) — survives death, persisted as JSON
   equipped: Partial<Record<Slot, Item>>; // gear by slot; its mods boost combat
@@ -613,7 +619,8 @@ export class WorldDO {
   private nextEventTick = -1;
   private lastStormTick = 0;
   private interior = false; // the safehouse zone — no enemies, no PvP
-  private msgRate = new Map<WebSocket, { windowStart: number; n: number }>(); // per-socket flood guard
+  /** Per-socket flood counters — reset every sim tick so sequential await can't dodge the kill. */
+  private msgRate = new Map<WebSocket, { n: number }>();
 
   constructor(
     private state: DurableObjectState,
@@ -1420,17 +1427,20 @@ export class WorldDO {
     await this.onClose(ws);
   }
 
-  /** Per-socket flood guard: drop beyond the soft cap, close on an egregious flood. */
+  /**
+   * Per-socket flood guard. Counts messages since the last ~1s window reset (driven
+   * by the sim tick, NOT wall-clock-on-message — the old approach reset mid-flood
+   * while awaiting handle() and never reached the kill count on a slow isolate).
+   */
   private rateOk(ws: WebSocket): boolean {
-    const now = Date.now();
-    const r = this.msgRate.get(ws);
-    if (!r || now - r.windowStart >= MSG_RATE_WINDOW_MS) {
-      this.msgRate.set(ws, { windowStart: now, n: 1 });
-      return true;
+    let r = this.msgRate.get(ws);
+    if (!r) {
+      r = { n: 0 };
+      this.msgRate.set(ws, r);
     }
     r.n++;
     if (r.n > MSG_KILL_PER_WINDOW) {
-      console.warn(`[${this.zoneName}] flood from ${this.sessions.get(ws) ?? "?"} (${r.n}/s) — closing`);
+      console.warn(`[${this.zoneName}] flood from ${this.sessions.get(ws) ?? "?"} (${r.n}/window) — closing`);
       try {
         ws.close(1008, "rate limit");
       } catch {
@@ -1441,6 +1451,11 @@ export class WorldDO {
       return false;
     }
     return r.n <= MSG_SOFT_PER_WINDOW;
+  }
+
+  /** Decay flood counters each ~1s window (carry residual over soft so multi-second dumps still kill). */
+  private resetMsgRates() {
+    for (const r of this.msgRate.values()) r.n = Math.max(0, r.n - MSG_SOFT_PER_WINDOW);
   }
 
   private send(ws: WebSocket, msg: unknown) {
@@ -1787,13 +1802,30 @@ export class WorldDO {
         if (err) return sys("cell: " + err);
         if (p.credits < GUILD_CREATE_COST) return sys(`founding a cell costs ₵${GUILD_CREATE_COST}`);
         if (await DB.prepare("SELECT id FROM guilds WHERE name = ?").bind(name).first()) return sys("that cell name is taken");
+        const now = Date.now();
+        let res;
+        try {
+          res = await DB.prepare("INSERT INTO guilds (name, tag, leader, created_at) VALUES (?,?,?,?)").bind(name, tag, p.id, now).run();
+        } catch {
+          return sys("that cell name is taken");
+        }
+        const gid = Number(res.meta.last_row_id);
+        if (!gid) return sys("cell founding failed");
         p.credits -= GUILD_CREATE_COST;
         this.eco("burn", "guild_found", GUILD_CREATE_COST);
         p.dirty = true;
-        const now = Date.now();
-        const res = await DB.prepare("INSERT INTO guilds (name, tag, leader, created_at) VALUES (?,?,?,?)").bind(name, tag, p.id, now).run();
-        const gid = Number(res.meta.last_row_id);
-        await DB.prepare("INSERT OR REPLACE INTO guild_members (player, guild_id, rank, joined_at) VALUES (?,?,?,?)").bind(p.id, gid, "leader", now).run();
+        try {
+          await DB.prepare("INSERT OR REPLACE INTO guild_members (player, guild_id, rank, joined_at) VALUES (?,?,?,?)").bind(p.id, gid, "leader", now).run();
+        } catch {
+          p.credits += GUILD_CREATE_COST;
+          p.dirty = true;
+          try {
+            await DB.prepare("DELETE FROM guilds WHERE id = ?").bind(gid).run();
+          } catch {
+            /* best-effort */
+          }
+          return sys("cell founding failed — credits refunded");
+        }
         p.guildId = gid;
         p.guildRank = "leader";
         sys(`✶ founded cell [${tag}] ${name}`);
@@ -1840,9 +1872,15 @@ export class WorldDO {
         p.credits -= c;
         p.cores -= k;
         p.dirty = true;
-        await DB.prepare("UPDATE guilds SET bank_credits = bank_credits + ?, bank_cores = bank_cores + ?, xp = xp + ? WHERE id = ?")
-          .bind(c, k, c, p.guildId)
-          .run();
+        try {
+          await DB.prepare("UPDATE guilds SET bank_credits = bank_credits + ?, bank_cores = bank_cores + ?, xp = xp + ? WHERE id = ?")
+            .bind(c, k, c, p.guildId)
+            .run();
+        } catch {
+          p.credits += c;
+          p.cores += k;
+          return sys("cell bank unavailable — deposit refunded");
+        }
         await this.refreshGuildBonus(p.guildId); // deposits raise XP → maybe a new level + perk
         sys(`deposited ₵${c} ${k}◈ to the cell bank`);
         await this.sendGuild(ws, p);
@@ -1980,30 +2018,36 @@ export class WorldDO {
         const idx = p.inventory.findIndex((it) => it.id === msg.itemId);
         if (idx < 0) return sys("can only list items in your bag (unequip first)");
         const item = p.inventory[idx];
+        let fee = 0;
         if (currency === "metro") {
           if (!(price >= MIN_METRO_PRICE && price <= MAX_PRICE)) return sys(`price must be ◈${MIN_METRO_PRICE}–${MAX_PRICE} $METRO`);
-          const fee = metroListingFee(price);
+          fee = metroListingFee(price);
           if (p.metro < fee) return sys(`listing fee is ◈${fee} $METRO`);
-          p.inventory.splice(idx, 1);
-          p.metro -= fee;
-          p.dirty = true;
-          await DB.prepare("INSERT INTO auctions (seller, seller_name, item, price, currency, status, created_at) VALUES (?,?,?,?,?,'open',?)")
-            .bind(p.id, p.name, JSON.stringify(item), price, currency, Date.now())
-            .run();
-          sys(`listed ${item.name} for ◈${price} $METRO (fee ◈${fee})`);
         } else {
           if (!(price >= MIN_PRICE && price <= MAX_PRICE)) return sys(`price must be ₵${MIN_PRICE}–${MAX_PRICE}`);
-          const fee = listingFee(price);
+          fee = listingFee(price);
           if (p.credits < fee) return sys(`listing fee is ₵${fee}`);
-          p.inventory.splice(idx, 1);
+        }
+        // Reserve the item + fee in memory first (prevents double-list races), then
+        // escrow into D1. Any insert failure restores bag + fee — never silent loss.
+        p.inventory.splice(idx, 1);
+        if (currency === "metro") p.metro -= fee;
+        else {
           p.credits -= fee;
           this.eco("burn", "market_fee", fee);
-          p.dirty = true;
+        }
+        p.dirty = true;
+        try {
           await DB.prepare("INSERT INTO auctions (seller, seller_name, item, price, currency, status, created_at) VALUES (?,?,?,?,?,'open',?)")
             .bind(p.id, p.name, JSON.stringify(item), price, currency, Date.now())
             .run();
-          sys(`listed ${item.name} for ₵${price} (fee ₵${fee})`);
+        } catch {
+          p.inventory.splice(Math.min(idx, p.inventory.length), 0, item);
+          if (currency === "metro") p.metro += fee;
+          else p.credits += fee;
+          return sys("market listing failed — item returned to bag");
         }
+        sys(currency === "metro" ? `listed ${item.name} for ◈${price} $METRO (fee ◈${fee})` : `listed ${item.name} for ₵${price} (fee ₵${fee})`);
         this.send(ws, { t: "inv", items: p.inventory });
         await this.sendMarket(ws);
         return;
@@ -2034,21 +2078,24 @@ export class WorldDO {
         if (row.seller === p.id) return sys("you can't buy your own listing");
         const price = row.price;
         const isMetro = row.currency === "metro";
+        const item = this.parseItemJson(row.item);
+        if (!item) return sys("listing is corrupt — contact support");
+        if (p.inventory.length >= INVENTORY_CAP) return sys("bag full — free a slot before buying");
         if (isMetro) {
           if (p.metro < price) return sys(`not enough $METRO (need ◈${price})`);
         } else if (p.credits < price) return sys(`not enough credits (₵${price})`);
-        // ATOMIC claim — a single buyer wins the row; ONLY then do money + item move
-        const claim = await DB.prepare("UPDATE auctions SET status='sold', buyer=? WHERE id=? AND status='open'").bind(p.id, id).run();
-        if (claim.meta.changes === 0) return sys("someone else just bought it");
-        const item = this.parseItemJson(row.item);
+        // Debit first, then atomic claim; refund on lost race so we never mark sold without pay.
         if (isMetro) p.metro -= price;
         else p.credits -= price;
         p.dirty = true;
-        if (item) {
-          p.inventory.push(item);
-          if (p.inventory.length > INVENTORY_CAP) p.inventory.shift();
-          this.send(ws, { t: "inv", items: p.inventory });
+        const claim = await DB.prepare("UPDATE auctions SET status='sold', buyer=? WHERE id=? AND status='open'").bind(p.id, id).run();
+        if (claim.meta.changes === 0) {
+          if (isMetro) p.metro += price;
+          else p.credits += price;
+          return sys("someone else just bought it");
         }
+        p.inventory.push(item);
+        this.send(ws, { t: "inv", items: p.inventory });
         // pay the seller: in-memory if they're in THIS zone, else via the cross-zone mailbox
         const seller = this.players.get(row.seller);
         if (seller) {
@@ -2061,16 +2108,31 @@ export class WorldDO {
           seller.dirty = true;
           this.sendTo(seller.id, {
             t: "sys",
-            text: isMetro ? `✦ sold ${item?.name ?? "item"} for ◈${price} $METRO` : `✦ sold ${item?.name ?? "item"} for ₵${price}`,
+            text: isMetro ? `✦ sold ${item.name} for ◈${price} $METRO` : `✦ sold ${item.name} for ₵${price}`,
           });
-        } else if (isMetro) {
-          await DB.prepare("INSERT INTO mailbox (player, metro, reason, created_at) VALUES (?,?,?,?)")
-            .bind(row.seller, price, "auction sale ($METRO)", Date.now())
-            .run();
         } else {
-          await DB.prepare("INSERT INTO mailbox (player, credits, reason, created_at) VALUES (?,?,?,?)").bind(row.seller, price, "auction sale", Date.now()).run();
+          try {
+            if (isMetro) {
+              await DB.prepare("INSERT INTO mailbox (player, metro, reason, created_at) VALUES (?,?,?,?)")
+                .bind(row.seller, price, "auction sale ($METRO)", Date.now())
+                .run();
+            } else {
+              await DB.prepare("INSERT INTO mailbox (player, credits, reason, created_at) VALUES (?,?,?,?)")
+                .bind(row.seller, price, "auction sale", Date.now())
+                .run();
+            }
+          } catch {
+            // Listing is sold and buyer paid — queue a retry row if mailbox insert failed.
+            try {
+              await DB.prepare("INSERT INTO mailbox (player, credits, metro, reason, created_at) VALUES (?,?,?,?,?)")
+                .bind(row.seller, isMetro ? 0 : price, isMetro ? price : 0, "auction sale (retry)", Date.now())
+                .run();
+            } catch {
+              /* durable sold row remains audit trail */
+            }
+          }
         }
-        sys(isMetro ? `bought ${item?.name ?? "item"} for ◈${price} $METRO` : `bought ${item?.name ?? "item"} for ₵${price}`);
+        sys(isMetro ? `bought ${item.name} for ◈${price} $METRO` : `bought ${item.name} for ₵${price}`);
         await this.sendMarket(ws);
         return;
       }
@@ -2079,36 +2141,49 @@ export class WorldDO {
     }
   }
 
-  /** Drain a player's cross-zone mailbox into their live state (claim-once: rows deleted). */
+  /** Drain a player's cross-zone mailbox into their live state.
+   *  Claim-once: DELETE…RETURNING so concurrent drains cannot double-credit. */
   private async drainMail(p: PlayerState): Promise<boolean> {
     try {
-      const { results } = await this.env.DB.prepare("SELECT id, credits, cores, metro, item FROM mailbox WHERE player=? LIMIT 50")
+      // Atomic claim: only rows this DELETE returns are credited (no SELECT→DELETE race).
+      const { results } = await this.env.DB.prepare(
+        `DELETE FROM mailbox WHERE id IN (
+           SELECT id FROM mailbox WHERE player = ? ORDER BY id ASC LIMIT 50
+         ) RETURNING credits, cores, metro, item, reason`,
+      )
         .bind(p.id)
-        .all<{ id: number; credits: number; cores: number; metro: number; item: string | null }>();
+        .all<{ credits: number; cores: number; metro: number; item: string | null; reason: string | null }>();
       if (!results || results.length === 0) return false;
       let dc = 0;
       let dk = 0;
       let dm = 0;
       const items: Item[] = [];
-      const ids: number[] = [];
       for (const r of results) {
         dc += r.credits || 0;
         dk += r.cores || 0;
         dm += r.metro || 0;
         const it = this.parseItemJson(r.item);
         if (it) items.push(it);
-        ids.push(r.id);
       }
+      // Transfers re-enter circulation — do NOT count as reward emission.
       p.credits += dc;
-      this.eco("emit", "pickup", dc);
       p.cores += dk;
       p.metro += dm;
       for (const it of items) {
-        p.inventory.push(it);
-        if (p.inventory.length > INVENTORY_CAP) p.inventory.shift();
+        if (p.inventory.length >= INVENTORY_CAP) {
+          // Bag full: re-queue the item so it is not destroyed.
+          try {
+            await this.env.DB.prepare("INSERT INTO mailbox (player, item, reason, created_at) VALUES (?,?,?,?)")
+              .bind(p.id, JSON.stringify(it), "bag full — requeued", Date.now())
+              .run();
+          } catch {
+            /* last resort: drop would lose it; keep trying next drain */
+          }
+        } else {
+          p.inventory.push(it);
+        }
       }
       p.dirty = true;
-      await this.env.DB.prepare(`DELETE FROM mailbox WHERE id IN (${ids.map(() => "?").join(",")})`).bind(...ids).run();
       if (dc || dk || dm) {
         const parts = [];
         if (dc) parts.push(`₵${dc}`);
@@ -2150,8 +2225,27 @@ export class WorldDO {
           this.eco("burn", "estates", c.price);
           p.dirty = true;
         }
+        try {
+          const ins = await DB.prepare("INSERT OR IGNORE INTO player_cosmetics (player, cosmetic_id, equipped, at) VALUES (?,?,0,?)")
+            .bind(p.id, c.id, Date.now())
+            .run();
+          if ((ins.meta.changes ?? 0) === 0 && !p.cosmeticsOwned.has(c.id)) {
+            // Row already existed from another zone — treat as owned, but refund if we just charged.
+            if (c.price > 0) {
+              p.credits += c.price;
+              p.dirty = true;
+            }
+            p.cosmeticsOwned.add(c.id);
+            return sys("already in your wardrobe");
+          }
+        } catch {
+          if (c.price > 0) {
+            p.credits += c.price;
+            p.dirty = true;
+          }
+          return sys("wardrobe unavailable — credits refunded");
+        }
         p.cosmeticsOwned.add(c.id);
-        await DB.prepare("INSERT OR IGNORE INTO player_cosmetics (player, cosmetic_id, equipped, at) VALUES (?,?,0,?)").bind(p.id, c.id, Date.now()).run();
         sys(`unlocked ${c.name}`);
         this.sendCosmetics(ws, p);
       } else if (msg.action === "equip") {
@@ -2512,6 +2606,29 @@ export class WorldDO {
       }
     }
     p.faction = fac;
+    // Claim this zone as the sole active session writer for this player. Older zone
+    // DOs lose the right to absolute-overwrite inventory/balances on their next persist.
+    p.sessionAt = Date.now();
+    try {
+      await this.env.DB.prepare("UPDATE players SET session_zone = ?, session_at = ? WHERE id = ?")
+        .bind(this.zoneName, p.sessionAt, id)
+        .run();
+    } catch {
+      /* pre-migration: session columns absent — degrade to same-zone kick only */
+    }
+    // Same-zone re-login: close prior sockets so two tabs cannot dual-drive one state.
+    for (const [sock, sid] of this.sessions) {
+      if (sid === id && sock !== ws) {
+        try {
+          sock.close(4002, "replaced");
+        } catch {
+          /* gone */
+        }
+        this.sessions.delete(sock);
+      }
+    }
+    // Pull any bridge deposits/withdrawals that hit D1 while this row was cold / offline.
+    await this.pullExternalBalances(p);
     // warm-path spawn sanitation: an in-memory player can be wall-locked too
     // (loadPlayer's check only covers cold loads)
     if (
@@ -2694,14 +2811,25 @@ export class WorldDO {
   private async guestSaveHasAssets(p: PlayerState): Promise<boolean> {
     if ((p.level ?? 1) >= 2) return true; // real grind, not a first-kill fluke
     if ((p.credits ?? 0) >= 1000) return true; // banked wealth well beyond the ~100₵ starter grant
+    if ((p.metro ?? 0) >= 10) return true; // token balance is real value
+    if ((p.cores ?? 0) >= 40) return true; // substantial forge material
     if (p.stash.length > 0) return true; // anything moved to a lockbox is intentional value
+    if (p.inventory.length > 4) return true; // more than starter kit
+    if (Object.keys(p.equipped).length > 2) return true; // geared beyond starters
     if (p.fragments.length > 0) return true; // recovered story memory / dive reward
     if (p.campaign.activeId || p.campaign.completed.length > 0 || p.campaign.flags.size > 0) return true;
+    if (p.cosmeticsOwned.size > 0) return true;
     try {
       const est = await this.env.DB.prepare("SELECT 1 FROM estates WHERE owner = ? LIMIT 1").bind(p.id).first();
       if (est) return true; // owns a home — the exact thing the lock protects
     } catch {
       /* estates table absent in some test DBs — treat as no property */
+    }
+    try {
+      const listing = await this.env.DB.prepare("SELECT 1 FROM auctions WHERE seller = ? AND status='open' LIMIT 1").bind(p.id).first();
+      if (listing) return true;
+    } catch {
+      /* market table absent */
     }
     return false;
   }
@@ -2803,7 +2931,7 @@ export class WorldDO {
         }
       }
     } else {
-      await this.upsert(id, name, x, y, 0, 0, 0, 0, campaign.toData(), [], [], undefined, {}, false, 0);
+      await this.insertNewPlayer(id, name, x, y);
     }
     // achievements + leaderboard counters (cross-zone, shared D1)
     const stats: Record<string, number> = {};
@@ -2915,8 +3043,11 @@ export class WorldDO {
       pvpSafeX: x,
       pvpSafeY: y,
       credits,
+      creditsBase: credits,
       cores,
       metro,
+      metroBase: metro,
+      sessionAt: 0,
       inventory,
       stash,
       equipped,
@@ -3346,25 +3477,7 @@ export class WorldDO {
     p.y = hub.y;
     this.ensureStarterKit(p);
     p.dirty = true;
-    await this.upsert(
-      p.id,
-      p.name,
-      p.x,
-      p.y,
-      p.credits,
-      p.xp,
-      p.cores,
-      p.metro,
-      p.campaign.toData(),
-      p.inventory,
-      p.stash,
-      p.look,
-      p.equipped,
-      true,
-      tutorialTotal(mode),
-      "safe",
-      mode,
-    );
+    await this.upsertPlayer(p, { zoneOverride: "safe" });
     const sock = ws ?? this.socketForPlayer(p.id);
     if (sock) {
       this.send(sock, {
@@ -3837,18 +3950,51 @@ export class WorldDO {
       if (e.owner && !e.forSale) return sys("this home isn't for sale");
       const price = e.owner ? e.price : ESTATE_BASE_PRICE;
       if (p.credits < price) return sys(`not enough credits — this home costs ₵${price}`);
+      const prevOwner = e.owner;
+      // CAS claim on D1 first — only the winning buyer is charged.
+      try {
+        let won = false;
+        if (prevOwner) {
+          const claim = await this.env.DB.prepare(
+            "UPDATE estates SET owner=?, owner_name=?, for_sale=0, updated=? WHERE id=? AND owner=? AND for_sale=1",
+          )
+            .bind(p.id, p.name, Date.now(), this.zoneName, prevOwner)
+            .run();
+          won = (claim.meta.changes ?? 0) > 0;
+        } else {
+          // Ensure a row exists, then claim only if still unowned / for sale.
+          await this.env.DB.prepare(
+            "INSERT OR IGNORE INTO estates (id, owner, owner_name, price, for_sale, furniture, guestbook, updated) VALUES (?,?,?,?,1,'[]','[]',?)",
+          )
+            .bind(this.zoneName, null, null, ESTATE_BASE_PRICE, Date.now())
+            .run();
+          const claim = await this.env.DB.prepare(
+            "UPDATE estates SET owner=?, owner_name=?, for_sale=0, updated=? WHERE id=? AND for_sale=1 AND (owner IS NULL OR owner='')",
+          )
+            .bind(p.id, p.name, Date.now(), this.zoneName)
+            .run();
+          won = (claim.meta.changes ?? 0) > 0;
+        }
+        if (!won) return sys("someone else just bought this home");
+      } catch {
+        return sys("estate registry unavailable — try again");
+      }
       p.credits -= price;
-      if (!e.owner) this.eco("burn", "estates", price); // resale is a transfer (mailbox), not a burn
+      if (!prevOwner) this.eco("burn", "estates", price); // resale is a transfer (mailbox), not a burn
       p.dirty = true;
-      if (e.owner) {
-        // resale: the proceeds go to the previous owner via the cross-zone mailbox
-        await this.env.DB.prepare("INSERT INTO mailbox (player, credits, reason, created_at) VALUES (?,?,?,?)")
-          .bind(e.owner, price, "estate sale", Date.now())
-          .run();
+      if (prevOwner) {
+        try {
+          await this.env.DB.prepare("INSERT INTO mailbox (player, credits, reason, created_at) VALUES (?,?,?,?)")
+            .bind(prevOwner, price, "estate sale", Date.now())
+            .run();
+        } catch {
+          /* ownership already transferred; seller can be made whole manually if needed */
+        }
       }
       e.owner = p.id;
       e.ownerName = p.name;
       e.forSale = false;
+      // Keep furniture from prior owner; only refresh ownership columns.
       await this.persistEstate();
       sys(`◈ home purchased for ₵${price} — press F to furnish it`);
       this.broadcastEstate();
@@ -3949,6 +4095,10 @@ export class WorldDO {
       this.send(ws, { t: "sys", text: `not enough credits for ${sku.label} (${sku.price})` });
       return;
     }
+    if (sku.rarity && p.inventory.length >= INVENTORY_CAP) {
+      this.send(ws, { t: "sys", text: "bag full — free a slot before buying" });
+      return;
+    }
     p.credits -= sku.price;
     this.eco("burn", "vendor", sku.price);
     if (sku.heal) {
@@ -3956,7 +4106,6 @@ export class WorldDO {
       this.send(ws, { t: "sys", text: `bought ${sku.label} — patched to full` });
     } else if (sku.rarity) {
       p.inventory.push(rollItem(p.level, 0, sku.rarity));
-      if (p.inventory.length > INVENTORY_CAP) p.inventory.shift();
       this.send(ws, { t: "inv", items: p.inventory });
       this.send(ws, { t: "sys", text: `bought ${sku.label}` });
     } else if (sku.cores) {
@@ -4584,6 +4733,8 @@ export class WorldDO {
   private step() {
     const stepT0 = Date.now();
     const dt = NET_TICK_MS / 1000;
+    // ~1s flood window (20 ticks) — full reset so legit play never permanently soft-drops
+    if (this.tick % 20 === 0) this.resetMsgRates();
 
     // 1) players — movement + respawn
     for (const p of this.players.values()) {
@@ -4795,13 +4946,11 @@ export class WorldDO {
         for (const e of this.enemies.values()) {
           if (e.hp <= 0) continue;
           if (segPointDist2(e.x, e.y, ax, ay, s.x, s.y) <= R2) {
-            // Server-authoritative crit + lifesteal, scaled by the shooter's level
-            // (computed server-side so a client can't spoof its own crit chance).
+            // Crit is applied once when the shot is created (rollPlayerCritDamage).
+            // Do not re-roll here — that was double-critting ranged hits (~1.85²).
             const owner = this.players.get(s.owner);
-            let dmg = s.dmg;
+            const dmg = s.dmg;
             if (owner) {
-              const critChance = Math.min(0.05 + owner.level * 0.012, 0.3) + (owner.mods.critPct || 0);
-              if (Math.random() < critChance) dmg *= 1.85;
               const lifesteal = Math.min(owner.level * 0.004, 0.08) + (owner.mods.lifestealPct || 0);
               if (lifesteal > 0 && !owner.dead && owner.hp > 0) {
                 owner.hp = Math.min(owner.maxHp, owner.hp + dmg * lifesteal);
@@ -5124,25 +5273,7 @@ export class WorldDO {
 
   /** Save the live withdrawable balance immediately before an escrow batch changes it. */
   private saveBeforePvpTransition(p: PlayerState): Promise<boolean> {
-    return this.upsert(
-      p.id,
-      p.name,
-      p.x,
-      p.y,
-      p.credits,
-      p.xp,
-      p.cores,
-      p.metro,
-      p.campaign.toData(),
-      p.inventory,
-      p.stash,
-      p.look,
-      p.equipped,
-      p.tutorialDone,
-      p.tutorialStep,
-      undefined,
-      p.tutorialMode ?? "quick",
-    );
+    return this.upsertPlayer(p);
   }
 
   /** Lock a buy-in. One D1 batch debits players.metro and creates the durable pot. */
@@ -5160,7 +5291,10 @@ export class WorldDO {
           updatedAt: now,
         });
         if (amount !== PVP_BUY_IN_METRO) throw new Error("escrow lock rejected");
+        // D1 already debited — keep the relative base in lockstep so the next upsert
+        // does not re-apply (or reverse) the escrow debit.
         p.metro -= amount;
+        p.metroBase -= amount;
         p.pvpEscrow = amount;
         p.pvpInArena = true;
         p.dirty = true;
@@ -5194,13 +5328,17 @@ export class WorldDO {
         const amount = await refundDurablePvpEscrow(this.env.DB, p.id, Date.now());
         if (amount > 0) {
           p.metro += amount;
+          p.metroBase += amount; // D1 already credited
           p.dirty = true;
           this.sendTo(p.id, { t: "sys", text: `✓ ${reason} — ◈${fmtMetro(amount)} $METRO returned to your balance` });
         } else {
           // Another zone/load may have recovered the row first. Read its committed
           // balance so this stale isolate cannot overwrite that refund on close.
           const balance = await readPlayerMetroBalance(this.env.DB, p.id);
-          if (balance !== null) p.metro = balance;
+          if (balance !== null) {
+            p.metro = balance;
+            p.metroBase = balance;
+          }
           p.dirty = true;
         }
       } catch {
@@ -5238,6 +5376,7 @@ export class WorldDO {
           const recovered = await refundDurablePvpEscrow(this.env.DB, victim.id, Date.now());
           if (recovered > 0) {
             victim.metro += recovered;
+            victim.metroBase += recovered;
             victim.dirty = true;
             this.sendTo(victim.id, {
               t: "sys",
@@ -5344,25 +5483,7 @@ export class WorldDO {
       // with the ordinary two-second player upsert.
       if (p.dirty && p.pvpPending === 0) {
         p.dirty = false;
-        playerSaved = await this.upsert(
-          p.id,
-          p.name,
-          p.x,
-          p.y,
-          p.credits,
-          p.xp,
-          p.cores,
-          p.metro,
-          p.campaign.toData(),
-          p.inventory,
-          p.stash,
-          p.look,
-          p.equipped,
-          p.tutorialDone,
-          p.tutorialStep,
-          undefined,
-          p.tutorialMode ?? "quick",
-        );
+        playerSaved = await this.upsertPlayer(p);
         if (!playerSaved) p.dirty = true;
       }
       await this.flushStats(p); // lifetime counters / achievements may change without `dirty`
@@ -5451,53 +5572,195 @@ export class WorldDO {
     }
   }
 
-  private async upsert(
-    id: string,
-    name: string,
-    x: number,
-    y: number,
-    credits: number,
-    xp: number,
-    cores: number,
-    metro: number,
-    campaign: CampaignData,
-    inventory: Item[],
-    stash: Item[],
-    look: PlayerLook | undefined,
-    equipped: Partial<Record<Slot, Item>>,
-    tutorialDone = false,
-    tutorialStep = 0,
-    zoneOverride?: string,
-    tutorialMode: TutorialMode = "quick",
-  ): Promise<boolean> {
-    const zone = zoneOverride ?? this.zoneName;
+  /**
+   * Pull bridge (or other zone) relative mutations into live memory.
+   * D1 is the multi-writer source of truth for credits/metro; the DO tracks a
+   * baseline and only applies its own deltas on persist.
+   */
+  private async pullExternalBalances(p: PlayerState): Promise<void> {
+    try {
+      const row = await this.env.DB.prepare("SELECT credits, metro FROM players WHERE id = ?")
+        .bind(p.id)
+        .first<{ credits: number; metro: number }>();
+      if (!row) return;
+      const dC = Math.round(row.credits ?? 0) - Math.round(p.creditsBase);
+      const dM = Math.round(row.metro ?? 0) - Math.round(p.metroBase);
+      if (dC !== 0) {
+        p.credits += dC;
+        p.creditsBase = Math.round(row.credits ?? 0);
+      }
+      if (dM !== 0) {
+        p.metro += dM;
+        p.metroBase = Math.round(row.metro ?? 0);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  /** First-time player row (absolute zeros). */
+  private async insertNewPlayer(id: string, name: string, x: number, y: number): Promise<void> {
     try {
       await this.env.DB.prepare(
-        "INSERT INTO players (id, name, x, y, zone, credits, xp, cores, metro, campaign, tutorial_done, tutorial_step, tutorial_mode, inventory, stash, look, equipped, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) " +
-          "ON CONFLICT(id) DO UPDATE SET x=excluded.x, y=excluded.y, zone=excluded.zone, credits=excluded.credits, xp=excluded.xp, cores=excluded.cores, metro=excluded.metro, campaign=excluded.campaign, tutorial_done=excluded.tutorial_done, tutorial_step=excluded.tutorial_step, tutorial_mode=excluded.tutorial_mode, inventory=excluded.inventory, stash=excluded.stash, look=excluded.look, equipped=excluded.equipped, updated_at=excluded.updated_at",
+        "INSERT OR IGNORE INTO players (id, name, x, y, zone, credits, xp, cores, metro, campaign, tutorial_done, tutorial_step, tutorial_mode, inventory, stash, look, equipped, updated_at, session_zone, session_at) VALUES (?,?,?,?,?,0,0,0,0,?,?,?,?,?,?,?,?,?,?,?)",
       )
         .bind(
           id,
           name,
           round2(x),
           round2(y),
-          zone,
-          Math.round(credits),
-          Math.round(xp),
-          Math.round(cores),
-          Math.max(0, Math.round(metro)),
-          serializeCampaign(campaign),
-          tutorialDone ? 1 : 0,
-          Math.round(tutorialStep),
-          tutorialMode,
-          JSON.stringify(inventory.slice(0, INVENTORY_CAP)),
-          JSON.stringify(stash.slice(0, STASH_CAP)),
-          look ? JSON.stringify(look) : null,
-          JSON.stringify(equipped),
+          this.zoneName,
+          serializeCampaign(new Campaign().toData()),
+          0,
+          0,
+          "quick",
+          "[]",
+          "[]",
+          null,
+          "{}",
+          Date.now(),
+          this.zoneName,
           Date.now(),
         )
         .run();
-      return true;
+    } catch {
+      // Pre-migration without session columns — fall back.
+      try {
+        await this.env.DB.prepare(
+          "INSERT OR IGNORE INTO players (id, name, x, y, zone, credits, xp, cores, metro, campaign, tutorial_done, tutorial_step, tutorial_mode, inventory, stash, look, equipped, updated_at) VALUES (?,?,?,?,?,0,0,0,0,?,?,?,?,?,?,?,?,?)",
+        )
+          .bind(
+            id,
+            name,
+            round2(x),
+            round2(y),
+            this.zoneName,
+            serializeCampaign(new Campaign().toData()),
+            0,
+            0,
+            "quick",
+            "[]",
+            "[]",
+            null,
+            "{}",
+            Date.now(),
+          )
+          .run();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  /**
+   * Persist player state. Credits/metro use RELATIVE deltas against a baseline so
+   * concurrent bridge HTTP mutations (also relative) cannot be absolute-overwritten.
+   * Inventory/other fields only write when this zone still owns session_zone.
+   */
+  private async upsertPlayer(p: PlayerState, opts?: { zoneOverride?: string }): Promise<boolean> {
+    const zone = opts?.zoneOverride ?? this.zoneName;
+    try {
+      // Absorb any bridge/external D1 moves before computing our delta.
+      await this.pullExternalBalances(p);
+      const dC = Math.round(p.credits) - Math.round(p.creditsBase);
+      const dM = Math.round(p.metro) - Math.round(p.metroBase);
+      const mode = p.tutorialMode ?? "quick";
+
+      // Prefer session-gated write (migration 0031). If the columns/session check
+      // fail, fall back to relative-balance write without the gate.
+      let applied = false;
+      try {
+        const res = await this.env.DB.prepare(
+          `UPDATE players SET
+             x=?, y=?, zone=?,
+             credits = credits + ?, xp=?, cores=?, metro = metro + ?,
+             campaign=?, tutorial_done=?, tutorial_step=?, tutorial_mode=?,
+             inventory=?, stash=?, look=?, equipped=?, updated_at=?
+           WHERE id=? AND (session_zone IS NULL OR session_zone = '' OR session_zone = ? OR session_at <= ?)`,
+        )
+          .bind(
+            round2(p.x),
+            round2(p.y),
+            zone,
+            dC,
+            Math.round(p.xp),
+            Math.round(p.cores),
+            dM,
+            serializeCampaign(p.campaign.toData()),
+            p.tutorialDone ? 1 : 0,
+            Math.round(p.tutorialStep),
+            mode,
+            JSON.stringify(p.inventory.slice(0, INVENTORY_CAP)),
+            JSON.stringify(p.stash.slice(0, STASH_CAP)),
+            p.look ? JSON.stringify(p.look) : null,
+            JSON.stringify(p.equipped),
+            Date.now(),
+            p.id,
+            this.zoneName,
+            p.sessionAt,
+          )
+          .run();
+        applied = (res.meta.changes ?? 0) > 0;
+        if (!applied) {
+          // Lost session to another zone — still flush our credit/metro delta so farmed
+          // currency is not stranded, but do not overwrite inventory/position.
+          await this.env.DB.prepare("UPDATE players SET credits = credits + ?, metro = metro + ?, updated_at=? WHERE id=?")
+            .bind(dC, dM, Date.now(), p.id)
+            .run();
+          // Align live to D1 and soft-kick so we stop dual-writing.
+          await this.pullExternalBalances(p);
+          p.creditsBase = Math.round(p.credits);
+          p.metroBase = Math.round(p.metro);
+          for (const [sock, sid] of this.sessions) {
+            if (sid === p.id) {
+              this.send(sock, { t: "sys", text: "session moved to another zone — reconnecting…" });
+              try {
+                sock.close(4003, "session superseded");
+              } catch {
+                /* gone */
+              }
+            }
+          }
+          return false;
+        }
+      } catch {
+        // session columns missing — relative write without gate
+        await this.env.DB.prepare(
+          `UPDATE players SET
+             x=?, y=?, zone=?,
+             credits = credits + ?, xp=?, cores=?, metro = metro + ?,
+             campaign=?, tutorial_done=?, tutorial_step=?, tutorial_mode=?,
+             inventory=?, stash=?, look=?, equipped=?, updated_at=?
+           WHERE id=?`,
+        )
+          .bind(
+            round2(p.x),
+            round2(p.y),
+            zone,
+            dC,
+            Math.round(p.xp),
+            Math.round(p.cores),
+            dM,
+            serializeCampaign(p.campaign.toData()),
+            p.tutorialDone ? 1 : 0,
+            Math.round(p.tutorialStep),
+            mode,
+            JSON.stringify(p.inventory.slice(0, INVENTORY_CAP)),
+            JSON.stringify(p.stash.slice(0, STASH_CAP)),
+            p.look ? JSON.stringify(p.look) : null,
+            JSON.stringify(p.equipped),
+            Date.now(),
+            p.id,
+          )
+          .run();
+        applied = true;
+      }
+
+      // Baseline catches up to the delta we just applied; re-pull absorbs races.
+      p.creditsBase = Math.round(p.creditsBase) + dC;
+      p.metroBase = Math.round(p.metroBase) + dM;
+      await this.pullExternalBalances(p);
+      return applied;
     } catch {
       return false; // caller retains `dirty` so the next snapshot really retries
     }
@@ -5507,6 +5770,10 @@ export class WorldDO {
     const id = this.sessions.get(ws);
     this.sessions.delete(ws);
     if (!id) return;
+    // Another socket still holds this player (same-zone replace) — leave live state alone.
+    for (const sid of this.sessions.values()) {
+      if (sid === id) return;
+    }
     const p = this.players.get(id);
     if (p) {
       const tr = this.tradeOf(p);
@@ -5517,29 +5784,12 @@ export class WorldDO {
       // A defeated player can close while their transfer is behind another zone
       // operation. Wait before the final upsert so no stale balance wins the race.
       if (p.pvpPending > 0) await this.pvpTail;
-      const playerSaved = await this.upsert(
-        p.id,
-        p.name,
-        p.x,
-        p.y,
-        p.credits,
-        p.xp,
-        p.cores,
-        p.metro,
-        p.campaign.toData(),
-        p.inventory,
-        p.stash,
-        p.look,
-        p.equipped,
-        p.tutorialDone,
-        p.tutorialStep,
-        undefined,
-        p.tutorialMode ?? "quick",
-      );
+      const playerSaved = await this.upsertPlayer(p);
       await this.flushStats(p);
       await this.flushDailies(p);
       if (p.bounty || playerSaved) await this.flushBounty(p);
       await this.syncMeta();
+      // Flush economy ledger tail for this player zone
       this.players.delete(id);
     }
   }

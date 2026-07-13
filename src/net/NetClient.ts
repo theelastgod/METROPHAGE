@@ -380,9 +380,24 @@ export default class NetClient {
       this.reconnectTimer = null;
     }
     this.onConnectionState?.(this.reconnectAttempts > 0 ? "reconnecting" : "connecting");
+    // Supersede any in-flight socket so spam-reconnect / retry cannot dual-login.
+    const prev = this.ws;
+    if (prev) {
+      try {
+        prev.onopen = null;
+        prev.onmessage = null;
+        prev.onclose = null;
+        prev.onerror = null;
+        prev.close();
+      } catch {
+        /* already closed */
+      }
+      this.ws = undefined;
+    }
     const ws = new WebSocket(this.url);
     this.ws = ws;
     ws.onopen = () => {
+      if (this.ws !== ws) return; // superseded
       const auth = this.auth;
       const session = auth?.wallet ? walletSessionSecret(auth.wallet) : undefined;
       // Only forward sig/ts when present (session resume sends wallet alone).
@@ -408,8 +423,12 @@ export default class NetClient {
         } satisfies ClientMsg),
       );
     };
-    ws.onmessage = (e) => this.onMessage(e.data);
+    ws.onmessage = (e) => {
+      if (this.ws !== ws) return; // ignore messages from superseded sockets
+      this.onMessage(e.data);
+    };
     ws.onclose = (ev) => {
+      if (this.ws !== ws && this.ws !== undefined) return; // a newer socket owns the client
       this.connected = false;
       // 4001 = wallet auth rejected — ask the host to re-sign once (no reconnect loop).
       if (ev.code === 4001 && this.auth?.wallet && !this.authRetryUsed) {
@@ -425,9 +444,11 @@ export default class NetClient {
         this.onGuestAuthFailed?.(this.lastSysText || "sign-in rejected");
         return;
       }
+      // 4002/4003 = server replaced this session (another tab / other zone) — reconnect cleanly.
       if (!this.manualClose) this.scheduleReconnect();
     };
     ws.onerror = () => {
+      if (this.ws !== ws) return;
       this.connected = false;
     };
   }
@@ -593,6 +614,10 @@ export default class NetClient {
       this.onConnectionState?.("connected");
       this.pred = { x: msg.x, y: msg.y };
       this.serverPos = { x: msg.x, y: msg.y };
+      // Fresh authority — drop stale prediction history from a prior socket/session.
+      this.pending = [];
+      this.seq = 0;
+      this.lastAck = 0;
       this.fragments = msg.fragments ?? [];
       // Protocol handshake — stale client against a new Worker (or reverse) should not
       // fail silently with half-working panels.

@@ -112,6 +112,8 @@ export interface SettleResult {
   metro?: number; // verified on-chain amount (deposit)
   /** Partially-signed payout tx (base64) — the PLAYER signs as fee payer and submits. */
   claimTx?: string;
+  /** EVM treasury nonce used for a pre-signed claim (burned on TTL reclaim). */
+  nonce?: number;
 }
 
 export interface Settlement {
@@ -123,6 +125,11 @@ export interface Settlement {
   verifyClaim(txSig: string, wallet: string, metro: number): Promise<SettleResult>;
   /** Verify an on-chain deposit tx that paid `metro` into the treasury from `wallet`. */
   verifyDeposit(txSig: string, wallet: string, claimedMetro: number): Promise<SettleResult>;
+  /**
+   * Invalidate a pre-signed EVM claim by consuming its treasury nonce (0-value self-tx).
+   * Optional — sim/Solana leave this undefined (Solana claims expire via blockhash).
+   */
+  invalidateNonce?(nonce: number): Promise<void>;
 }
 
 /** Devnet-sim settlement: simulates the chain so the off-chain accounting is fully
@@ -151,8 +158,8 @@ export interface BridgeResponse {
 // lookup for wallet players ("unknown player").
 const normId = (player: string): string => (player || "").replace(/[^A-Za-z0-9:_-]/g, "").slice(0, 64) || "blank";
 
-export async function getAccount(db: D1Database, player: string): Promise<BridgeResponse> {
-  await reclaimExpired(db); // lazily return credits from abandoned claims
+export async function getAccount(db: D1Database, player: string, settlement?: Settlement): Promise<BridgeResponse> {
+  await reclaimExpired(db, settlement); // lazily return credits from abandoned claims
   const id = normId(player);
   const row = await db.prepare("SELECT credits, metro FROM players WHERE id = ?").bind(id).first<{ credits: number; metro: number }>();
   if (!row) return { ok: false, reason: "unknown player" };
@@ -205,7 +212,7 @@ export async function withdraw(
   if (!isValidWallet(wallet)) return { ok: false, reason: "invalid wallet address" };
   if (!Number.isFinite(credits) || credits < BRIDGE.minWithdrawCredits)
     return { ok: false, reason: `minimum withdraw is ${BRIDGE.minWithdrawCredits} credits` };
-  await reclaimExpired(db); // abandoned claims release their pool reservation first
+  await reclaimExpired(db, settlement); // abandoned claims release their pool reservation first
 
   // server-authoritative anti-abuse: cooldown + rolling daily cap
   const agg = await db
@@ -261,6 +268,15 @@ export async function withdraw(
     await db.prepare("UPDATE metro_withdrawals SET status = 'failed' WHERE id = ?").bind(wid).run();
     return { ok: false, reason: settle.reason ?? "claim build failed (credits refunded)" };
   }
+  // Persist EVM nonce so TTL reclaim can burn the pre-signed claim (otherwise an
+  // abandoned signed transfer remains valid forever until the nonce advances).
+  if (typeof settle.nonce === "number" && Number.isFinite(settle.nonce)) {
+    try {
+      await db.prepare("UPDATE metro_withdrawals SET claim_nonce = ? WHERE id = ?").bind(settle.nonce, wid).run();
+    } catch {
+      /* pre-migration — reclaim cannot burn nonce until 0031 is applied */
+    }
+  }
   // The row stays 'pending' (reserving the pool) until /metro/withdraw/confirm proves
   // the claim landed — or the TTL reclaims it. The tx itself is not stored: it is only
   // valid signed-as-is, and the confirm step re-verifies everything on-chain anyway.
@@ -300,7 +316,7 @@ export async function confirmWithdraw(
   if (row.status === "done") return { ok: false, reason: "already confirmed" };
   if (row.status !== "pending") return { ok: false, reason: "claim expired or failed" };
   if (Date.now() - row.created_at > BRIDGE.claimTtlMs) {
-    await reclaimExpired(db);
+    await reclaimExpired(db, settlement);
     return { ok: false, reason: "claim expired — credits refunded" };
   }
 
@@ -320,23 +336,42 @@ export async function confirmWithdraw(
   return { ok: true, player: id, withdrawId: wid, metro: row.metro, credits: row.credits, txSig };
 }
 
-/** Refund pending claims older than the TTL. Safe because the TTL dwarfs blockhash
- *  validity — an expired claim's tx can no longer land on-chain. Run lazily from the
- *  bridge endpoints; no cron needed. */
-export async function reclaimExpired(db: D1Database): Promise<number> {
+/** Refund pending claims older than the TTL.
+ *  Solana claims die with blockhash; EVM pre-signed raw txs do NOT — pass settlement
+ *  so we can burn the treasury nonce and invalidate the abandoned claimTx. */
+export async function reclaimExpired(db: D1Database, settlement?: Settlement): Promise<number> {
   const cutoff = Date.now() - BRIDGE.claimTtlMs;
-  const { results } = await db
-    .prepare("SELECT id, player, credits FROM metro_withdrawals WHERE status = 'pending' AND created_at < ?")
-    .bind(cutoff)
-    .all<{ id: number; player: string; credits: number }>();
+  let results: Array<{ id: number; player: string; credits: number; claim_nonce: number | null }>;
+  try {
+    const q = await db
+      .prepare("SELECT id, player, credits, claim_nonce FROM metro_withdrawals WHERE status = 'pending' AND created_at < ?")
+      .bind(cutoff)
+      .all<{ id: number; player: string; credits: number; claim_nonce: number | null }>();
+    results = q.results ?? [];
+  } catch {
+    const q = await db
+      .prepare("SELECT id, player, credits FROM metro_withdrawals WHERE status = 'pending' AND created_at < ?")
+      .bind(cutoff)
+      .all<{ id: number; player: string; credits: number }>();
+    results = (q.results ?? []).map((r) => ({ ...r, claim_nonce: null }));
+  }
   let reclaimed = 0;
-  for (const r of results ?? []) {
+  for (const r of results) {
     // conditional flip first so a concurrent confirm cannot race the refund
     const flip = await db
       .prepare("UPDATE metro_withdrawals SET status = 'failed' WHERE id = ? AND status = 'pending'")
       .bind(r.id)
       .run();
     if (flip.meta.changes === 0) continue;
+    // Burn EVM nonce BEFORE refunding credits — otherwise a player can broadcast the
+    // abandoned signed transfer and keep the refund.
+    if (r.claim_nonce != null && settlement?.invalidateNonce) {
+      try {
+        await settlement.invalidateNonce(r.claim_nonce);
+      } catch {
+        /* best-effort; nonce may already be used */
+      }
+    }
     await db.prepare("UPDATE players SET credits = credits + ? WHERE id = ?").bind(r.credits, r.player).run();
     reclaimed++;
   }

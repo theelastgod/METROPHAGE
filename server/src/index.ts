@@ -214,7 +214,7 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
 
   try {
     if (url.pathname === "/metro/account" && req.method === "GET")
-      return json(await getAccount(env.DB, url.searchParams.get("player") ?? ""));
+      return json(await getAccount(env.DB, url.searchParams.get("player") ?? "", settlement));
     if (url.pathname === "/metro/pool" && req.method === "GET") {
       const info = (await poolInfo(env.DB)) as Record<string, unknown>;
       info.mintConfigured = !!mint;

@@ -249,6 +249,8 @@ export default class OnlineScene extends Phaser.Scene {
   private bossIntroShown = ""; // boss name whose title card already played this visit
   private atmosphere?: Atmosphere; // rich ambient layer, shared with the SP city
   private connectStartedAt = 0; // when this connection attempt began (for the offline timeout)
+  /** Bumped on connect / shutdown so async wallet auth cannot open a zombie socket. */
+  private sceneConnectGen = 0;
   private connectionState: "connecting" | "connected" | "reconnecting" | "offline" = "connecting";
   private connectDots = 0;
   private connectDotTimer = 0;
@@ -1743,6 +1745,7 @@ export default class OnlineScene extends Phaser.Scene {
       }
     });
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.sceneConnectGen++;
       this.unmountMobileChatInput();
       this.cancelLongPress();
       this.net?.disconnect();
@@ -1795,6 +1798,11 @@ export default class OnlineScene extends Phaser.Scene {
    *  3) only then prompt MetaMask (first connect / session never bound)
    */
   private async signInThenConnect() {
+    // Generation token: ignore auth completion if the scene was shut down mid-await
+    // (Esc to title / zone travel) so we never open a zombie socket.
+    const gen = (this.sceneConnectGen = (this.sceneConnectGen ?? 0) + 1);
+    const stillHere = () => this.sceneConnectGen === gen && this.sys?.isActive?.() !== false && !!this.net;
+
     const guest = this.isGuestRun();
     let addr = guest
       ? undefined
@@ -1802,19 +1810,23 @@ export default class OnlineScene extends Phaser.Scene {
     if (!guest && !addr) {
       // Silent restore after page reload (eth_accounts — no popup).
       addr = (await restoreWalletSession()) ?? undefined;
+      if (!stillHere()) return;
       if (addr) this.registry.set("walletAddress", addr);
     }
+    if (!stillHere()) return;
     if (!guest && addr) {
       await this.applyWalletAuth(addr, /* allowPrompt */ false);
     }
+    if (!stillHere()) return;
     // If session resume fails (never bound / new device), re-sign once silently-as-possible.
     this.net.onAuthRequired = () => {
       void (async () => {
-        if (this.isGuestRun()) return;
+        if (!stillHere() || this.isGuestRun()) return;
         const a =
           (this.registry.get("walletAddress") as string | undefined) || connectedWallet();
         if (!a) return;
         await this.applyWalletAuth(a, /* allowPrompt */ true);
+        if (!stillHere()) return;
         this.net.retryConnect();
       })();
     };
@@ -1822,10 +1834,12 @@ export default class OnlineScene extends Phaser.Scene {
     // retrying is hopeless — bounce to the title screen with the server's reason so the
     // player can pick a new callsign or link a wallet. (Was an infinite reject loop.)
     this.net.onGuestAuthFailed = (reason) => {
+      if (!stillHere()) return;
       this.registry.set("guestAuthError", reason);
       this.hud?.setColor("#ff3b6b");
       this.hud?.setText(["⚠ SIGN-IN REJECTED", reason, "returning to title…"]);
       this.time.delayedCall(1400, () => {
+        if (!stillHere()) return;
         transitionTo(this, "Select", undefined, { style: "glitch", accent: 0xff3b6b });
       });
     };
@@ -4358,7 +4372,7 @@ export default class OnlineScene extends Phaser.Scene {
     // stepping onto the room's south mat leaves. Both fire once per zone visit.
     if (!this.doorTransit) {
       if (this.districtDoors.length && my < 0 && mx === 0) {
-        const p = this.net.pred;
+        const p = this.playerPos(); // prefer live avatar (solo walk + connected), not raw pred
         const ptx = Math.floor(p.x / TILE);
         const pty = Math.floor(p.y / TILE);
         const d = this.districtDoors.find((dd) => dd.tx === ptx && dd.ty === pty && Math.abs(p.x - (dd.tx * TILE + TILE / 2)) < 12);
@@ -4367,7 +4381,7 @@ export default class OnlineScene extends Phaser.Scene {
           this.enterZone(d.dest);
         }
       } else if (this.interior && (parseBuildingInterior(this.zone) || parseHubInterior(this.zone) !== null || parseEstateInterior(this.zone) !== null)) {
-        const p = this.net.pred;
+        const p = this.playerPos();
         const [matTx, matTy] = venueLayoutFor(this.zone).mat; // est homes resolve to the classic [7,9]
         if (Math.floor(p.x / TILE) === matTx && Math.floor(p.y / TILE) === matTy) {
           this.doorTransit = true;
@@ -4972,7 +4986,7 @@ export default class OnlineScene extends Phaser.Scene {
     this.hpBar.clear();
     if (this.net.connected && this.hpBarRect.w > 0) {
       const { x, y, w, h } = this.hpBarRect;
-      const hpN = Phaser.Math.Clamp(this.net.hp / PLAYER_HP, 0, 1);
+      const hpN = Phaser.Math.Clamp(this.net.hp / Math.max(1, this.net.maxHp || PLAYER_HP), 0, 1);
       drawPremiumBar(this.hpBar, x, y, w, h, hpN, hpN > 0.3 ? COLORS.hp : COLORS.hpLow);
       // dash (SPACE) + signature (Q) + secondary (E) readiness + HEAT (R) — the fourth
       // quarter fills with damage dealt and burns bright once the ultimate is armed
@@ -5565,7 +5579,7 @@ export default class OnlineScene extends Phaser.Scene {
 
   /** E (away from interactables) — the class secondary. */
   private tryAbility2() {
-    const aim = this.pointerAim();
+    const aim = this.combatAim();
     if (!this.net.ability2(aim, this.ability2CooldownMs())) return;
     this.synth?.cast();
     const cls = this.net.classId;
@@ -5607,7 +5621,7 @@ export default class OnlineScene extends Phaser.Scene {
   /** R — the class ultimate. HEAT is the gate and the cost; the server holds the meter,
    *  so a cold press is silently ignored (we mirror the threshold to skip dead FX). */
   private tryUlt() {
-    const aim = this.pointerAim();
+    const aim = this.combatAim();
     const gate = this.ultThresholdNow();
     if (!this.net.ult(aim, gate)) {
       if (this.net.heat < gate) this.showBubble(this.me.x, this.me.y, "HEAT LOW — keep fighting");
@@ -5712,14 +5726,42 @@ export default class OnlineScene extends Phaser.Scene {
     }
   }
 
-  /** Aim from the pointer (world space) — shared by dash fallback + the signature. */
+  /** Aim from the pointer (world space) — desktop mouse; mobile uses combatAim(). */
   private pointerAim(): number {
     const ptr = this.input.activePointer;
+    const origin = this.playerPos();
     const wp = this.cameras.main.getWorldPoint(ptr.x, ptr.y);
-    return Math.atan2(wp.y - this.me.y, wp.x - this.me.x);
+    return Math.atan2(wp.y - origin.y, wp.x - origin.x);
   }
 
-  /** SPACE/SHIFT — dash along current move intent (or toward the pointer standing still). */
+  /**
+   * Combat aim for dash / Q / E / R. On touch the active pointer sits on the UI pad,
+   * so we aim from pad/facing/nearest enemy — never at the finger-on-button.
+   */
+  private combatAim(): number {
+    if (this.mobileUx()) {
+      // Prefer nearest live enemy in a generous ring (mirrors hold-ATK).
+      let best: { x: number; y: number } | null = null;
+      let bestD = this.attackRange * 1.5;
+      const origin = this.playerPos();
+      for (const e of this.net.enemies.values()) {
+        if (e.hp <= 0) continue;
+        const d = Math.hypot(e.x - origin.x, e.y - origin.y);
+        if (d < bestD) {
+          bestD = d;
+          best = e;
+        }
+      }
+      if (best) return Math.atan2(best.y - origin.y, best.x - origin.x);
+      const fx = this.meDir.x;
+      const fy = this.meDir.y;
+      if (Math.abs(fx) + Math.abs(fy) > 1e-3) return Math.atan2(fy, fx);
+      return 0; // default face right
+    }
+    return this.pointerAim();
+  }
+
+  /** SPACE/SHIFT — dash along current move intent (or combat aim when standing still). */
   private tryDash() {
     let dx = 0;
     let dy = 0;
@@ -5727,8 +5769,15 @@ export default class OnlineScene extends Phaser.Scene {
     if (this.keys.D?.isDown || this.keys.RIGHT?.isDown) dx += 1;
     if (this.keys.W?.isDown || this.keys.UP?.isDown) dy -= 1;
     if (this.keys.S?.isDown || this.keys.DOWN?.isDown) dy += 1;
+    // Mobile stick / last facing when no keyboard keys.
+    if (dx === 0 && dy === 0 && this.mobileUx()) {
+      if (Math.abs(this.meDir.x) + Math.abs(this.meDir.y) > 1e-3) {
+        dx = this.meDir.x;
+        dy = this.meDir.y;
+      }
+    }
     if (dx === 0 && dy === 0) {
-      const aim = this.pointerAim();
+      const aim = this.combatAim();
       dx = Math.cos(aim);
       dy = Math.sin(aim);
     }
@@ -5749,7 +5798,7 @@ export default class OnlineScene extends Phaser.Scene {
 
   /** Q — the class signature. The server resolves the effect; we sell the moment. */
   private tryAbility() {
-    const aim = this.pointerAim();
+    const aim = this.combatAim();
     if (!this.net.ability(aim, this.abilityCooldownMs())) return;
     this.synth?.cast();
     juiceShake(this, 90, 0.003);
@@ -6253,7 +6302,11 @@ export default class OnlineScene extends Phaser.Scene {
       this.contracts?.open ||
       this.rsSkillsPanel?.open ||
       this.mapPanel?.open ||
-      this.questLog?.open
+      this.questLog?.open ||
+      this.cosmetics?.open ||
+      this.guildPanel?.open ||
+      this.stashPanel?.open ||
+      !!this.registryOpen
     );
   }
 
