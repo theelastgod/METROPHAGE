@@ -234,6 +234,8 @@ export default class NetClient {
   campaignStage = 0;
   campaignProgress = 0;
   campaignObjective = "";
+  /** Completed main-story quest ids (for the quest log). */
+  campaignCompleted: string[] = [];
   tutorialStep = 0;
   tutorialProgress = 0;
   tutorialTotal = 9;
@@ -960,6 +962,13 @@ export default class NetClient {
       }
       this.pushChat({ from: "", ch: "sys", text: msg.text, faction: -1, sys: true });
       this.onRedirect?.(msg.zone);
+    } else if (msg.t === "campaign") {
+      this.campaignQuest = msg.activeId;
+      this.campaignStage = msg.stage;
+      this.campaignProgress = msg.progress;
+      this.campaignObjective = msg.objective ?? "";
+      this.campaignCompleted = Array.isArray(msg.completed) ? msg.completed : [];
+      this.onCampaign?.();
     } else if (msg.t === "story") {
       this.story = {
         quest: msg.quest,

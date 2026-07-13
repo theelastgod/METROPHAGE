@@ -1049,7 +1049,10 @@ export default class OnlineScene extends Phaser.Scene {
     this.net.arrival = fastArrival ? "fast" : "organic";
     this.net.travelFrom = fastArrival ? undefined : this.fromZone;
     this.wireHomeAfterNet(); // if this is an est{K} home, hook estate updates + furniture placement
-    this.net.onCampaign = () => this.refreshAllyLines(); // story allies re-react as the questline advances
+    this.net.onCampaign = () => {
+      this.refreshAllyLines(); // story allies re-react as the questline advances
+      if (this.questLog?.open) this.refreshQuestLog();
+    };
     this.net.onStory = () => this.presentStoryBeat();
     const tutorialMode =
       data?.tutorialMode ?? (this.registry.get("tutorialMode") as TutorialMode | undefined) ?? getSettings().tutorialMode;
@@ -1325,6 +1328,8 @@ export default class OnlineScene extends Phaser.Scene {
             { key: "inv", label: "Bag", sub: mobile ? "tap" : "I", color: 0x00e5ff, onClick: () => this.inv?.toggle() },
             { key: "map", label: "Map", sub: mobile ? "tap" : "M", color: 0x39ff88, onClick: () => this.mapPanel?.toggle(this.net.discovered, this.net.unlocked, this.zone) },
             { key: "quests", label: "Quests", sub: mobile ? "tap" : "J", color: 0xb06bff, onClick: () => this.refreshQuestLog(true) },
+            // keep key consistent in both mobile/desktop bars
+            { key: "dailies", label: "Dailies", sub: mobile ? "tap" : "C", color: 0x00e5ff, onClick: () => this.contracts?.toggle(this.net.contracts, this.net.rep) },
             ...(mobile
               ? [
                   { key: "chat", label: "Chat", sub: "tap", color: 0x9aa3b2, onClick: () => this.openChat() },
@@ -1339,6 +1344,8 @@ export default class OnlineScene extends Phaser.Scene {
             { key: "map", label: "Map", sub: mobile ? "tap" : "M", color: 0x39ff88, onClick: () => this.mapPanel?.toggle(this.net.discovered, this.net.unlocked, this.zone) },
             { key: "market", label: "Market", sub: mobile ? "tap" : "K", color: 0xff2bd6, onClick: () => this.market?.toggle(this.net.marketListings, this.net.inventory, this.net.id, this.net.credits, this.net.metro) },
             { key: "quests", label: "Quests", sub: mobile ? "tap" : "J", color: 0xb06bff, onClick: () => this.refreshQuestLog(true) },
+            // keep key consistent in both mobile/desktop bars
+            { key: "dailies", label: "Dailies", sub: mobile ? "tap" : "C", color: 0x00e5ff, onClick: () => this.contracts?.toggle(this.net.contracts, this.net.rep) },
             ...(mobile
               ? [
                   { key: "chat", label: "Chat", sub: "tap", color: 0x9aa3b2, onClick: () => this.openChat() },
@@ -1686,19 +1693,24 @@ export default class OnlineScene extends Phaser.Scene {
         return;
       }
       if (e.key === "j" || e.key === "J") {
-        // J is DAILY contracts only — never THE WAKE. If campaign not started, route to FIXER brief.
-        if (this.usingRsControls() && !this.isTutorial && !firstHourSystemsLocked()) {
-          this.refreshQuestLog(true);
-          return;
+        // J = QUEST LOG (main / side / completed). Daily contracts board is C.
+        if (this.fixerBrief?.isOpen) this.fixerBrief.close();
+        this.refreshQuestLog(true);
+        if (this.questLog.open) this.reportTutorialPanel("panel");
+        return;
+      }
+      if (e.key === "c" || e.key === "C") {
+        // Daily contracts board (separate from quest log).
+        if (this.isTutorial) {
+          this.tryOpenCitySystem(() => {
+            this.contracts.toggle(this.net.contracts, this.net.rep);
+            if (this.contracts.open) this.reportTutorialPanel("contracts");
+          });
+        } else {
+          this.tryOpenCitySystem(() => {
+            this.contracts.toggle(this.net.contracts, this.net.rep);
+          });
         }
-        if (!this.net.campaignQuest && this.net.connected && !this.isTutorial) {
-          this.engageFixer();
-          return;
-        }
-        this.tryOpenCitySystem(() => {
-          this.contracts.toggle(this.net.contracts, this.net.rep);
-          if (this.contracts.open) this.reportTutorialPanel("contracts");
-        });
         return;
       }
       if (this.fixerBrief?.isOpen && e.key === "Escape") {
@@ -6603,6 +6615,7 @@ export default class OnlineScene extends Phaser.Scene {
       campaignStage: this.net.campaignStage,
       campaignProgress: this.net.campaignProgress,
       campaignObjective: this.net.campaignObjective,
+      campaignCompleted: this.net.campaignCompleted ?? [],
       contracts: this.net.contracts,
       bounty: this.net.bounty,
       fragments: this.net.fragments,

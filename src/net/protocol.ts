@@ -283,6 +283,15 @@ export type ServerMsg =
       objective: string;
       done: boolean;
     }
+  /** Full campaign journal for the quest log (main + completed). */
+  | {
+      t: "campaign";
+      activeId: string | null;
+      stage: number;
+      progress: number;
+      objective: string;
+      completed: string[];
+    }
   // a memory fragment recovered at an ICE-dive core (new=false when already held)
   | { t: "fragment"; id: string; title: string; lines: string[]; isNew: boolean }
   // dynamic world event phase change in this district (telegraph -> active -> end)

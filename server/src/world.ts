@@ -2792,6 +2792,7 @@ export class WorldDO {
       this.sendTutorialState(p);
     } else {
       this.ensureStarterKit(p);
+      this.sendCampaignJournal(ws, p);
       this.sendCampaignBeat(ws, p);
       if (this.zoneName === "safe") {
         const nearHub =
@@ -3197,8 +3198,22 @@ export class WorldDO {
     }
   }
 
+  /** Push campaign journal state for the quest log (ids + progress + completed list). */
+  private sendCampaignJournal(ws: WebSocket, p: PlayerState) {
+    const s = p.campaign.currentStage;
+    this.send(ws, {
+      t: "campaign",
+      activeId: p.campaign.activeId,
+      stage: p.campaign.stage,
+      progress: p.campaign.progress,
+      objective: s?.objective ?? "",
+      completed: [...p.campaign.completed],
+    });
+  }
+
   /** Push the current campaign beat (stage journal + uplink line) to one client. */
   private sendCampaignBeat(ws: WebSocket, p: PlayerState) {
+    this.sendCampaignJournal(ws, p);
     const q = p.campaign.active;
     const s = p.campaign.currentStage;
     if (q && s) {

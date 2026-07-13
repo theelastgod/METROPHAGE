@@ -1,11 +1,11 @@
 import Phaser from "phaser";
-import { getQuest } from "../game/quests";
+import { QUESTS, getQuest } from "../game/quests";
+import { BOUNTIES } from "../game/bounties";
 import { FRAGMENTS } from "../game/fragments";
-import { drawPanelFrame } from "./panelChrome";
 import Modal from "./Modal";
 import { closeHint, dimBackdrop, modalRect, uiDim } from "./uiLayout";
 import { bodyFont, displayFont, fitTextToWidth } from "./typography";
-import { addPanelGlow, animatePanelIn, drawScanlines, STUDIO } from "./studioChrome";
+import { STUDIO } from "./studioChrome";
 
 interface ContractRow {
   id: string;
@@ -17,6 +17,7 @@ interface ContractRow {
 }
 
 interface BountyRow {
+  id?: string;
   name: string;
   count: number;
   progress: number;
@@ -27,19 +28,24 @@ export interface QuestLogState {
   campaignStage: number;
   campaignProgress: number;
   campaignObjective: string;
+  /** Main story quests already finished. */
+  campaignCompleted: string[];
   contracts: ContractRow[];
   bounty: BountyRow | null;
-  /** Recovered memory-fragment ids (ICE-dive rewards). */
   fragments: string[];
 }
 
-/** RuneScape-style quest journal — campaign steps, dailies, bounty with checkmarks. */
+/**
+ * Quest journal — main story, side jobs, completed.
+ * No giant glow orb (was misread as a "ball" taking the screen).
+ */
 export default class RsQuestLog extends Modal {
   private state: QuestLogState = {
     campaignId: null,
     campaignStage: 0,
     campaignProgress: 0,
     campaignObjective: "",
+    campaignCompleted: [],
     contracts: [],
     bounty: null,
     fragments: [],
@@ -58,173 +64,184 @@ export default class RsQuestLog extends Modal {
   protected build() {
     this.clear();
     const scene = this.scene;
-    const add = <T extends Phaser.GameObjects.GameObject>(o: T) => {
+    const add = <T extends Phaser.GameObjects.GameObject>(o: T): T => {
       this.objs.push(o);
       return o;
     };
     const D = 1760;
-    const { x, y, w, h } = modalRect(520, 460);
-    add(dimBackdrop(scene, D, 0.66, () => this.close(), { x, y, w, h }));
-    const glow = addPanelGlow(scene, x, y, w, h, 0xb06bff, 0.09);
-    glow.setScrollFactor(0).setDepth(D);
+    const { x, y, w, h } = modalRect(540, 500);
+    add(dimBackdrop(scene, D, 0.7, () => this.close(), { x, y, w, h }));
+
+    // Solid frame only — no oversized ADD glow (that rendered as a giant ball).
     const g = add(scene.add.graphics().setScrollFactor(0).setDepth(D + 1));
-    drawPanelFrame(g, x, y, w, h);
-    drawScanlines(g, x, y, w, h, 0xb06bff, 0.02);
+    g.fillStyle(0x0a0818, 0.97).fillRect(x, y, w, h);
+    g.lineStyle(uiDim(2), 0xb06bff, 0.9).strokeRect(x, y, w, h);
+    g.fillStyle(0xb06bff, 0.1).fillRect(x, y, w, uiDim(40));
+    g.lineStyle(1, 0xffffff, 0.06).strokeRect(x + uiDim(3), y + uiDim(3), w - uiDim(6), h - uiDim(6));
 
     add(
       scene.add
-        .text(x + uiDim(22), y + uiDim(14), "◆ QUEST LOG", displayFont(17, { color: "#b06bff", fontStyle: "bold" }))
+        .text(x + uiDim(18), y + uiDim(12), "◆ QUEST LOG", displayFont(16, { color: "#d0a0ff", fontStyle: "bold" }))
         .setScrollFactor(0)
         .setDepth(D + 2),
     );
     add(
       scene.add
-        .text(x + w - uiDim(22), y + uiDim(16), closeHint("J / ESC close"), bodyFont(10, { color: STUDIO.dim }))
+        .text(x + w - uiDim(16), y + uiDim(14), closeHint("J / ESC"), bodyFont(10, { color: STUDIO.dim }))
         .setOrigin(1, 0)
         .setScrollFactor(0)
         .setDepth(D + 2),
     );
 
-    let ry = y + uiDim(48);
-    const q = this.state.campaignId ? getQuest(this.state.campaignId) : null;
-    add(
-      scene.add
-        .text(x + uiDim(22), ry, "CAMPAIGN", bodyFont(11, { color: "#f7ff3c", fontStyle: "bold" }))
-        .setScrollFactor(0)
-        .setDepth(D + 2),
-    );
-    ry += uiDim(22);
-
-    if (q) {
-      const questName = add(
+    let ry = y + uiDim(50);
+    const left = x + uiDim(18);
+    const innerW = w - uiDim(36);
+    const line = (label: string, color: string, size = 11, bold = false) => {
+      const t = add(
         scene.add
-          .text(x + uiDim(22), ry, q.name, displayFont(14, { color: "#eafdff", fontStyle: "bold" }))
+          .text(left, ry, label, bodyFont(size, { color, fontStyle: bold ? "bold" : "normal", wordWrap: { width: innerW } }))
           .setScrollFactor(0)
           .setDepth(D + 2),
       );
-      fitTextToWidth(questName, w - uiDim(44), { minScale: 0.72 });
-      ry += uiDim(22);
-      q.stages.forEach((st, i) => {
-        const done = i < this.state.campaignStage;
-        const active = i === this.state.campaignStage;
-        const mark = done ? "✓" : active ? "►" : "○";
-        const color = done ? STUDIO.ready : active ? "#f7ff3c" : STUDIO.dim;
-        let line = `${mark} ${st.objective}`;
-        if (active && st.on.type !== "talk" && st.on.count) {
-          line += `  (${this.state.campaignProgress}/${st.on.count})`;
-        }
-        add(
-          scene.add
-            .text(x + uiDim(28), ry, line, bodyFont(11, { color, wordWrap: { width: w - uiDim(56) } }))
-            .setScrollFactor(0)
-            .setDepth(D + 2),
-        );
-        ry += uiDim(18);
-      });
-      if (this.state.campaignObjective) {
-        add(
-          scene.add
-            .text(x + uiDim(28), ry, this.state.campaignObjective, bodyFont(10, { color: STUDIO.muted, wordWrap: { width: w - uiDim(56) } }))
-            .setScrollFactor(0)
-            .setDepth(D + 2),
-        );
-        ry += uiDim(24);
-      }
-    } else {
-      add(
-        scene.add
-          .text(x + uiDim(28), ry, "○ Talk to THE FIXER on the plaza to begin your arc", bodyFont(11, { color: STUDIO.dim }))
-          .setScrollFactor(0)
-          .setDepth(D + 2),
-      );
-      ry += uiDim(28);
-    }
-
-    ry += uiDim(8);
-    g.lineStyle(1, 0x2a2440, 0.8).lineBetween(x + uiDim(18), ry, x + w - uiDim(18), ry);
-    ry += uiDim(12);
-    add(
-      scene.add
-        .text(x + uiDim(22), ry, "DAILY CONTRACTS", bodyFont(11, { color: "#00e5ff", fontStyle: "bold" }))
-        .setScrollFactor(0)
-        .setDepth(D + 2),
-    );
-    ry += uiDim(20);
-
-    const contracts = this.state.contracts;
-    if (contracts.length === 0) {
-      add(
-        scene.add.text(x + uiDim(28), ry, "no contracts loaded", bodyFont(11, { color: STUDIO.dim })).setScrollFactor(0).setDepth(D + 2),
-      );
-      ry += uiDim(20);
-    } else {
-      for (const c of contracts.slice(0, 5)) {
-        const mark = c.done ? "✓" : "►";
-        const color = c.done ? STUDIO.ready : "#eafdff";
-        add(
-          scene.add
-            .text(
-              x + uiDim(28),
-              ry,
-              `${mark} ${c.name} — ${c.objective}  (${Math.min(c.progress, c.count)}/${c.count})`,
-              bodyFont(10, { color, wordWrap: { width: w - uiDim(56) } }),
-            )
-            .setScrollFactor(0)
-            .setDepth(D + 2),
-        );
-        ry += uiDim(17);
-      }
-    }
-
-    if (this.state.bounty) {
+      ry += Math.max(uiDim(16), t.height + uiDim(2));
+      return t;
+    };
+    const section = (title: string, accent: string) => {
+      ry += uiDim(4);
+      g.lineStyle(1, 0x2a2440, 0.85).lineBetween(left, ry, x + w - uiDim(18), ry);
       ry += uiDim(8);
-      g.lineStyle(1, 0x2a2440, 0.8).lineBetween(x + uiDim(18), ry, x + w - uiDim(18), ry);
-      ry += uiDim(12);
-      const b = this.state.bounty;
+      line(title, accent, 11, true);
+      ry += uiDim(2);
+    };
+
+    // ── MAIN QUEST (story arc) ──────────────────────────────────────────────
+    section("MAIN QUEST", "#f7ff3c");
+    const completed = new Set(this.state.campaignCompleted ?? []);
+    const activeId = this.state.campaignId;
+    let anyMain = false;
+    for (const q of QUESTS) {
+      const done = completed.has(q.id);
+      const active = activeId === q.id;
+      // requiresFlag is a flag name — prior quests set it via setsFlag on complete.
+      const isLocked = !done && !active && !!q.requiresFlag && !hasFlagFromCompleted(q.requiresFlag, completed);
+      let mark = "○";
+      let color = STUDIO.dim;
+      let detail = "";
+      if (done) {
+        mark = "✓";
+        color = STUDIO.ready;
+        detail = "complete";
+      } else if (active) {
+        mark = "►";
+        color = "#f7ff3c";
+        const st = q.stages[this.state.campaignStage];
+        if (st) {
+          const n = st.on.count ?? 1;
+          const prog = st.on.type === "talk" ? "" : ` ${this.state.campaignProgress}/${n}`;
+          detail = `${st.objective}${prog}`;
+        } else detail = this.state.campaignObjective || "in progress";
+      } else if (isLocked) {
+        mark = "◌";
+        color = "#3a3550";
+        detail = "locked";
+      } else {
+        mark = "○";
+        color = "#9aa3b2";
+        detail = "talk to THE FIXER";
+      }
+      anyMain = true;
+      const row = add(
+        scene.add
+          .text(left, ry, `${mark} ${q.name}`, bodyFont(12, { color, fontStyle: active || done ? "bold" : "normal" }))
+          .setScrollFactor(0)
+          .setDepth(D + 2),
+      );
+      fitTextToWidth(row, innerW * 0.55, { minScale: 0.75 });
       add(
         scene.add
-          .text(x + uiDim(22), ry, "BOUNTY", bodyFont(11, { color: STUDIO.metro, fontStyle: "bold" }))
+          .text(x + w - uiDim(18), ry, detail, bodyFont(10, { color: active ? "#eafdff" : color }))
+          .setOrigin(1, 0)
           .setScrollFactor(0)
           .setDepth(D + 2),
       );
       ry += uiDim(18);
-      const bountyText = add(
-        scene.add
-          .text(x + uiDim(28), ry, `► ${b.name}  (${Math.min(b.progress, b.count)}/${b.count})`, bodyFont(11, { color: STUDIO.metro }))
-          .setScrollFactor(0)
-          .setDepth(D + 2),
-      );
-      fitTextToWidth(bountyText, w - uiDim(56), { minScale: 0.72 });
-      ry += uiDim(18);
+      if (active && q.stages.length) {
+        // Compact stage checklist under active only
+        for (let i = 0; i < q.stages.length; i++) {
+          const st = q.stages[i];
+          const stDone = i < this.state.campaignStage;
+          const stAct = i === this.state.campaignStage;
+          const m = stDone ? "  ✓" : stAct ? "  ►" : "  ·";
+          const c = stDone ? STUDIO.ready : stAct ? "#c8d0dc" : "#4a4558";
+          line(`${m} ${st.objective}`, c, 10);
+        }
+      }
+      if (ry > y + h - uiDim(120)) break;
     }
+    if (!anyMain) line("No story data", STUDIO.dim);
 
-    // MEMORY — recovered fragments (ICE-dive rewards); the rest stay encrypted
-    ry += uiDim(8);
-    g.lineStyle(1, 0x2a2440, 0.8).lineBetween(x + uiDim(18), ry, x + w - uiDim(18), ry);
-    ry += uiDim(12);
-    const frags = this.state.fragments;
+    // ── SIDE QUESTS (dailies + bounty + open NPC jobs) ─────────────────────
+    section("SIDE QUESTS", "#00e5ff");
+    let sideCount = 0;
+    if (this.state.bounty) {
+      const b = this.state.bounty;
+      line(`► ${b.name}  (${Math.min(b.progress, b.count)}/${b.count})`, STUDIO.metro, 11, true);
+      sideCount++;
+    }
+    for (const c of this.state.contracts) {
+      if (c.done) continue;
+      line(`► ${c.name} — ${c.objective}  (${Math.min(c.progress, c.count)}/${c.count})`, "#eafdff", 10);
+      sideCount++;
+    }
+    // Available NPC bounties (not currently active)
+    const activeBountyName = this.state.bounty?.name;
+    for (const b of Object.values(BOUNTIES)) {
+      if (activeBountyName && b.name === activeBountyName) continue;
+      if (ry > y + h - uiDim(90)) break;
+      line(`○ ${b.name} — talk to ${b.npc.toUpperCase()}`, STUDIO.dim, 10);
+      sideCount++;
+    }
+    if (sideCount === 0) line("No side jobs right now", STUDIO.dim);
+
+    // ── COMPLETED ──────────────────────────────────────────────────────────
+    section("COMPLETED", STUDIO.ready);
+    let doneN = 0;
+    for (const id of this.state.campaignCompleted ?? []) {
+      const q = getQuest(id);
+      line(`✓ ${q?.name ?? id}`, STUDIO.ready, 11);
+      doneN++;
+    }
+    for (const c of this.state.contracts.filter((c) => c.done)) {
+      line(`✓ ${c.name} (daily)`, "#6ecf9a", 10);
+      doneN++;
+    }
+    const frags = this.state.fragments ?? [];
+    if (frags.length) {
+      const titles = FRAGMENTS.filter((f) => frags.includes(f.id))
+        .map((f) => f.title)
+        .slice(0, 6);
+      line(`✓ Memories ${frags.length}/${FRAGMENTS.length}${titles.length ? " · " + titles.join(", ") : ""}`, "#9fe8ff", 10);
+      doneN++;
+    }
+    if (doneN === 0) line("Nothing finished yet", STUDIO.dim);
+
+    // Footer hint
+    ry = Math.max(ry, y + h - uiDim(28));
     add(
       scene.add
-        .text(x + uiDim(22), ry, `MEMORY  ${frags.length} / ${FRAGMENTS.length}`, bodyFont(11, { color: "#9fe8ff", fontStyle: "bold" }))
+        .text(x + w / 2, y + h - uiDim(14), "Main = FIXER story · Side = dailies & NPC bounties", bodyFont(9, { color: STUDIO.dim }))
+        .setOrigin(0.5)
         .setScrollFactor(0)
         .setDepth(D + 2),
     );
-    ry += uiDim(18);
-    const known = FRAGMENTS.filter((f) => frags.includes(f.id))
-      .map((f) => f.title)
-      .slice(0, 4);
-    add(
-      scene.add
-        .text(
-          x + uiDim(28),
-          ry,
-          known.length ? known.join("  ·  ") : "○ dive an ICE SHAFT in any district to recover what they froze",
-          bodyFont(10, { color: known.length ? "#eafdff" : STUDIO.dim, wordWrap: { width: w - uiDim(56) } }),
-        )
-        .setScrollFactor(0)
-        .setDepth(D + 2),
-    );
-
-    animatePanelIn(scene, this.objs);
   }
+}
+
+/** Map campaign flag → previous quest that sets it (for lock display). */
+function hasFlagFromCompleted(flag: string, completed: Set<string>): boolean {
+  for (const q of QUESTS) {
+    if (q.setsFlag === flag && completed.has(q.id)) return true;
+  }
+  // If no prior quest sets it, treat as unlocked (edge data).
+  return !QUESTS.some((q) => q.setsFlag === flag);
 }
