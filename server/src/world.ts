@@ -3538,7 +3538,8 @@ export class WorldDO {
     p.y = hub.y;
     this.ensureStarterKit(p);
     p.dirty = true;
-    await this.upsertPlayer(p, { zoneOverride: "safe" });
+    // Redirect + close FIRST so a slow/failed D1 upsert never leaves the client
+    // stuck in the drill yard after SKIP (was: await upsert → no redirect on throw).
     const sock = ws ?? this.socketForPlayer(p.id);
     if (sock) {
       this.send(sock, {
@@ -3554,6 +3555,11 @@ export class WorldDO {
       this.sessions.delete(sock);
     }
     this.players.delete(p.id);
+    try {
+      await this.upsertPlayer(p, { zoneOverride: "safe" });
+    } catch (e) {
+      console.error("graduateTutorial upsert failed", e);
+    }
   }
 
   private onTutorial(ws: WebSocket, msg: Extract<ClientMsg, { t: "tutorial" }>) {

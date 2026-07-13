@@ -21,6 +21,9 @@ export function guestIdFromCallsign(name: string): string {
   return (name || "").toLowerCase().replace(/[^a-z0-9_-]/g, "");
 }
 
+/** Session-only secrets when localStorage is blocked (private mode / ITP). */
+const memoryDeviceSecrets = new Map<string, string>();
+
 /**
  * Guest-identity device secret — generated once per callsign on this device and bound
  * server-side on first login. Stops anyone else logging in as your name and selling
@@ -29,62 +32,75 @@ export function guestIdFromCallsign(name: string): string {
  * Sources (first hit wins, then all are synced):
  *  1. localStorage `mp_secret_<id>`
  *  2. LocalRunner profile.deviceSecret (survives partial storage clears)
- *  3. freshly minted UUID
+ *  3. in-memory map (private mode / storage blocked)
+ *  4. freshly minted UUID
  *
- * Exported so title-screen create can mint the secret before the first WS login.
+ * ALWAYS returns a secret when the callsign is non-empty — server guest login
+ * rejects missing secrets and used to brick tutorial entry.
  */
 export function ensureGuestDeviceSecret(name: string): string | undefined {
+  const id = guestIdFromCallsign(name);
+  if (!id) return undefined;
+  const key = "mp_secret_" + id;
+
+  let s: string | undefined;
+
   try {
-    const id = guestIdFromCallsign(name);
-    if (!id) return undefined;
-    const key = "mp_secret_" + id;
+    s = localStorage.getItem(key) || undefined;
+  } catch {
+    /* storage blocked */
+  }
 
-    let s = localStorage.getItem(key) || undefined;
-
-    // Recover from LocalRunner if the dedicated key was wiped (was regenerating a NEW
-    // secret and locking the player out of their own server save).
-    if (!s || s.length < 8) {
-      try {
-        const raw = localStorage.getItem("metrophage_local_runner_v1");
-        if (raw) {
-          const prof = JSON.parse(raw) as { callsign?: string; deviceSecret?: string };
-          const profId = guestIdFromCallsign(prof?.callsign || "");
-          if (profId === id && typeof prof.deviceSecret === "string" && prof.deviceSecret.length >= 8) {
-            s = prof.deviceSecret;
-          }
-        }
-      } catch {
-        /* ignore corrupt profile */
-      }
-    }
-
-    if (!s || s.length < 8) {
-      s = crypto.randomUUID();
-    }
-
-    // Sync both stores so CONTINUE + login always present the same proof.
-    try {
-      localStorage.setItem(key, s);
-    } catch {
-      /* quota */
-    }
+  // Recover from LocalRunner if the dedicated key was wiped (was regenerating a NEW
+  // secret and locking the player out of their own server save).
+  if (!s || s.length < 8) {
     try {
       const raw = localStorage.getItem("metrophage_local_runner_v1");
       if (raw) {
-        const prof = JSON.parse(raw) as Record<string, unknown>;
-        const profId = guestIdFromCallsign(String(prof.callsign || ""));
-        if (profId === id && prof.deviceSecret !== s) {
-          prof.deviceSecret = s;
-          localStorage.setItem("metrophage_local_runner_v1", JSON.stringify(prof));
+        const prof = JSON.parse(raw) as { callsign?: string; deviceSecret?: string };
+        const profId = guestIdFromCallsign(prof?.callsign || "");
+        if (profId === id && typeof prof.deviceSecret === "string" && prof.deviceSecret.length >= 8) {
+          s = prof.deviceSecret;
         }
       }
     } catch {
-      /* ignore */
+      /* ignore corrupt / blocked */
     }
-    return s;
-  } catch {
-    return undefined; // storage unavailable (private mode) — plays as an unbound guest
   }
+
+  if (!s || s.length < 8) {
+    s = memoryDeviceSecrets.get(id);
+  }
+
+  if (!s || s.length < 8) {
+    s =
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `mp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+  }
+
+  memoryDeviceSecrets.set(id, s);
+
+  // Best-effort persist so CONTINUE + login always present the same proof.
+  try {
+    localStorage.setItem(key, s);
+  } catch {
+    /* quota / private mode — memory map still holds it for this tab */
+  }
+  try {
+    const raw = localStorage.getItem("metrophage_local_runner_v1");
+    if (raw) {
+      const prof = JSON.parse(raw) as Record<string, unknown>;
+      const profId = guestIdFromCallsign(String(prof.callsign || ""));
+      if (profId === id && prof.deviceSecret !== s) {
+        prof.deviceSecret = s;
+        localStorage.setItem("metrophage_local_runner_v1", JSON.stringify(prof));
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return s;
 }
 
 /** @deprecated use ensureGuestDeviceSecret */
@@ -441,11 +457,22 @@ export default class NetClient {
         this.onAuthRequired?.();
         return;
       }
+      // Second+ wallet 4001 (re-sign failed / session still dead): STOP looping.
+      // Was infinite reconnect → stuck "LINKING…" forever with dead instructors.
+      if (ev.code === 4001 && this.auth?.wallet && this.authRetryUsed) {
+        this.manualClose = true;
+        this.onConnectionState?.("offline");
+        this.onGuestAuthFailed?.(
+          this.lastSysText || "wallet session expired — re-sign from the title screen, or play as guest",
+        );
+        return;
+      }
       // 4001 without a wallet = GUEST login rejected (callsign saved on another
       // device / no device key / reserved name). Reconnecting would be rejected
       // identically forever — stop and surface the reason instead.
       if (ev.code === 4001 && !this.auth?.wallet) {
         this.manualClose = true;
+        this.onConnectionState?.("offline");
         this.onGuestAuthFailed?.(this.lastSysText || "sign-in rejected");
         return;
       }

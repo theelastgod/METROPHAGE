@@ -438,6 +438,8 @@ export default class OnlineScene extends Phaser.Scene {
       this.isDive;
     this.zone = this.isBridge ? rawZone : named ? rawZone : "d" + this.parseZone(data?.zone);
     this.isTutorial = this.zone === TUTORIAL_ZONE;
+    // Fresh skip state each time we enter the drill (registry survives zone hops).
+    if (this.isTutorial) this.registry.remove("tutorialSkipFired");
     this.interior =
       !!INTERIOR_TITLES[this.zone] ||
       this.zone === "safe" ||
@@ -1835,13 +1837,26 @@ export default class OnlineScene extends Phaser.Scene {
         this.net.retryConnect();
       })();
     };
-    // Guest login rejected outright (name on another device / no device key / reserved):
-    // retrying is hopeless — bounce to the title screen with the server's reason so the
-    // player can pick a new callsign or link a wallet. (Was an infinite reject loop.)
+    // Guest/wallet login rejected outright: surface the reason. In the drill yard,
+    // still offer an immediate escape to the city instead of trapping them offline.
     this.net.onGuestAuthFailed = (reason) => {
       if (!stillHere()) return;
       this.registry.set("guestAuthError", reason);
       this.hud?.setColor("#ff3b6b");
+      if (this.isTutorial) {
+        this.hud?.setText([
+          "⚠ SIGN-IN BLOCKED",
+          reason,
+          "Hit SKIP TO CITY (top-right) — or wait, returning to title…",
+        ]);
+        this.showOfflineSkipBanner();
+        this.time.delayedCall(6000, () => {
+          if (!stillHere() || !this.isTutorial) return;
+          // Still on drill after 6s without a skip click → title with the error.
+          transitionTo(this, "Select", undefined, { style: "glitch", accent: 0xff3b6b });
+        });
+        return;
+      }
       this.hud?.setText(["⚠ SIGN-IN REJECTED", reason, "returning to title…"]);
       this.time.delayedCall(1400, () => {
         if (!stillHere()) return;
@@ -2246,49 +2261,49 @@ export default class OnlineScene extends Phaser.Scene {
 
   /** Always-on SKIP control so runners can bail into the live city during cold start. */
   private buildTutorialSkipCta() {
-    const btnW = uiDim(this.mobileUx() ? 168 : 200);
-    const btnH = uiDim(this.mobileUx() ? 44 : 52);
+    const btnW = uiDim(this.mobileUx() ? 180 : 210);
+    const btnH = uiDim(this.mobileUx() ? 48 : 54);
     // Top-right on every device: the top-left corner belongs to the drill status
     // panel (they were overlapping on phones), and the minimap doesn't start until
     // y≈96 so even the mobile button clears it.
-    const bx = this.scale.width - uiDim(this.mobileUx() ? 12 : 16) - btnW;
-    const by = uiDim(this.mobileUx() ? 8 : 12);
+    const bx = this.scale.width - uiDim(this.mobileUx() ? 10 : 14) - btnW;
+    const by = uiDim(this.mobileUx() ? 6 : 10);
 
-    const bg = this.add.graphics().setScrollFactor(0).setDepth(1006);
+    const bg = this.add.graphics().setScrollFactor(0).setDepth(2400);
     const drawBg = (hot: boolean) => {
       bg.clear();
-      bg.fillStyle(hot ? 0x39ff88 : 0x0d1a14, hot ? 0.95 : 0.92);
+      bg.fillStyle(hot ? 0x39ff88 : 0x0d1a14, hot ? 0.98 : 0.94);
       bg.fillRoundedRect(bx, by, btnW, btnH, uiDim(6));
       bg.lineStyle(uiDim(2), hot ? 0xffffff : 0x39ff88, 1);
       bg.strokeRoundedRect(bx, by, btnW, btnH, uiDim(6));
       if (!hot) {
-        bg.fillStyle(0x39ff88, 0.12);
+        bg.fillStyle(0x39ff88, 0.14);
         bg.fillRoundedRect(bx + uiDim(2), by + uiDim(2), btnW - uiDim(4), btnH - uiDim(4), uiDim(4));
       }
     };
     drawBg(false);
 
     this.tutorialSkipBtn = this.add
-      .text(bx + btnW / 2, by + uiDim(14), "SKIP TO CITY →", displayFont(15, {
+      .text(bx + btnW / 2, by + uiDim(12), "SKIP TO CITY →", displayFont(this.mobileUx() ? 14 : 15, {
         color: "#39ff88",
         fontStyle: "bold",
       }))
       .setOrigin(0.5, 0)
       .setScrollFactor(0)
-      .setDepth(1007)
-      .setShadow(0, 0, "#39ff88", 6, true, true);
+      .setDepth(2401)
+      .setShadow(0, 0, "#39ff88", 8, true, true);
 
     this.tutorialSkipSub = this.add
-      .text(bx + btnW / 2, by + uiDim(34), "enter the game now", bodyFont(10, { color: "#9dffc4" }))
+      .text(bx + btnW / 2, by + uiDim(32), "works offline · enter now", bodyFont(10, { color: "#9dffc4" }))
       .setOrigin(0.5, 0)
       .setScrollFactor(0)
-      .setDepth(1007);
+      .setDepth(2401);
 
     const zone = this.add
       .zone(bx, by, btnW, btnH)
       .setOrigin(0)
       .setScrollFactor(0)
-      .setDepth(1008)
+      .setDepth(2402)
       .setInteractive({ useHandCursor: true });
     zone.on("pointerover", () => {
       drawBg(true);
@@ -2300,41 +2315,103 @@ export default class OnlineScene extends Phaser.Scene {
       this.tutorialSkipBtn.setColor("#39ff88");
       this.tutorialSkipSub?.setColor("#9dffc4");
     });
+    // Use pointerup so mobile kits that steal pointerdown still allow a clean skip.
+    zone.on("pointerup", () => this.skipTutorialToCity());
     zone.on("pointerdown", () => this.skipTutorialToCity());
 
-    // Soft pulse so it reads during the "linking…" load screen.
     this.tweens.add({
       targets: [this.tutorialSkipBtn, this.tutorialSkipSub],
-      alpha: { from: 0.85, to: 1 },
+      alpha: { from: 0.88, to: 1 },
       duration: 700,
       yoyo: true,
       repeat: -1,
       ease: "Sine.inOut",
     });
+
+    // Backup center CTA if still offline after a few seconds (top-right easy to miss on phones).
+    this.time.delayedCall(5000, () => {
+      if (!this.isTutorial || !this.sys.isActive() || this.net?.connected) return;
+      this.showOfflineSkipBanner();
+    });
   }
 
-  /** Skip drill immediately — queues skip if socket still linking, else server skip. */
+  /** Large center button when the drill socket never links. */
+  private showOfflineSkipBanner() {
+    if (!this.isTutorial || this.net?.connected) return;
+    const w = uiDim(this.mobileUx() ? 280 : 320);
+    const h = uiDim(72);
+    const x = (this.scale.width - w) / 2;
+    const y = this.scale.height * 0.58;
+    const g = this.add.graphics().setScrollFactor(0).setDepth(2450);
+    g.fillStyle(0x0a0614, 0.92).fillRoundedRect(x, y, w, h, uiDim(8));
+    g.lineStyle(uiDim(2), 0x39ff88, 0.95).strokeRoundedRect(x, y, w, h, uiDim(8));
+    const label = this.add
+      .text(x + w / 2, y + uiDim(18), "ENTER CITY ANYWAY →", displayFont(16, { color: "#39ff88", fontStyle: "bold" }))
+      .setOrigin(0.5, 0)
+      .setScrollFactor(0)
+      .setDepth(2451);
+    const sub = this.add
+      .text(x + w / 2, y + uiDim(42), "server still linking — skip the drill", bodyFont(11, { color: "#9aa3b2" }))
+      .setOrigin(0.5, 0)
+      .setScrollFactor(0)
+      .setDepth(2451);
+    const hit = this.add
+      .zone(x, y, w, h)
+      .setOrigin(0)
+      .setScrollFactor(0)
+      .setDepth(2452)
+      .setInteractive({ useHandCursor: true });
+    const go = () => {
+      g.destroy();
+      label.destroy();
+      sub.destroy();
+      hit.destroy();
+      this.skipTutorialToCity();
+    };
+    hit.on("pointerdown", go);
+    hit.on("pointerup", go);
+  }
+
+  /** Skip drill immediately — server skip when linked; hard-jump to city when not. */
   private skipTutorialToCity() {
     if (!this.isTutorial || !this.net) return;
+    // Prevent double-fire from pointerdown+up.
+    if (this.registry.get("tutorialSkipFired")) return;
+    this.registry.set("tutorialSkipFired", true);
+    this.tutorialSkipBtn?.setText("DEPLOYING…");
+    this.tutorialSkipSub?.setText("opening the city");
+
     if (this.net.connected) {
       this.net.tutorialSkip();
-      this.tutorialSkipBtn?.setText("DEPLOYING…");
-      this.tutorialSkipSub?.setText("opening the city");
+      // Failsafe: if redirect never arrives (D1 hang, race), leave client-side.
+      this.time.delayedCall(2500, () => {
+        if (!this.isTutorial || !this.sys.isActive()) return;
+        this.forceClientDeployToCity();
+      });
       return;
     }
-    // Cold start / offline: mark skip so welcome auto-graduates, and show feedback.
+
+    // Offline / still linking: queue skip for when welcome lands, AND leave now.
     this.net.tutorialSkip();
-    this.tutorialSkipBtn?.setText("QUEUED…");
-    this.tutorialSkipSub?.setText("skips when linked");
     this.showBubble(
       this.me?.x ?? 0,
       this.me?.y ?? 0,
-      "Skip queued — you'll drop into the city as soon as the server links.",
+      "Deploying to the city — linking continues in the background.",
     );
-    // Also hard-jump after a short wait if the socket never comes up.
-    this.time.delayedCall(4500, () => {
-      if (!this.isTutorial || !this.net || this.net.connected) return;
-      this.registry.set("tutorialMode", getSettings().tutorialMode);
+    this.forceClientDeployToCity();
+  }
+
+  /** Client-side leave for drill yard when the socket cannot graduate us. */
+  private forceClientDeployToCity() {
+    if (!this.sys.isActive()) return;
+    try {
+      localStorage.setItem("metrophage_tutorial_skip_v1", "1");
+    } catch {
+      /* ignore */
+    }
+    this.registry.set("tutorialMode", getSettings().tutorialMode);
+    void this.net?.disconnectAwait(800).finally(() => {
+      if (!this.sys.isActive()) return;
       transitionTo(this, "Online", { zone: "safe" }, { style: "deploy", accent: 0x39ff88 });
     });
   }
@@ -2656,7 +2733,9 @@ export default class OnlineScene extends Phaser.Scene {
   private enterTutorialPortal(fromClick = false) {
     if (!this.isTutorial || !this.net) return;
     if (!this.net.connected) {
-      this.showBubble(this.me.x, this.me.y, "Connecting to drill server…");
+      // Offline portal = skip path (same as SKIP TO CITY). Never dead-end.
+      this.showBubble(this.me.x, this.me.y, "Server still linking — deploying you to the city.");
+      this.skipTutorialToCity();
       return;
     }
     if (!this.net.tutorialPortalOpen) {
@@ -2665,6 +2744,11 @@ export default class OnlineScene extends Phaser.Scene {
     }
     if (!fromClick && !this.nearPortal) return;
     this.net.tutorialGraduate();
+    // Failsafe if graduate never redirects.
+    this.time.delayedCall(2500, () => {
+      if (!this.isTutorial || !this.sys.isActive()) return;
+      this.forceClientDeployToCity();
+    });
   }
 
   /** Build an authored, talkable citizen at a world position (baked from its PlayerLook).
