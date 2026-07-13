@@ -1063,12 +1063,11 @@ export default class OnlineScene extends Phaser.Scene {
       juiceFlash(this, 180, 40, 200, 80);
     };
     this.net.onRedirect = (zone) => {
-      this.net.disconnect();
-      // Defer restart — graduating closes the socket from inside onmessage; restarting
-      // synchronously there can drop the hand-off into the live city.
-      this.time.delayedCall(0, () => {
+      // Flush current zone first, then hand off (avoids dual-session race with graduate).
+      void (async () => {
+        await this.net?.disconnectAwait(2500);
         if (this.scene.isActive("Online")) this.travelOrganic(zone);
-      });
+      })();
     };
     this.contextMenu = new ContextMenu(this);
     this.rsGameMessage = new RsGameMessage(this);
@@ -3992,7 +3991,12 @@ export default class OnlineScene extends Phaser.Scene {
               ? getBridge(destBridge).accent
               : (DISTRICTS[di]?.accent ?? 0x29e7ff);
     const style = zone === "safe" || this.interior || bldgInt || hubInt !== null || estateInt !== null ? "fade" : "deploy";
-    transitionTo(this, "Online", { zone, ...extra }, { style, accent, onMid: () => this.net?.disconnect() });
+    transitionTo(this, "Online", { zone, ...extra }, {
+      style,
+      accent,
+      // Wait for server onClose flush before the next zone DO claims session_zone.
+      onMid: () => this.net?.disconnectAwait(2500) ?? Promise.resolve(),
+    });
   }
 
   private zoneUnlocked(zone: string): boolean {

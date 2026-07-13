@@ -1,5 +1,7 @@
 # $METRO Mainnet Go-Live
 
+> **Canonical ordered checklist:** [`docs/BRIDGE_GO_LIVE.md`](./docs/BRIDGE_GO_LIVE.md)
+
 Current launch path: **Robinhood Chain mainnet** (`chainId=4663`) with an
 ERC-20 `0x...` contract address.
 

@@ -1,5 +1,7 @@
 # $METRO on Robinhood Chain — go-live checklist
 
+> **Canonical ordered checklist:** [`docs/BRIDGE_GO_LIVE.md`](./docs/BRIDGE_GO_LIVE.md)
+
 ## What is live in code
 
 - MetaMask sign-up + auto-add **Robinhood Chain** (testnet 46630 / mainnet 4663)

@@ -88,6 +88,8 @@ export type ClientMsg =
     }
   | { t: "inv_move"; from: number; to: number }
   | { t: "stash"; action: "deposit" | "withdraw"; itemId: string } // TENEMENT lockbox — move an item bag↔stash
+  /** Graceful leave — server flushes durable state then replies `bye` (zone travel). */
+  | { t: "leave" }
   | { t: "input"; seq: number; mx: number; my: number }
   | { t: "fire"; seq: number; aim: number } // aim in radians; server validates rate
   | { t: "dash"; seq: number; dx: number; dy: number } // burst move; server validates cooldown + grants i-frames
@@ -264,6 +266,8 @@ export type ServerMsg =
   | { t: "sys"; text: string }
   /** Kit/dash outcome — client rolls back optimistic CDs when ok:false. */
   | { t: "kit_ack"; slot: "dash" | "q" | "e" | "r"; ok: boolean; cdMs?: number }
+  /** Server finished durable flush on disconnect (zone travel can open the next socket). */
+  | { t: "bye" }
   | { t: "emote"; from: string; kind: number; ping: boolean; x: number; y: number } // relayed emote/ping
   | {
       t: "story";

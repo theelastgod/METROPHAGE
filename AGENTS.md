@@ -74,6 +74,7 @@ to dismiss dialogue in the online scene — ESC quits to menu**; rig pre-sets
 ## Docs
 
 - `SHIPPING.md` — deploy runbook (dry-run-verified) + $0-launch table + CA go-live.
+- `docs/BRIDGE_GO_LIVE.md` — **canonical** live $METRO bridge checklist (testnet → mainnet arm).
 - `README.md` — world map, class kits, economy, smoke modes.
 - Session-scale history lives in Codex's project memory under
   `~/.Codex/projects/-Users-wendellphillips-Desktop-Codex/memory/` (sessions

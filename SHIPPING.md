@@ -103,6 +103,8 @@ settlement). Ordinary `npm run dev` keeps simulated ledger mutations locked.
 
 ## 5. Entering the $METRO contract address (when the token is live)
 
+**Full ordered checklist:** `docs/BRIDGE_GO_LIVE.md` (testnet rehearsal → mainnet arm → monitor).
+
 Preferred chain: **Robinhood Chain** (ETH L2 / Arbitrum Orbit) ERC-20.
 
 | Network | Chain ID | RPC |

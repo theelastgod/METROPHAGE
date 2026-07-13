@@ -572,6 +572,8 @@ interface Shot {
  */
 export class WorldDO {
   private sessions = new Map<WebSocket, string>();
+  /** Exactly one controlling socket per player id in this zone (hard dual-tab lock). */
+  private ownerSocket = new Map<string, WebSocket>();
   private players = new Map<string, PlayerState>();
   private enemies = new Map<number, Enemy>();
   private shots: Shot[] = [];
@@ -1491,6 +1493,19 @@ export class WorldDO {
         secret: msg.secret,
         session: msg.session,
       });
+    // Hard single-socket: after login, only the registered owner may send intents.
+    // Superseded tabs still map sessions→id but fail this check and are closed.
+    const sid = this.sessions.get(ws);
+    if (sid && this.ownerSocket.get(sid) !== ws) {
+      try {
+        ws.close(4002, "replaced");
+      } catch {
+        /* gone */
+      }
+      this.sessions.delete(ws);
+      return;
+    }
+    if (msg.t === "leave") return this.onLeave(ws);
     if (msg.t === "input") return this.onInput(ws, msg);
     if (msg.t === "fire") return this.onFire(ws, msg);
     if (msg.t === "dash") return this.onDash(ws, msg);
@@ -2648,6 +2663,8 @@ export class WorldDO {
         this.sessions.delete(sock);
       }
     }
+    // This socket becomes the sole controller for this player in this zone.
+    this.ownerSocket.set(id, ws);
     // Pull any bridge deposits/withdrawals that hit D1 while this row was cold / offline.
     await this.pullExternalBalances(p);
     // warm-path spawn sanitation: an in-memory player can be wall-locked too
@@ -2709,6 +2726,7 @@ export class WorldDO {
     }
     this.players.set(id, p);
     this.sessions.set(ws, id);
+    this.ownerSocket.set(id, ws);
     if (this.diveIndex >= 0) this.coopScaleDive(); // the vault hardens as runners stack up
     // Persist identity + look on the socket so a hibernation wake can re-attach it (above).
     ws.serializeAttachment({ id, name: p.name, faction: fac, look: p.look } satisfies SessionAttach);
@@ -3143,9 +3161,12 @@ export class WorldDO {
    *  the client never disconnected, it just resumes receiving snapshots). */
   private async resumeSession(ws: WebSocket, att: SessionAttach) {
     this.sessions.set(ws, att.id);
+    // Hibernation wake: this socket reclaims sole control for the player.
+    this.ownerSocket.set(att.id, ws);
     if (!this.players.has(att.id)) {
       const p = await this.loadPlayer(att.id, att.name, att.faction);
       if (att.look) p.look = att.look; // restore appearance from the socket attachment
+      p.sessionValid = true;
       this.players.set(att.id, p);
       if (p.pvpRecovered > 0) {
         this.send(ws, {
@@ -3154,6 +3175,10 @@ export class WorldDO {
         });
         p.pvpRecovered = 0;
       }
+    } else {
+      // Live player still in memory — re-bind owner so intents are accepted again.
+      const p = this.players.get(att.id);
+      if (p) p.sessionValid = true;
     }
   }
 
@@ -4743,7 +4768,12 @@ export class WorldDO {
 
   private playerFor(ws: WebSocket): PlayerState | undefined {
     const id = this.sessions.get(ws);
-    return id ? this.players.get(id) : undefined;
+    if (!id) return undefined;
+    // Only the sole owner socket may drive this player (rejects superseded tabs).
+    if (this.ownerSocket.get(id) !== ws) return undefined;
+    const p = this.players.get(id);
+    if (!p || !p.sessionValid) return undefined;
+    return p;
   }
 
   private ensureTick() {
@@ -5875,13 +5905,65 @@ export class WorldDO {
     }
   }
 
+  /**
+   * Graceful leave (zone travel): flush durable state while the socket is still open,
+   * send `bye`, then close. Client disconnectAwait waits for `bye` before opening
+   * the next zone — prevents dual-session races on session_zone claim.
+   */
+  private async onLeave(ws: WebSocket) {
+    const id = this.sessions.get(ws);
+    if (!id || this.ownerSocket.get(id) !== ws) return;
+    const p = this.players.get(id);
+    if (!p) return;
+    p.sessionValid = false; // freeze intents while flushing
+    p.mx = 0;
+    p.my = 0;
+    try {
+      const tr = this.tradeOf(p);
+      if (tr) this.endTrade(tr, "cancelled", "trade partner left");
+      this.leaveParty(p);
+      this.pendingInvites.delete(p.id);
+      if (p.pvpInArena) await this.refundPvpEscrow(p, "left the arena");
+      if (p.pvpPending > 0) await this.pvpTail;
+      const playerSaved = await this.upsertPlayer(p);
+      await this.flushStats(p);
+      await this.flushDailies(p);
+      if (p.bounty || playerSaved) await this.flushBounty(p);
+      await this.syncMeta();
+    } catch {
+      /* still try to bye */
+    }
+    try {
+      this.send(ws, { t: "bye" });
+    } catch {
+      /* ignore */
+    }
+    // Drop ownership so a racing close does not double-flush.
+    this.sessions.delete(ws);
+    if (this.ownerSocket.get(id) === ws) this.ownerSocket.delete(id);
+    this.players.delete(id);
+    try {
+      ws.close(1000, "leave");
+    } catch {
+      /* ignore */
+    }
+  }
+
   private async onClose(ws: WebSocket) {
     const id = this.sessions.get(ws);
     this.sessions.delete(ws);
     if (!id) return;
-    // Another socket still holds this player (same-zone replace) — leave live state alone.
-    for (const sid of this.sessions.values()) {
-      if (sid === id) return;
+    // Only the owner socket performs the durable flush. A superseded tab closing
+    // must not race the new owner or wipe a just-claimed session.
+    if (this.ownerSocket.get(id) === ws) {
+      this.ownerSocket.delete(id);
+    } else {
+      return;
+    }
+    // Another live socket re-claimed ownership mid-close — leave state alone.
+    if (this.ownerSocket.has(id)) return;
+    for (const [sock, sid] of this.sessions) {
+      if (sid === id && sock !== ws) return;
     }
     const p = this.players.get(id);
     if (p) {
@@ -5893,12 +5975,12 @@ export class WorldDO {
       // A defeated player can close while their transfer is behind another zone
       // operation. Wait before the final upsert so no stale balance wins the race.
       if (p.pvpPending > 0) await this.pvpTail;
+      // Hard disconnect path (tab close / network drop) — flush best-effort.
       const playerSaved = await this.upsertPlayer(p);
       await this.flushStats(p);
       await this.flushDailies(p);
       if (p.bounty || playerSaved) await this.flushBounty(p);
       await this.syncMeta();
-      // Flush economy ledger tail for this player zone
       this.players.delete(id);
     }
   }

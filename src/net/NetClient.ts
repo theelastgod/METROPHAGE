@@ -486,7 +486,86 @@ export default class NetClient {
     this.connected = false;
   }
 
+  /**
+   * Zone travel handoff: ask the server to flush (`leave` → `bye`), then close.
+   * The next zone DO must not claim session_zone until this finishes.
+   */
+  disconnectAwait(timeoutMs = 2500): Promise<void> {
+    this.manualClose = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    const ws = this.ws;
+    if (!ws || ws.readyState === WebSocket.CLOSING || ws.readyState === WebSocket.CLOSED) {
+      this.connected = false;
+      this.ws = undefined;
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        this.connected = false;
+        if (this.ws === ws) this.ws = undefined;
+        resolve();
+      };
+      const timer = setTimeout(() => {
+        try {
+          ws.close(1000, "travel-timeout");
+        } catch {
+          /* ignore */
+        }
+        finish();
+      }, timeoutMs);
+      const prevClose = ws.onclose;
+      const prevMsg = ws.onmessage;
+      ws.onmessage = (e) => {
+        try {
+          const m = JSON.parse(typeof e.data === "string" ? e.data : "{}") as { t?: string };
+          if (m.t === "bye") {
+            clearTimeout(timer);
+            try {
+              ws.close(1000, "travel");
+            } catch {
+              /* ignore */
+            }
+            finish();
+            return;
+          }
+        } catch {
+          /* ignore */
+        }
+        if (typeof prevMsg === "function") prevMsg.call(ws, e);
+      };
+      ws.onclose = (ev) => {
+        clearTimeout(timer);
+        if (typeof prevClose === "function") {
+          try {
+            prevClose.call(ws, ev);
+          } catch {
+            /* ignore */
+          }
+        }
+        finish();
+      };
+      // Prefer leave+flush while the socket is still open; fall back to hard close.
+      try {
+        ws.send(JSON.stringify({ t: "leave" } satisfies ClientMsg));
+      } catch {
+        try {
+          ws.close(1000, "travel");
+        } catch {
+          clearTimeout(timer);
+          finish();
+        }
+      }
+    });
+  }
+
   retryConnect() {
+    if (this.protocolBlocked) return;
     this.reconnectAttempts = 0;
     this.manualClose = false;
     this.openSocket();
@@ -802,6 +881,15 @@ export default class NetClient {
         if (msg.slot === "dash") this.dashCdUntil = until;
         else if (msg.slot === "q") this.abilityCdUntil = until;
         else if (msg.slot === "e") this.ability2CdUntil = until;
+      }
+    } else if (msg.t === "bye") {
+      // Server finished durable flush — close settles disconnectAwait.
+      this.manualClose = true;
+      this.connected = false;
+      try {
+        this.ws?.close(1000, "bye");
+      } catch {
+        /* ignore */
       }
     } else if (msg.t === "emote") {
       this.emotes.push({ from: msg.from, kind: msg.kind, ping: msg.ping, x: msg.x, y: msg.y, at: performance.now() });

@@ -7,7 +7,8 @@ export interface TransitionOpts {
   style?: TransitionStyle;
   duration?: number;
   accent?: number;
-  onMid?: () => void;
+  /** May be async — zone travel awaits disconnect flush before the next scene starts. */
+  onMid?: () => void | Promise<void>;
 }
 
 /** Fade colour: near-black kissed with the accent. Fading through the FULL accent
@@ -48,15 +49,17 @@ export function transitionTo(
   const handOff = () => {
     if (handedOff) return;
     handedOff = true;
-    try {
-      opts.onMid?.();
-    } catch (err) {
-      console.error("[transition] midpoint hook failed", err);
-    }
-    globalThis.setTimeout(() => {
-      if (target === scene.scene.key) scene.scene.restart(data);
-      else scene.scene.start(target, data);
-    }, 0);
+    void (async () => {
+      try {
+        await opts.onMid?.();
+      } catch (err) {
+        console.error("[transition] midpoint hook failed", err);
+      }
+      globalThis.setTimeout(() => {
+        if (target === scene.scene.key) scene.scene.restart(data);
+        else scene.scene.start(target, data);
+      }, 0);
+    })();
   };
 
   if (style === "glitch" || style === "deploy") {
