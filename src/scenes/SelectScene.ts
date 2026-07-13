@@ -70,6 +70,13 @@ export default class SelectScene extends Phaser.Scene {
     super("Select");
   }
 
+  preload() {
+    for (const c of CLASSES) {
+      const key = classArtKey(c.id);
+      if (!this.textures.exists(key)) this.load.image(key, `assets/ui/classart_${c.id}.jpg`);
+    }
+  }
+
   create() {
     const boot = document.getElementById("boot");
     if (boot) boot.remove();
@@ -955,27 +962,40 @@ export default class SelectScene extends Phaser.Scene {
     "M10.226 17.284c-2.965-.36-5.054-2.493-5.054-5.256 0-1.123.404-2.336 1.078-3.144-.292-.741-.247-2.314.09-2.965.898-.112 2.111.36 2.83 1.01.853-.269 1.752-.404 2.853-.404 1.1 0 1.999.135 2.807.382.696-.629 1.932-1.1 2.83-.988.315.606.36 2.179.067 2.942.72.854 1.101 2 1.101 3.167 0 2.763-2.089 4.852-5.098 5.234.763.494 1.28 1.572 1.28 2.807v2.336c0 .674.561 1.056 1.235.786 4.066-1.55 7.255-5.615 7.255-10.646C23.5 6.188 18.334 1 11.978 1 5.62 1 .5 6.188 .5 12.545c0 4.986 3.167 9.12 7.435 10.669.606.225 1.19-.18 1.19-.786V20.63a2.9 2.9 0 0 1-1.078.224c-1.483 0-2.359-.808-2.987-2.313-.247-.607-.517-.966-1.034-1.033-.27-.023-.359-.135-.359-.27 0-.27.45-.471.898-.471.652 0 1.213.404 1.797 1.235.45.651.921.943 1.483.943.561 0 .92-.202 1.437-.719.382-.381.674-.718.944-.943";
   private static readonly GH_KEY = "gh_mark_tex";
 
+  /** Official GitBook mark (viewBox 0 0 24 24), fetched from simple-icons —
+   *  rendered white on a dark disc, same treatment as the GitHub mark. */
+  private static readonly GB_MARK_PATH =
+    "M12.513 1.097c-.645 0-1.233.34-2.407 1.017L3.675 5.82A7.233 7.233 0 0 0 0 12.063v.236a7.233 7.233 0 0 0 3.667 6.238L7.69 20.86c2.354 1.36 3.531 2.042 4.824 2.042 1.292.001 2.47-.678 4.825-2.038l4.251-2.453c1.177-.68 1.764-1.02 2.087-1.579.323-.56.324-1.24.323-2.6v-2.63a1.04 1.04 0 0 0-1.558-.903l-8.728 5.024c-.587.337-.88.507-1.201.507-.323 0-.616-.168-1.204-.506l-5.904-3.393c-.297-.171-.446-.256-.565-.271a.603.603 0 0 0-.634.368c-.045.111-.045.282-.043.625.002.252 0 .378.025.494.053.259.189.493.387.667.089.077.198.14.416.266l6.315 3.65c.589.34.884.51 1.207.51.324 0 .617-.17 1.206-.509l7.74-4.469c.202-.116.302-.172.377-.13.075.044.075.16.075.392v1.193c0 .34.001.51-.08.649-.08.14-.227.224-.522.394l-6.382 3.685c-1.178.68-1.767 1.02-2.413 1.02-.646 0-1.236-.34-2.412-1.022l-5.97-3.452-.043-.025a4.106 4.106 0 0 1-2.031-3.52V11.7c0-.801.427-1.541 1.12-1.944a1.979 1.979 0 0 1 1.982-.001l4.946 2.858c1.174.679 1.762 1.019 2.407 1.02.645 0 1.233-.34 2.41-1.017l7.482-4.306a1.091 1.091 0 0 0 0-1.891L14.92 2.11c-1.175-.675-1.762-1.013-2.406-1.013Z";
+  private static readonly GB_KEY = "gb_mark_tex";
+
   /**
-   * Intro social row — X + Telegram (vector-drawn) + GitHub (official octicon mark
-   * rendered to an SVG texture). Opens in a new tab so the Phaser canvas keeps the session.
-   * The GitHub mark is loaded async; the row rebuilds once its texture is ready.
+   * Intro social row — X + Telegram (vector-drawn) + GitHub + GitBook (official marks
+   * rendered to SVG textures). Icon-only buttons; each opens in a new tab so the
+   * Phaser canvas keeps the session. Marks load async; the row builds once ready.
    */
   private addSocialLinks() {
-    const key = SelectScene.GH_KEY;
-    if (this.textures.exists(key)) {
+    // Compose each official mark (white) on a dark disc as a self-contained SVG data URI.
+    const marks: Array<[string, string]> = [
+      [SelectScene.GH_KEY, SelectScene.GH_MARK_PATH],
+      [SelectScene.GB_KEY, SelectScene.GB_MARK_PATH],
+    ];
+    let queued = false;
+    for (const [key, path] of marks) {
+      if (this.textures.exists(key)) continue;
+      const svg =
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="64" height="64">` +
+        `<circle cx="12" cy="12" r="12" fill="#0a0a0a"/>` +
+        `<path d="${path}" fill="#ffffff"/></svg>`;
+      this.load.svg(key, "data:image/svg+xml;base64," + btoa(svg), { width: 64, height: 64 });
+      queued = true;
+    }
+    if (!queued) {
       this.buildSocialRow();
       return;
     }
-    // Compose the official mark (white) on a dark disc as a self-contained SVG data URI.
-    const svg =
-      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="64" height="64">` +
-      `<circle cx="12" cy="12" r="12" fill="#0a0a0a"/>` +
-      `<path d="${SelectScene.GH_MARK_PATH}" fill="#ffffff"/></svg>`;
-    const uri = "data:image/svg+xml;base64," + btoa(svg);
-    this.load.svg(key, uri, { width: 64, height: 64 });
     this.load.once(Phaser.Loader.Events.COMPLETE, () => this.buildSocialRow());
     this.load.start();
-    // If the GitHub texture ever fails to decode, still show X + Telegram.
+    // If a mark texture ever fails to decode, still show the rest of the row.
     this.load.once(Phaser.Loader.Events.FILE_LOAD_ERROR, () => this.buildSocialRow());
   }
 
@@ -987,17 +1007,14 @@ export default class SelectScene extends Phaser.Scene {
     const rowY = VIEW_H - uiDim(18);
     // Bottom-left: sits under OPTIONS strip, clear of the centre footer blurb.
     let cursorX = MENU_PAD;
-    const ghReady = this.textures.exists(SelectScene.GH_KEY);
 
     const links: Array<{
       url: string;
-      handle: string;
       paint?: (g: Phaser.GameObjects.Graphics, r: number) => void;
       texture?: string;
     }> = [
       {
         url: "https://x.com/metrophage",
-        handle: "x.com/metrophage",
         paint: (g, r) => {
           // Black disc + white X (current brand mark). Local origin = disc centre.
           g.fillStyle(0x0a0a0a, 0.95).fillCircle(0, 0, r);
@@ -1010,7 +1027,6 @@ export default class SelectScene extends Phaser.Scene {
       },
       {
         url: "https://t.me/metrophagefun",
-        handle: "t.me/metrophagefun",
         paint: (g, r) => {
           // Telegram blue circle + paper-plane glyph.
           g.fillStyle(0x2aabee, 1).fillCircle(0, 0, r);
@@ -1022,8 +1038,11 @@ export default class SelectScene extends Phaser.Scene {
           g.lineStyle(1, 0x8ad4f8, 0.75).strokeCircle(0, 0, r);
         },
       },
-      ...(ghReady
-        ? [{ url: "https://github.com/theelastgod/METROPHAGE", handle: "github.com/metrophage", texture: SelectScene.GH_KEY }]
+      ...(this.textures.exists(SelectScene.GH_KEY)
+        ? [{ url: "https://github.com/theelastgod/METROPHAGE", texture: SelectScene.GH_KEY }]
+        : []),
+      ...(this.textures.exists(SelectScene.GB_KEY)
+        ? [{ url: "https://reverie.gitbook.io/metrophage", texture: SelectScene.GB_KEY }]
         : []),
     ];
 
@@ -1036,37 +1055,30 @@ export default class SelectScene extends Phaser.Scene {
             return g;
           })();
 
-      const label = this.add
-        .text(iconR + uiDim(8), 0, link.handle, bodyFont(11, { color: "#7a8294" }))
-        .setOrigin(0, 0.5);
-
-      // Container origin at icon centre; hit zone covers icon + handle text.
-      const hitW = iconR * 2 + uiDim(12) + label.width;
-      const hitH = Math.max(iconR * 2 + uiDim(8), uiDim(28));
+      // Container origin at icon centre; square hit zone keeps a comfortable touch target.
+      const hitS = Math.max(iconR * 2 + uiDim(8), uiDim(28));
       const wrap = this.add
-        .container(cursorX + iconR, rowY, [icon, label])
+        .container(cursorX + iconR, rowY, [icon])
         .setDepth(40)
         .setScrollFactor(0);
 
       const hit = this.add
-        .zone(label.width / 2, 0, hitW, hitH)
+        .zone(0, 0, hitS, hitS)
         .setOrigin(0.5)
         .setInteractive({ useHandCursor: true });
       wrap.add(hit);
 
       hit.on("pointerover", () => {
-        this.tweens.add({ targets: wrap, scale: 1.06, duration: 90, ease: "Sine.out" });
-        label.setColor("#eafdff");
+        this.tweens.add({ targets: wrap, scale: 1.12, duration: 90, ease: "Sine.out" });
       });
       hit.on("pointerout", () => {
         this.tweens.add({ targets: wrap, scale: 1, duration: 90, ease: "Sine.out" });
-        label.setColor("#7a8294");
       });
       hit.on("pointerdown", () => {
         window.open(link.url, "_blank", "noopener,noreferrer");
       });
 
-      cursorX += hitW + uiDim(18);
+      cursorX += iconR * 2 + uiDim(14);
     }
   }
 }

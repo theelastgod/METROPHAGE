@@ -164,10 +164,8 @@ export const ASSETS: Record<string, AssetEntry[]> = {
     // Premium dialogue portraits — painted Higgsfield busts (fixer + runner singles).
     { key: PORTRAIT_PLAYER_KEY, file: "assets/portraits/painted_player.jpg" },
     { key: PORTRAIT_NPC_KEY, file: "assets/portraits/painted_fixer.jpg" },
-    // Painted city-cast sheets: 12 × 256px frames each (see src/game/portraits.ts).
-    { key: PORTRAIT_CAST_KEY, file: "assets/portraits/cast_sheet.jpg", frameWidth: 256, frameHeight: 256 },
-    { key: PORTRAIT_KEEPERS_KEY, file: "assets/portraits/keepers_sheet.jpg", frameWidth: 256, frameHeight: 256 },
-    { key: PORTRAIT_RESIDENTS_KEY, file: "assets/portraits/residents_sheet.jpg", frameWidth: 256, frameHeight: 256 },
+    // The three city-cast sheets are loaded by OnlineScene, where they are first used.
+    // Keeping them out of BootScene removes ~0.5 MB from the cold-open critical path.
   ],
   ui: [
     // Real art (PixelWhale pack + Higgsfield HUD kit via tools/higgsfield-hud-build.mjs).
@@ -178,10 +176,8 @@ export const ASSETS: Record<string, AssetEntry[]> = {
     { key: UI_BTN_RING_KEY, file: "assets/ui/btn_ring.png" },
     ...ABILITY_ICON_KEYS.map((k) => ({ key: k, file: `assets/ui/${k}.png` })),
     { key: MENU_BG_KEY, file: "assets/ui/menu_bg.jpg" }, // painted menu key art
-    { key: classArtKey("metrophage"), file: "assets/ui/classart_metrophage.jpg" },
-    { key: classArtKey("k-guerilla"), file: "assets/ui/classart_k-guerilla.jpg" },
-    { key: classArtKey("wintermute"), file: "assets/ui/classart_wintermute.jpg" },
-    { key: classArtKey("swarm"), file: "assets/ui/classart_swarm.jpg" },
+    // Class cards are loaded by SelectScene, where they are first used. First-time
+    // players no longer download ~0.5 MB of menu art before the cold open.
   ],
   // Build-time generated VO + the per-environment music beds (ElevenLabs). The
   // beds are OPTIONAL: only those whose mp3 actually exists in src/assets/music/

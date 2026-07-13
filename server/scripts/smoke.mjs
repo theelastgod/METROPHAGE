@@ -1408,27 +1408,62 @@ async function cosmetic() {
 }
 
 async function bounty() {
-  // AUTHORED NPC BOUNTIES — accept a quest-giver's job (one at a time), auto-rewarded on done.
-  const ws = await connect();
+  // AUTHORED NPC BOUNTIES — accept a quest-giver's job, carry it across zone DOs,
+  // reject a second job, then auto-reward it on completion.
+  const name = "hunter_" + Math.random().toString(36).slice(2, 6);
+  const zoneUrl = (zone) => {
+    const u = new URL(WS_URL);
+    u.searchParams.set("zone", zone);
+    return u.toString();
+  };
+  let ws = await connect(zoneUrl("d0"));
   const store = { x: 0, y: 0, enemies: [], bounty: null, sys: [] };
-  ws.addEventListener("message", (ev) => {
-    const m = JSON.parse(ev.data);
-    if (m.t === "bounty") store.bounty = m.active;
-    if (m.t === "sys") store.sys.push(m.text);
-  });
-  const w = await login(ws, "hunter_" + Math.random().toString(36).slice(2, 6));
+  const wire = (socket) =>
+    socket.addEventListener("message", (ev) => {
+      const m = JSON.parse(ev.data);
+      if (m.t === "bounty") store.bounty = m.active;
+      if (m.t === "sys") store.sys.push(m.text);
+    });
+  wire(ws);
+  let w = await login(ws, name);
   store.x = w.x;
   store.y = w.y;
   trackState(ws, w.id, store);
   await sleep(400);
 
-  ws.send(JSON.stringify({ t: "bounty", action: "accept", id: "marek_grudge" })); // fell a boss
+  // Use the ordinary kill-sheet job here: persistence is what this mode owns, and
+  // waiting for a high-HP world boss made a passing persistence check seed-dependent.
+  const bountyId = "kessler_hold"; // purge 10 ordinary HSS units
+  ws.send(JSON.stringify({ t: "bounty", action: "accept", id: bountyId }));
   await sleep(400);
-  const accepted = !!store.bounty && store.bounty.id === "marek_grudge";
+  const accepted = !!store.bounty && store.bounty.id === bountyId;
+
+  // Cross into a different zone Durable Object. The tracker must hydrate from D1,
+  // then survive the return trip before combat resumes in d0.
+  ws.close();
+  await sleep(300);
+  store.bounty = null;
+  ws = await connect(zoneUrl("safe"));
+  wire(ws);
+  await login(ws, name, undefined, undefined, { from: "d0" });
+  await sleep(400);
+  const persistedAcrossZone = !!store.bounty && store.bounty.id === bountyId;
 
   ws.send(JSON.stringify({ t: "bounty", action: "accept", id: "doc_cores" })); // already have one
   await sleep(400);
-  const secondRejected = !!store.bounty && store.bounty.id === "marek_grudge" && store.sys.some((t) => /finish your current/i.test(t));
+  const secondRejected = !!store.bounty && store.bounty.id === bountyId && store.sys.some((t) => /finish your current/i.test(t));
+
+  ws.close();
+  await sleep(300);
+  store.bounty = null;
+  ws = await connect(zoneUrl("d0"));
+  wire(ws);
+  w = await login(ws, name, undefined, undefined, { from: "safe" });
+  store.x = w.x;
+  store.y = w.y;
+  trackState(ws, w.id, store);
+  await sleep(400);
+  const persistedOnReturn = !!store.bounty && store.bounty.id === bountyId;
 
   const nearest = () => {
     let b = null, bd = 1e9;
@@ -1473,9 +1508,9 @@ async function bounty() {
 
   ws.close();
   await sleep(200);
-  const checks = { accepted, secondRejected, progressed, completed };
+  const checks = { accepted, persistedAcrossZone, secondRejected, persistedOnReturn, progressed, completed };
   report(
-    "BOUNTY — accept an NPC job (one at a time), progress on kills, auto-reward on completion",
+    "BOUNTY — accept one NPC job, persist across zone DOs, progress on kills, auto-reward",
     { maxProgress: maxProg, lastSys: store.sys.slice(-2) },
     Object.values(checks).every(Boolean),
     checks,
@@ -2217,7 +2252,7 @@ async function abuse() {
   await login(k, "flooder", 0);
   let killed = false;
   k.addEventListener("close", () => (killed = true));
-  for (let i = 0; i < 200; i++) k.send(JSON.stringify({ t: "input", seq: i, mx: 0, my: 0 }));
+  for (let i = 0; i < 800; i++) k.send(JSON.stringify({ t: "input", seq: i, mx: 0, my: 0 }));
   await sleep(1300);
   const floodSocketClosed = killed && ws.readyState === 1; // flooder gone, we're fine
 
@@ -2238,75 +2273,282 @@ async function abuse() {
 }
 
 async function load() {
-  const N = parseInt(process.argv[3] || "20", 10);
+  const setting = (name, fallback, { min = 0, max = Infinity, integer = false } = {}) => {
+    const raw = process.env[name];
+    const value = raw === undefined || raw === "" ? fallback : Number(raw);
+    if (!Number.isFinite(value) || value < min || value > max || (integer && !Number.isInteger(value))) {
+      throw new Error(`${name} must be ${integer ? "an integer" : "a number"} between ${min} and ${max}; got ${raw}`);
+    }
+    return value;
+  };
+  const percentile = (values, p) => {
+    if (!values.length) return 0;
+    const sorted = [...values].sort((a, b) => a - b);
+    return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * p) - 1)];
+  };
+  const N = setting("LOAD_PLAYERS", process.argv[3] ? Number(process.argv[3]) : 20, { min: 1, max: 500, integer: true });
+  const DUR = setting("LOAD_DURATION_MS", 6000, { min: 2000, max: 300_000, integer: true });
+  const CONNECT_BATCH = setting("LOAD_CONNECT_BATCH", 10, { min: 1, max: 100, integer: true });
+  const RECONNECT_FRACTION = setting("LOAD_RECONNECT_FRACTION", 0.25, { min: 0, max: 1 });
+  const MIN_HZ = setting("LOAD_MIN_HZ", 7, { min: 1, max: 20 });
+  const MAX_SNAPSHOT_GAP_MS = setting("LOAD_MAX_SNAPSHOT_GAP_MS", 1000, { min: 100, max: 60_000 });
+  const MAX_RECONNECT_MS = setting("LOAD_MAX_RECONNECT_MS", 5000, { min: 250, max: 60_000 });
+  const MAX_TICK_AVG_MS = setting("LOAD_MAX_TICK_AVG_MS", 50, { min: 1, max: 1000 });
   const suffix = String(Date.now() % 1_000_000);
-  const DUR = 4000;
-  const bots = [];
-  for (let i = 0; i < N; i++) {
-    const ws = await connect();
-    const w = await login(ws, "ld" + suffix + "_" + i, i % 4);
-    const s = { id: w.id, snaps: 0, closed: false, lastTick: 0 };
+  const bots = Array.from({ length: N }, (_, i) => ({
+    name: "ld" + suffix + "_" + i,
+    faction: i % 4,
+    id: null,
+    ws: null,
+    closed: true,
+    snaps: 0,
+    lastTick: 0,
+    firstTick: null,
+    lastStateAt: 0,
+    maxGapMs: 0,
+    maxSteadyGapMs: 0,
+    connectMs: 0,
+    reconnecting: false,
+    reconnectStartedAt: 0,
+    reconnectResumeAt: 0,
+    reconnectError: null,
+    connectError: null,
+    resume: null,
+  }));
+
+  const attach = (bot, ws) => {
+    bot.ws = ws;
+    bot.closed = false;
     ws.addEventListener("message", (ev) => {
-      const m = JSON.parse(ev.data);
+      if (bot.ws !== ws) return; // ignore the tail of a socket intentionally replaced below
+      let m;
+      try {
+        m = JSON.parse(ev.data);
+      } catch {
+        return;
+      }
       if (m.t === "state") {
-        s.snaps++;
-        s.lastTick = m.tick;
+        const now = Date.now();
+        if (bot.lastStateAt) {
+          const gap = now - bot.lastStateAt;
+          bot.maxGapMs = Math.max(bot.maxGapMs, gap);
+          if (!bot.reconnecting) bot.maxSteadyGapMs = Math.max(bot.maxSteadyGapMs, gap);
+        }
+        bot.lastStateAt = now;
+        bot.snaps++;
+        bot.firstTick ??= m.tick;
+        bot.lastTick = m.tick;
+        if (bot.reconnecting) {
+          bot.reconnecting = false;
+          bot.reconnectResumeAt = now;
+          bot.resume?.();
+          bot.resume = null;
+        }
       }
     });
-    ws.addEventListener("close", () => (s.closed = true));
-    bots.push({ ws, s });
+    ws.addEventListener("close", () => {
+      if (bot.ws === ws) bot.closed = true;
+    });
+  };
+
+  const connectBot = async (bot) => {
+    const started = Date.now();
+    let ws;
+    try {
+      ws = await connect();
+      const w = await login(ws, bot.name, bot.faction);
+      bot.id = w.id;
+      bot.connectMs = Date.now() - started;
+      attach(bot, ws);
+    } catch (e) {
+      bot.connectError = String(e?.message ?? e);
+      try {
+        ws?.close();
+      } catch {
+        /* ignore */
+      }
+    }
+  };
+  // Connect in bounded parallel batches: enough pressure to exercise handshakes/D1,
+  // without making the local workerd and Node client manufacture a thundering herd.
+  for (let i = 0; i < bots.length; i += CONNECT_BATCH) {
+    await Promise.all(bots.slice(i, i + CONNECT_BATCH).map(connectBot));
   }
-  const connected = bots.filter((b) => !b.s.closed).length;
+  const connected = bots.filter((b) => b.ws && !b.closed).length;
+
+  const statsUrl = (() => {
+    const u = new URL(WS_URL);
+    u.protocol = u.protocol === "wss:" ? "https:" : "http:";
+    const zone = u.searchParams.get("zone");
+    u.pathname = "/stats";
+    u.search = "";
+    if (zone) u.searchParams.set("zone", zone);
+    return u;
+  })();
+  const readStats = async () => {
+    const res = await fetch(statsUrl);
+    if (!res.ok) throw new Error(`/stats returned ${res.status}`);
+    return res.json();
+  };
+  let statsStart = null;
+  let statsEnd = null;
+  let statsError = null;
+  // Let every successful login enter the broadcast loop before taking the baseline.
+  await sleep(250);
+  try {
+    statsStart = await readStats();
+  } catch (e) {
+    statsError = String(e?.message ?? e);
+  }
+
+  // Exclude handshake/warm-up snapshots from the sustained-rate measurement.
+  for (const b of bots) {
+    b.snaps = 0;
+    b.firstTick = null;
+    b.lastTick = 0;
+    b.lastStateAt = 0;
+    b.maxGapMs = 0;
+    b.maxSteadyGapMs = 0;
+  }
+
+  const closeForReconnect = (ws) =>
+    new Promise((resolve) => {
+      if (!ws || ws.readyState === 3) return resolve(true);
+      let done = false;
+      const finish = (closed) => {
+        if (done) return;
+        done = true;
+        resolve(closed);
+      };
+      ws.addEventListener("close", () => finish(true), { once: true });
+      try {
+        ws.close(1000, "load reconnect");
+      } catch {
+        return finish(ws.readyState === 3);
+      }
+      setTimeout(() => finish(ws.readyState === 3), 3000);
+    });
+
+  const reconnectBot = async (bot) => {
+    const old = bot.ws;
+    bot.reconnectStartedAt = Date.now();
+    bot.reconnecting = true;
+    bot.ws = null; // old-socket state/close events no longer count as recovery
+    try {
+      if (!(await closeForReconnect(old))) throw new Error("old socket did not close within 3s");
+      const ws = await connect();
+      const w = await login(ws, bot.name, bot.faction);
+      if (w.id !== bot.id) {
+        ws.close();
+        throw new Error(`identity changed from ${bot.id} to ${w.id}`);
+      }
+      const resumed = new Promise((resolve) => (bot.resume = resolve));
+      attach(bot, ws);
+      await Promise.race([
+        resumed,
+        sleep(MAX_RECONNECT_MS).then(() => {
+          throw new Error(`no state snapshot within ${MAX_RECONNECT_MS}ms`);
+        }),
+      ]);
+    } catch (e) {
+      bot.reconnectError = String(e?.message ?? e);
+      bot.reconnecting = false;
+      bot.resume = null;
+    }
+  };
 
   // Everyone moves + fires for a few seconds; the server must keep ticking for all.
   const dirs = [[1, 0], [0, 1], [-1, 0], [0, -1], [1, 1], [-1, -1]];
   const t0 = Date.now();
   let frame = 0;
+  let reconnectPromise = null;
+  let reconnectTargets = [];
   while (Date.now() - t0 < DUR) {
+    if (!reconnectPromise && RECONNECT_FRACTION > 0 && Date.now() - t0 >= DUR * 0.45) {
+      const candidates = bots.filter((b) => b.ws && !b.closed);
+      const count = Math.min(candidates.length, Math.max(1, Math.round(candidates.length * RECONNECT_FRACTION)));
+      reconnectTargets = candidates.slice(0, count);
+      reconnectPromise = Promise.all(reconnectTargets.map(reconnectBot));
+    }
     const [mx, my] = dirs[frame % dirs.length];
     for (const b of bots) {
-      if (b.s.closed) continue;
+      if (!b.ws || b.closed || b.ws.readyState !== 1) continue;
       b.ws.send(JSON.stringify({ t: "input", seq: frame, mx, my }));
       if (frame % 4 === 0) b.ws.send(JSON.stringify({ t: "fire", seq: frame, aim: Math.random() * Math.PI * 2 }));
     }
     frame++;
     await sleep(50);
   }
+  await reconnectPromise;
+  await sleep(250); // prove a reconnected socket remains in the broadcast loop
   const durSecs = (Date.now() - t0) / 1000;
 
-  const snaps = bots.map((b) => b.s.snaps);
+  try {
+    statsEnd = await readStats();
+  } catch (e) {
+    statsError = String(e?.message ?? e);
+  }
+
+  const snaps = bots.map((b) => b.snaps);
   const minSnaps = Math.min(...snaps);
   const totalSnaps = snaps.reduce((a, c) => a + c, 0);
-  const stillOpen = bots.filter((b) => !b.s.closed).length;
+  const stillOpen = bots.filter((b) => b.ws && !b.closed && b.ws.readyState === 1).length;
   const expectedPerBot = (durSecs * 1000) / 50; // ~20Hz ideal
+  const maxSteadyGapMs = Math.max(...bots.map((b) => b.maxSteadyGapMs));
+  const maxGapMs = Math.max(...bots.map((b) => b.maxGapMs));
+  const reconnectMs = reconnectTargets.filter((b) => b.reconnectResumeAt).map((b) => b.reconnectResumeAt - b.reconnectStartedAt);
+  const serverTickAdvance = statsStart && statsEnd ? statsEnd.tick - statsStart.tick : 0;
+  const serverTickRate = serverTickAdvance / durSecs;
+  const initialConnectMs = bots.filter((b) => !b.connectError).map((b) => b.connectMs);
 
   const checks = {
     allConnected: connected === N,
     noneDropped: stillOpen === N,
-    // The loop kept broadcasting to EVERY bot at a playable rate. (Floor is 0.35×
-    // the 20Hz ideal: in a single-box local run the Node client + workerd + D1 all
-    // share one CPU, so effective rate is well below what isolated infra delivers.)
-    serverKeptTicking: minSnaps >= expectedPerBot * 0.35,
+    everyClientPlayableRate: minSnaps >= durSecs * MIN_HZ,
+    noSteadySnapshotStalls: maxSteadyGapMs <= MAX_SNAPSHOT_GAP_MS,
+    reconnectsResumed:
+      reconnectTargets.length === reconnectMs.length && reconnectTargets.every((b) => !b.reconnectError && b.ws?.readyState === 1),
+    reconnectWithinLimit: reconnectMs.every((ms) => ms <= MAX_RECONNECT_MS),
+    metricsAvailable: !!statsStart && !!statsEnd,
+    // Cross-check client-observed snapshot rate against the DO's own tick counter.
+    serverTickAdvanced: !!statsStart && !!statsEnd && serverTickRate >= MIN_HZ,
+    tickWorkWithinBudget: !!statsEnd && statsEnd.tickMsAvg <= MAX_TICK_AVG_MS,
   };
   for (const b of bots) {
     try {
-      b.ws.close();
+      b.ws?.close();
     } catch {
       /* ignore */
     }
   }
   await sleep(400);
   report(
-    `LOAD — ${N} concurrent players; server stays up + keeps broadcasting`,
+    `LOAD — ${N} players; sustained snapshots + tick budget + reconnect recovery`,
     {
       players: N,
       durSecs: round(durSecs),
       stillOpen,
+      connectErrors: bots.filter((b) => b.connectError).map((b) => ({ name: b.name, error: b.connectError })),
+      loginMsP95: round(percentile(initialConnectMs, 0.95)),
       minSnaps,
       avgSnaps: round(totalSnaps / N),
       idealPerBot: round(expectedPerBot),
       minHz: round(minSnaps / durSecs),
       snapshotsPerSec: round(totalSnaps / durSecs),
+      maxSteadyGapMs,
+      maxGapIncludingReconnectMs: maxGapMs,
+      reconnects: reconnectTargets.length,
+      reconnectErrors: reconnectTargets.filter((b) => b.reconnectError).map((b) => ({ name: b.name, error: b.reconnectError })),
+      reconnectMsP95: round(percentile(reconnectMs, 0.95)),
+      serverTickRate: round(serverTickRate),
+      stats: statsEnd,
+      statsError,
+      thresholds: {
+        minHz: MIN_HZ,
+        maxSnapshotGapMs: MAX_SNAPSHOT_GAP_MS,
+        maxReconnectMs: MAX_RECONNECT_MS,
+        maxTickAvgMs: MAX_TICK_AVG_MS,
+      },
     },
     Object.values(checks).every(Boolean),
     checks,

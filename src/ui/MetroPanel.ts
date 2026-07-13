@@ -225,6 +225,8 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
     minWithdrawCredits?: number;
     treasury?: string;
     settlement?: string;
+    simLocked?: boolean;
+    /** Backward compatibility with Workers deployed before the fail-closed rename. */
     dangerousSim?: boolean;
     treasuryWarn?: string;
     treasuryEth?: string;
@@ -252,12 +254,12 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
       phaseEl.classList.remove("warn", "ok");
       phasePill.classList.remove("warn", "ok");
       fab.classList.remove("warn");
-      if (p.dangerousSim) {
+      if (p.simLocked || p.dangerousSim) {
         phaseEl.classList.add("warn");
         phasePill.classList.add("warn");
         phasePill.textContent = "LOCKED";
         phaseEl.textContent =
-          "⚠ BRIDGE LOCKED — mint configured but settlement is still SIM. Deposits rejected (no fake credits). Fix server secrets / arm, or unset client mint.";
+          "⚠ BRIDGE LOCKED — simulated settlement is read-only. Deposits and cash-outs are rejected. Configure live server settlement or unset the client mint.";
         fab.classList.add("warn");
       } else if (p.phase === "bootstrap" || (p.poolMetro ?? 0) <= 0) {
         phaseEl.classList.add("warn");
@@ -402,8 +404,8 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
 
   /** Always re-sign for live money (fresh ≤2 min). */
   async function walletAuth(wallet: string): Promise<{ sig?: string; ts?: number; error?: string }> {
+    if (pool?.simLocked || pool?.dangerousSim) return { error: "bridge locked (simulated settlement is read-only)" };
     if (pool?.settlement === "sim" || !pool?.settlement) return {};
-    if (pool.dangerousSim) return { error: "bridge locked (sim+mint)" };
     const ts = Date.now();
     const signed = await signWalletLogin(loginMessage(wallet, ts), wallet);
     if (!signed) return { error: "MetaMask signature cancelled" };
@@ -421,7 +423,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
       status("connect MetaMask first");
       return;
     }
-    if (pool?.dangerousSim) return status("bridge locked — cannot deposit while settlement is sim");
+    if (pool?.simLocked || pool?.dangerousSim) return status("bridge locked — cannot deposit while settlement is sim");
     status("approve $METRO transfer in MetaMask (you pay RH ETH gas)…");
     const sent = await sendErc20Deposit({ treasury, amount });
     if (!sent.ok || !sent.txHash) {
@@ -442,7 +444,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
     if (!player) return status("log in online first");
     if (!wallet) return status("connect MetaMask");
     if (!txSig) return status("send via MetaMask or paste tx hash");
-    if (pool?.dangerousSim) return status("bridge locked (sim+mint)");
+    if (pool?.simLocked || pool?.dangerousSim) return status("bridge locked (simulated settlement is read-only)");
     status("verifying deposit on-chain (amount from Transfer logs, not your form)…");
     try {
       const auth = await walletAuth(wallet);
@@ -485,7 +487,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
     if (!player) return status("log in online first");
     if (!wallet) return status("connect MetaMask");
     if (!(credits > 0)) return status("enter a credit amount");
-    if (pool?.dangerousSim) return status("bridge locked (sim+mint)");
+    if (pool?.simLocked || pool?.dangerousSim) return status("bridge locked (simulated settlement is read-only)");
     if (pool && pool.poolMetro <= 0)
       return status("✗ insufficient $METRO in the treasury — come back and try again later (it refills as runners deposit)");
     status("requesting cash-out…");

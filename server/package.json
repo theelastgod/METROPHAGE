@@ -6,10 +6,13 @@
   "description": "METROPHAGE authoritative game server — Cloudflare Worker + Durable Objects + D1",
   "scripts": {
     "dev": "wrangler dev",
+    "dev:sim": "wrangler dev --var METRO_ALLOW_SIM:1",
     "migrate:local": "wrangler d1 migrations apply metrophage --local",
     "migrate:remote": "wrangler d1 migrations apply metrophage --remote",
     "deploy": "wrangler deploy",
     "smoke": "node scripts/smoke.mjs",
+    "smoke:load": "node scripts/smoke.mjs load",
+    "smoke:pvp-escrow": "node scripts/pvp-escrow-smoke.mjs",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

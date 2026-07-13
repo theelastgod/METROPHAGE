@@ -3,20 +3,18 @@
 Both halves are production-ready; each ships with one command once a Cloudflare
 account is logged in (`npx wrangler login`).
 
-> **Dry-run verified (2026-07-07).** Everything below that does NOT need your
-> Cloudflare account has been exercised: `wrangler deploy --dry-run` bundles the
-> Worker clean (241 KiB gzip, both bindings resolve); the Durable Object is
-> **SQLite-backed → free-tier eligible** (`$0` hosting, no plan upgrade prompt);
-> all 21 migrations apply with none pending; the DO round-trips + persists under
-> the SQLite backing (`smoke move`); and the client build injects the production
-> server URL into the bundle. The only untested steps are the four account-gated
-> commands below. Expect **no surprises**.
+> **Dry-run reverified (2026-07-12).** `wrangler deploy --dry-run` bundles the
+> Worker clean (460 KiB gzip, both bindings resolve); migrations `0001–0030`
+> apply cleanly to an isolated SQLite-backed D1; the 20-player load/reconnect gate
+> and focused escrow crash proof pass; and the client production build contains
+> the live Worker URL. No account-gated deployment was performed.
 
-## 0. One footgun, up front
+## 0. Production client safety, up front
 
 The client's server URL comes from `VITE_SERVER_URL` **at build time**. If you
-forget it, the build silently falls back to `ws://127.0.0.1:8787` and *nobody can
-connect*. Always set it (Step 2). There is no runtime override.
+forget it, a production build now **fails**. Production builds also reject non-WSS
+and localhost/loopback URLs. Development continues to fall back to
+`ws://127.0.0.1:8787`; there is no runtime override.
 
 ## 1. Server — Cloudflare Worker + Durable Objects + D1
 
@@ -25,15 +23,21 @@ cd server
 npx wrangler login                       # the one step only you can do
 npx wrangler d1 create metrophage        # once — copy the id it prints
 #   → paste that id into wrangler.toml [[d1_databases]] database_id
-npm run migrate:remote                   # apply migrations 0001–0021 to the real D1
+npm run migrate:remote                   # apply every pending migration to the real D1
 npm run deploy                           # deploy the Worker (prints its URL)
 ```
+
+Current head includes migrations through `0030_pvp_escrow.sql`. Migration `0030`
+must land before its Worker code. For the first escrow rollout,
+empty/disconnect THE CRUCIBLE arenas first: an in-memory pot created by an older
+Worker cannot be retroactively journaled after the deploy.
 
 The DO ships as `new_sqlite_classes` (see `wrangler.toml`) — SQLite-backed, which
 is free-tier eligible and Cloudflare's recommended default. No Workers Paid plan
 required. (It has never been deployed, so this was a free choice made at creation.)
 
-Optional (the $METRO bridge stays in devnet-sim mode without these):
+Optional (without these, the public $METRO bridge remains read-only and fails
+closed; simulated mutation is available only through local `npm run dev:sim`):
 
 ```sh
 npx wrangler secret put METRO_TREASURY_SECRET   # base64 64-byte treasury keypair
@@ -43,10 +47,20 @@ npx wrangler secret put METRO_DEVNET_MINT       # the $METRO mint address
 
 ## 2. Client — static Vite build (any static host / Cloudflare Pages)
 
+For the deployed production endpoint, use the checked release helper from the repo
+root. It sets the live WSS URL, builds, verifies that URL is present in `dist/`, and
+then deploys only to Pages project `metrophagev1` on production branch `main`:
+
 ```sh
-# from the repo root — the wss:// URL is Step 1's worker URL + /ws (NOT optional):
+npm run build:production   # same verified build, but does not deploy
+npm run deploy:client      # verified build + production Pages deploy
+```
+
+For another static host or Worker endpoint, a manual production build remains
+available; the WSS URL is Step 1's Worker URL + `/ws` and is not optional:
+
+```sh
 VITE_SERVER_URL=wss://<worker-url>/ws npm run build
-npx wrangler pages deploy dist            # prints your public play URL
 ```
 
 `VITE_METRO_MINT` additionally wakes the in-game $METRO bridge panel (leave unset
@@ -84,7 +98,8 @@ require a small treasury ETH balance for gas:
 The treasury never holds or spends SOL on the Robinhood path. It does need a
 small ETH gas float before cash-outs can succeed. Pending claims auto-refund
 after 10 minutes; the whole accounting flow still verifies with no chain at all:
-`node scripts/smoke.mjs metro` (sim settlement).
+`npm run dev:sim` followed by `node scripts/smoke.mjs metro` (trusted local sim
+settlement). Ordinary `npm run dev` keeps simulated ledger mutations locked.
 
 ## 5. Entering the $METRO contract address (when the token is live)
 
@@ -135,9 +150,10 @@ Mainnet client: `VITE_METRO_CLUSTER=robinhood` + `VITE_METRO_MAINNET_ARMED=1` + 
 unset, the game is pure off-chain (MetaMask sign-up still uses Robinhood Chain).
 
 **⚠️ Ordering rule:** never ship Layer 2 to real players without Layer 1. With
-the panel live but no server secrets, the bridge runs devnet-sim settlement,
-which TRUSTS claimed deposit amounts — a player could fabricate deposits.
-Secrets first, CA second, always.
+the panel live but no server secrets, the Worker now fails closed: simulated
+settlement is read-only and every deposit/cash-out returns 503. That prevents
+fabricated credits, but still ships a visibly broken money panel. Secrets first,
+CA second, always.
 
 **Mainnet arming (counsel-gated):** real-value Robinhood mainnet additionally
 requires `VITE_METRO_CLUSTER=robinhood` AND `VITE_METRO_MAINNET_ARMED=1` at
@@ -151,8 +167,11 @@ Pre-CA: `cd server && node scripts/mainnet-prepare.mjs` then put
 ## 6. Ship checklist (every production deploy)
 
 1. **Same commit** on Worker + Pages — geometry/protocol mismatches hurt.
-2. **`VITE_SERVER_URL=wss://…/ws`** on the client build (never forget — silent localhost).
-3. **`npx wrangler pages deploy … --branch=main`** (else you get a preview URL).
+2. **`npm run deploy:client`** for the live client. It fixes `VITE_SERVER_URL` to the
+   production Worker, verifies the artifact, and fixes the Pages project/branch.
+3. Manual deploys must still use
+   `npx wrangler pages deploy dist --project-name=metrophagev1 --branch=main --commit-dirty=true`;
+   omitting `--branch=main` creates a preview URL.
 4. Protocol: welcome carries `protocol` (`PROTOCOL_VERSION` in `src/net/protocol.ts`).
    Stale clients print a hard-refresh sys warning — bump the constant when wire shape breaks.
 5. Smoke (trusted five, standalone): `move combat kit quest abuse` with server up.
@@ -160,3 +179,6 @@ Pre-CA: `cd server && node scripts/mainnet-prepare.mjs` then put
    (`METRO_MAINNET_ARMED` off by default). Never arm without counsel sign-off.
 7. Rates (Robinhood launch): **100 in / 125 out**, min **250 ₵**, daily cap **50k ₵**,
    player-funded pool — treat as launch constants; don't redesign mid-launch without a migration note.
+8. PvP escrow rollout: apply `0030` before the Worker and deploy with arenas empty.
+   Afterward, buy-ins, elimination transfers, disconnect refunds, and crash recovery
+   are atomic in D1.

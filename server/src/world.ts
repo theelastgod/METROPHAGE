@@ -109,6 +109,16 @@ import { RAID_SCRIPT, phaseForHp, raidHpScale } from "../../src/game/raid";
 import { getCosmetic, applyCosmetic } from "../../src/game/cosmetics";
 import { bountyById, type BountyObjective } from "../../src/game/bounties";
 import { verifyWalletLogin, walletPlayerId } from "./auth";
+import { shouldBroadcastSnapshot } from "./snapshotPolicy";
+import { remotePlayerView, type RemotePlayerView } from "./playerSnapshot";
+import { buildWorldSnapshot } from "./worldSnapshot";
+import {
+  lockPvpEscrow as lockDurablePvpEscrow,
+  readPlayerMetroBalance,
+  recoverPvpEscrow as recoverDurablePvpEscrow,
+  refundPvpEscrow as refundDurablePvpEscrow,
+  transferPvpEscrow as transferDurablePvpEscrow,
+} from "./pvpEscrow";
 
 /** Inventory is capped so the persisted JSON stays bounded; oldest drops out (FIFO). */
 const INVENTORY_CAP = 24;
@@ -175,14 +185,15 @@ const INTENT_EXPIRE_TICKS = 3;
 // not) and heartbeat-persists, so the loop is supervised + durable, not
 // fire-and-forget.
 const SUPERVISOR_ALARM_MS = 10_000;
-// Step 7 (anti-cheat): per-socket flood guard. Legit play is ~1 input/tick plus
-// the odd fire/chat, so even a 144fps client holding fire stays well under these.
+// Step 7 (anti-cheat): per-socket wall-clock flood guard. Legit play is ~1 input
+// per render frame plus the odd fire/chat, so even a 144fps client stays below it.
 // Movement is already flood-immune (intent is integrated once per server tick, not
 // per message) and fire is already server-rate-limited — this only stops a socket
 // from exhausting CPU/bandwidth with raw message volume.
 const MAX_MSG_BYTES = 4096; // reject oversized payloads outright
-const MSG_SOFT_PER_TICK = 20; // ~400/s — silently drop beyond this
-const MSG_KILL_PER_TICK = 60; // ~1200/s — close the socket on a real flood
+const MSG_RATE_WINDOW_MS = 1000;
+const MSG_SOFT_PER_WINDOW = 400; // silently drop excess work in a one-second window
+const MSG_KILL_PER_WINDOW = 600; // close only a genuine per-socket flood
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const clampUnit = (n: number) => (n > 1 ? 1 : n < -1 ? -1 : Number.isFinite(n) ? n : 0);
 const ticks = (ms: number) => Math.ceil(ms / NET_TICK_MS);
@@ -256,7 +267,8 @@ export interface Env {
   WORLD: DurableObjectNamespace;
   DB: D1Database;
   // $METRO bridge (Phase 5) — wrangler secrets / .dev.vars.
-  // Absent mint or treasury → sim settlement (accounting only, no chain).
+  // Absent settlement credentials → status/read-only bridge. Mutating simulated
+  // settlement is available only to an explicitly enabled local smoke harness.
   METRO_TREASURY_SECRET?: string;
   /** Preferred mint env (mainnet or devnet). */
   METRO_MINT?: string;
@@ -293,6 +305,11 @@ interface PlayerState {
   pvpInArena: boolean;
   /** Buy-in + loot from eliminations — returned on safe exit, lost on death. */
   pvpEscrow: number;
+  /** Number of durable escrow transitions queued for this runner. While non-zero,
+   *  ordinary snapshots must not overwrite the balance participating in them. */
+  pvpPending: number;
+  /** Pot recovered from D1 after an interrupted contest; announced once on resume. */
+  pvpRecovered: number;
   /** Last position outside the arena (used to bounce players who can't afford buy-in). */
   pvpSafeX: number;
   pvpSafeY: number;
@@ -360,8 +377,9 @@ interface PlayerState {
   // cosmetics / transmog — owned set + equipped override (zero power), persisted to D1
   cosmeticsOwned: Set<string>;
   cosmeticEquipped: string | null;
-  // authored NPC bounty — one active at a time (in-memory; reward + count persist)
+  // authored NPC bounty — one active at a time, persisted cross-zone in D1
   bounty: { id: string; progress: number } | null;
+  bountyDirty: boolean;
   // appearance (relayed to other clients so they render this player's customization)
   look?: PlayerLook;
 }
@@ -578,6 +596,11 @@ export class WorldDO {
   private trades = new Map<number, TradeSession>();
   private playerTrade = new Map<string, number>(); // player id -> trade id
   private nextTradeId = 1;
+  /** Per-player tails keep authored-bounty writes ordered across rapid progress. */
+  private bountyFlushes = new Map<string, Promise<boolean>>();
+  /** PvP escrow transitions are globally ordered within a zone. A kill followed by
+   *  an exit (or two kills in adjacent ticks) must reach D1 in gameplay order. */
+  private pvpTail: Promise<void> = Promise.resolve();
 
   private zoneName = "d0";
   private districtIndex = 0;
@@ -590,7 +613,7 @@ export class WorldDO {
   private nextEventTick = -1;
   private lastStormTick = 0;
   private interior = false; // the safehouse zone — no enemies, no PvP
-  private msgRate = new Map<WebSocket, { tick: number; n: number }>(); // per-socket flood guard
+  private msgRate = new Map<WebSocket, { windowStart: number; n: number }>(); // per-socket flood guard
 
   constructor(
     private state: DurableObjectState,
@@ -1399,14 +1422,15 @@ export class WorldDO {
 
   /** Per-socket flood guard: drop beyond the soft cap, close on an egregious flood. */
   private rateOk(ws: WebSocket): boolean {
+    const now = Date.now();
     const r = this.msgRate.get(ws);
-    if (!r || r.tick !== this.tick) {
-      this.msgRate.set(ws, { tick: this.tick, n: 1 });
+    if (!r || now - r.windowStart >= MSG_RATE_WINDOW_MS) {
+      this.msgRate.set(ws, { windowStart: now, n: 1 });
       return true;
     }
     r.n++;
-    if (r.n > MSG_KILL_PER_TICK) {
-      console.warn(`[${this.zoneName}] flood from ${this.sessions.get(ws) ?? "?"} (${r.n}/tick) — closing`);
+    if (r.n > MSG_KILL_PER_WINDOW) {
+      console.warn(`[${this.zoneName}] flood from ${this.sessions.get(ws) ?? "?"} (${r.n}/s) — closing`);
       try {
         ws.close(1008, "rate limit");
       } catch {
@@ -1416,7 +1440,7 @@ export class WorldDO {
       void this.onClose(ws);
       return false;
     }
-    return r.n <= MSG_SOFT_PER_TICK;
+    return r.n <= MSG_SOFT_PER_WINDOW;
   }
 
   private send(ws: WebSocket, msg: unknown) {
@@ -2561,6 +2585,13 @@ export class WorldDO {
       lookLocked: lookLocked || !!p.look,
       fragments: p.fragments,
     });
+    if (p.pvpRecovered > 0) {
+      this.send(ws, {
+        t: "sys",
+        text: `✓ interrupted arena contest recovered — ◈${fmtMetro(p.pvpRecovered)} $METRO returned to your balance`,
+      });
+      p.pvpRecovered = 0;
+    }
     // AFTER welcome — clients (and smoke bots) attach their sys listeners post-login
     if (this.provingVault) {
       const wk = WorldDO.weekNow();
@@ -2679,6 +2710,15 @@ export class WorldDO {
    *  quest) from D1. Shared by fresh login and hibernation-wake rehydration. */
   private async loadPlayer(id: string, name: string, fac: number): Promise<PlayerState> {
     await this.loadMeta();
+    // A cold load means the prior in-memory contest owner disappeared (disconnect,
+    // zone handoff, isolate recycle, or deploy). Refund its durable pot first so
+    // the player row read below can never reconstruct a permanently debited balance.
+    let pvpRecovered = 0;
+    try {
+      pvpRecovered = await recoverDurablePvpEscrow(this.env.DB, id, Date.now());
+    } catch {
+      /* migration not applied yet, or another zone settled the row first */
+    }
     let x = this.spawn.x;
     let y = this.spawn.y;
     let credits = 0;
@@ -2834,6 +2874,23 @@ export class WorldDO {
     } catch {
       /* table may not exist before migration */
     }
+    // Authored NPC bounty — shared by every zone DO. Invalid/stale rows are ignored
+    // and queued for cleanup rather than allowing a removed bounty to lock the slot.
+    let bounty: PlayerState["bounty"] = null;
+    let bountyDirty = false;
+    try {
+      const brow = await this.env.DB.prepare("SELECT bounty_id, progress FROM player_bounties WHERE player = ?")
+        .bind(id)
+        .first<{ bounty_id: string; progress: number }>();
+      if (brow) {
+        const def = bountyById(brow.bounty_id);
+        const progress = Math.max(0, Math.floor(Number(brow.progress) || 0));
+        if (def && progress < def.count) bounty = { id: def.id, progress };
+        else bountyDirty = true;
+      }
+    } catch {
+      /* table may not exist before migration */
+    }
     const mods = deriveMods(equipped);
     const maxHp = PLAYER_HP + Math.round(mods.hpAdd);
     return {
@@ -2853,6 +2910,8 @@ export class WorldDO {
       pvpSafeUntil: 0,
       pvpInArena: false,
       pvpEscrow: 0,
+      pvpPending: 0,
+      pvpRecovered,
       pvpSafeX: x,
       pvpSafeY: y,
       credits,
@@ -2907,7 +2966,8 @@ export class WorldDO {
       dailyDirty: false,
       cosmeticsOwned,
       cosmeticEquipped,
-      bounty: null,
+      bounty,
+      bountyDirty,
       look,
     };
   }
@@ -2920,6 +2980,13 @@ export class WorldDO {
       const p = await this.loadPlayer(att.id, att.name, att.faction);
       if (att.look) p.look = att.look; // restore appearance from the socket attachment
       this.players.set(att.id, p);
+      if (p.pvpRecovered > 0) {
+        this.send(ws, {
+          t: "sys",
+          text: `✓ interrupted arena contest recovered — ◈${fmtMetro(p.pvpRecovered)} $METRO returned to your balance`,
+        });
+        p.pvpRecovered = 0;
+      }
     }
   }
 
@@ -3471,7 +3538,7 @@ export class WorldDO {
     }
   }
 
-  // ── authored NPC bounties (one active at a time; in-memory, auto-rewarded) ──────
+  // ── authored NPC bounties (one active at a time; D1-persisted, auto-rewarded) ──
   private sendBounty(ws: WebSocket, p: PlayerState) {
     const b = p.bounty ? bountyById(p.bounty.id) : undefined;
     this.send(ws, {
@@ -3481,6 +3548,39 @@ export class WorldDO {
   }
   private pushBounty(p: PlayerState) {
     for (const [sock, id] of this.sessions) if (id === p.id) this.sendBounty(sock, p);
+  }
+
+  /** Queue the current bounty snapshot behind older writes for this player. Snapshotting
+   *  before queueing means progress made while D1 is busy remains dirty for the next write. */
+  private flushBounty(p: PlayerState): Promise<boolean> {
+    if (!p.bountyDirty) return this.bountyFlushes.get(p.id) ?? Promise.resolve(true);
+    const active = p.bounty ? { ...p.bounty } : null;
+    p.bountyDirty = false;
+    const previous = this.bountyFlushes.get(p.id) ?? Promise.resolve(true);
+    const next = previous.then(async () => {
+      try {
+        if (active) {
+          await this.env.DB.prepare(
+            "INSERT INTO player_bounties (player, bounty_id, progress, updated_at) VALUES (?,?,?,?) " +
+              "ON CONFLICT(player) DO UPDATE SET bounty_id=excluded.bounty_id, progress=excluded.progress, updated_at=excluded.updated_at",
+          )
+            .bind(p.id, active.id, Math.max(0, Math.floor(active.progress)), Date.now())
+            .run();
+        } else {
+          await this.env.DB.prepare("DELETE FROM player_bounties WHERE player = ?").bind(p.id).run();
+        }
+        return true;
+      } catch {
+        // Pre-migration or transient D1 failure: retry on the normal persistence cadence.
+        p.bountyDirty = true;
+        return false;
+      }
+    });
+    this.bountyFlushes.set(p.id, next);
+    void next.then(() => {
+      if (this.bountyFlushes.get(p.id) === next) this.bountyFlushes.delete(p.id);
+    });
+    return next;
   }
 
   /** Mark zone on the map; organic arrivals also unlock fast travel. */
@@ -3531,7 +3631,7 @@ export class WorldDO {
     }
   }
 
-  private onBounty(ws: WebSocket, msg: Extract<ClientMsg, { t: "bounty" }>) {
+  private async onBounty(ws: WebSocket, msg: Extract<ClientMsg, { t: "bounty" }>) {
     const p = this.playerFor(ws);
     if (!p) return;
     if (msg.action === "accept") {
@@ -3549,6 +3649,17 @@ export class WorldDO {
         return;
       }
       p.bounty = { id: b.id, progress: 0 };
+      p.bountyDirty = true;
+      const saved = await this.flushBounty(p);
+      if (!saved) {
+        // Do not tell the player an unpersisted job was accepted: zone travel at this
+        // point would silently lose it. Leave the slot empty so they can retry.
+        p.bounty = null;
+        p.bountyDirty = false;
+        this.send(ws, { t: "sys", text: "bounty network unavailable — try again" });
+        this.pushBounty(p);
+        return;
+      }
       this.send(ws, { t: "sys", text: `accepted: ${b.name}` });
       this.pushBounty(p);
     }
@@ -3560,6 +3671,7 @@ export class WorldDO {
     const b = bountyById(p.bounty.id);
     if (!b || b.objective !== objective) return;
     p.bounty.progress += n;
+    p.bountyDirty = true;
     if (p.bounty.progress >= b.count) {
       p.credits += b.rewardCredits; // server-authoritative reward
       this.eco("emit", "bounty", b.rewardCredits);
@@ -3568,6 +3680,10 @@ export class WorldDO {
       p.dirty = true;
       this.sendTo(p.id, { t: "sys", text: `✔ BOUNTY — ${b.name} (+₵${b.rewardCredits} +${b.rewardRep} rep)` });
       p.bounty = null;
+    } else {
+      // Completion waits for persistDirty/onClose so its reward saves before the
+      // tracker row is deleted; ordinary progress has no coupled currency mutation.
+      void this.flushBounty(p);
     }
     this.pushBounty(p);
   }
@@ -4874,21 +4990,30 @@ export class WorldDO {
       }
     }
 
-    // 5) broadcast — PER-CLIENT area-of-interest: each player is only sent the
-    // entities within AOI_RADIUS of their own position (always including itself).
-    const factions = Array.from({ length: FACTION_COUNT }, (_, i) => Math.round(this.meta["f" + i] ?? 0));
-    const control = this.districtControl();
-    const roster = [...this.players.values()].map((p) => ({ id: p.id, faction: p.faction, level: p.level }));
+    // 5) broadcast — keep the authoritative sim at 20 Hz, but step down full-state
+    // network cadence in crowded zones. Remotes are interpolated client-side, and
+    // the local player continues predicting/reconciling between acknowledgements.
     let snapBytes = 0;
-    for (const [ws, id] of this.sessions) {
-      const viewer = this.players.get(id);
-      if (!viewer) continue;
-      try {
-        const snap = this.snapshotFor(viewer, factions, control, roster);
-        snapBytes += snap.length;
-        ws.send(snap);
-      } catch {
-        /* dropped */
+    if (shouldBroadcastSnapshot(this.tick, this.sessions.size)) {
+      const factions = Array.from({ length: FACTION_COUNT }, (_, i) => Math.round(this.meta["f" + i] ?? 0));
+      const control = this.districtControl();
+      const roster = [...this.players.values()].map((p) => ({ id: p.id, faction: p.faction, level: p.level }));
+      // Remote presentation is viewer-independent; compute it once per player/tick
+      // instead of rebuilding/rounding the same object in the crowded-zone O(N²) loop.
+      const playerViews = new Map<string, RemotePlayerView>();
+      for (const p of this.players.values()) {
+        playerViews.set(p.id, remotePlayerView(p, this.tick, applyCosmetic(p.look, p.cosmeticEquipped)));
+      }
+      for (const [ws, id] of this.sessions) {
+        const viewer = this.players.get(id);
+        if (!viewer) continue;
+        try {
+          const snap = this.snapshotFor(viewer, factions, control, roster, playerViews);
+          snapBytes += snap.length;
+          ws.send(snap);
+        } catch {
+          /* dropped */
+        }
       }
     }
 
@@ -4916,115 +5041,24 @@ export class WorldDO {
     factions: number[],
     control: number,
     roster: Array<{ id: string; faction: number; level: number }>,
+    playerViews: Map<string, RemotePlayerView>,
   ): string {
-    const R2 = AOI_RADIUS * AOI_RADIUS;
-    const near = (x: number, y: number) => dist2(viewer.x, viewer.y, x, y) <= R2;
-    const players = [];
-    for (const p of this.players.values()) {
-      if (p.id !== viewer.id && !near(p.x, p.y)) continue;
-      players.push({
-        id: p.id,
-        x: round2(p.x),
-        y: round2(p.y),
-        ack: p.ack,
-        hp: Math.max(0, Math.round(p.hp)),
-        dead: p.dead,
-        credits: p.credits,
-        cores: p.cores,
-        metro: p.metro,
-        xp: p.xp,
-        level: p.level,
-        faction: p.faction,
-        campaignQuest: p.campaign.activeId,
-        campaignStage: p.campaign.stage,
-        campaignProgress: p.campaign.progress,
-        campaignObjective: p.campaign.currentStage?.objective ?? "",
-        tutorialStep: p.tutorialStep,
-        tutorialProgress: p.tutorialProgress,
-        tutorialDone: p.tutorialDone,
-        inTutorial: this.inTutorial(),
-        look: applyCosmetic(p.look, p.cosmeticEquipped), // relay the equipped transmog so others see it
-        pvpInArena: p.pvpInArena,
-        ...(this.tick < p.dashUntilTick ? { dash: 1 as const } : {}),
-        ...(this.tick < p.droneUntilTick ? { escort: 1 as const } : {}),
-        ...(p.id === viewer.id ? { pvpEscrow: p.pvpEscrow, heat: Math.round(p.heat) } : {}),
-      });
-    }
-    const enemies = [];
-    for (const e of this.enemies.values()) {
-      if (e.hp > 0 && near(e.x, e.y))
-        enemies.push({
-          id: e.id,
-          x: round2(e.x),
-          y: round2(e.y),
-          hp: Math.round(e.hp),
-          kind: e.kind,
-          ...(e.boss
-            ? { boss: true, name: e.name, tint: e.tint, hpMax: Math.round(e.maxHp) }
-            : e.hvt
-              ? { name: e.name, tint: e.tint, hvt: true, hpMax: Math.round(e.maxHp) } // the day's bounty — labelled + health-barred
-              : e.name && e.tint
-                ? { name: e.name, tint: e.tint } // elites + named fixtures (CRUCIBLE DRONE): aura tint + name
-                : {}),
-        });
-    }
-    const shots = [];
-    for (const s of this.shots) {
-      if (near(s.x, s.y)) shots.push({ id: s.id, x: round2(s.x), y: round2(s.y), team: s.team });
-    }
-    const pickups = [];
-    for (const pu of this.pickups.values()) {
-      if (near(pu.x, pu.y)) pickups.push({ id: pu.id, x: round2(pu.x), y: round2(pu.y), kind: pu.kind });
-    }
-    const hazards = [];
-    for (const hz of this.hazards) {
-      if (near(hz.x, hz.y))
-        hazards.push({
-          id: hz.id,
-          x: round2(hz.x),
-          y: round2(hz.y),
-          r: hz.r,
-          // 0 → just cast, 1 → about to detonate (drives the client telegraph fill)
-          frac: round2(Math.max(0, Math.min(1, (this.tick - hz.castTick) / Math.max(1, hz.detonateTick - hz.castTick)))),
-          ...(hz.vsEnemies ? { friendly: 1 as const } : {}),
-        });
-    }
-    const nodes = [];
-    for (const n of this.nodes) {
-      nodes.push({ id: n.id, x: round2(n.x), y: round2(n.y), owner: n.owner, progress: round2(n.progress), by: n.by });
-    }
-    // Zone-wide boss status (NOT AOI-culled) so every player can locate it + see its
-    // respawn countdown — the "find" half of find-and-fight.
-    let boss:
-      | { name: string; x: number; y: number; hp: number; hpMax: number; alive: boolean; respawnSec: number }
-      | undefined;
-    for (const e of this.enemies.values()) {
-      if (!e.boss) continue;
-      const alive = e.hp > 0;
-      boss = {
-        name: e.name ?? "BOSS",
-        x: round2(alive ? e.x : e.ox), // where it is now; its lair while reforming
-        y: round2(alive ? e.y : e.oy),
-        hp: Math.max(0, Math.round(e.hp)),
-        hpMax: Math.round(e.maxHp),
-        alive,
-        respawnSec: alive ? 0 : Math.max(0, Math.ceil(((e.respawnTick - this.tick) * NET_TICK_MS) / 1000)),
-      };
-      break;
-    }
-    return JSON.stringify({
-      t: "state",
+    return buildWorldSnapshot({
       tick: this.tick,
-      players,
-      enemies,
-      shots,
-      pickups,
-      hazards,
-      nodes,
+      netTickMs: NET_TICK_MS,
+      aoiRadius: AOI_RADIUS,
+      viewer,
+      players: this.players.values(),
+      playerViews,
+      enemies: this.enemies.values(),
+      shots: this.shots,
+      pickups: this.pickups.values(),
+      hazards: this.hazards,
+      nodes: this.nodes,
       factions,
       control,
       roster,
-      boss,
+      inTutorial: this.inTutorial(),
     });
   }
 
@@ -5045,19 +5079,22 @@ export class WorldDO {
 
   /** Enter/exit THE CRUCIBLE — $METRO buy-in escrow. Called after movement each tick. */
   private tickPvpArena(p: PlayerState) {
+    // D1 owns a transition once queued. Do not enqueue a second entry/exit while a
+    // prior kill, refund, or debit is still resolving.
+    if (p.pvpPending > 0) return;
     if (this.inTutorial() || this.interior) {
-      if (p.pvpInArena) this.refundPvpEscrow(p, "contest ended");
+      if (p.pvpInArena) void this.refundPvpEscrow(p, "contest ended");
       return;
     }
     const { worldW, worldH } = gridDims(this.grid);
     const zones = pvpZonesFor(worldW, worldH, this.zoneName);
     if (zones.length === 0) {
-      if (p.pvpInArena) this.refundPvpEscrow(p, "contest ended");
+      if (p.pvpInArena) void this.refundPvpEscrow(p, "contest ended");
       return;
     }
     const inZone = inPvpZone(p.x, p.y, zones);
     if (!inZone) {
-      if (p.pvpInArena) this.refundPvpEscrow(p, "left the arena");
+      if (p.pvpInArena) void this.refundPvpEscrow(p, "left the arena");
       p.pvpSafeX = p.x;
       p.pvpSafeY = p.y;
       return;
@@ -5073,27 +5110,150 @@ export class WorldDO {
       });
       return;
     }
-    p.metro -= PVP_BUY_IN_METRO;
-    p.pvpEscrow = PVP_BUY_IN_METRO;
-    p.pvpInArena = true;
-    p.dirty = true;
-    this.sendTo(p.id, {
-      t: "sys",
-      text: `◈ ${fmtMetro(PVP_BUY_IN_METRO)} $METRO buy-in locked — claim eliminations, leave safely to withdraw`,
+    void this.enterPvpEscrow(p);
+  }
+
+  /** Append one escrow mutation to the zone's durable gameplay-order queue. */
+  private queuePvp(op: () => Promise<void>): Promise<void> {
+    const run = this.pvpTail.then(op, op);
+    this.pvpTail = run.catch(() => {
+      /* callers restore/reconcile their own runtime state */
+    });
+    return run;
+  }
+
+  /** Save the live withdrawable balance immediately before an escrow batch changes it. */
+  private saveBeforePvpTransition(p: PlayerState): Promise<boolean> {
+    return this.upsert(
+      p.id,
+      p.name,
+      p.x,
+      p.y,
+      p.credits,
+      p.xp,
+      p.cores,
+      p.metro,
+      p.campaign.toData(),
+      p.inventory,
+      p.stash,
+      p.look,
+      p.equipped,
+      p.tutorialDone,
+      p.tutorialStep,
+      undefined,
+      p.tutorialMode ?? "quick",
+    );
+  }
+
+  /** Lock a buy-in. One D1 batch debits players.metro and creates the durable pot. */
+  private enterPvpEscrow(p: PlayerState): Promise<void> {
+    if (p.pvpInArena || p.pvpPending > 0) return Promise.resolve();
+    p.pvpPending++;
+    return this.queuePvp(async () => {
+      try {
+        if (!(await this.saveBeforePvpTransition(p))) throw new Error("player save unavailable");
+        const now = Date.now();
+        const amount = await lockDurablePvpEscrow(this.env.DB, {
+          player: p.id,
+          amount: PVP_BUY_IN_METRO,
+          zone: this.zoneName,
+          updatedAt: now,
+        });
+        if (amount !== PVP_BUY_IN_METRO) throw new Error("escrow lock rejected");
+        p.metro -= amount;
+        p.pvpEscrow = amount;
+        p.pvpInArena = true;
+        p.dirty = true;
+        this.sendTo(p.id, {
+          t: "sys",
+          text: `◈ ${fmtMetro(amount)} $METRO buy-in locked — claim eliminations, leave safely to withdraw`,
+        });
+      } catch {
+        // Fail closed: without a durable row the player never becomes a PvP target
+        // and no in-memory-only debit is allowed.
+        p.x = p.pvpSafeX;
+        p.y = p.pvpSafeY;
+        p.dirty = true;
+        this.sendTo(p.id, { t: "sys", text: "arena escrow unavailable — buy-in was not charged" });
+      } finally {
+        p.pvpPending = Math.max(0, p.pvpPending - 1);
+      }
     });
   }
 
-  /** Return escrowed $METRO to the player's withdrawable balance. */
-  private refundPvpEscrow(p: PlayerState, reason: string) {
-    if (!p.pvpInArena) return;
-    const pot = p.pvpEscrow;
-    p.metro += pot;
-    p.pvpEscrow = 0;
+  /** Return the complete durable pot to the player's withdrawable balance. */
+  private refundPvpEscrow(p: PlayerState, reason: string): Promise<void> {
+    if (!p.pvpInArena) return Promise.resolve();
+    const runtimePot = p.pvpEscrow;
     p.pvpInArena = false;
-    p.dirty = true;
-    if (pot > 0) {
-      this.sendTo(p.id, { t: "sys", text: `✓ ${reason} — ◈${fmtMetro(pot)} $METRO returned to your balance` });
-    }
+    p.pvpEscrow = 0;
+    p.pvpPending++;
+    return this.queuePvp(async () => {
+      try {
+        if (!(await this.saveBeforePvpTransition(p))) throw new Error("player save unavailable");
+        const amount = await refundDurablePvpEscrow(this.env.DB, p.id, Date.now());
+        if (amount > 0) {
+          p.metro += amount;
+          p.dirty = true;
+          this.sendTo(p.id, { t: "sys", text: `✓ ${reason} — ◈${fmtMetro(amount)} $METRO returned to your balance` });
+        } else {
+          // Another zone/load may have recovered the row first. Read its committed
+          // balance so this stale isolate cannot overwrite that refund on close.
+          const balance = await readPlayerMetroBalance(this.env.DB, p.id);
+          if (balance !== null) p.metro = balance;
+          p.dirty = true;
+        }
+      } catch {
+        // The durable active row remains the source of truth and a cold load will
+        // recover it. Restore the live marker so a connected player retries exit.
+        p.pvpInArena = true;
+        p.pvpEscrow = runtimePot;
+      } finally {
+        p.pvpPending = Math.max(0, p.pvpPending - 1);
+      }
+    });
+  }
+
+  /** Atomically merge a defeated runner's durable pot into the winner's pot. */
+  private transferPvpEscrow(victim: PlayerState, winner: PlayerState): Promise<void> {
+    victim.pvpPending++;
+    winner.pvpPending++;
+    return this.queuePvp(async () => {
+      let amount = 0;
+      try {
+        amount = await transferDurablePvpEscrow(this.env.DB, {
+          victim: victim.id,
+          winner: winner.id,
+          updatedAt: Date.now(),
+        });
+        if (amount > 0 && winner.pvpInArena) {
+          winner.pvpEscrow += amount;
+          winner.dirty = true;
+        }
+      } catch {
+        // If the winner row vanished (for example, a simultaneous disconnect),
+        // transfer aborts with the victim row still active. Refund it immediately
+        // when D1 is reachable; otherwise cold-load recovery remains the backstop.
+        try {
+          const recovered = await refundDurablePvpEscrow(this.env.DB, victim.id, Date.now());
+          if (recovered > 0) {
+            victim.metro += recovered;
+            victim.dirty = true;
+            this.sendTo(victim.id, {
+              t: "sys",
+              text: `✓ arena payout unavailable — ◈${fmtMetro(recovered)} $METRO returned to your balance`,
+            });
+          }
+        } catch {
+          /* durable active row remains; the victim's next load refunds it */
+        }
+      } finally {
+        victim.pvpPending = Math.max(0, victim.pvpPending - 1);
+        winner.pvpPending = Math.max(0, winner.pvpPending - 1);
+        const lootLine = amount > 0 ? ` (+◈${fmtMetro(amount)} $METRO)` : "";
+        this.broadcastSys(`☠ ${winner.name} eliminated ${victim.name} in the arena${lootLine}`);
+      }
+    });
   }
 
   /** Player-vs-player damage, gated to the PvP arenas. The server owns HP/death/respawn
@@ -5118,14 +5278,10 @@ export class WorldDO {
           v.hp = 0;
           v.dead = true;
           v.respawnTick = this.tick + ticks(RESPAWN_MS);
-          const loot = v.pvpEscrow;
           v.pvpEscrow = 0;
           v.pvpInArena = false;
           v.dirty = true;
-          if (loot > 0) {
-            shooter.pvpEscrow += loot;
-            shooter.dirty = true;
-          }
+          void this.transferPvpEscrow(v, shooter);
           shooter.credits += CREDITS_PER_KILL * 3; // an arena kill pays a bounty
         this.eco("emit", "arena", CREDITS_PER_KILL * 3);
           shooter.xp += XP_PER_KILL * 2;
@@ -5133,8 +5289,6 @@ export class WorldDO {
           shooter.dirty = true;
           this.bumpStat(shooter, "pvp", 1);
           this.bumpStat(shooter, "credits", CREDITS_PER_KILL * 3);
-          const lootLine = loot > 0 ? ` (+◈${fmtMetro(loot)} $METRO)` : "";
-          this.broadcastSys(`☠ ${shooter.name} eliminated ${v.name} in the arena${lootLine}`);
         }
         return true;
       }
@@ -5184,9 +5338,13 @@ export class WorldDO {
 
   private async persistDirty() {
     for (const p of this.players.values()) {
-      if (p.dirty) {
+      let playerSaved = true;
+      // An escrow operation has already snapshotted (or is about to snapshot) the
+      // exact withdrawable balance it will atomically debit/refund. Do not race it
+      // with the ordinary two-second player upsert.
+      if (p.dirty && p.pvpPending === 0) {
         p.dirty = false;
-        await this.upsert(
+        playerSaved = await this.upsert(
           p.id,
           p.name,
           p.x,
@@ -5205,9 +5363,13 @@ export class WorldDO {
           undefined,
           p.tutorialMode ?? "quick",
         );
+        if (!playerSaved) p.dirty = true;
       }
       await this.flushStats(p); // lifetime counters / achievements may change without `dirty`
       await this.flushDailies(p);
+      // An active tracker is independent of the core player row. Clearing a completed
+      // tracker waits until its coupled credit reward has saved successfully.
+      if (p.bounty || (playerSaved && !p.dirty)) await this.flushBounty(p);
     }
     await this.syncMeta();
   }
@@ -5307,7 +5469,7 @@ export class WorldDO {
     tutorialStep = 0,
     zoneOverride?: string,
     tutorialMode: TutorialMode = "quick",
-  ) {
+  ): Promise<boolean> {
     const zone = zoneOverride ?? this.zoneName;
     try {
       await this.env.DB.prepare(
@@ -5335,8 +5497,9 @@ export class WorldDO {
           Date.now(),
         )
         .run();
+      return true;
     } catch {
-      /* D1 hiccup — next snapshot retries */
+      return false; // caller retains `dirty` so the next snapshot really retries
     }
   }
 
@@ -5350,8 +5513,11 @@ export class WorldDO {
       if (tr) this.endTrade(tr, "cancelled", "trade partner left");
       this.leaveParty(p);
       this.pendingInvites.delete(p.id);
-      if (p.pvpInArena) this.refundPvpEscrow(p, "disconnected from arena");
-      await this.upsert(
+      if (p.pvpInArena) await this.refundPvpEscrow(p, "disconnected from arena");
+      // A defeated player can close while their transfer is behind another zone
+      // operation. Wait before the final upsert so no stale balance wins the race.
+      if (p.pvpPending > 0) await this.pvpTail;
+      const playerSaved = await this.upsert(
         p.id,
         p.name,
         p.x,
@@ -5372,6 +5538,7 @@ export class WorldDO {
       );
       await this.flushStats(p);
       await this.flushDailies(p);
+      if (p.bounty || playerSaved) await this.flushBounty(p);
       await this.syncMeta();
       this.players.delete(id);
     }

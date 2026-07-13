@@ -68,15 +68,32 @@ npm install && npm run dev
 # server (Cloudflare Workers local; WebSocket on :8787)
 cd server && npm install && npm run migrate:local && npm run dev
 
+# bridge accounting smoke only (explicitly enables trusted simulated settlement)
+cd server && npm run dev:sim
+
 # both at once
 npm run dev:online
 ```
 
 - `npm run typecheck` / `npm test` — client checks.
+- `cd server && npm run smoke:pvp-escrow` — isolated SQLite proof for atomic
+  Crucible buy-in, elimination transfer, replay protection, and crash refund.
 - `cd server && npm run smoke <mode>` — headless server proofs. Modes:
   `move combat kit mp zones quest trade territory social market daily look
   abuse subway interior safehouse dive event metro load` (see the header of
   `server/scripts/smoke.mjs` for battery-ordering constraints).
+  The `metro` and `market` modes require the server to be started with
+  `npm run dev:sim`; ordinary `npm run dev` keeps simulated ledger mutations locked.
+- `npm run smoke:load -- 50` — 50-player local load/reconnect proof against the
+  running server. It reports client snapshot rate/stalls, reconnect recovery,
+  authoritative tick cost, and snapshot bandwidth from `/stats`. Soak duration
+  and pass thresholds are configurable, for example:
+  `LOAD_DURATION_MS=30000 LOAD_RECONNECT_FRACTION=.3 npm run smoke:load -- 100`.
+  Useful gates are `LOAD_MIN_HZ`, `LOAD_MAX_SNAPSHOT_GAP_MS`,
+  `LOAD_MAX_RECONNECT_MS`, and `LOAD_MAX_TICK_AVG_MS`.
+  The normal 20-player local gate passes on one machine. Treat 50+ as a stress
+  profile unless the Worker and clients run on separate hosts; local workerd,
+  D1, and every Node bot otherwise compete for the same event loop/CPU budget.
 - `SHIPPING.md` — one-command-per-side production deploy.
 - `marketing/` — 30s gameplay trailer + posters (`build-trailer.sh`).
 
