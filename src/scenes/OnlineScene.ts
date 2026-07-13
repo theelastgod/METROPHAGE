@@ -289,6 +289,8 @@ export default class OnlineScene extends Phaser.Scene {
   private dailyText!: Phaser.GameObjects.Text; // active daily contract — the immediate objective
   private bountyText!: Phaser.GameObjects.Text; // active authored NPC bounty
   private storyPanel!: Phaser.GameObjects.Text;
+  /** Hold campaign / fragment dialogue until this timestamp (ms, performance.now). */
+  private storyHoldUntil = 0;
   private chatOpen = false;
   private chatBuffer = "";
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
@@ -1044,6 +1046,7 @@ export default class OnlineScene extends Phaser.Scene {
     this.net.travelFrom = fastArrival ? undefined : this.fromZone;
     this.wireHomeAfterNet(); // if this is an est{K} home, hook estate updates + furniture placement
     this.net.onCampaign = () => this.refreshAllyLines(); // story allies re-react as the questline advances
+    this.net.onStory = () => this.presentStoryBeat();
     const tutorialMode =
       data?.tutorialMode ?? (this.registry.get("tutorialMode") as TutorialMode | undefined) ?? getSettings().tutorialMode;
     if (this.isTutorial) this.registry.set("tutorialMode", tutorialMode);
@@ -1462,18 +1465,23 @@ export default class OnlineScene extends Phaser.Scene {
     this.storyPanel = this.add
       // Mobile: the 0.16 band belongs to the hotbar/actions/tracker stack — beats
       // read lower, still above the interact prompt.
-      .text(this.scale.width / 2, this.scale.height * (this.mobileUx() ? 0.34 : 0.16), "", hudFont(12, {
+      .text(this.scale.width / 2, this.scale.height * (this.mobileUx() ? 0.34 : 0.18), "", hudFont(13, {
         color: "#eafdff",
         align: "center",
-        backgroundColor: "#0b0716e0",
-        padding: { x: uiDim(16), y: uiDim(10) },
+        backgroundColor: "#0b0716f2",
+        padding: { x: uiDim(18), y: uiDim(12) },
         wordWrap: { width: uiDim(560) },
       }))
       .setOrigin(0.5)
       .setScrollFactor(0)
-      .setDepth(1006)
-      .setVisible(false);
+      .setDepth(1900)
+      .setVisible(false)
+      .setInteractive({ useHandCursor: true });
     this.storyPanel.setWordWrapWidth(Math.min(this.scale.width - uiDim(64), uiDim(560)));
+    this.storyPanel.on("pointerdown", () => {
+      this.storyHoldUntil = 0;
+      this.storyPanel.setVisible(false);
+    });
     // First-session coach + core loop — always above the action so "what next" is obvious.
     this.coachText = this.add
       .text(this.scale.width / 2, uiDim(44), "", hudFont(11, {
@@ -2133,9 +2141,8 @@ export default class OnlineScene extends Phaser.Scene {
         this.market.toggle(n.marketListings, n.inventory, n.id, n.credits, n.metro);
         break;
       case "contracts":
-        this.contracts.toggle(n.contracts, n.rep);
-        this.net.questTalk();
-        noteTalkedFixer();
+        // FIXER is campaign first (THE WAKE + talk beats). Daily contracts = J key.
+        this.engageFixer();
         break;
       case "board":
         this.board.toggle(n.achievements, n.id);
@@ -2794,14 +2801,72 @@ export default class OnlineScene extends Phaser.Scene {
     const b = npc.npcId ? bountyForNpc(npc.npcId) : undefined;
     if (b) {
       const face = this.bubblePortrait(npc.npcId, npc.name);
+      if (!this.net.connected) {
+        this.showBubble(npc.x, npc.y, `${npc.name}: …link the city first — I don't hand jobs offline.`, face);
+        return;
+      }
       const active = this.net.bounty;
       if (active && active.id === b.id) this.showBubble(npc.x, npc.y, `${npc.name}: still on it — ${active.progress}/${active.count}.`, face);
       else if (active) this.showBubble(npc.x, npc.y, `${npc.name}: finish your current job first.`, face);
       else {
         this.net.bountyAccept(b.id);
         this.showBubble(npc.x, npc.y, `${npc.name}: ${b.offer}`, face);
+        // Mirror bounty offer into the story banner so it isn't a one-line bubble only.
+        this.net.story = {
+          quest: b.name,
+          stage: "bounty",
+          title: npc.name,
+          text: b.offer,
+          journal: b.offer,
+          objective: b.desc,
+          done: false,
+          at: performance.now(),
+        };
+        this.presentStoryBeat();
       }
     } else this.sayLine(npc);
+  }
+
+  /**
+   * THE FIXER interact — starts / advances the personal campaign (THE WAKE…).
+   * Daily contracts board is separate (J key) so the first mission is never just a menu.
+   */
+  private engageFixer() {
+    noteTalkedFixer();
+    const face = this.bubblePortrait(undefined, "THE FIXER");
+    const fx = this.nearNpc?.x ?? this.me?.x ?? 0;
+    const fy = this.nearNpc?.y ?? this.me?.y ?? 0;
+
+    if (!this.net.connected) {
+      this.showBubble(fx, fy, "THE FIXER: …grid's dark. Wait for the link — then we'll talk.", face);
+      return;
+    }
+
+    // Close boards that would bury the story banner (was the "menu only" bug).
+    this.contracts?.close();
+    this.shop?.close();
+    this.forge?.close();
+    this.market?.close();
+
+    this.showBubble(fx, fy, "THE FIXER: …yeah. You again. Listen.", face);
+    this.net.questEngage();
+  }
+
+  /** Surface campaign / fragment / bounty dialogue above gameplay for a long readable hold. */
+  private presentStoryBeat() {
+    const story = this.net.story;
+    if (!story) return;
+    // ~22s hold — enough to read a journal beat; click the panel to dismiss early.
+    this.storyHoldUntil = performance.now() + 22_000;
+    this.contracts?.close();
+    const body = `◢ ${story.quest} — ${story.title} ◣\n\n${story.text}\n\n▸ ${story.objective}${story.done ? "" : "\n· tap banner to dismiss"}`;
+    this.storyPanel
+      .setText(body)
+      .setVisible(true)
+      .setAlpha(1)
+      .setDepth(1900);
+    this.hudRefreshAcc = OnlineScene.HUD_REFRESH_MS;
+    this.refreshAllyLines();
   }
 
   /** Painted bust for a bubble speaker; sex from the NPC def keeps the face on-sprite. */
@@ -5266,10 +5331,16 @@ export default class OnlineScene extends Phaser.Scene {
       else this.bountyText.setVisible(false);
     }
     const story = this.net.story;
-    if (story && performance.now() - story.at < 8000) {
-      this.storyPanel.setVisible(true).setText(`◢ ${story.quest} — ${story.title} ◣\n\n${story.text}`);
+    const hold = this.storyHoldUntil > 0 ? this.storyHoldUntil : story ? story.at + 8_000 : 0;
+    if (story && performance.now() < hold) {
+      if (!this.storyPanel.visible) {
+        // Late paint if presentStoryBeat raced ahead of panel init.
+        this.storyPanel.setText(`◢ ${story.quest} — ${story.title} ◣\n\n${story.text}\n\n▸ ${story.objective}`);
+      }
+      this.storyPanel.setVisible(true).setDepth(1900);
     } else {
       this.storyPanel.setVisible(false);
+      this.storyHoldUntil = 0;
     }
     this.layoutHudChrome();
   }

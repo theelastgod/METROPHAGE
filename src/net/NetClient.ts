@@ -296,6 +296,8 @@ export default class NetClient {
   onEstate?: () => void; // fired when the server pushes an estate ownership/furniture update
   onEstatesDir?: () => void; // fired when the server pushes the street-wide ownership directory
   onCampaign?: () => void; // fired when the active campaign quest changes (story allies re-react)
+  /** Fired when a `story` beat arrives (FIXER dialogue / quest stage). */
+  onStory?: () => void;
   onRedirect?: (zone: string) => void;
   /** Memory fragments this player has recovered (dive rewards; welcome + live updates). */
   fragments: string[] = [];
@@ -955,6 +957,7 @@ export default class NetClient {
         at: performance.now(),
       };
       this.pushChat({ from: "", ch: "sys", text: `${msg.quest} — ${msg.title}`, faction: -1, sys: true });
+      this.onStory?.();
     } else if (msg.t === "fragment") {
       // a memory recovered at a dive core — surface it through the story panel
       if (msg.isNew && !this.fragments.includes(msg.id)) this.fragments.push(msg.id);
@@ -969,6 +972,7 @@ export default class NetClient {
         at: performance.now(),
       };
       this.onFragment?.(msg.id, msg.isNew);
+      this.onStory?.();
     } else if (msg.t === "event") {
       this.worldEvent =
         msg.phase === "end"
@@ -1050,6 +1054,10 @@ export default class NetClient {
   }
   questTalk() {
     this.sendMsg({ t: "quest", action: "talk" });
+  }
+  /** FIXER interact — accept next campaign job, resolve talk beat, or re-brief. */
+  questEngage() {
+    this.sendMsg({ t: "quest", action: "engage" });
   }
   /** TENEMENT lockbox — server validates the venue, caps, and item ownership. */
   stashAction(action: "deposit" | "withdraw", itemId: string) {

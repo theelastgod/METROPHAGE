@@ -3187,12 +3187,18 @@ export class WorldDO {
     const q = p.campaign.active;
     const s = p.campaign.currentStage;
     if (q && s) {
+      // Prefer spoken uplink; fall back to first-person journal so the FIXER always has copy.
+      const spoken =
+        s.onEnterLine ||
+        (s.on.type === "talk"
+          ? `THE FIXER: ${s.journal}`
+          : `THE FIXER: ${s.objective}. ${s.journal}`);
       this.send(ws, {
         t: "story",
         quest: q.name,
         stage: s.id,
         title: s.objective,
-        text: s.onEnterLine ?? s.journal,
+        text: spoken,
         journal: s.journal,
         objective: s.objective,
         done: false,
@@ -3201,14 +3207,15 @@ export class WorldDO {
     }
     const next = p.campaign.nextOffer();
     if (next) {
+      const hook = next.stages[0]?.journal ?? next.name;
       this.send(ws, {
         t: "story",
         quest: next.name,
         stage: "offer",
         title: "THE FIXER",
-        text: `THE FIXER pinged your uplink: ${next.name}. They're in the safehouse. They've got that look again — like they already know how this ends.`,
+        text: `THE FIXER: ${hook}\n\n▸ Job accepted — ${next.name}. Check your objective and deploy when ready.`,
         journal: next.stages[0]?.journal ?? "",
-        objective: "Visit THE FIXER",
+        objective: next.stages[0]?.objective ?? "Follow THE FIXER",
         done: false,
       });
       return;
@@ -3466,11 +3473,19 @@ export class WorldDO {
     const p = this.playerFor(ws);
     if (!p) return;
     const sys = (text: string) => this.send(ws, { t: "sys", text });
-    if (msg.action === "accept") {
-      const id = msg.id ?? p.campaign.nextOffer()?.id;
-      if (!id) return sys("no quest available");
+
+    /** Accept next (or named) campaign quest and push story dialogue. */
+    const acceptQuest = (wantId?: string): boolean => {
+      const id = wantId ?? p.campaign.nextOffer()?.id;
+      if (!id) {
+        sys("no quest available");
+        return false;
+      }
       const q = p.campaign.accept(id);
-      if (!q) return sys("can't accept that quest");
+      if (!q) {
+        sys("can't accept that quest");
+        return false;
+      }
       p.dirty = true;
       sys(`accepted — ${q.name}`);
       this.sendCampaignBeat(ws, p);
@@ -3479,12 +3494,39 @@ export class WorldDO {
       if (q.stages[0]?.on.type === "visit" && (this.zoneName === ESTATES_ZONE || parseEstateInterior(this.zoneName) !== null)) {
         this.campaignEvent(p, "visit");
       }
+      return true;
+    };
+
+    if (msg.action === "accept") {
+      acceptQuest(msg.id);
       return;
     }
     if (msg.action === "talk") {
-      if (!p.campaign.isTalkStage()) return sys("nothing to report right now");
-      p.campaign.onTalk();
-      this.campaignBeat(p);
+      // Returning to FIXER mid-quest: resolve talk beats; otherwise re-brief (don't dead-end).
+      if (p.campaign.isTalkStage()) {
+        p.campaign.onTalk();
+        this.campaignBeat(p);
+        return;
+      }
+      this.sendCampaignBeat(ws, p);
+      return;
+    }
+    if (msg.action === "engage") {
+      // Primary FIXER interact — this is what starts THE WAKE (was only opening dailies UI).
+      if (!p.campaign.activeId) {
+        if (!acceptQuest()) {
+          // Campaign complete or nothing offered — still send closing beat.
+          this.sendCampaignBeat(ws, p);
+        }
+        return;
+      }
+      if (p.campaign.isTalkStage()) {
+        p.campaign.onTalk();
+        this.campaignBeat(p);
+        return;
+      }
+      // Active combat/visit stage — re-deliver the uplink so the player hears the brief again.
+      this.sendCampaignBeat(ws, p);
     }
   }
 

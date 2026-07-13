@@ -122,6 +122,8 @@ export type ClientMsg =
   // personal campaign — accept a quest from THE FIXER or resolve a talk beat
   | { t: "quest"; action: "accept"; id?: string }
   | { t: "quest"; action: "talk" }
+  /** Unified FIXER interact: accept next offer, resolve talk beat, or re-send current story. */
+  | { t: "quest"; action: "engage" }
   | { t: "tutorial"; action: "skip" | "graduate" | "progress" | "mode"; kind?: string; mode?: "quick" | "full"; n?: number }
   | { t: "buy"; sku: string } // vendor purchase (heal / gear cache), priced + validated server-side
   | { t: "emote"; kind: number; ping: boolean; x: number; y: number } // emote (above avatar) or world ping
