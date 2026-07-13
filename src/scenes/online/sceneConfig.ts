@@ -96,7 +96,7 @@ export const CITY_HUB_NPCS: {
   {
     svc: "contracts",
     name: "THE FIXER",
-    tag: "CONTRACTS",
+    tag: "THE WAKE", // campaign jobs — not the daily contracts board (J)
     color: 0x39ff88,
     tile: hubT(8, 10),
     look: hubLook({ color: 0x39ff88, head: "hood", skin: 0x4f3220, hair: "long", hairColor: 0xc7cdd8, cloak: "coat" }),

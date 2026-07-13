@@ -125,7 +125,7 @@ export function firstSessionLine(): string | null {
   if (state.dismissed || state.step === "done") return null;
   switch (state.step) {
     case "meet_fixer":
-      return "▶ GO TO THE FIXER (green light) — accept THE WAKE · then deploy";
+      return "▶ Talk to THE FIXER (green light / E) — start THE WAKE · then deploy south";
     case "deploy":
       return "▶ DEPLOY south through the gate — enter a combat district";
     case "combat":

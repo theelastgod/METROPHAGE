@@ -15,6 +15,7 @@ import OnlineMarket from "../ui/OnlineMarket";
 import OnlineStash from "../ui/OnlineStash";
 import { installDecorCulling } from "../render/decorCull";
 import OnlineContracts from "../ui/OnlineContracts";
+import FixerBrief from "../ui/FixerBrief";
 import OnlineChatPanel from "../ui/OnlineChatPanel";
 import { COLORS, TILE, VIEW_W, VIEW_H, NPC, PLAYER, HEAT, uiDim, uiFont, DISTRICT_SCALE } from "../config";
 import { effectiveMods } from "../game/items";
@@ -273,6 +274,7 @@ export default class OnlineScene extends Phaser.Scene {
   private guildPanel!: OnlineGuild; // guild ("Cell") bank/roster/level (D1-backed)
   private market!: OnlineMarket; // auction house — cross-zone player market (D1-backed)
   private contracts!: OnlineContracts; // daily contracts + reputation track (D1-backed)
+  private fixerBrief!: FixerBrief; // campaign brief (THE WAKE) — never the dailies board
   private cosmetics!: OnlineCosmetics; // wardrobe / transmog (cosmetic-only, wallet-owned)
   private stashPanel!: OnlineStash; // TENEMENT lockbox — personal safe storage (D1-backed)
   private mapPanel!: OnlineMap; // fast-travel map with per-account discovery fog
@@ -799,7 +801,7 @@ export default class OnlineScene extends Phaser.Scene {
               { svc: "forge", name: "ARMORER", tag: "FORGE", color: 0xff2bd6, look: hubLook({ color: 0xff2bd6, sex: "f", skin: 0xe6b58c, hair: "undercut", hairColor: 0x1b1820, gloves: "wraps" }) },
             ],
             den: [{ svc: "market", name: "FENCE", tag: "BLACK MARKET", color: 0xff2bd6, look: hubLook({ color: 0xff2bd6, head: "hood", skin: 0xa9794a, hair: "short", hairColor: 0x1b1820, cloak: "coat" }) }],
-            bar: [{ svc: "contracts", name: "FIXER", tag: "CONTRACTS", color: 0x9dff3c, look: hubLook({ color: 0x9dff3c, skin: 0x7c4f30, hair: "dreads", hairColor: 0x1b1820, cloak: "coat" }) }],
+            bar: [{ svc: "contracts", name: "FIXER", tag: "THE WAKE", color: 0x9dff3c, look: hubLook({ color: 0x9dff3c, skin: 0x7c4f30, hair: "dreads", hairColor: 0x1b1820, cloak: "coat" }) }],
           };
           (VENUE_SERVICES[kind] ?? []).forEach((s, j) => {
             const [tx, ty] = seats[(occupants.length + j) % seats.length];
@@ -1125,6 +1127,7 @@ export default class OnlineScene extends Phaser.Scene {
       if (this.market.open) this.market.setState(this.net.marketListings, this.net.inventory, this.net.id, this.net.credits, this.net.metro);
     };
     this.contracts = new OnlineContracts(this);
+    this.fixerBrief = new FixerBrief(this);
     this.net.onContracts = () => {
       if (this.contracts.open) this.contracts.setState(this.net.contracts, this.net.rep);
       this.shop.setRep(this.net.repTier); // higher vendor caches unlock with reputation
@@ -1355,6 +1358,7 @@ export default class OnlineScene extends Phaser.Scene {
     reg(() => !!this.market?.open, () => this.market.close());
     reg(() => !!this.stashPanel?.open, () => this.stashPanel.close());
     reg(() => !!this.contracts?.open, () => this.contracts.close());
+    reg(() => !!this.fixerBrief?.isOpen, () => this.fixerBrief.close());
     reg(() => !!this.board?.open, () => this.board.close());
     reg(() => !!this.guildPanel?.open, () => this.guildPanel.close());
     reg(() => !!this.cosmetics?.open, () => this.cosmetics.close());
@@ -1682,15 +1686,23 @@ export default class OnlineScene extends Phaser.Scene {
         return;
       }
       if (e.key === "j" || e.key === "J") {
-        // Tutorial + first hour: contracts board. RS mode outside funnel: quest log.
+        // J is DAILY contracts only — never THE WAKE. If campaign not started, route to FIXER brief.
         if (this.usingRsControls() && !this.isTutorial && !firstHourSystemsLocked()) {
           this.refreshQuestLog(true);
+          return;
+        }
+        if (!this.net.campaignQuest && this.net.connected && !this.isTutorial) {
+          this.engageFixer();
           return;
         }
         this.tryOpenCitySystem(() => {
           this.contracts.toggle(this.net.contracts, this.net.rep);
           if (this.contracts.open) this.reportTutorialPanel("contracts");
         });
+        return;
+      }
+      if (this.fixerBrief?.isOpen && e.key === "Escape") {
+        this.fixerBrief.close();
         return;
       }
       if (this.contracts.open && e.key === "Escape") {
@@ -2846,7 +2858,7 @@ export default class OnlineScene extends Phaser.Scene {
 
   /**
    * THE FIXER interact — starts / advances the personal campaign (THE WAKE…).
-   * Daily contracts board is separate (J key) so the first mission is never just a menu.
+   * Daily contracts board is separate (J only after you have a mission).
    */
   private engageFixer() {
     noteTalkedFixer();
@@ -2854,30 +2866,64 @@ export default class OnlineScene extends Phaser.Scene {
     const fx = this.nearNpc?.x ?? this.me?.x ?? 0;
     const fy = this.nearNpc?.y ?? this.me?.y ?? 0;
 
-    if (!this.net.connected) {
-      this.showBubble(fx, fy, "THE FIXER: …grid's dark. Wait for the link — then we'll talk.", face);
-      return;
-    }
-
-    // Close boards that would bury the story banner (was the "menu only" bug).
+    // Always close dailies — talking to FIXER must never open that board.
     this.contracts?.close();
     this.shop?.close();
     this.forge?.close();
     this.market?.close();
+    this.questLog?.close?.();
+
+    if (!this.net.connected) {
+      this.showBubble(fx, fy, "THE FIXER: …grid's dark. Wait for the link — then we'll talk.", face);
+      this.fixerBrief?.show({
+        quest: "OFFLINE",
+        title: "No uplink",
+        text: "Can't accept THE WAKE until the server links. Wait for LINKING to clear, then talk again.",
+        objective: "Stay near THE FIXER · wait for link",
+      });
+      return;
+    }
 
     this.showBubble(fx, fy, "THE FIXER: …yeah. You again. Listen.", face);
+    // Immediate placeholder so the player never only sees a blank / wrong panel.
+    this.fixerBrief?.show({
+      quest: this.net.campaignQuest ? "BRIEFING" : "THE WAKE",
+      title: this.net.campaignQuest ? "Checking the books…" : "New job",
+      text: this.net.campaignQuest
+        ? "Hold on — pulling your current beat."
+        : "Signing you onto THE WAKE. Don't walk off.",
+      objective: this.net.campaignQuest ? "…" : "Accepting…",
+    });
     this.net.questEngage();
+    // Failsafe re-engage if the first packet was lost mid-reconnect.
+    this.time.delayedCall(800, () => {
+      if (!this.sys.isActive() || !this.net?.connected) return;
+      if (!this.net.campaignQuest) this.net.questEngage();
+    });
   }
 
-  /** Surface campaign / fragment / bounty dialogue as a compact toast. */
+  /** Surface campaign / fragment / bounty dialogue via FIXER brief + small toast. */
   private presentStoryBeat() {
     const story = this.net.story;
     if (!story) return;
-    // Short hold — full journal is in the objective strip / log, not a wall of text.
-    this.storyHoldUntil = performance.now() + 10_000;
     this.contracts?.close();
+    // Prefer dedicated FIXER panel for campaign beats (not dailies).
+    const isCampaign =
+      !!story.quest &&
+      !story.quest.startsWith("MEMORY") &&
+      story.stage !== "bounty";
+    if (isCampaign) {
+      this.fixerBrief?.update({
+        quest: story.quest,
+        title: story.title,
+        text: story.text,
+        objective: story.objective,
+      });
+    }
+    // Short toast as secondary cue.
+    this.storyHoldUntil = performance.now() + 8_000;
     const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
-    const body = `◢ ${clip(story.quest, 28)} · ${clip(story.title, 36)}\n${clip(story.text.replace(/\n+/g, " "), 140)}\n▸ ${clip(story.objective, 42)} · tap`;
+    const body = `◢ ${clip(story.quest, 28)} · ${clip(story.title, 36)}\n${clip(story.text.replace(/\n+/g, " "), 120)}\n▸ ${clip(story.objective, 42)}`;
     this.storyPanel
       .setText(body)
       .setVisible(true)
@@ -6540,6 +6586,7 @@ export default class OnlineScene extends Phaser.Scene {
       this.market?.open ||
       this.board?.open ||
       this.contracts?.open ||
+      this.fixerBrief?.isOpen ||
       this.rsSkillsPanel?.open ||
       this.mapPanel?.open ||
       this.questLog?.open ||

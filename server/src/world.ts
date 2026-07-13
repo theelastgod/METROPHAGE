@@ -2805,7 +2805,7 @@ export class WorldDO {
         if (!p.campaign.activeId) {
           this.send(ws, {
             t: "sys",
-            text: `◢ METRO CITY — ${this.sessions.size} runners online · safe zone. THE FIXER (J) knew the last you. Accept THE WAKE, then DEPLOY GATE.`,
+            text: `◢ METRO CITY — ${this.sessions.size} runners online · safe zone. Talk to THE FIXER (green light / E) for THE WAKE, then DEPLOY south. J = daily contracts only.`,
           });
         } else {
           this.send(ws, { t: "sys", text: `◢ METRO CITY — ${this.sessions.size} runners sharing this zone.` });
