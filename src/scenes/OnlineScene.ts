@@ -117,8 +117,9 @@ import { getWeapon, type PrimaryDef } from "../game/weapons";
 import { ENEMY_BARKS } from "../game/enemies";
 import { gridDims, pvpZonesFor, stepMove, NET_TICK_MS, RESPAWN_MS, type MoveState } from "../net/sim";
 import PvpCrucibleHud from "../ui/PvpCrucibleHud";
+import { topIntelRailGeometry } from "../ui/topIntelRail";
 import { drawHubNpcPlate } from "../ui/studioChrome";
-import { displayFont, bodyFont, hudFont } from "../ui/typography";
+import { displayFont, bodyFont, hudFont, fitTextToWidth, setFittedText } from "../ui/typography";
 import { onlineHudStack, uiGap, panelPadInner } from "../ui/spacing";
 import { drawHudPanel, drawPremiumBar, ensureHudPanelImage } from "../ui/panelChrome";
 import ClickToMove from "../systems/ClickToMove";
@@ -273,6 +274,9 @@ export default class OnlineScene extends Phaser.Scene {
   private tradeText!: Phaser.GameObjects.Text;
   private trackerG!: Phaser.GameObjects.Graphics; // backing frame behind the objective tracker
   private trackerBottomY = 0; // where the boss banner may start
+  private intelEventMaxW = 0; // fixed top-rail width used by the per-frame event countdown
+  private intelRailX = 0;
+  private intelRailW = 0;
   private questText!: Phaser.GameObjects.Text;
   private dailyText!: Phaser.GameObjects.Text; // active daily contract — the immediate objective
   private bountyText!: Phaser.GameObjects.Text; // active authored NPC bounty
@@ -1163,7 +1167,7 @@ export default class OnlineScene extends Phaser.Scene {
       .setDepth(20)
       .setVisible(false);
     this.questMarker.setShadow(0, 0, "#02030a", 5, true, true);
-    // world-event banner — slots under the boss banner, colored by the event
+    // Live world-event row — laid into the shared top intel rail by layoutHudChrome().
     this.eventBanner = this.add
       .text(VIEW_W / 2, uiDim(72), "", hudFont(11, { fontStyle: "bold", align: "center" }))
       .setOrigin(0.5, 0)
@@ -5135,7 +5139,7 @@ export default class OnlineScene extends Phaser.Scene {
       // Always show a compact objective strip in the hub — new runners need the FIXER
       // pointer. Only hide once the campaign is fully done.
       const showQuest = this.isCityHub ? !camp.done : hasActive;
-      this.questText.setText(showQuest ? hudLine : "").setVisible(showQuest);
+      this.questText.setText(showQuest ? `MISSION // ${hudLine}` : "").setVisible(showQuest);
       // Waypoint always tracks the next physical beat (FIXER / gate / estates).
       this.questTarget = this.resolveQuestTarget(camp);
     }
@@ -5143,12 +5147,12 @@ export default class OnlineScene extends Phaser.Scene {
       const active = this.net.contracts.find((c) => !c.done);
       // Hide "contracts complete" noise — only surface in-progress work.
       if (active) {
-        this.dailyText.setVisible(true).setText(`◇ ${active.name}  ${Math.min(active.progress, active.count)}/${active.count}`);
+        this.dailyText.setVisible(true).setText(`DAILY // ${active.name}  ${Math.min(active.progress, active.count)}/${active.count}`);
       } else {
         this.dailyText.setVisible(false);
       }
       const bty = this.net.bounty;
-      if (bty) this.bountyText.setVisible(true).setText(`◈ ${bty.name}  ${Math.min(bty.progress, bty.count)}/${bty.count}`);
+      if (bty) this.bountyText.setVisible(true).setText(`BOUNTY // ${bty.name}  ${Math.min(bty.progress, bty.count)}/${bty.count}`);
       else this.bountyText.setVisible(false);
     }
     const story = this.net.story;
@@ -5197,63 +5201,91 @@ export default class OnlineScene extends Phaser.Scene {
       this.tutorialPanel.setY(Math.max(uiDim(this.mobileUx() ? 150 : 76), py + innerH + pad * 2 + uiGap("sm")));
     }
 
-    // top-center objective tracker: stack visible rows, one shared frame behind them.
-    // On narrow/mobile layouts it drops below the status panel instead of trying to
-    // share the top row and printing through it.
+    // Top intel rail: mission + the most urgent secondary objective share a compact
+    // two-row panel beside status. Keeping the live event INSIDE this rail prevents
+    // mobile's old status -> quests -> boss -> event chain from drifting mid-screen.
     const mobile = this.mobileUx();
     const screenPad = uiDim(12);
     const statusRight = px + panelW;
     const statusBottom = py + panelH;
-    let trackerTop = mobile ? Math.max(uiDim(44), statusBottom + uiGap("sm")) : uiDim(12);
-    const cx = this.scale.width / 2;
-    const rightLaneW = Math.max(0, this.scale.width - statusRight - uiGap("md") - screenPad);
-    const centeredFrameMaxW = this.scale.width - screenPad * 2;
-    // Mobile: a compact card hugging the LEFT edge under the status panel — a wide
-    // centered banner sat in the middle of the short landscape screen, over the action.
-    const textMaxW = Math.max(
-      uiDim(180),
-      Math.min(uiDim(mobile ? 300 : 640), (mobile ? centeredFrameMaxW : Math.max(rightLaneW, centeredFrameMaxW * 0.52)) - pad * 2),
-    );
-    const rows = [this.questText, this.dailyText, this.bountyText].filter(
-      (t) => t.visible && t.text.length > 0,
-    );
-    for (const row of rows) row.setWordWrapWidth(textMaxW);
+    const laneGap = uiGap(mobile ? "sm" : "md");
+    // Pathological narrow/status-heavy layouts still get a safe full-width row below
+    // status; normal phone landscape (including 844x390) always takes the true top lane.
+    const rail = topIntelRailGeometry({
+      viewW: this.scale.width,
+      top: py,
+      screenPad,
+      statusRight,
+      statusBottom,
+      laneGap,
+      fallbackGap: uiGap("sm"),
+      minTopWidth: uiDim(220),
+      maxWidth: uiDim(mobile ? 560 : 640),
+    });
+    const trackerTop = rail.y;
+    const left = rail.x;
+    const frameW = Math.max(uiDim(180), rail.w);
+    const textMaxW = Math.max(uiDim(150), frameW - pad * 2);
+    this.intelRailX = left;
+    this.intelRailW = frameW;
+    this.intelEventMaxW = textMaxW;
+
+    const questVisible = this.questText.visible && this.questText.text.length > 0;
+    const eventVisible = this.eventBanner.visible && this.eventBanner.text.length > 0;
+    const dailyVisible = this.dailyText.visible && this.dailyText.text.length > 0;
+    const bountyVisible = this.bountyText.visible && this.bountyText.text.length > 0;
+    const secondaryVisible = eventVisible || dailyVisible || bountyVisible;
+
+    // Events own the urgency row while live. Daily/bounty state stays visible=true at
+    // alpha 0, so it returns instantly when an event ends instead of waiting on data.
+    this.dailyText.setAlpha(eventVisible ? 0 : 1);
+    this.bountyText.setAlpha(eventVisible ? 0 : 1);
+    this.eventBanner.setAlpha(1);
+    for (const row of [this.questText, this.dailyText, this.bountyText, this.eventBanner]) {
+      row.setOrigin(0, 0).setWordWrapWidth(0);
+    }
     this.trackerG.clear();
-    if (rows.length === 0) {
+    if (!questVisible && !secondaryVisible) {
       if (this.trackerPanelImg) this.trackerPanelImg.setVisible(false);
-      this.trackerBottomY = trackerTop;
+      this.trackerBottomY = statusBottom;
       this.positionCoach();
       return;
     }
+
     let y = trackerTop + pad;
-    let maxW = 0;
-    for (const row of rows) {
-      row.setPosition(cx, y);
-      y += row.height + uiGap("xs");
-      maxW = Math.max(maxW, row.width);
+    if (questVisible) {
+      fitTextToWidth(this.questText, textMaxW, { minScale: mobile ? 0.74 : 0.8 });
+      this.questText.setPosition(left + pad, y);
+      y += this.questText.displayHeight;
     }
-    const frameW = Math.min(maxW + pad * 2, textMaxW + pad * 2, centeredFrameMaxW);
-    const frameH = y - uiGap("xs") + pad - trackerTop;
-    // Never let the tracker frame lap the status panel. Desktop uses the right lane
-    // when it fits; otherwise the tracker moves underneath the status stack.
-    let left = mobile ? screenPad : cx - frameW / 2; // mobile: left-anchored, not mid-screen
-    const overlapsStatusBand = trackerTop < statusBottom + uiGap("sm");
-    if (!mobile && overlapsStatusBand) {
-      const rightLaneLeft = statusRight + uiGap("md");
-      if (rightLaneW >= frameW) {
-        left = Math.max(left, rightLaneLeft);
+
+    let secondaryY = y;
+    let secondaryH = 0;
+    if (secondaryVisible) {
+      if (questVisible) y += uiGap("xs");
+      secondaryY = y;
+      if (eventVisible) {
+        fitTextToWidth(this.eventBanner, textMaxW, { minScale: mobile ? 0.72 : 0.78 });
+        this.eventBanner.setPosition(left + pad, y);
+        secondaryH = this.eventBanner.displayHeight;
       } else {
-        const nextTop = statusBottom + uiGap("sm");
-        const dy = nextTop - trackerTop;
-        trackerTop = nextTop;
-        y += dy;
-        for (const row of rows) row.setY(row.y + dy);
+        const chipGap = dailyVisible && bountyVisible ? uiGap("sm") : 0;
+        const chipW = (textMaxW - chipGap) / (dailyVisible && bountyVisible ? 2 : 1);
+        if (dailyVisible) {
+          fitTextToWidth(this.dailyText, chipW, { minScale: mobile ? 0.72 : 0.78 });
+          this.dailyText.setPosition(left + pad, y);
+          secondaryH = Math.max(secondaryH, this.dailyText.displayHeight);
+        }
+        if (bountyVisible) {
+          fitTextToWidth(this.bountyText, chipW, { minScale: mobile ? 0.72 : 0.78 });
+          this.bountyText.setPosition(left + pad + (dailyVisible ? chipW + chipGap : 0), y);
+          secondaryH = Math.max(secondaryH, this.bountyText.displayHeight);
+        }
       }
+      y += secondaryH;
     }
-    const maxLeft = Math.max(screenPad, this.scale.width - screenPad - frameW);
-    left = Phaser.Math.Clamp(left, screenPad, maxLeft);
-    const tcx = left + frameW / 2;
-    for (const row of rows) row.setX(tcx);
+    const frameH = y + pad - trackerTop;
+
     this.trackerPanelImg = ensureHudPanelImage(
       this,
       this.trackerPanelImg,
@@ -5264,12 +5296,24 @@ export default class OnlineScene extends Phaser.Scene {
       999,
       0xd0a0ff,
     );
+    this.trackerG.setDepth(999.1);
     if (!this.trackerPanelImg) {
       drawHudPanel(this.trackerG, left, trackerTop, frameW, frameH, 0xb06bff);
     } else {
       this.trackerG.fillStyle(0x0a0618, 0.3).fillRect(left + uiDim(6), trackerTop + uiDim(6), frameW - uiDim(12), frameH - uiDim(12));
     }
-    this.trackerBottomY = trackerTop + frameH;
+    if (questVisible && secondaryVisible) {
+      this.trackerG
+        .lineStyle(1, 0xb06bff, 0.24)
+        .lineBetween(left + pad, secondaryY - uiGap("xs") / 2, left + frameW - pad, secondaryY - uiGap("xs") / 2);
+    }
+    if (eventVisible) {
+      const parsed = Number.parseInt((this.net.worldEvent?.hex ?? "#f7ff3c").replace("#", ""), 16);
+      this.trackerG
+        .fillStyle(Number.isFinite(parsed) ? parsed : 0xf7ff3c, 0.82)
+        .fillRect(left + uiDim(5), secondaryY, uiDim(2), Math.max(uiDim(10), secondaryH));
+    }
+    this.trackerBottomY = Math.max(statusBottom, trackerTop + frameH);
     this.positionCoach();
   }
 
@@ -5279,13 +5323,15 @@ export default class OnlineScene extends Phaser.Scene {
   private positionCoach() {
     if (!this.coachText) return;
     const mobile = this.mobileUx();
-    this.coachText.setWordWrapWidth(Math.min(this.scale.width - uiDim(48), uiDim(mobile ? 300 : 640)));
+    this.coachText.setWordWrapWidth(
+      Math.min(this.scale.width - uiDim(48), mobile && this.intelRailW > 0 ? this.intelRailW : uiDim(640)),
+    );
     let y = this.trackerBottomY + uiGap("sm");
     if (this.bossBanner?.visible) y = Math.max(y, this.bossBanner.y + this.bossBanner.height + uiGap("xs"));
     if (this.eventBanner?.visible) y = Math.max(y, this.eventBanner.y + this.eventBanner.height + uiGap("xs"));
     this.coachText.setY(y);
-    // Mobile: ride the same left-anchored chain as the tracker card (origin 0.5).
-    if (mobile) this.coachText.setX(uiDim(12) + this.coachText.width / 2);
+    // Mobile: ride under the same right-of-status rail, never back over the action.
+    if (mobile && this.intelRailW > 0) this.coachText.setX(this.intelRailX + this.intelRailW / 2);
   }
 
   /** Floating HSS deploy bark above a newly-seen online enemy (throttled), tinted to
@@ -5873,30 +5919,34 @@ export default class OnlineScene extends Phaser.Scene {
     this.wasDead = dead;
   }
 
-  /** World-event banner — warning countdown while telegraphing, name + time left while
-   *  active; rides just below the boss banner and pulses in the event's colour. */
+  /** Live world-event row inside the fixed top intel rail. The timer precedes the
+   *  tagline so narrow-phone truncation never hides the urgent part. */
   private updateEventBanner() {
     const ev = this.net.worldEvent;
+    const wasVisible = this.eventBanner.visible;
     if (!ev) {
       this.eventBanner.setVisible(false);
+      if (wasVisible) this.layoutHudChrome();
       this.updateEventAmbience(null);
       return;
     }
     const secs = Math.max(0, Math.ceil((ev.untilAt - performance.now()) / 1000));
-    const pulse = ev.phase === "telegraph" && Math.floor(this.time.now / 300) % 2 === 0;
-    const y = Math.max(
-      this.trackerBottomY + uiGap("xl"),
-      this.bossBanner?.visible ? this.bossBanner.y + this.bossBanner.height + uiGap("xs") : 0,
-    );
+    const line =
+      ev.phase === "telegraph"
+        ? `EVENT // ⚠ ${ev.name} · IN ${secs}s — ${ev.tagline}`
+        : `EVENT // ◆ ${ev.name} · LIVE ${secs}s — ${ev.tagline}`;
     this.eventBanner
       .setVisible(true)
-      .setY(y)
-      .setWordWrapWidth(Math.min(this.scale.width - uiDim(32), uiDim(720)))
-      .setColor(pulse ? "#ffffff" : ev.hex)
-      .setText(
-        ev.phase === "telegraph" ? `⚠ ${ev.name} in ${secs}s — ${ev.tagline}` : `◆ ${ev.name} — ${ev.tagline} · ${secs}s`,
-      );
-    this.positionCoach(); // after setText — the chain math needs the final banner height
+      .setColor(ev.hex)
+      .setWordWrapWidth(0);
+    setFittedText(
+      this.eventBanner,
+      line,
+      this.intelEventMaxW || Math.min(this.scale.width - uiDim(48), uiDim(640)),
+      { minScale: this.mobileUx() ? 0.72 : 0.78 },
+    );
+    if (!wasVisible) this.layoutHudChrome();
+    else this.positionCoach();
     this.updateEventAmbience(ev.phase === "active" ? ev.id : null);
   }
 
