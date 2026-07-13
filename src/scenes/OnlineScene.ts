@@ -98,6 +98,7 @@ import {
   noteTalkedFixer,
   noteDeployed,
   noteKill,
+  setGodSessionUnlock,
   noteReturnedToHub,
   noteHeatCoached,
   firstHourSystemsLocked,
@@ -1065,6 +1066,14 @@ export default class OnlineScene extends Phaser.Scene {
       this.cameras.main.startFollow(this.me, true, 0.18, 0.18);
       setOnlinePlayer(this.net.id);
       if (this.isTutorial) this.net.setTutorialMode(tutorialMode);
+      if (this.net.godMode) {
+        setGodSessionUnlock(true);
+        this.mapPanel.godMode = true;
+        // Skip drill yard entirely for operators.
+        if (this.isTutorial) {
+          this.time.delayedCall(200, () => this.forceClientDeployToCity());
+        }
+      }
       this.initCombatTracking();
       juiceFlash(this, 180, 40, 200, 80);
     };
@@ -1144,6 +1153,7 @@ export default class OnlineScene extends Phaser.Scene {
     this.mapPanel.onWalkToZone = (zone) => this.walkToZoneFromMap(zone);
     this.mapPanel.onExamine = (text) => this.rsExamine(text);
     this.net.onDiscovered = () => {
+      this.mapPanel.godMode = !!this.net.godMode;
       if (this.mapPanel.open) this.mapPanel.setState(this.net.discovered, this.net.unlocked, this.zone);
     };
     this.inv.onMove = (from, to) => this.net.moveInv(from, to);
@@ -4111,7 +4121,8 @@ export default class OnlineScene extends Phaser.Scene {
   /** First deployment into combat — gated on accepting THE WAKE (or first-session FIXER talk). */
   private deployOrganic(zone: string) {
     const fs = getFirstSession();
-    const allowed = !!this.net.campaignQuest || fs.talkedFixer || fs.step !== "meet_fixer";
+    const allowed =
+      this.net.godMode || !!this.net.campaignQuest || fs.talkedFixer || fs.step !== "meet_fixer";
     if (!allowed) {
       this.showBubble(this.me.x, this.me.y, "Visit THE FIXER (green light) first — then deploy south.");
       return;
@@ -4159,6 +4170,7 @@ export default class OnlineScene extends Phaser.Scene {
   }
 
   private zoneUnlocked(zone: string): boolean {
+    if (this.net.godMode) return true;
     return zone === this.zone || zone === "safe" || this.net.unlocked.includes(zone);
   }
 

@@ -115,11 +115,16 @@ export default class OnlineMap extends Modal {
     }
   }
 
+  /** When true (operator account), every zone is known + fast-travel ready. */
+  godMode = false;
+
   private canFastTravel(zone: string): boolean {
+    if (this.godMode) return true;
     return zone === "safe" || this.unlocked.has(zone);
   }
 
   private isKnown(zone: string) {
+    if (this.godMode) return true;
     return this.discovered.has(zone) || zone === this.current;
   }
 

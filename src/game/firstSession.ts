@@ -104,7 +104,19 @@ export function noteReturnedToHub() {
  * Secondary city systems (market/forge/guild/…) stay locked until the player has
  * met THE FIXER — keeps the first ten minutes on FIXER → WAKE → DEPLOY.
  */
+/** Operator override — set from NetClient.godMode so first-hour gates never brick admins. */
+let godUnlock = false;
+export function setGodSessionUnlock(on: boolean) {
+  godUnlock = on;
+  if (on) {
+    state.talkedFixer = true;
+    if (state.step === "meet_fixer") state.step = "deploy";
+    save();
+  }
+}
+
 export function firstHourSystemsLocked(): boolean {
+  if (godUnlock) return false;
   return !state.talkedFixer;
 }
 

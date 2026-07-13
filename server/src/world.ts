@@ -109,6 +109,8 @@ import { RAID_SCRIPT, phaseForHp, raidHpScale } from "../../src/game/raid";
 import { getCosmetic, applyCosmetic } from "../../src/game/cosmetics";
 import { bountyById, type BountyObjective } from "../../src/game/bounties";
 import { verifyWalletLogin, walletPlayerId } from "./auth";
+import { allDiscoverableZones, isGodPlayerId } from "./godMode";
+import { COSMETICS } from "../../src/game/cosmetics";
 import { shouldBroadcastSnapshot } from "./snapshotPolicy";
 import { remotePlayerView, type RemotePlayerView } from "./playerSnapshot";
 import { buildWorldSnapshot } from "./worldSnapshot";
@@ -367,6 +369,8 @@ interface PlayerState {
   tutorialProgress: number;
   tutorialAnchorX: number;
   tutorialAnchorY: number;
+  /** Operator / god account — never takes damage; full map unlock on login. */
+  godMode: boolean;
   // achievements + leaderboards — cross-zone lifetime counters persisted to D1 player_stats
   stats: Record<string, number>; // additive counters (kills, bosses, captures, credits, pvp)
   statDelta: Record<string, number>; // unflushed increments queued for D1
@@ -2730,6 +2734,11 @@ export class WorldDO {
     if (this.diveIndex >= 0) this.coopScaleDive(); // the vault hardens as runners stack up
     // Persist identity + look on the socket so a hibernation wake can re-attach it (above).
     ws.serializeAttachment({ id, name: p.name, faction: fac, look: p.look } satisfies SessionAttach);
+    // God accounts re-assert on every login (fresh player row or rejoin).
+    if (isGodPlayerId(id)) {
+      p.godMode = true;
+      p.tutorialDone = true;
+    }
     this.send(ws, {
       t: "welcome",
       id,
@@ -2742,7 +2751,11 @@ export class WorldDO {
       look: p.look,
       lookLocked: lookLocked || !!p.look,
       fragments: p.fragments,
+      god: p.godMode || undefined,
     });
+    if (p.godMode) {
+      void this.grantGodPrivileges(ws, p);
+    }
     if (p.pvpRecovered > 0) {
       this.send(ws, {
         t: "sys",
@@ -3131,12 +3144,13 @@ export class WorldDO {
       droneKind: 0,
       heat: 0,
       heatGainTick: 0,
-      tutorialDone,
+      tutorialDone: tutorialDone || isGodPlayerId(id),
       tutorialStep,
       tutorialMode,
       tutorialProgress: 0,
       tutorialAnchorX: x,
       tutorialAnchorY: y,
+      godMode: isGodPlayerId(id),
       stats,
       statDelta: {},
       deepest,
@@ -3807,6 +3821,11 @@ export class WorldDO {
 
   /** Mark zone on the map; organic arrivals also unlock fast travel. */
   private async markDiscovered(ws: WebSocket, id: string, organic: boolean) {
+    if (isGodPlayerId(id)) {
+      // God: every zone known + fast-travel unlocked from the first login.
+      await this.grantGodMapUnlock(ws, id);
+      return;
+    }
     try {
       await this.env.DB.prepare("INSERT OR IGNORE INTO player_discovered (player, zone, at, organic) VALUES (?,?,?,?)")
         .bind(id, this.zoneName, Date.now(), organic ? 1 : 0)
@@ -3824,6 +3843,72 @@ export class WorldDO {
       const fallback = organic ? [this.zoneName] : [];
       this.send(ws, { t: "discovered", zones: [this.zoneName], unlocked: fallback });
     }
+  }
+
+  /** Persist full map discovery/unlock for an operator account and push to client. */
+  private async grantGodMapUnlock(ws: WebSocket, id: string) {
+    const zones = allDiscoverableZones();
+    const now = Date.now();
+    try {
+      for (const z of zones) {
+        await this.env.DB.prepare("INSERT OR IGNORE INTO player_discovered (player, zone, at, organic) VALUES (?,?,?,?)")
+          .bind(id, z, now, 1)
+          .run();
+        await this.env.DB.prepare("UPDATE player_discovered SET organic = 1 WHERE player = ? AND zone = ?")
+          .bind(id, z)
+          .run();
+      }
+    } catch {
+      /* D1 optional — still push full unlock client-side */
+    }
+    this.send(ws, { t: "discovered", zones, unlocked: zones });
+  }
+
+  /** Operator login: invuln flag, full map, skip drill, generous wallet. */
+  private async grantGodPrivileges(ws: WebSocket, p: PlayerState) {
+    p.godMode = true;
+    p.tutorialDone = true;
+    p.hp = p.maxHp;
+    p.dead = false;
+    p.iframeUntilTick = this.tick + 1_000_000;
+    // Generous operating capital (not infinite print each login — only top-up).
+    if (p.credits < 250_000) p.credits = 250_000;
+    if (p.cores < 500) p.cores = 500;
+    if ((p.metro ?? 0) < 1000) p.metro = 1000;
+    p.dirty = true;
+    await this.grantGodMapUnlock(ws, p.id);
+    // Own every cosmetic so wardrobe / transmog is unrestricted.
+    for (const c of COSMETICS) p.cosmeticsOwned.add(c.id);
+    this.sendCosmetics(ws, p);
+    this.send(ws, {
+      t: "sys",
+      text: "◆ GOD MODE — invulnerable · full map · all zones unlocked · unrestricted access",
+    });
+    // Persist tutorial_done so drill never re-traps the operator.
+    try {
+      await this.env.DB.prepare("UPDATE players SET tutorial_done = 1 WHERE id = ?").bind(p.id).run();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  /** Apply damage to a player. God accounts ignore all damage sources. */
+  private hurtPlayer(p: PlayerState, dmg: number): boolean {
+    if (!p || p.dead || dmg <= 0) return false;
+    if (p.godMode || isGodPlayerId(p.id)) {
+      p.godMode = true;
+      p.hp = p.maxHp;
+      p.dead = false;
+      return false;
+    }
+    p.hp -= dmg;
+    if (p.hp <= 0) {
+      p.hp = 0;
+      p.dead = true;
+      p.respawnTick = this.tick + ticks(RESPAWN_MS);
+      p.dirty = true;
+    }
+    return true;
   }
 
   /** Starter melee + resources for live-city players. */
@@ -4883,6 +4968,14 @@ export class WorldDO {
 
     // 1) players — movement + respawn
     for (const p of this.players.values()) {
+      // God accounts: permanent full health + i-frames (covers any missed damage path).
+      if (p.godMode || isGodPlayerId(p.id)) {
+        p.godMode = true;
+        p.dead = false;
+        p.hp = p.maxHp;
+        p.iframeUntilTick = this.tick + 1_000_000;
+        p.pvpSafeUntil = this.tick + 1_000_000;
+      }
       if (p.dead) {
         if (this.tick >= p.respawnTick) {
           p.x = this.spawn.x;
@@ -5124,15 +5217,10 @@ export class WorldDO {
       } else {
         for (const p of this.players.values()) {
           if (p.dead || this.tick < p.iframeUntilTick) continue; // dash grace — untouchable
+          if (p.godMode || isGodPlayerId(p.id)) continue; // god — never takes shot damage
           if (segPointDist2(p.x, p.y, ax, ay, s.x, s.y) <= R2) {
-            p.hp -= s.dmg;
+            this.hurtPlayer(p, s.dmg);
             consumed = true;
-            if (p.hp <= 0) {
-              p.hp = 0;
-              p.dead = true;
-              p.respawnTick = this.tick + ticks(RESPAWN_MS);
-              p.dirty = true;
-            }
             break;
           }
         }
@@ -5172,14 +5260,9 @@ export class WorldDO {
           } else {
             for (const p of this.players.values()) {
               if (p.dead || this.tick < p.pvpSafeUntil || this.tick < p.iframeUntilTick) continue;
+              if (p.godMode || isGodPlayerId(p.id)) continue;
               if (dist2(p.x, p.y, hz.x, hz.y) <= hr2) {
-                p.hp -= hz.dmg;
-                if (p.hp <= 0) {
-                  p.hp = 0;
-                  p.dead = true;
-                  p.respawnTick = this.tick + ticks(RESPAWN_MS);
-                  p.dirty = true;
-                }
+                this.hurtPlayer(p, hz.dmg);
               }
             }
           }
@@ -5556,18 +5639,16 @@ export class WorldDO {
       if (this.tick < v.dashUntilTick) continue;
       if (shooter.party >= 0 && v.party === shooter.party) continue; // no team-killing
       if (!v.pvpInArena || !inPvpZone(v.x, v.y, pvp)) continue;
+      if (v.godMode || isGodPlayerId(v.id)) continue; // god never dies in the arena
       if (segPointDist2(v.x, v.y, ax, ay, s.x, s.y) <= R2) {
-        v.hp -= s.dmg;
-        if (v.hp <= 0) {
-          v.hp = 0;
-          v.dead = true;
-          v.respawnTick = this.tick + ticks(RESPAWN_MS);
+        const before = v.hp;
+        this.hurtPlayer(v, s.dmg);
+        if (v.dead && before > 0) {
           v.pvpEscrow = 0;
           v.pvpInArena = false;
-          v.dirty = true;
           void this.transferPvpEscrow(v, shooter);
           shooter.credits += CREDITS_PER_KILL * 3; // an arena kill pays a bounty
-        this.eco("emit", "arena", CREDITS_PER_KILL * 3);
+          this.eco("emit", "arena", CREDITS_PER_KILL * 3);
           shooter.xp += XP_PER_KILL * 2;
           shooter.level = levelForXp(shooter.xp);
           shooter.dirty = true;

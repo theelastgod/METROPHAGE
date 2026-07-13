@@ -247,6 +247,8 @@ export type ServerMsg =
       look?: PlayerLook;
       lookLocked?: boolean;
       fragments?: string[]; // memory fragments this player has recovered (dive rewards)
+      /** Operator account — invulnerable, full map, unrestricted access. */
+      god?: boolean;
     }
   | {
       t: "state";

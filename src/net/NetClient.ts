@@ -240,6 +240,8 @@ export default class NetClient {
   tutorialMode: "quick" | "full" = "quick";
   tutorialDone = false;
   inTutorial = false;
+  /** Operator account from welcome.god — full map + unlocked client systems. */
+  godMode = false;
   tutorialPortalOpen = false;
   tutorialTitle = "";
   tutorialTeach = "";
@@ -761,6 +763,17 @@ export default class NetClient {
       this.seq = 0;
       this.lastAck = 0;
       this.fragments = msg.fragments ?? [];
+      this.godMode = !!msg.god;
+      if (this.godMode) {
+        this.tutorialDone = true;
+        this.pushChat({
+          from: "",
+          ch: "sys",
+          text: "◆ GOD MODE active — invulnerable · full map · unrestricted",
+          faction: -1,
+          sys: true,
+        });
+      }
       this.onWelcome?.(msg.x, msg.y);
       if (this.pendingSkip) {
         this.pendingSkip = false;
