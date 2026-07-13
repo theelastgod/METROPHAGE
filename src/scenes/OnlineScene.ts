@@ -1169,7 +1169,7 @@ export default class OnlineScene extends Phaser.Scene {
     this.questMarker.setShadow(0, 0, "#02030a", 5, true, true);
     // Live world-event row — laid into the shared top intel rail by layoutHudChrome().
     this.eventBanner = this.add
-      .text(VIEW_W / 2, uiDim(72), "", hudFont(11, { fontStyle: "bold", align: "center" }))
+      .text(VIEW_W / 2, uiDim(72), "", hudFont(9, { fontStyle: "bold", align: "center" }))
       .setOrigin(0.5, 0)
       .setScrollFactor(0)
       .setDepth(1002)
@@ -1434,17 +1434,17 @@ export default class OnlineScene extends Phaser.Scene {
     // laid out in refreshHudPanels() as rows appear and disappear
     this.trackerG = this.add.graphics().setScrollFactor(0).setDepth(999);
     this.questText = this.add
-      .text(this.scale.width / 2, uiDim(12), "", hudFont(11, { color: "#b06bff", align: "center", fontStyle: "bold" }))
+      .text(this.scale.width / 2, uiDim(12), "", hudFont(9, { color: "#b06bff", align: "center", fontStyle: "bold" }))
       .setOrigin(0.5, 0)
       .setScrollFactor(0)
       .setDepth(1000);
     this.dailyText = this.add
-      .text(this.scale.width / 2, 0, "", hudFont(10, { color: "#39ff88", align: "center" }))
+      .text(this.scale.width / 2, 0, "", hudFont(8, { color: "#39ff88", align: "center" }))
       .setOrigin(0.5, 0)
       .setScrollFactor(0)
       .setDepth(1000);
     this.bountyText = this.add
-      .text(this.scale.width / 2, 0, "", hudFont(10, { color: "#f7ff3c", align: "center" }))
+      .text(this.scale.width / 2, 0, "", hudFont(8, { color: "#f7ff3c", align: "center" }))
       .setOrigin(0.5, 0)
       .setScrollFactor(0)
       .setDepth(1000);
@@ -5224,11 +5224,14 @@ export default class OnlineScene extends Phaser.Scene {
     });
     const trackerTop = rail.y;
     const left = rail.x;
-    const frameW = Math.max(uiDim(180), rail.w);
-    const textMaxW = Math.max(uiDim(150), frameW - pad * 2);
+    // Compact rail: tight padding + a small ceiling, and the panel hugs its actual
+    // content instead of always painting a wide box across the top of the screen.
+    const railPad = uiGap("sm");
+    const capW = Math.max(uiDim(140), Math.min(rail.w, uiDim(mobile ? 340 : 400)));
+    const railMaxInner = Math.max(uiDim(120), capW - railPad * 2);
     this.intelRailX = left;
-    this.intelRailW = frameW;
-    this.intelEventMaxW = textMaxW;
+    this.intelRailW = capW;
+    this.intelEventMaxW = railMaxInner;
 
     const questVisible = this.questText.visible && this.questText.text.length > 0;
     const eventVisible = this.eventBanner.visible && this.eventBanner.text.length > 0;
@@ -5252,11 +5255,13 @@ export default class OnlineScene extends Phaser.Scene {
       return;
     }
 
-    let y = trackerTop + pad;
+    let y = trackerTop + railPad;
+    let contentW = 0;
     if (questVisible) {
-      fitTextToWidth(this.questText, textMaxW, { minScale: mobile ? 0.74 : 0.8 });
-      this.questText.setPosition(left + pad, y);
+      fitTextToWidth(this.questText, railMaxInner, { minScale: mobile ? 0.74 : 0.8 });
+      this.questText.setPosition(left + railPad, y);
       y += this.questText.displayHeight;
+      contentW = Math.max(contentW, this.questText.displayWidth);
     }
 
     let secondaryY = y;
@@ -5265,26 +5270,35 @@ export default class OnlineScene extends Phaser.Scene {
       if (questVisible) y += uiGap("xs");
       secondaryY = y;
       if (eventVisible) {
-        fitTextToWidth(this.eventBanner, textMaxW, { minScale: mobile ? 0.72 : 0.78 });
-        this.eventBanner.setPosition(left + pad, y);
+        fitTextToWidth(this.eventBanner, railMaxInner, { minScale: mobile ? 0.72 : 0.78 });
+        this.eventBanner.setPosition(left + railPad, y);
         secondaryH = this.eventBanner.displayHeight;
+        contentW = Math.max(contentW, this.eventBanner.displayWidth);
       } else {
+        // Daily + bounty ride one row, packed tight so the panel hugs them rather than
+        // reserving two fixed half-width slots.
         const chipGap = dailyVisible && bountyVisible ? uiGap("sm") : 0;
-        const chipW = (textMaxW - chipGap) / (dailyVisible && bountyVisible ? 2 : 1);
+        const chipCap = (railMaxInner - chipGap) / (dailyVisible && bountyVisible ? 2 : 1);
+        let cx = left + railPad;
         if (dailyVisible) {
-          fitTextToWidth(this.dailyText, chipW, { minScale: mobile ? 0.72 : 0.78 });
-          this.dailyText.setPosition(left + pad, y);
+          fitTextToWidth(this.dailyText, chipCap, { minScale: mobile ? 0.72 : 0.78 });
+          this.dailyText.setPosition(cx, y);
           secondaryH = Math.max(secondaryH, this.dailyText.displayHeight);
+          cx += this.dailyText.displayWidth + chipGap;
         }
         if (bountyVisible) {
-          fitTextToWidth(this.bountyText, chipW, { minScale: mobile ? 0.72 : 0.78 });
-          this.bountyText.setPosition(left + pad + (dailyVisible ? chipW + chipGap : 0), y);
+          fitTextToWidth(this.bountyText, chipCap, { minScale: mobile ? 0.72 : 0.78 });
+          this.bountyText.setPosition(cx, y);
           secondaryH = Math.max(secondaryH, this.bountyText.displayHeight);
+          cx += this.bountyText.displayWidth;
         }
+        contentW = Math.max(contentW, cx - (left + railPad));
       }
       y += secondaryH;
     }
-    const frameH = y + pad - trackerTop;
+    const frameW = Math.max(uiDim(140), Math.min(capW, contentW + railPad * 2));
+    this.intelRailW = frameW;
+    const frameH = y + railPad - trackerTop;
 
     this.trackerPanelImg = ensureHudPanelImage(
       this,
@@ -5305,7 +5319,7 @@ export default class OnlineScene extends Phaser.Scene {
     if (questVisible && secondaryVisible) {
       this.trackerG
         .lineStyle(1, 0xb06bff, 0.24)
-        .lineBetween(left + pad, secondaryY - uiGap("xs") / 2, left + frameW - pad, secondaryY - uiGap("xs") / 2);
+        .lineBetween(left + railPad, secondaryY - uiGap("xs") / 2, left + frameW - railPad, secondaryY - uiGap("xs") / 2);
     }
     if (eventVisible) {
       const parsed = Number.parseInt((this.net.worldEvent?.hex ?? "#f7ff3c").replace("#", ""), 16);
