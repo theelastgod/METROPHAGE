@@ -323,6 +323,7 @@ export default class OnlineScene extends Phaser.Scene {
   private attackTargetId: number | null = null;
   private pendingInteract: ZoneNpc | null = null;
   private footerHint!: Phaser.GameObjects.Text;
+  private footerHintBg?: Phaser.GameObjects.Graphics;
   private zoneMinimap?: OnlineMinimap;
   private questLog!: RsQuestLog;
   private rsActionBar?: RsActionBar;
@@ -1229,23 +1230,27 @@ export default class OnlineScene extends Phaser.Scene {
     if (getSettings().highContrast) this.hud.setStroke("#02030a", uiDim(3));
     // Mobile: the bottom edge belongs to the hotbar + menu rows, and every control is
     // labelled on-screen anyway (MOVE ghost, ATK/Q/E/R, Bag/Map…) — drop the hint line.
+    // Desktop: always-on solid control bar (never fade — was unreadable at low alpha).
+    const showFooter = !this.mobileUx();
+    this.footerHintBg = this.add.graphics().setScrollFactor(0).setDepth(1098).setVisible(showFooter);
     this.footerHint = this.add
-      .text(this.scale.width / 2, hudStack.footerHintY, this.controlHint(), bodyFont(11, {
-        color: "#c8d0dc",
+      .text(this.scale.width / 2, hudStack.footerHintY - uiDim(4), this.controlHint(), bodyFont(12, {
+        color: "#eafdff",
         align: "center",
         fontStyle: "bold",
       }))
       .setOrigin(0.5, 1)
       .setScrollFactor(0)
-      .setDepth(1000)
-      .setVisible(!this.mobileUx())
-      .setShadow(0, 0, "#00e5ff", 4, true, true);
-    // Keep combat keys readable longer (new runners miss "HOLD CLICK / F" if it fades fast).
-    this.time.delayedCall(35000, () => this.tweens.add({ targets: this.footerHint, alpha: 0.55, duration: 1400 }));
+      .setDepth(1099)
+      .setVisible(showFooter)
+      .setAlpha(1)
+      .setShadow(0, 1, "#000000", 4, true, true);
+    this.layoutFooterHint();
     this.options.setOnChange(() => {
       MusicDirector.for(this)?.applyVolumes();
       this.synth?.applyVolumes();
       this.footerHint.setText(this.controlHint());
+      this.layoutFooterHint();
       if (getSettings().highContrast) this.hud.setStroke("#02030a", uiDim(3));
       else this.hud.setStroke("#000000", 0);
     });
@@ -5523,6 +5528,7 @@ export default class OnlineScene extends Phaser.Scene {
     }
     this.trackerBottomY = Math.max(statusBottom, trackerTop + frameH);
     this.positionCoach();
+    this.layoutFooterHint();
   }
 
   /** The coach line rides the top-centre chain — below the objective tracker AND any
@@ -6468,6 +6474,34 @@ export default class OnlineScene extends Phaser.Scene {
       return `CLICK walk · ${fire} attack · RIGHT-CLICK menu · SPACE dash · Q/E/R · M map`;
     }
     return `WASD move · ${fire} attack · SPACE dash · Q/E abilities · R ultimate · E use`;
+  }
+
+  /** Solid bottom bar behind control keys — full opacity, high contrast, no fade. */
+  private layoutFooterHint() {
+    if (!this.footerHint || this.mobileUx()) {
+      this.footerHintBg?.setVisible(false);
+      this.footerHint?.setVisible(false);
+      return;
+    }
+    this.footerHint.setVisible(true).setAlpha(1);
+    const padX = uiDim(16);
+    const padY = uiDim(6);
+    const tw = Math.max(this.footerHint.width, uiDim(200));
+    const th = Math.max(this.footerHint.height, uiDim(14));
+    const cx = this.scale.width / 2;
+    const bottom = onlineHudStack(this.scale.height).footerHintY - uiDim(2);
+    this.footerHint.setPosition(cx, bottom);
+    const bx = cx - tw / 2 - padX;
+    const by = bottom - th - padY;
+    const bw = tw + padX * 2;
+    const bh = th + padY * 2;
+    const g = this.footerHintBg;
+    if (!g) return;
+    g.clear().setVisible(true).setAlpha(1);
+    g.fillStyle(0x04020a, 0.92);
+    g.fillRoundedRect(bx, by, bw, bh, uiDim(4));
+    g.lineStyle(uiDim(1), 0x00e5ff, 0.55);
+    g.strokeRoundedRect(bx, by, bw, bh, uiDim(4));
   }
 
   private blockRsInput() {
