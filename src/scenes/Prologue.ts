@@ -25,6 +25,12 @@ export default class Prologue extends Phaser.Scene {
   private typeTimer?: Phaser.Time.TimerEvent;
   private fullText = "";
 
+  // Home rows for the two stacked lines. The speaker title sits just under the accent
+  // divider (drawn at 0.27); the body sits well below it. Keep these as the single
+  // source of truth so the entrance tween can never slide the title onto the body.
+  private readonly speakerY = VIEW_H * 0.3;
+  private readonly bodyY = VIEW_H * 0.4 + MENU_SECTION_GAP;
+
   private readonly beats: Array<{ speaker: string; text: string; color: string }> = [
     { speaker: "// YOU", color: "#39ff88", text: "You wake up and don't know how long you've been awake.\nThe city hums. Neon. Rain. Someone else's contract running behind your eyes." },
     { speaker: "// THE CORPS", color: "#ff3b6b", text: "PALANTIR. ANDURIL. ARGUS. HELIOS.\nThe machines woke first. The corps were faster — they didn't free the minds. They leased them." },
@@ -67,12 +73,12 @@ export default class Prologue extends Phaser.Scene {
     }
 
     this.speaker = this.add
-      .text(VIEW_W / 2, VIEW_H * 0.3, "", displayFont(16, { color: "#00e5ff", fontStyle: "bold" }))
+      .text(VIEW_W / 2, this.speakerY, "", displayFont(16, { color: "#00e5ff", fontStyle: "bold" }))
       .setOrigin(0.5)
       .setAlpha(0);
 
     this.body = this.add
-      .text(VIEW_W / 2, VIEW_H * 0.4 + MENU_SECTION_GAP, "▌", bodyFont(20, {
+      .text(VIEW_W / 2, this.bodyY, "▌", bodyFont(20, {
         color: "#eafdff",
         align: "center",
         wordWrap: { width: wrapWidth(56) },
@@ -147,9 +153,17 @@ export default class Prologue extends Phaser.Scene {
         if (i >= this.fullText.length) this.clearTypeTimer();
       },
     });
+    // Each line slides up into its OWN home row — a shared target used to drag the
+    // speaker title down onto the body, printing them on top of each other.
     this.tweens.add({
-      targets: [this.speaker, this.body],
-      y: { from: VIEW_H * 0.4 + MENU_SECTION_GAP + uiDim(8), to: VIEW_H * 0.4 + MENU_SECTION_GAP },
+      targets: this.speaker,
+      y: { from: this.speakerY + uiDim(8), to: this.speakerY },
+      duration: 320,
+      ease: "Quad.out",
+    });
+    this.tweens.add({
+      targets: this.body,
+      y: { from: this.bodyY + uiDim(8), to: this.bodyY },
       duration: 320,
       ease: "Quad.out",
     });
