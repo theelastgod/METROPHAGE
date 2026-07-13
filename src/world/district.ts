@@ -140,6 +140,27 @@ function carve(grid: TileGrid, tx: number, ty: number, tile = TILE_FLOOR) {
   }
 }
 
+/** Nearest already-walkable tile to (tx,ty), found by an expanding ring search that
+ *  stays inside the outer wall ring. Returns undefined if none within `maxR`. Used so a
+ *  travel entry point that lands inside a building footprint snaps to the adjacent street
+ *  instead of carving a one-tile pocket that traps the runner on top of the building. */
+function nearestWalkable(grid: TileGrid, tx: number, ty: number, maxR = 12): [number, number] | undefined {
+  const gw = gridW(grid);
+  const gh = gridH(grid);
+  const open = (x: number, y: number) =>
+    x > 0 && x < gw - 1 && y > 0 && y < gh - 1 && grid[y]?.[x] !== undefined && !isWall(grid[y][x]);
+  if (open(tx, ty)) return [tx, ty];
+  for (let r = 1; r <= maxR; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue; // ring perimeter only
+        if (open(tx + dx, ty + dy)) return [tx + dx, ty + dy];
+      }
+    }
+  }
+  return undefined;
+}
+
 /** Build a district's tile grid deterministically from its DistrictDef. */
 /** How many of a district's authored buildings to actually place — capped so combat
  *  districts read as an open street with a few structures, not a dense block maze. */
@@ -643,11 +664,11 @@ export function spawnPointForTravel(
   }
   const tile = travelSpawnTile(zone, fromZone);
   if (tile) {
-    const [tx, ty] = tile;
-    carve(grid, tx, ty, TILE_DIRT);
-    if (grid[ty]?.[tx] !== undefined && !isWall(grid[ty][tx])) {
-      return { x: tx * TILE + TILE / 2, y: ty * TILE + TILE / 2 };
-    }
+    // The authored entry tile can fall inside a building footprint (e.g. ANDURIL YARDS
+    // from the west bridge). Snap to the nearest open street tile rather than carving a
+    // pocket into the building and stranding the runner on the roof.
+    const open = nearestWalkable(grid, tile[0], tile[1]);
+    if (open) return { x: open[0] * TILE + TILE / 2, y: open[1] * TILE + TILE / 2 };
   }
   // No explicit gate mapping — the zone's own canonical spawn beats guessing from a
   // district def (which, evaluated against a NAMED zone's grid like estates/subway,
