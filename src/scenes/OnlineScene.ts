@@ -107,7 +107,7 @@ import { fadeInScene, transitionTo } from "../systems/transitions";
 import { juiceShake, juiceFlash, juiceHitStop, juiceZoomPunch, juiceNeonPulse } from "../systems/juice";
 import Particles from "../render/Particles";
 import { playCombatPose, resetCombatPose } from "../assets/combatAnim";
-import { gamepadIntent } from "../systems/Input";
+import { gamepadIntent, keyDown, fireControlLabel } from "../systems/Input";
 import { t } from "../i18n";
 import Synth from "../audio/Synth";
 import Pops from "../render/Pops";
@@ -1230,13 +1230,18 @@ export default class OnlineScene extends Phaser.Scene {
     // Mobile: the bottom edge belongs to the hotbar + menu rows, and every control is
     // labelled on-screen anyway (MOVE ghost, ATK/Q/E/R, Bag/Map…) — drop the hint line.
     this.footerHint = this.add
-      .text(this.scale.width / 2, hudStack.footerHintY, this.controlHint(), bodyFont(10, { color: "#6b7184", align: "center" }))
+      .text(this.scale.width / 2, hudStack.footerHintY, this.controlHint(), bodyFont(11, {
+        color: "#c8d0dc",
+        align: "center",
+        fontStyle: "bold",
+      }))
       .setOrigin(0.5, 1)
       .setScrollFactor(0)
       .setDepth(1000)
-      .setVisible(!this.mobileUx());
-    // control hint: useful for 12s, then almost gone so the floor stays readable
-    this.time.delayedCall(12000, () => this.tweens.add({ targets: this.footerHint, alpha: 0.18, duration: 1200 }));
+      .setVisible(!this.mobileUx())
+      .setShadow(0, 0, "#00e5ff", 4, true, true);
+    // Keep combat keys readable longer (new runners miss "HOLD CLICK / F" if it fades fast).
+    this.time.delayedCall(35000, () => this.tweens.add({ targets: this.footerHint, alpha: 0.55, duration: 1400 }));
     this.options.setOnChange(() => {
       MusicDirector.for(this)?.applyVolumes();
       this.synth?.applyVolumes();
@@ -4696,12 +4701,20 @@ export default class OnlineScene extends Phaser.Scene {
       }
     }
 
-    // FIRE — RS auto-attacks locked target; action mode hold-click; mobile ATK button.
+    // FIRE — RS auto-attacks locked target; action mode hold-click / F / Ctrl; mobile ATK.
     const ptr = this.input.activePointer;
     const mobileFire = !!this.mobilePad?.isFireHeld();
-    // Mobile ATK always works (even in RS/tap mode). Desktop action uses hold-click.
-    const rsFire = rs && this.attackTargetId !== null && !mobileFire;
-    const actionFire = (!rs && ptr.isDown && !this.mobilePad?.containsScreen(ptr.x, ptr.y)) || mobileFire;
+    // Keyboard fire (F / Ctrl) — works even when panels aren't stealing focus; never in chat.
+    const keyFire =
+      !this.chatOpen &&
+      !this.emoteWheelOpen &&
+      !this.options?.isOpen &&
+      !this.blockRsInput() &&
+      keyDown(this, "fire");
+    // Mobile ATK always works (even in RS/tap mode). Desktop action uses hold-click + keys.
+    const rsFire = rs && this.attackTargetId !== null && !mobileFire && !keyFire;
+    const mouseFire = !rs && ptr.isDown && !this.mobilePad?.containsScreen(ptr.x, ptr.y) && !this.blockRsInput();
+    const actionFire = mouseFire || mobileFire || keyFire;
     let aim: number | null = null;
     if (rsFire) {
       const tgt = this.net.enemies.get(this.attackTargetId!);
@@ -6442,18 +6455,19 @@ export default class OnlineScene extends Phaser.Scene {
   }
 
   private controlHint() {
+    const fire = fireControlLabel(); // "HOLD CLICK or F"
     if (this.isTutorial) {
       return prefersMobileUx() || this.mobileUx()
         ? "touch LEFT to move · hold ATK to fire · Q/E/R/⇢ · ◆ use · SKIP TO CITY"
-        : "WASD · CLICK fire · SKIP TO CITY (top-right, works while loading)";
+        : `WASD move · ${fire} attack · SPACE dash · SKIP TO CITY (top-right)`;
     }
     if (prefersMobileUx() || (this.usingRsControls() && this.mobileUx())) {
       return "touch LEFT to move · TAP to walk/attack · hold ATK · Q/E/R/⇢ · ◆ use";
     }
     if (this.usingRsControls()) {
-      return "CLICK walk · RIGHT-CLICK menu · Q/E/R abilities · SPACE dash · M map · ENTER chat";
+      return `CLICK walk · ${fire} attack · RIGHT-CLICK menu · SPACE dash · Q/E/R · M map`;
     }
-    return "WASD · HOLD CLICK fire · Q/E/R abilities · SPACE dash · M map · ENTER chat";
+    return `WASD move · ${fire} attack · SPACE dash · Q/E abilities · R ultimate · E use`;
   }
 
   private blockRsInput() {

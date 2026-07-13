@@ -90,8 +90,8 @@ const FIRE: TutorialStepDef = {
   id: "fire",
   title: "WEAPON",
   teach:
-    "Your ARC-BLADE is melee from the start — hold the mouse toward a target and swing. The server validates range, arc, and rate.",
-  hint: "Click / hold to slash · land 3 swings",
+    "Your ARC-BLADE is melee from the start — aim with the mouse, then HOLD LEFT CLICK or HOLD F to swing. The server validates range, arc, and rate.",
+  hint: "HOLD CLICK or F to slash · land 3 swings",
   kind: "fire",
   count: 3,
 };

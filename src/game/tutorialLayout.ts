@@ -127,7 +127,7 @@ export const TUTORIAL_INSTRUCTORS: TutorialInstructor[] = [
     color: 0xff7a18,
     look: look({ color: 0xff7a18, head: "cap", gloves: "wraps", skin: 0x7c4f30, hair: "buzz", hairColor: 0x1b1820, beard: "stubble", cloak: "coat" }),
     lines: [
-      "This is my lane. Point the mouse and click — your ARC-BLADE swings that way.",
+      "This is my lane. Aim with the mouse — HOLD CLICK or HOLD F to swing.",
       "Melee range, arc, and rate are server-checked. Spam doesn't cheat cooldowns.",
       "Land three swings, then walk east for the class kit before the pit fight.",
     ],
@@ -159,7 +159,7 @@ export const TUTORIAL_INSTRUCTORS: TutorialInstructor[] = [
     lines: [
       "Human Security System — a Turing Cop. It patrols for unlicensed minds.",
       "Dash in, slash it down. Salvage spawns where it falls.",
-      "Hold mouse toward it and click. Close range only.",
+      "Aim at it — HOLD CLICK or HOLD F. Close range only.",
     ],
   },
   {

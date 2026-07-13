@@ -1,13 +1,14 @@
 import Phaser from "phaser";
 import { getSettings, updateSettings } from "./Settings";
 
-/** Default keyboard bindings (action → keys). */
+/** Default keyboard bindings (action → keys).
+ *  Fire is F (and Ctrl) — SPACE is dash, not attack. Mouse hold-click also fires. */
 export const DEFAULT_BINDS = {
   up: ["W", "UP"],
   down: ["S", "DOWN"],
   left: ["A", "LEFT"],
   right: ["D", "RIGHT"],
-  fire: ["SPACE"],
+  fire: ["F", "CTRL"],
   interact: ["E"],
   inventory: ["I"],
   map: ["M"],
@@ -18,15 +19,23 @@ export const DEFAULT_BINDS = {
 
 export type BindAction = keyof typeof DEFAULT_BINDS;
 
-const BIND_KEY = "metrophage_binds_v1";
+const BIND_KEY = "metrophage_binds_v2";
 
 export type BindMap = Record<BindAction, string[]>;
 
 function loadBinds(): BindMap {
   try {
-    const raw = localStorage.getItem(BIND_KEY);
+    const raw = localStorage.getItem(BIND_KEY) ?? localStorage.getItem("metrophage_binds_v1");
     if (!raw) return cloneDefaults();
-    return { ...cloneDefaults(), ...(JSON.parse(raw) as Partial<BindMap>) };
+    const merged = { ...cloneDefaults(), ...(JSON.parse(raw) as Partial<BindMap>) };
+    // Migrate stale fire→SPACE (SPACE is dash) so attack and dash never share a key.
+    if (Array.isArray(merged.fire)) {
+      merged.fire = merged.fire
+        .map((k) => (k === "SPACE" || k === " " ? "F" : k))
+        .filter((k, i, a) => a.indexOf(k) === i);
+      if (merged.fire.length === 0) merged.fire = [...DEFAULT_BINDS.fire];
+    }
+    return merged;
   } catch {
     return cloneDefaults();
   }
@@ -63,7 +72,20 @@ export function resetBinds() {
 export function keyDown(scene: Phaser.Scene, action: BindAction): boolean {
   const kb = scene.input.keyboard;
   if (!kb) return false;
-  return binds[action].some((code) => kb.addKey(code).isDown);
+  return binds[action].some((code) => {
+    // CTRL — Phaser maps Control to KeyCodes.CTRL (17).
+    if (code === "CTRL" || code === "CONTROL") {
+      return kb.addKey(Phaser.Input.Keyboard.KeyCodes.CTRL).isDown;
+    }
+    return kb.addKey(code).isDown;
+  });
+}
+
+/** Human-readable fire controls for HUD / coach (keyboard + mouse). */
+export function fireControlLabel(): string {
+  const keys = binds.fire.filter((k) => k !== "CTRL" && k !== "CONTROL");
+  const keyPart = keys.length ? keys.join("/") : "F";
+  return `HOLD CLICK or ${keyPart}`;
 }
 
 export function keyJustDown(scene: Phaser.Scene, action: BindAction): boolean {

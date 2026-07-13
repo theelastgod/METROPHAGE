@@ -117,7 +117,7 @@ export function firstSessionLine(): string | null {
     case "deploy":
       return "▶ DEPLOY south through the gate — enter a combat district";
     case "combat":
-      return "▶ CLOSE RANGE · hold mouse · click to slash · SPACE dash · drop an HSS unit";
+      return "▶ ATTACK: hold LEFT CLICK or hold F · aim with mouse · SPACE dash · drop an HSS unit";
     case "heat":
       return "▶ HEAT builds on hits — at orange, press R for your ultimate";
     case "return":
