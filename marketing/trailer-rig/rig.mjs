@@ -67,6 +67,7 @@ export async function launch({ recordDir = null, slowMoWindow = "40,40" } = {}) 
       localStorage.setItem(KEY, JSON.stringify(cur));
       // rig sessions are returning players — skip the first-boot cold open
       // (coldopen-view.mjs clears this to audit the intro itself)
+      localStorage.setItem("metrophage_coldopen_v2", "1");
       localStorage.setItem("metrophage_coldopen_v1", "1");
     } catch {}
   });

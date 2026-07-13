@@ -92,6 +92,64 @@ export function drawHudPanel(g: Phaser.GameObjects.Graphics, x: number, y: numbe
 }
 
 /**
+ * Place (or resize) a painted NineSlice panel behind chrome.
+ * Falls back to a stretched Image when NineSlice can't be created.
+ */
+export function ensurePanelImage(
+  scene: Phaser.Scene,
+  existing: Phaser.GameObjects.NineSlice | Phaser.GameObjects.Image | null | undefined,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  textureKey: string,
+  depth = 999,
+  tint = 0xffffff,
+  alpha = 0.92,
+  sliceCap = 48,
+): Phaser.GameObjects.NineSlice | Phaser.GameObjects.Image | null {
+  if (!scene.textures.exists(textureKey)) return null;
+  if (existing && (!existing.scene || !existing.active)) existing = null;
+  // Recreate when the stored object is a different texture (identity vs HUD pack).
+  if (existing && "texture" in existing && (existing as Phaser.GameObjects.Image).texture?.key !== textureKey) {
+    existing.destroy();
+    existing = null;
+  }
+  const min = Math.max(w, h, 1);
+  // NineSlice needs a source large enough for left/right/top/bottom slices.
+  const slice = Math.min(sliceCap, Math.floor(Math.min(w, h) * 0.28));
+  if (existing && "setSize" in existing && typeof (existing as Phaser.GameObjects.NineSlice).setSize === "function") {
+    const ns = existing as Phaser.GameObjects.NineSlice;
+    ns.setPosition(x + w / 2, y + h / 2);
+    ns.setSize(Math.max(w, slice * 2 + 4), Math.max(h, slice * 2 + 4));
+    ns.setTint(tint);
+    ns.setAlpha(alpha);
+    ns.setVisible(true);
+    return ns;
+  }
+  if (existing) existing.destroy();
+  try {
+    const ns = scene.add
+      .nineslice(x + w / 2, y + h / 2, textureKey, undefined, Math.max(w, slice * 2 + 4), Math.max(h, slice * 2 + 4), slice, slice, slice, slice)
+      .setScrollFactor(0)
+      .setDepth(depth)
+      .setTint(tint)
+      .setAlpha(alpha);
+    return ns;
+  } catch {
+    // Older path / odd texture dims — stretch as Image.
+    const img = scene.add
+      .image(x + w / 2, y + h / 2, textureKey)
+      .setDisplaySize(Math.max(w, min * 0.5), Math.max(h, min * 0.5))
+      .setScrollFactor(0)
+      .setDepth(depth)
+      .setTint(tint)
+      .setAlpha(alpha * 0.98);
+    return img;
+  }
+}
+
+/**
  * Place (or resize) a painted Higgsfield HUD panel behind chrome.
  * Falls back to `drawHudPanel` graphics when the texture isn't loaded.
  * Uses NineSlice so the neon frame stays crisp on desktop and mobile sizes.
@@ -106,38 +164,58 @@ export function ensureHudPanelImage(
   depth = 999,
   tint = 0xffffff,
 ): Phaser.GameObjects.NineSlice | Phaser.GameObjects.Image | null {
-  if (!scene.textures.exists(UI_PANEL_KEY)) return null;
+  return ensurePanelImage(scene, existing, x, y, w, h, UI_PANEL_KEY, depth, tint, 0.92, 48);
+}
+
+/**
+ * Horizontal button chrome from a painted strip (left/right caps + stretch).
+ * 512×96 identity buttons use ~40px caps so neon corners stay crisp.
+ */
+export function ensureButtonStrip(
+  scene: Phaser.Scene,
+  existing: Phaser.GameObjects.NineSlice | Phaser.GameObjects.Image | null | undefined,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  textureKey: string,
+  depth = 999,
+  tint = 0xffffff,
+  alpha = 0.95,
+): Phaser.GameObjects.NineSlice | Phaser.GameObjects.Image | null {
+  if (!scene.textures.exists(textureKey)) return null;
   if (existing && (!existing.scene || !existing.active)) existing = null;
-  const min = Math.max(w, h, 1);
-  // NineSlice needs a source large enough for left/right/top/bottom slices.
-  const slice = Math.min(48, Math.floor(Math.min(w, h) * 0.28));
+  if (existing && "texture" in existing && (existing as Phaser.GameObjects.Image).texture?.key !== textureKey) {
+    existing.destroy();
+    existing = null;
+  }
+  const sliceX = Math.min(48, Math.floor(w * 0.18));
+  const sliceY = Math.min(24, Math.floor(h * 0.35));
   if (existing && "setSize" in existing && typeof (existing as Phaser.GameObjects.NineSlice).setSize === "function") {
     const ns = existing as Phaser.GameObjects.NineSlice;
     ns.setPosition(x + w / 2, y + h / 2);
-    ns.setSize(Math.max(w, slice * 2 + 4), Math.max(h, slice * 2 + 4));
+    ns.setSize(Math.max(w, sliceX * 2 + 4), Math.max(h, sliceY * 2 + 2));
     ns.setTint(tint);
+    ns.setAlpha(alpha);
     ns.setVisible(true);
     return ns;
   }
   if (existing) existing.destroy();
   try {
-    const ns = scene.add
-      .nineslice(x + w / 2, y + h / 2, UI_PANEL_KEY, undefined, Math.max(w, slice * 2 + 4), Math.max(h, slice * 2 + 4), slice, slice, slice, slice)
+    return scene.add
+      .nineslice(x + w / 2, y + h / 2, textureKey, undefined, Math.max(w, sliceX * 2 + 4), Math.max(h, sliceY * 2 + 2), sliceX, sliceX, sliceY, sliceY)
       .setScrollFactor(0)
       .setDepth(depth)
       .setTint(tint)
-      .setAlpha(0.92);
-    return ns;
+      .setAlpha(alpha);
   } catch {
-    // Older path / odd texture dims — stretch as Image.
-    const img = scene.add
-      .image(x + w / 2, y + h / 2, UI_PANEL_KEY)
-      .setDisplaySize(Math.max(w, min * 0.5), Math.max(h, min * 0.5))
+    return scene.add
+      .image(x + w / 2, y + h / 2, textureKey)
+      .setDisplaySize(w, h)
       .setScrollFactor(0)
       .setDepth(depth)
       .setTint(tint)
-      .setAlpha(0.9);
-    return img;
+      .setAlpha(alpha);
   }
 }
 

@@ -89,39 +89,40 @@ export default class SelectScene extends Phaser.Scene {
     drawMenuBackdrop(this);
     new MenuAtmosphere(this);
 
+    // Brand mark — slightly smaller than before so the identity card owns the center.
     const title = this.add
-      .text(VIEW_W / 2, MENU_HEADER_Y, t("app.title"), displayFont(52, { color: "#ff2bd6", fontStyle: "bold" }))
+      .text(VIEW_W / 2, MENU_HEADER_Y - uiDim(4), t("app.title"), displayFont(40, { color: "#ff2bd6", fontStyle: "bold" }))
       .setOrigin(0.5)
-      .setShadow(0, 0, "#00e5ff", 8, true, true)
+      .setShadow(0, 0, "#00e5ff", 5, true, true)
       .setAlpha(0);
-    this.tweens.add({ targets: title, alpha: 1, scale: { from: 1.4, to: 1 }, duration: 700, ease: "Back.out" });
+    this.tweens.add({ targets: title, alpha: 1, scale: { from: 1.12, to: 1 }, duration: 520, ease: "Cubic.out" });
 
     this.time.addEvent({
-      delay: 2600,
+      delay: 3200,
       loop: true,
       callback: () => {
         if (!this.neon) return;
-        this.neon.glitch = 0.24;
-        this.tweens.add({ targets: this.neon, glitch: 0, duration: 300 });
-        this.tweens.add({ targets: title, x: VIEW_W / 2 + uiDim(3), duration: 60, yoyo: true });
+        this.neon.glitch = 0.16;
+        this.tweens.add({ targets: this.neon, glitch: 0, duration: 280 });
+        this.tweens.add({ targets: title, x: VIEW_W / 2 + uiDim(2), duration: 50, yoyo: true });
       },
     });
 
     this.add
-      .text(VIEW_W / 2, MENU_SUB_Y, t("app.tagline"), bodyFont(13, { color: "#6b7184" }))
+      .text(VIEW_W / 2, MENU_SUB_Y - uiDim(8), t("app.tagline"), bodyFont(11, { color: "#5a6172", letterSpacing: 1 }))
       .setOrigin(0.5);
 
     this.walletPanel = new WalletSignInPanel(this);
     this.walletLabel = this.add
-      .text(MENU_PAD, uiDim(18), "", bodyFont(12, { color: "#5a6172" }))
+      .text(MENU_PAD, uiDim(14), "", bodyFont(10, { color: "#4a5260" }))
       .setOrigin(0, 0);
 
     this.bodyText = this.add
-      .text(VIEW_W / 2, VIEW_H * 0.42, "", bodyFont(18, {
-        color: "#eafdff",
+      .text(VIEW_W / 2, VIEW_H * 0.42, "", bodyFont(14, {
+        color: "#c8d0dc",
         align: "center",
-        lineSpacing: uiGap("md"),
-        wordWrap: { width: VIEW_W - MENU_PAD * 2 },
+        lineSpacing: uiGap("sm"),
+        wordWrap: { width: Math.min(VIEW_W - MENU_PAD * 2, uiDim(520)) },
       }))
       .setOrigin(0.5)
       .setVisible(false);
@@ -133,19 +134,19 @@ export default class SelectScene extends Phaser.Scene {
 
     this.options = new OptionsPanel(this, () => MusicDirector.for(this)?.applyVolumes());
     const optBtn = this.add
-      .text(VIEW_W - MENU_PAD, uiDim(18), "⚙ OPTIONS", bodyFont(13, { color: "#9aa3b2" }))
+      .text(VIEW_W - MENU_PAD, uiDim(14), "OPTIONS", bodyFont(10, { color: "#6b7184" }))
       .setOrigin(1, 0)
       .setInteractive({ useHandCursor: true });
     optBtn.on("pointerover", () => optBtn.setColor("#eafdff"));
-    optBtn.on("pointerout", () => optBtn.setColor("#9aa3b2"));
+    optBtn.on("pointerout", () => optBtn.setColor("#6b7184"));
     optBtn.on("pointerdown", () => this.options.toggle());
 
     this.add
       .text(
         VIEW_W / 2,
-        MENU_FOOTER_Y,
-        "MetaMask = permanent wallet runner  ·  free play saves multiplayer on this device",
-        bodyFont(11, { color: "#5a6172" }),
+        MENU_FOOTER_Y + uiDim(4),
+        "METAMASK  ·  PERMANENT ID     ·     FREE PLAY  ·  DEVICE SAVE",
+        bodyFont(9, { color: "#3d4454" }),
       )
       .setOrigin(0.5);
 

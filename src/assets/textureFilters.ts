@@ -11,6 +11,10 @@ import {
   UI_GUN_KEY,
   UI_PANEL_KEY,
   UI_BTN_RING_KEY,
+  IDENTITY_PANEL_KEY,
+  IDENTITY_BTN_PRIMARY_KEY,
+  IDENTITY_BTN_SECONDARY_KEY,
+  IDENTITY_MARK_KEY,
   ABILITY_ICON_KEYS,
   MENU_BG_KEY,
 } from "./manifest";
@@ -28,6 +32,10 @@ const LINEAR_KEYS = new Set([
   UI_GUN_KEY,
   UI_PANEL_KEY,
   UI_BTN_RING_KEY,
+  IDENTITY_PANEL_KEY,
+  IDENTITY_BTN_PRIMARY_KEY,
+  IDENTITY_BTN_SECONDARY_KEY,
+  IDENTITY_MARK_KEY,
   MENU_BG_KEY,
   ...ABILITY_ICON_KEYS,
 ]);
@@ -49,7 +57,8 @@ export function applyTextureFilters(scene: Phaser.Scene): void {
       key.startsWith("portrait_") ||
       key.startsWith("ability_") ||
       key.startsWith("hf_prop_") ||
-      key.startsWith("gun_hf_");
+      key.startsWith("gun_hf_") ||
+      key.startsWith("identity_");
     const mode = painted ? Phaser.Textures.FilterMode.LINEAR : Phaser.Textures.FilterMode.NEAREST;
     scene.textures.get(key).setFilter(mode);
   }

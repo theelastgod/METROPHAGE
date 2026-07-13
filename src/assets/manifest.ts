@@ -88,6 +88,11 @@ export const UI_GUN_KEY = "ui_gun";
 export const UI_PANEL_KEY = "ui_panel";
 /** Circular neon ring for mobile action buttons. */
 export const UI_BTN_RING_KEY = "ui_btn_ring";
+/** Title identity-gate chrome (Higgsfield gpt_image_2 pack). */
+export const IDENTITY_PANEL_KEY = "identity_panel";
+export const IDENTITY_BTN_PRIMARY_KEY = "identity_btn_primary";
+export const IDENTITY_BTN_SECONDARY_KEY = "identity_btn_secondary";
+export const IDENTITY_MARK_KEY = "identity_mark";
 /** Ability icons (Higgsfield) — dash / shield / pulse / virus / rail / overdrive / blade / radar. */
 export const ABILITY_ICON_KEYS = [
   "ability_dash",
@@ -174,6 +179,10 @@ export const ASSETS: Record<string, AssetEntry[]> = {
     { key: UI_GUN_KEY, file: "assets/ui/gun_hf_01.png" },
     { key: UI_PANEL_KEY, file: "assets/ui/hud_panel.png" },
     { key: UI_BTN_RING_KEY, file: "assets/ui/btn_ring.png" },
+    { key: IDENTITY_PANEL_KEY, file: "assets/ui/identity_panel.png" },
+    { key: IDENTITY_BTN_PRIMARY_KEY, file: "assets/ui/identity_btn_primary.png" },
+    { key: IDENTITY_BTN_SECONDARY_KEY, file: "assets/ui/identity_btn_secondary.png" },
+    { key: IDENTITY_MARK_KEY, file: "assets/ui/identity_mark.png" },
     ...ABILITY_ICON_KEYS.map((k) => ({ key: k, file: `assets/ui/${k}.png` })),
     { key: MENU_BG_KEY, file: "assets/ui/menu_bg.jpg" }, // painted menu key art
     // Class cards are loaded by SelectScene, where they are first used. First-time

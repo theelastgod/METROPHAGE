@@ -9,6 +9,7 @@ fs.mkdirSync(OUT, { recursive: true });
 const { browser, page } = await launch();
 await page.addInitScript(() => {
   try {
+    localStorage.removeItem("metrophage_coldopen_v2");
     localStorage.removeItem("metrophage_coldopen_v1");
   } catch {}
 });
@@ -33,36 +34,31 @@ while (Date.now() < deadline) {
   } catch {}
   await sleep(500);
 }
-await sleep(600);
-await shot("1-signal-lost");
-await sleep(2500);
-await shot("2-wake");
-await sleep(2200);
-await shot("3-hostiles");
-// fight: click at the hostiles a bunch while strafing
-for (let i = 0; i < 14; i++) {
-  await page.mouse.click(560 + (i % 3) * 60, 300 + (i % 2) * 40);
-  if (i % 4 === 0) {
-    await page.keyboard.down("a");
-    await sleep(160);
-    await page.keyboard.up("a");
-  }
-  await sleep(180);
+await sleep(800);
+await shot("1-stream-intro");
+// skip the Stream overlay if present, then capture text beats
+try {
+  await page.click("#mp-intro .mp-intro-skip", { timeout: 4000 });
+} catch {
+  await page.keyboard.press("Escape");
 }
-await shot("4-fight");
-await sleep(2600);
-await shot("5-voice");
-// let the remaining lines run out to the menu
-await sleep(5200);
+await sleep(1200);
+await shot("2-signal-lost");
+await sleep(2200);
+await shot("3-reprint");
+await sleep(2200);
+await shot("4-hook");
+// let remaining lines run out to the menu
+await sleep(5000);
 const state = await page.evaluate(() => {
   const g = window.__game;
   return {
     active: g.scene.getScenes(true).map((s) => s.scene.key),
-    seen: localStorage.getItem("metrophage_coldopen_v1"),
+    seen: localStorage.getItem("metrophage_coldopen_v2"),
   };
 });
 console.log("end state:", JSON.stringify(state));
-await shot("6-after");
+await shot("5-after");
 
 await browser.close();
 console.log("done ->", OUT);

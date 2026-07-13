@@ -69,7 +69,7 @@ charview/charclose, depth-audit, coldopen-view, flicker-audit, verify-session.
 Gotchas: use CDP `Page.captureScreenshot` (page.screenshot hangs on the Google-Fonts
 import); double-shot (full-screen juice flashes eat single frames); **never press ESC
 to dismiss dialogue in the online scene — ESC quits to menu**; rig pre-sets
-`metrophage_coldopen_v1=1` (coldopen-view clears it).
+`metrophage_coldopen_v2=1` (coldopen-view clears it; v1 legacy ignored).
 
 ## Docs
 
