@@ -12,7 +12,7 @@ export type { Item };
  * compatibility. Server stamps it on welcome; client warns on mismatch so a
  * stale Pages cache against a new Worker is obvious (hard refresh), not silent.
  */
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 /** One buffered local input the client keeps until the server acks its seq. */
 export interface InputCmd {
@@ -262,6 +262,8 @@ export type ServerMsg =
   | { t: "chat"; from: string; faction: number; ch: string; text: string; x?: number; y?: number }
   | { t: "party"; members: string[] }
   | { t: "sys"; text: string }
+  /** Kit/dash outcome — client rolls back optimistic CDs when ok:false. */
+  | { t: "kit_ack"; slot: "dash" | "q" | "e" | "r"; ok: boolean; cdMs?: number }
   | { t: "emote"; from: string; kind: number; ping: boolean; x: number; y: number } // relayed emote/ping
   | {
       t: "story";

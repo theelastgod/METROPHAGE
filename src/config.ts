@@ -79,11 +79,11 @@ export const uiDim = (px: number) => Math.round(px * UI_SCALE);
 /** Scale a design-space font size for Phaser text styles. */
 export const uiFont = (px: number) => `${uiDim(px)}px`;
 
-/** Player tuning. */
+/** Player tuning — must stay aligned with `src/net/sim.ts` combat constants for online play. */
 export const PLAYER = {
-  speed: 200, // px/sec
-  maxHp: 100,
-  fireRateMs: 170, // min gap between shots (hold to auto-fire)
+  speed: 200, // px/sec (matches server stepMove default)
+  maxHp: 140, // matches PLAYER_HP in net/sim
+  fireRateMs: 170, // matches PLAYER_FIRE_MS in net/sim
   dashSpeed: 640,
   dashDurationMs: 150,
   dashIframeMs: 260, // i-frames outlast the dash slightly
@@ -91,16 +91,16 @@ export const PLAYER = {
   hitIframeMs: 650, // mercy invulnerability after taking a hit
 } as const;
 
-/** Turing Cop (Human Security System) tuning. */
+/** Turing Cop (Human Security System) tuning — aligned with net/sim enemy defaults. */
 export const COP = {
-  hp: 75,
+  hp: 60, // matches COP_HP in net/sim
   patrolSpeed: 55,
-  chaseSpeed: 116,
-  aggroRange: 250, // start chasing within this
-  deAggroRange: 380, // give up beyond this
-  attackRange: 210, // open fire within this
-  attackCooldownMs: 1050,
-  patrolRadius: 110, // wander radius around spawn
+  chaseSpeed: 110, // matches ENEMY_SPEED in net/sim
+  aggroRange: 300, // matches ENEMY_AGGRO in net/sim
+  deAggroRange: 380,
+  attackRange: 240, // matches ENEMY_FIRE_RANGE in net/sim
+  attackCooldownMs: 1400, // matches COP_FIRE_MS in net/sim
+  patrolRadius: 110,
 } as const;
 
 /** HEAT — risk/reward meter that also drives the post-processing intensity. */

@@ -173,7 +173,13 @@ import { portraitFor, portraitForName, type PortraitRef } from "../game/portrait
 import { bountyForNpc } from "../game/bounties";
 import type { PlayerLook } from "../net/protocol";
 import { setOnlinePlayer } from "../economy/session";
-import { connectedWallet, signWalletLogin, walletSessionSecret, restoreWalletSession } from "../economy/wallet";
+import {
+  connectedWallet,
+  signWalletLogin,
+  walletSessionSecret,
+  rotateWalletSessionSecret,
+  restoreWalletSession,
+} from "../economy/wallet";
 import { loginMessage } from "../net/protocol";
 import {
   sanitizeCustomization,
@@ -1867,6 +1873,8 @@ export default class OnlineScene extends Phaser.Scene {
     const ts = Date.now();
     const signed = await signWalletLogin(loginMessage(addr, ts), addr);
     if (signed) {
+      // Fresh signature → rotate device session so stolen old secrets die.
+      rotateWalletSessionSecret(signed.address);
       const proof = { wallet: signed.address, sig: signed.signature, ts };
       this.net.setAuth(proof);
       this.registry.set("walletProof", proof);

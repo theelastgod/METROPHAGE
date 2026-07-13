@@ -120,10 +120,11 @@ import {
   transferPvpEscrow as transferDurablePvpEscrow,
 } from "./pvpEscrow";
 
-/** Inventory is capped so the persisted JSON stays bounded; oldest drops out (FIFO). */
+/** Inventory is capped so the persisted JSON stays bounded; overflow is refused or mailed. */
 const INVENTORY_CAP = 24;
 /** Personal stash (TENEMENT lockbox) cap — deposits are refused beyond this, never dropped. */
 const STASH_CAP = 24;
+const CLASS_IDS = new Set(["metrophage", "k-guerilla", "wintermute", "swarm"]);
 
 /** Defensive JSON → Item[] parse for the persisted inventory column. */
 function parseInventory(raw: string | null | undefined): Item[] {
@@ -190,8 +191,7 @@ const SUPERVISOR_ALARM_MS = 10_000;
 // per message) and fire is already server-rate-limited — this only stops a socket
 // from exhausting CPU/bandwidth with raw message volume.
 const MAX_MSG_BYTES = 4096; // reject oversized payloads outright
-const MSG_RATE_WINDOW_MS = 1000;
-const MSG_SOFT_PER_WINDOW = 400; // silently drop excess work in a one-second window
+const MSG_SOFT_PER_WINDOW = 400; // soft-drop past this many msgs per ~1s window
 const MSG_KILL_PER_WINDOW = 600; // close only a genuine per-socket flood
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const clampUnit = (n: number) => (n > 1 ? 1 : n < -1 ? -1 : Number.isFinite(n) ? n : 0);
@@ -322,6 +322,8 @@ interface PlayerState {
   metroBase: number;
   /** Wall-clock of the login that claimed session_zone on D1 (cross-zone last-writer guard). */
   sessionAt: number;
+  /** False after another zone claimed the session — freeze inputs and stop balance writes. */
+  sessionValid: boolean;
   inventory: Item[]; // server-authoritative loot, persisted as JSON (capped FIFO)
   stash: Item[]; // personal safe storage (TENEMENT lockbox) — survives death, persisted as JSON
   equipped: Partial<Record<Slot, Item>>; // gear by slot; its mods boost combat
@@ -1958,7 +1960,16 @@ export class WorldDO {
       const listings = [];
       for (const r of results ?? []) {
         const it = this.parseItemJson(r.item);
-        if (it) listings.push({ id: r.id, seller: r.seller, sellerName: r.seller_name, item: it, price: r.price, currency: r.currency });
+        if (it) {
+          listings.push({ id: r.id, seller: r.seller, sellerName: r.seller_name, item: it, price: r.price, currency: r.currency });
+        } else {
+          // Auto-retire corrupt rows so they cannot be bought or clog the board.
+          try {
+            await this.env.DB.prepare("UPDATE auctions SET status='cancelled' WHERE id=? AND status='open'").bind(r.id).run();
+          } catch {
+            /* ignore */
+          }
+        }
       }
       this.send(ws, { t: "market", listings });
     } catch {
@@ -2056,15 +2067,20 @@ export class WorldDO {
         const id = msg.id ?? -1;
         const row = await DB.prepare("SELECT item FROM auctions WHERE id=? AND seller=? AND status='open'").bind(id, p.id).first<{ item: string }>();
         if (!row) return sys("no such open listing of yours");
+        const item = this.parseItemJson(row.item);
+        if (!item) {
+          await DB.prepare("UPDATE auctions SET status='cancelled' WHERE id=? AND seller=? AND status='open'").bind(id, p.id).run();
+          return sys("corrupt listing removed");
+        }
+        // Bag-full: keep the listing open so the item is never destroyed.
+        if (p.inventory.length >= INVENTORY_CAP) {
+          return sys("bag full — free a slot before cancelling this listing");
+        }
         const r = await DB.prepare("UPDATE auctions SET status='cancelled' WHERE id=? AND seller=? AND status='open'").bind(id, p.id).run();
         if (r.meta.changes === 0) return sys("listing already gone");
-        const item = this.parseItemJson(row.item);
-        if (item) {
-          p.inventory.push(item);
-          if (p.inventory.length > INVENTORY_CAP) p.inventory.shift();
-          p.dirty = true;
-          this.send(ws, { t: "inv", items: p.inventory });
-        }
+        p.inventory.push(item);
+        p.dirty = true;
+        this.send(ws, { t: "inv", items: p.inventory });
         sys("listing cancelled — item returned to your bag");
         await this.sendMarket(ws);
         return;
@@ -2096,39 +2112,43 @@ export class WorldDO {
         }
         p.inventory.push(item);
         this.send(ws, { t: "inv", items: p.inventory });
-        // pay the seller: in-memory if they're in THIS zone, else via the cross-zone mailbox
-        const seller = this.players.get(row.seller);
-        if (seller) {
-          if (isMetro) {
-            seller.metro += price;
-          } else {
-            seller.credits += price;
-            this.bumpStat(seller, "credits", price);
-          }
-          seller.dirty = true;
-          this.sendTo(seller.id, {
-            t: "sys",
-            text: isMetro ? `✦ sold ${item.name} for ◈${price} $METRO` : `✦ sold ${item.name} for ₵${price}`,
-          });
+        // pay the seller: broker sales are a pure sink; players get live credit or mailbox.
+        if (row.seller === "__broker") {
+          if (!isMetro) this.eco("burn", "market_sink", price);
+          // metro broker sales leave the token out of player hands (no mailbox pile-up)
         } else {
-          try {
+          const seller = this.players.get(row.seller);
+          if (seller) {
             if (isMetro) {
-              await DB.prepare("INSERT INTO mailbox (player, metro, reason, created_at) VALUES (?,?,?,?)")
-                .bind(row.seller, price, "auction sale ($METRO)", Date.now())
-                .run();
+              seller.metro += price;
             } else {
-              await DB.prepare("INSERT INTO mailbox (player, credits, reason, created_at) VALUES (?,?,?,?)")
-                .bind(row.seller, price, "auction sale", Date.now())
-                .run();
+              seller.credits += price;
+              this.bumpStat(seller, "credits", price);
             }
-          } catch {
-            // Listing is sold and buyer paid — queue a retry row if mailbox insert failed.
+            seller.dirty = true;
+            this.sendTo(seller.id, {
+              t: "sys",
+              text: isMetro ? `✦ sold ${item.name} for ◈${price} $METRO` : `✦ sold ${item.name} for ₵${price}`,
+            });
+          } else {
             try {
-              await DB.prepare("INSERT INTO mailbox (player, credits, metro, reason, created_at) VALUES (?,?,?,?,?)")
-                .bind(row.seller, isMetro ? 0 : price, isMetro ? price : 0, "auction sale (retry)", Date.now())
-                .run();
+              if (isMetro) {
+                await DB.prepare("INSERT INTO mailbox (player, metro, reason, created_at) VALUES (?,?,?,?)")
+                  .bind(row.seller, price, "auction sale ($METRO)", Date.now())
+                  .run();
+              } else {
+                await DB.prepare("INSERT INTO mailbox (player, credits, reason, created_at) VALUES (?,?,?,?)")
+                  .bind(row.seller, price, "auction sale", Date.now())
+                  .run();
+              }
             } catch {
-              /* durable sold row remains audit trail */
+              try {
+                await DB.prepare("INSERT INTO mailbox (player, credits, metro, reason, created_at) VALUES (?,?,?,?,?)")
+                  .bind(row.seller, isMetro ? 0 : price, isMetro ? price : 0, "auction sale (retry)", Date.now())
+                  .run();
+              } catch {
+                /* durable sold row remains audit trail */
+              }
             }
           }
         }
@@ -2609,6 +2629,7 @@ export class WorldDO {
     // Claim this zone as the sole active session writer for this player. Older zone
     // DOs lose the right to absolute-overwrite inventory/balances on their next persist.
     p.sessionAt = Date.now();
+    p.sessionValid = true;
     try {
       await this.env.DB.prepare("UPDATE players SET session_zone = ?, session_at = ? WHERE id = ?")
         .bind(this.zoneName, p.sessionAt, id)
@@ -2643,8 +2664,10 @@ export class WorldDO {
       p.dirty = true;
     }
     // class selects the signature ability (validated against the known roster)
-    const CLASS_IDS = new Set(["metrophage", "k-guerilla", "wintermute", "swarm"]);
-    if (proof?.classId && CLASS_IDS.has(proof.classId)) p.classId = proof.classId;
+    if (proof?.classId && CLASS_IDS.has(proof.classId)) {
+      p.classId = proof.classId;
+      p.dirty = true;
+    }
     // Zone handoff: always place at the correct entry spawn for this room.
     // (Venue-sized interiors used to inherit district/safehouse coords via a weak
     // spawnPointForTravel match and park the runner outside the walls.)
@@ -2863,33 +2886,45 @@ export class WorldDO {
     let equipped: Partial<Record<Slot, Item>> = {};
     let fragments: string[] = [];
     let secret: string | null = null;
-    const row = await this.env.DB.prepare(
-      "SELECT x, y, credits, metro, xp, zone, cores, quest_step, campaign, tutorial_done, tutorial_step, tutorial_mode, inventory, look, equipped, fragments, stash, secret FROM players WHERE id = ?",
-    )
-      .bind(id)
-      .first<{
-        x: number;
-        y: number;
-        credits: number;
-        metro: number;
-        xp: number;
-        zone: string;
-        cores: number;
-        quest_step: number;
-        campaign: string | null;
-        tutorial_done: number;
-        tutorial_step: number;
-        tutorial_mode: string | null;
-        inventory: string;
-        look: string | null;
-        equipped: string;
-        fragments: string | null;
-        stash: string | null;
-        secret: string | null;
-      }>();
+    let classId = "metrophage";
+    let row: {
+      x: number;
+      y: number;
+      credits: number;
+      metro: number;
+      xp: number;
+      zone: string;
+      cores: number;
+      quest_step: number;
+      campaign: string | null;
+      tutorial_done: number;
+      tutorial_step: number;
+      tutorial_mode: string | null;
+      inventory: string;
+      look: string | null;
+      equipped: string;
+      fragments: string | null;
+      stash: string | null;
+      secret: string | null;
+      class_id?: string | null;
+    } | null = null;
+    try {
+      row = await this.env.DB.prepare(
+        "SELECT x, y, credits, metro, xp, zone, cores, quest_step, campaign, tutorial_done, tutorial_step, tutorial_mode, inventory, look, equipped, fragments, stash, secret, class_id FROM players WHERE id = ?",
+      )
+        .bind(id)
+        .first();
+    } catch {
+      row = await this.env.DB.prepare(
+        "SELECT x, y, credits, metro, xp, zone, cores, quest_step, campaign, tutorial_done, tutorial_step, tutorial_mode, inventory, look, equipped, fragments, stash, secret FROM players WHERE id = ?",
+      )
+        .bind(id)
+        .first();
+    }
     if (row) {
       credits = row.credits ?? 0;
       metro = row.metro ?? 0;
+      if (row.class_id && CLASS_IDS.has(row.class_id)) classId = row.class_id;
       xp = row.xp ?? 0;
       cores = row.cores ?? 0;
       campaign = new Campaign(parseCampaign(row.campaign));
@@ -3048,6 +3083,7 @@ export class WorldDO {
       metro,
       metroBase: metro,
       sessionAt: 0,
+      sessionValid: true,
       inventory,
       stash,
       equipped,
@@ -3064,7 +3100,7 @@ export class WorldDO {
       lastEmoteTick: -999,
       campaign,
       fragments,
-      classId: "metrophage",
+      classId,
       dashUntilTick: 0,
       dashCdUntilTick: 0,
       dashDx: 0,
@@ -4030,7 +4066,7 @@ export class WorldDO {
 
   private onInput(ws: WebSocket, msg: Extract<ClientMsg, { t: "input" }>) {
     const p = this.playerFor(ws);
-    if (!p) return;
+    if (!p || !p.sessionValid) return;
     p.mx = clampUnit(msg.mx);
     p.my = clampUnit(msg.my);
     p.lastInputTick = this.tick;
@@ -4072,9 +4108,12 @@ export class WorldDO {
     const slot = msg.slot as Slot;
     const it = p.equipped[slot];
     if (!it) return;
+    if (p.inventory.length >= INVENTORY_CAP) {
+      this.send(ws, { t: "sys", text: "bag full — free a slot before unequipping" });
+      return;
+    }
     delete p.equipped[slot];
     p.inventory.push(it);
-    if (p.inventory.length > INVENTORY_CAP) p.inventory.shift();
     this.recomputeStats(p);
     p.dirty = true;
     this.send(ws, { t: "inv", items: p.inventory });
@@ -4211,8 +4250,8 @@ export class WorldDO {
       p.inventory.splice(hi, 1);
       p.inventory.splice(lo, 1);
       const out = rollItem(p.level, 0, up);
+      // fuse removes two items then adds one — net -1, always fits if inputs were bagged
       p.inventory.push(out);
-      if (p.inventory.length > INVENTORY_CAP) p.inventory.shift();
       fail(`✦ fused → ${out.rarity} ${out.name}`);
     } else return;
 
@@ -4247,8 +4286,11 @@ export class WorldDO {
    *  than the walk cap, so the anti-cheat speed validation stays honest. */
   private onDash(ws: WebSocket, msg: Extract<ClientMsg, { t: "dash" }>) {
     const p = this.playerFor(ws);
-    if (!p || p.dead) return;
-    if (this.tick < p.dashCdUntilTick) return; // still recharging — silently dropped
+    if (!p || p.dead || !p.sessionValid) return;
+    if (this.tick < p.dashCdUntilTick) {
+      this.send(ws, { t: "kit_ack", slot: "dash", ok: false });
+      return;
+    }
     let dx = Number(msg.dx);
     let dy = Number(msg.dy);
     const len = Math.hypot(dx, dy);
@@ -4264,6 +4306,7 @@ export class WorldDO {
     p.dashUntilTick = this.tick + ticks(PLAYER.dashDurationMs);
     p.dashCdUntilTick = this.tick + ticks(PLAYER.dashCooldownMs);
     p.iframeUntilTick = this.tick + ticks(PLAYER.dashIframeMs);
+    this.send(ws, { t: "kit_ack", slot: "dash", ok: true, cdMs: PLAYER.dashCooldownMs });
     // kit-mod: DASH TRAIL — contagion pods pop along the blink line
     if ((p.mods.dashTrailPct || 0) > 0) {
       const dmg = Math.round(PLAYER_DMG * (0.6 + 2 * p.mods.dashTrailPct));
@@ -4288,27 +4331,33 @@ export class WorldDO {
    *  cooldowns can't be spoofed. Kill payouts ride the same pipeline as gunfire. */
   private onAbility(ws: WebSocket, msg: Extract<ClientMsg, { t: "ability" }>) {
     const p = this.playerFor(ws);
-    if (!p || p.dead) return;
-    if (this.tick < p.abilityCdUntilTick) return;
+    if (!p || p.dead || !p.sessionValid) return;
+    if (this.tick < p.abilityCdUntilTick) {
+      this.send(ws, { t: "kit_ack", slot: "q", ok: false });
+      return;
+    }
     const aim = Number.isFinite(msg.aim) ? msg.aim : p.aim;
     p.aim = aim;
     if (this.inTutorial()) this.tutorialEvent(p, "kit");
     // DASH-STRIKE moves on the PRIMARY cast only (an echo re-blinking you would be chaos)
     if (p.classId === "k-guerilla") this.onDash(ws, { t: "dash", seq: msg.seq, dx: Math.cos(aim), dy: Math.sin(aim) });
     this.resolveSignature(p, aim, 1);
+    let cdMs = 7000;
     switch (p.classId) {
       case "k-guerilla":
-        p.abilityCdUntilTick = this.tick + ticks(6000);
+        cdMs = 6000;
         break;
       case "wintermute":
-        p.abilityCdUntilTick = this.tick + ticks(8000);
+        cdMs = 8000;
         break;
       case "swarm":
-        p.abilityCdUntilTick = this.tick + ticks(6500);
+        cdMs = 6500;
         break;
       default:
-        p.abilityCdUntilTick = this.tick + ticks(7000);
+        cdMs = 7000;
     }
+    p.abilityCdUntilTick = this.tick + ticks(cdMs);
+    this.send(ws, { t: "kit_ack", slot: "q", ok: true, cdMs });
     // kit-mod: Q ECHO — the signature repeats moments later at a damage fraction
     if ((p.mods.abilityEchoPct || 0) > 0) {
       this.echoes.push({ tick: this.tick + ticks(340), pid: p.id, aim, scale: Math.min(0.8, 0.35 + p.mods.abilityEchoPct) });
@@ -4377,12 +4426,16 @@ export class WorldDO {
   /** The class secondary (E) — completes the kit each class card advertises. */
   private onAbility2(ws: WebSocket, msg: Extract<ClientMsg, { t: "ability2" }>) {
     const p = this.playerFor(ws);
-    if (!p || p.dead) return;
-    if (this.tick < p.ability2CdUntilTick) return;
+    if (!p || p.dead || !p.sessionValid) return;
+    if (this.tick < p.ability2CdUntilTick) {
+      this.send(ws, { t: "kit_ack", slot: "e", ok: false });
+      return;
+    }
     const aim = Number.isFinite(msg.aim) ? msg.aim : p.aim;
     p.aim = aim;
     if (this.inTutorial()) this.tutorialEvent(p, "kit");
     const lvl = 1 + (p.mods.dmgPct || 0);
+    let cdMs = 9000;
     switch (p.classId) {
       case "k-guerilla": {
         // AIRSTRIKE — call a telegraphed strike on the aim point; enemies caught in
@@ -4400,7 +4453,7 @@ export class WorldDO {
           vsEnemies: true,
           owner: p.id,
         });
-        p.ability2CdUntilTick = this.tick + ticks(10000);
+        cdMs = 10000;
         break;
       }
       case "wintermute": {
@@ -4408,7 +4461,7 @@ export class WorldDO {
         p.droneUntilTick = this.tick + ticks(6000);
         p.droneNextTick = this.tick;
         p.droneKind = 0;
-        p.ability2CdUntilTick = this.tick + ticks(12000);
+        cdMs = 12000;
         break;
       }
       case "swarm": {
@@ -4416,7 +4469,7 @@ export class WorldDO {
         p.droneUntilTick = this.tick + ticks(8000);
         p.droneNextTick = this.tick;
         p.droneKind = 1;
-        p.ability2CdUntilTick = this.tick + ticks(12000);
+        cdMs = 12000;
         break;
       }
       default: {
@@ -4429,21 +4482,27 @@ export class WorldDO {
           e.slowUntilTick = this.tick + this.statusTicks(e, e.boss ? 1200 : 3000);
           this.applyPlayerHitToEnemy(e, p, dmg);
         }
-        p.ability2CdUntilTick = this.tick + ticks(9000);
+        cdMs = 9000;
         break;
       }
     }
+    p.ability2CdUntilTick = this.tick + ticks(cdMs);
+    this.send(ws, { t: "kit_ack", slot: "e", ok: true, cdMs });
   }
 
   /** The class ultimate (R) — gated on HEAT, not a cooldown: you EARN it in the fight
    *  (HEAT.ultThreshold to cast, spends HEAT.ultHeatCost). Server-resolved end to end. */
   private onUlt(ws: WebSocket, msg: Extract<ClientMsg, { t: "ult" }>) {
     const p = this.playerFor(ws);
-    if (!p || p.dead) return;
+    if (!p || p.dead || !p.sessionValid) return;
     // kit-mod: ULT HEAT — singular chips lower the arm threshold (floor 25)
     const ultGate = Math.max(25, HEAT.ultThreshold - Math.round(p.mods.ultHeatDiscount || 0));
-    if (p.heat < ultGate) return; // not hot enough — silently dropped
+    if (p.heat < ultGate) {
+      this.send(ws, { t: "kit_ack", slot: "r", ok: false });
+      return;
+    }
     p.heat = Math.max(0, p.heat - HEAT.ultHeatCost);
+    this.send(ws, { t: "kit_ack", slot: "r", ok: true });
     const aim = Number.isFinite(msg.aim) ? msg.aim : p.aim;
     p.aim = aim;
     const lvl = 1 + (p.mods.dmgPct || 0);
@@ -4505,7 +4564,7 @@ export class WorldDO {
 
   private onFire(ws: WebSocket, msg: Extract<ClientMsg, { t: "fire" }>) {
     const p = this.playerFor(ws);
-    if (!p || p.dead) return;
+    if (!p || p.dead || !p.sessionValid) return;
     if (Number.isFinite(msg.aim)) p.aim = msg.aim;
     const weapon = p.equipped.weapon;
     const wdef = weapon?.weaponId ? getWeapon(weapon.weaponId) : undefined;
@@ -4651,9 +4710,17 @@ export class WorldDO {
         for (const [aid, ae] of this.enemies) if (ae.add && !ae.boss) this.enemies.delete(aid);
       }
       if (isBoss || e.elite || wasHvt || Math.random() < arch.loot.chance) {
-        killer.inventory.push(rollItem(killer.level, isBoss ? 2.5 : wasHvt ? 2.2 : arch.loot.boost + (e.elite?.lootBonus ?? 0)));
-        if (killer.inventory.length > INVENTORY_CAP) killer.inventory.shift();
-        this.sendTo(killer.id, { t: "inv", items: killer.inventory });
+        const drop = rollItem(killer.level, isBoss ? 2.5 : wasHvt ? 2.2 : arch.loot.boost + (e.elite?.lootBonus ?? 0));
+        if (killer.inventory.length >= INVENTORY_CAP) {
+          // Never destroy loot — mail it for later claim.
+          void this.env.DB.prepare("INSERT INTO mailbox (player, item, reason, created_at) VALUES (?,?,?,?)")
+            .bind(killer.id, JSON.stringify(drop), "bag full loot", Date.now())
+            .run();
+          this.sendTo(killer.id, { t: "sys", text: "bag full — loot mailed (open market/board later to claim)" });
+        } else {
+          killer.inventory.push(drop);
+          this.sendTo(killer.id, { t: "inv", items: killer.inventory });
+        }
       }
       if (isBoss) this.broadcast({ t: "sys", text: `▲ ${killer.name} slew ${e.name} — it will reform soon` });
     } else {
@@ -5670,47 +5737,89 @@ export class WorldDO {
       // fail, fall back to relative-balance write without the gate.
       let applied = false;
       try {
-        const res = await this.env.DB.prepare(
-          `UPDATE players SET
-             x=?, y=?, zone=?,
-             credits = credits + ?, xp=?, cores=?, metro = metro + ?,
-             campaign=?, tutorial_done=?, tutorial_step=?, tutorial_mode=?,
-             inventory=?, stash=?, look=?, equipped=?, updated_at=?
-           WHERE id=? AND (session_zone IS NULL OR session_zone = '' OR session_zone = ? OR session_at <= ?)`,
-        )
-          .bind(
-            round2(p.x),
-            round2(p.y),
-            zone,
-            dC,
-            Math.round(p.xp),
-            Math.round(p.cores),
-            dM,
-            serializeCampaign(p.campaign.toData()),
-            p.tutorialDone ? 1 : 0,
-            Math.round(p.tutorialStep),
-            mode,
-            JSON.stringify(p.inventory.slice(0, INVENTORY_CAP)),
-            JSON.stringify(p.stash.slice(0, STASH_CAP)),
-            p.look ? JSON.stringify(p.look) : null,
-            JSON.stringify(p.equipped),
-            Date.now(),
-            p.id,
-            this.zoneName,
-            p.sessionAt,
+        let res;
+        try {
+          res = await this.env.DB.prepare(
+            `UPDATE players SET
+               x=?, y=?, zone=?,
+               credits = credits + ?, xp=?, cores=?, metro = metro + ?,
+               campaign=?, tutorial_done=?, tutorial_step=?, tutorial_mode=?,
+               inventory=?, stash=?, look=?, equipped=?, class_id=?, updated_at=?
+             WHERE id=? AND (session_zone IS NULL OR session_zone = '' OR session_zone = ? OR session_at <= ?)`,
           )
-          .run();
+            .bind(
+              round2(p.x),
+              round2(p.y),
+              zone,
+              dC,
+              Math.round(p.xp),
+              Math.round(p.cores),
+              dM,
+              serializeCampaign(p.campaign.toData()),
+              p.tutorialDone ? 1 : 0,
+              Math.round(p.tutorialStep),
+              mode,
+              JSON.stringify(p.inventory.slice(0, INVENTORY_CAP)),
+              JSON.stringify(p.stash.slice(0, STASH_CAP)),
+              p.look ? JSON.stringify(p.look) : null,
+              JSON.stringify(p.equipped),
+              p.classId || "metrophage",
+              Date.now(),
+              p.id,
+              this.zoneName,
+              p.sessionAt,
+            )
+            .run();
+        } catch {
+          res = await this.env.DB.prepare(
+            `UPDATE players SET
+               x=?, y=?, zone=?,
+               credits = credits + ?, xp=?, cores=?, metro = metro + ?,
+               campaign=?, tutorial_done=?, tutorial_step=?, tutorial_mode=?,
+               inventory=?, stash=?, look=?, equipped=?, updated_at=?
+             WHERE id=? AND (session_zone IS NULL OR session_zone = '' OR session_zone = ? OR session_at <= ?)`,
+          )
+            .bind(
+              round2(p.x),
+              round2(p.y),
+              zone,
+              dC,
+              Math.round(p.xp),
+              Math.round(p.cores),
+              dM,
+              serializeCampaign(p.campaign.toData()),
+              p.tutorialDone ? 1 : 0,
+              Math.round(p.tutorialStep),
+              mode,
+              JSON.stringify(p.inventory.slice(0, INVENTORY_CAP)),
+              JSON.stringify(p.stash.slice(0, STASH_CAP)),
+              p.look ? JSON.stringify(p.look) : null,
+              JSON.stringify(p.equipped),
+              Date.now(),
+              p.id,
+              this.zoneName,
+              p.sessionAt,
+            )
+            .run();
+        }
         applied = (res.meta.changes ?? 0) > 0;
         if (!applied) {
-          // Lost session to another zone — still flush our credit/metro delta so farmed
-          // currency is not stranded, but do not overwrite inventory/position.
-          await this.env.DB.prepare("UPDATE players SET credits = credits + ?, metro = metro + ?, updated_at=? WHERE id=?")
-            .bind(dC, dM, Date.now(), p.id)
-            .run();
-          // Align live to D1 and soft-kick so we stop dual-writing.
-          await this.pullExternalBalances(p);
-          p.creditsBase = Math.round(p.credits);
-          p.metroBase = Math.round(p.metro);
+          // Lost session to another zone — DO NOT flush credit/metro deltas (dual-session
+          // mint vector). Discard unflushed local farm, re-sync to D1, freeze, and kick.
+          p.sessionValid = false;
+          try {
+            const truth = await this.env.DB.prepare("SELECT credits, metro FROM players WHERE id = ?")
+              .bind(p.id)
+              .first<{ credits: number; metro: number }>();
+            if (truth) {
+              p.credits = Math.round(truth.credits ?? 0);
+              p.creditsBase = p.credits;
+              p.metro = Math.round(truth.metro ?? 0);
+              p.metroBase = p.metro;
+            }
+          } catch {
+            /* ignore */
+          }
           for (const [sock, sid] of this.sessions) {
             if (sid === p.id) {
               this.send(sock, { t: "sys", text: "session moved to another zone — reconnecting…" });

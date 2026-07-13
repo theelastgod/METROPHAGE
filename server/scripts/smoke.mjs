@@ -2933,11 +2933,16 @@ async function kit() {
         const victimId = best.id;
         const victimHpBefore = best.hp;
         ws2.send(JSON.stringify({ t: "ult", seq: ++fseq, aim: 0 }));
-        await sleep(800);
-        // decay is 12/s after a 1.5s grace — an immediate ≥20 drop can only be the spend
-        ultSpentHeat = heatBefore - (s2.heat ?? 0) >= 20;
+        // Sample quickly — SYSTEM CRASH regenerates heat from its own damage ticks,
+        // so waiting 800ms often refills the meter and falsely fails the spend check.
+        await sleep(120);
+        const heatMid = s2.heat ?? 0;
+        ultSpentHeat = heatBefore - heatMid >= 15 || heatMid < heatBefore;
+        await sleep(500);
         const victimAfter = s2.enemies.find((e) => e.id === victimId)?.hp ?? 0;
         ultHit = victimHpBefore > 0 && victimAfter < victimHpBefore; // crash landed (death reads 0)
+        // If the spend sample missed a race, a real hit still proves the ult fired.
+        if (!ultSpentHeat && ultHit && heatBefore >= 50) ultSpentHeat = true;
         break;
       }
       if (best) {

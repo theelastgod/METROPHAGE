@@ -52,26 +52,38 @@ function persistConnection(addr: string | null, chain: "evm" | "solana" | null) 
   }
 }
 
+/** Wallet device sessions expire after 7 days — forces a fresh MetaMask sign-in. */
+const WALLET_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
 /**
  * Device-bound wallet session secret — bound server-side after the first successful
  * MetaMask signature. Zone travel reuses this so you don't re-sign every district.
+ * Stored as `secret|issuedAtMs`; expired secrets are rotated (next login needs a re-sign).
  */
 export function walletSessionSecret(wallet: string): string | undefined {
   try {
     const addr = (wallet || "").toLowerCase().replace(/[^a-z0-9x]/g, "");
     if (addr.length < 8) return undefined;
     const key = "mp_wsession_" + addr;
-    let s = localStorage.getItem(key);
-    if (!s) {
-      s = crypto.randomUUID();
-      localStorage.setItem(key, s);
+    const now = Date.now();
+    const raw = localStorage.getItem(key);
+    if (raw) {
+      const pipe = raw.indexOf("|");
+      const s = pipe >= 0 ? raw.slice(0, pipe) : raw;
+      const issued = pipe >= 0 ? Number(raw.slice(pipe + 1)) : now;
+      if (s && s.length >= 8 && Number.isFinite(issued) && now - issued < WALLET_SESSION_TTL_MS) {
+        return s;
+      }
     }
+    const s = crypto.randomUUID();
+    localStorage.setItem(key, `${s}|${now}`);
     return s;
   } catch {
     return undefined;
   }
 }
 
+/** Force-rotate the device session (e.g. after sign-out). */
 export function clearWalletSessionSecret(wallet?: string) {
   try {
     if (wallet) {
@@ -79,6 +91,19 @@ export function clearWalletSessionSecret(wallet?: string) {
     }
   } catch {
     /* ignore */
+  }
+}
+
+/** Mint a fresh session secret and stamp issued-at (call after a successful personal_sign). */
+export function rotateWalletSessionSecret(wallet: string): string | undefined {
+  try {
+    const addr = (wallet || "").toLowerCase().replace(/[^a-z0-9x]/g, "");
+    if (addr.length < 8) return undefined;
+    const s = crypto.randomUUID();
+    localStorage.setItem("mp_wsession_" + addr, `${s}|${Date.now()}`);
+    return s;
+  } catch {
+    return undefined;
   }
 }
 

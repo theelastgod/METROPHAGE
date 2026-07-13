@@ -1,4 +1,4 @@
-import { stepMove, NET_TICK_MS, PLAYER_HP, type MoveState } from "./sim";
+import { stepMove, NET_TICK_MS, PLAYER_HP, PLAYER_FIRE_MS, type MoveState } from "./sim";
 import { PLAYER } from "../config";
 import type { TileGrid } from "../world/district";
 import type { ClientMsg, ServerMsg, InputCmd, PlayerLook, Item, EstateFurniture } from "./protocol";
@@ -320,6 +320,11 @@ export default class NetClient {
   private seq = 0;
   private pending: InputCmd[] = [];
   private acc = 0;
+  /** Cap unacked prediction cmds so a stalled ack stream cannot grow forever. */
+  private static readonly PENDING_CAP = 48;
+  private lastFireSentAt = 0;
+  /** When set, protocol mismatch hard-stopped the client (no more reconnect loops). */
+  protocolBlocked = false;
 
   constructor(
     private grid: TileGrid,
@@ -454,7 +459,7 @@ export default class NetClient {
   }
 
   private scheduleReconnect() {
-    if (this.manualClose) return;
+    if (this.manualClose || this.protocolBlocked) return;
     if (this.reconnectAttempts >= 8) {
       this.onConnectionState?.("offline");
       return;
@@ -536,6 +541,9 @@ export default class NetClient {
     if (dashing) stepMove(this.pred, { mx: this.predDashX, my: this.predDashY }, this.grid, NET_TICK_MS, PLAYER.dashSpeed);
     else stepMove(this.pred, cmd, this.grid, NET_TICK_MS);
     this.pending.push(cmd);
+    if (this.pending.length > NetClient.PENDING_CAP) {
+      this.pending.splice(0, this.pending.length - NetClient.PENDING_CAP);
+    }
     try {
       this.ws?.send(JSON.stringify({ t: "input", seq: cmd.seq, mx: cmd.mx, my: cmd.my } satisfies ClientMsg));
     } catch {
@@ -547,7 +555,7 @@ export default class NetClient {
    *  run the same dash sim, so reconciliation stays quiet). Returns false on cooldown. */
   dash(dx: number, dy: number): boolean {
     const now = performance.now();
-    if (now < this.dashCdUntil || this.dead) return false;
+    if (now < this.dashCdUntil || this.dead || !this.connected) return false;
     const len = Math.hypot(dx, dy) || 1;
     this.predDashX = dx / len;
     this.predDashY = dy / len;
@@ -556,7 +564,10 @@ export default class NetClient {
     try {
       this.ws?.send(JSON.stringify({ t: "dash", seq: this.seq, dx: this.predDashX, dy: this.predDashY } satisfies ClientMsg));
     } catch {
-      /* offline — prediction still gives the feel; server corrects on reconnect */
+      // Offline — don't lock the player out of a full CD with no server resolution.
+      this.dashCdUntil = 0;
+      this.predDashUntil = 0;
+      return false;
     }
     return true;
   }
@@ -564,12 +575,13 @@ export default class NetClient {
   /** Class signature (Q) — the server resolves the effect; we track the cooldown for UI. */
   ability(aim: number, cooldownMs: number): boolean {
     const now = performance.now();
-    if (now < this.abilityCdUntil || this.dead) return false;
+    if (now < this.abilityCdUntil || this.dead || !this.connected) return false;
     this.abilityCdUntil = now + cooldownMs;
     try {
       this.ws?.send(JSON.stringify({ t: "ability", seq: this.seq, aim } satisfies ClientMsg));
     } catch {
-      /* offline */
+      this.abilityCdUntil = 0;
+      return false;
     }
     return true;
   }
@@ -577,11 +589,11 @@ export default class NetClient {
   /** Class ultimate (R) — no cooldown: HEAT is the cost, and the server holds the meter.
    *  `threshold` mirrors the server gate (kit-mod chips can lower it); server enforces. */
   ult(aim: number, threshold = 50): boolean {
-    if (this.dead || this.heat < threshold) return false;
+    if (this.dead || this.heat < threshold || !this.connected) return false;
     try {
       this.ws?.send(JSON.stringify({ t: "ult", seq: this.seq, aim } satisfies ClientMsg));
     } catch {
-      /* offline */
+      return false;
     }
     return true;
   }
@@ -589,12 +601,13 @@ export default class NetClient {
   /** Class secondary (E) — same contract as the signature. */
   ability2(aim: number, cooldownMs: number): boolean {
     const now = performance.now();
-    if (now < this.ability2CdUntil || this.dead) return false;
+    if (now < this.ability2CdUntil || this.dead || !this.connected) return false;
     this.ability2CdUntil = now + cooldownMs;
     try {
       this.ws?.send(JSON.stringify({ t: "ability2", seq: this.seq, aim } satisfies ClientMsg));
     } catch {
-      /* offline */
+      this.ability2CdUntil = 0;
+      return false;
     }
     return true;
   }
@@ -607,10 +620,31 @@ export default class NetClient {
       return;
     }
     if (msg.t === "welcome") {
+      // Hard gate: mismatched protocol half-breaks panels — stop reconnect loops.
+      if (typeof msg.protocol === "number" && msg.protocol !== PROTOCOL_VERSION) {
+        this.protocolBlocked = true;
+        this.manualClose = true;
+        this.connected = false;
+        this.pushChat({
+          from: "",
+          ch: "sys",
+          text: `⚠ CLIENT OUTDATED — hard refresh required (server protocol ${msg.protocol}, client ${PROTOCOL_VERSION}).`,
+          faction: -1,
+          sys: true,
+        });
+        this.onConnectionState?.("offline");
+        try {
+          this.ws?.close(4000, "protocol");
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
       this.id = msg.id;
       this.faction = msg.faction;
       this.connected = true;
       this.reconnectAttempts = 0;
+      this.protocolBlocked = false;
       this.onConnectionState?.("connected");
       this.pred = { x: msg.x, y: msg.y };
       this.serverPos = { x: msg.x, y: msg.y };
@@ -619,17 +653,6 @@ export default class NetClient {
       this.seq = 0;
       this.lastAck = 0;
       this.fragments = msg.fragments ?? [];
-      // Protocol handshake — stale client against a new Worker (or reverse) should not
-      // fail silently with half-working panels.
-      if (typeof msg.protocol === "number" && msg.protocol !== PROTOCOL_VERSION) {
-        this.pushChat({
-          from: "",
-          ch: "sys",
-          text: `⚠ CLIENT OUTDATED — hard refresh (server protocol ${msg.protocol}, client ${PROTOCOL_VERSION}). If this persists, redeploy Pages + Worker together.`,
-          faction: -1,
-          sys: true,
-        });
-      }
       this.onWelcome?.(msg.x, msg.y);
       if (this.pendingSkip) {
         this.pendingSkip = false;
@@ -766,6 +789,20 @@ export default class NetClient {
     } else if (msg.t === "sys") {
       this.lastSysText = msg.text; // a 4001 close right after carries this as its reason
       this.pushChat({ from: "", ch: "sys", text: msg.text, faction: -1, sys: true });
+    } else if (msg.t === "kit_ack") {
+      // Roll back optimistic CDs when the server rejected the cast.
+      if (!msg.ok) {
+        if (msg.slot === "dash") {
+          this.dashCdUntil = 0;
+          this.predDashUntil = 0;
+        } else if (msg.slot === "q") this.abilityCdUntil = 0;
+        else if (msg.slot === "e") this.ability2CdUntil = 0;
+      } else if (typeof msg.cdMs === "number" && msg.cdMs > 0) {
+        const until = performance.now() + msg.cdMs;
+        if (msg.slot === "dash") this.dashCdUntil = until;
+        else if (msg.slot === "q") this.abilityCdUntil = until;
+        else if (msg.slot === "e") this.ability2CdUntil = until;
+      }
     } else if (msg.t === "emote") {
       this.emotes.push({ from: msg.from, kind: msg.kind, ping: msg.ping, x: msg.x, y: msg.y, at: performance.now() });
       if (this.emotes.length > 30) this.emotes.shift();
@@ -1025,9 +1062,13 @@ export default class NetClient {
     }
   }
 
-  /** Send a fire intent (aim in radians). The server validates rate + resolves hits. */
+  /** Send a fire intent (aim in radians). Client-throttled to ~server fire rate. */
   fire(aim: number) {
     if (!this.connected || this.dead) return;
+    const now = performance.now();
+    // Stay just under server PLAYER_FIRE_MS so legit hold-fire never soft-drops.
+    if (now - this.lastFireSentAt < PLAYER_FIRE_MS * 0.92) return;
+    this.lastFireSentAt = now;
     try {
       this.ws?.send(JSON.stringify({ t: "fire", seq: this.seq, aim } satisfies ClientMsg));
     } catch {
