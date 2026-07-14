@@ -51,6 +51,13 @@ import {
   NEUTRAL,
   factionForColor,
   inPvpZone,
+  resolveOpenSpawn,
+  gridDims,
+  pvpZonesFor,
+  stepMove,
+  NET_TICK_MS,
+  RESPAWN_MS,
+  type MoveState,
 } from "../net/sim";
 import {
   buildGrid,
@@ -124,7 +131,6 @@ import OptionsPanel from "../ui/OptionsPanel";
 import { DISTRICTS } from "../game/districts";
 import { getWeapon, type PrimaryDef } from "../game/weapons";
 import { ENEMY_BARKS } from "../game/enemies";
-import { gridDims, pvpZonesFor, stepMove, NET_TICK_MS, RESPAWN_MS, type MoveState } from "../net/sim";
 import PvpCrucibleHud from "../ui/PvpCrucibleHud";
 import { topIntelRailGeometry } from "../ui/topIntelRail";
 import { drawHubNpcPlate } from "../ui/studioChrome";
@@ -2011,14 +2017,17 @@ export default class OnlineScene extends Phaser.Scene {
 
   /** Local wander spawn while the socket connects (tutorial + safe social zones). */
   private soloSpawnPoint(): { x: number; y: number } | null {
-    if (this.isTutorial) return TUTORIAL_SPAWN;
-    if (this.isCityHub) return CITY_HUB_SPAWN;
+    let preferred: { x: number; y: number } | null = null;
+    if (this.isTutorial) preferred = TUTORIAL_SPAWN;
+    else if (this.isCityHub) preferred = CITY_HUB_SPAWN;
     // Compact FRLG rooms (district buildings, hub facades, estate homes) — mat entry tile.
     // SAFEHOUSE_SPAWN is centre of the large safehouse plan and sits OUTSIDE 15×11 walls.
-    if (isVenueSizedZone(this.zone)) return venueSpawnFor(this.zone);
-    if (isSafehouseSizedInterior(this.zone)) return SAFEHOUSE_SPAWN;
-    if (this.interior && !this.isSubway) return SAFEHOUSE_SPAWN;
-    return null;
+    else if (isVenueSizedZone(this.zone)) preferred = venueSpawnFor(this.zone, this.zoneGrid);
+    else if (isSafehouseSizedInterior(this.zone)) preferred = SAFEHOUSE_SPAWN;
+    else if (this.interior && !this.isSubway) preferred = SAFEHOUSE_SPAWN;
+    if (!preferred || !this.zoneGrid) return preferred;
+    // Never park the drill/local preview inside walls.
+    return resolveOpenSpawn(this.zoneGrid, preferred);
   }
 
   private playerPos(): { x: number; y: number } {

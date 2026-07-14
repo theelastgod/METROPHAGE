@@ -61,8 +61,18 @@ async function enterCity(page, base) {
   await page.addInitScript(() => {
     // Lift the first-hour funnel locks (the smoke exercises panels, not onboarding)
     localStorage.setItem(
-      "metrophage_first_session_v3",
-      JSON.stringify({ step: "done", kills: 99, talkedFixer: true, deployed: true, heatCoached: true, dismissed: true }),
+      "metrophage_first_session_v4",
+      JSON.stringify({
+        step: "done",
+        kills: 99,
+        talkedFixer: true,
+        deployed: true,
+        heatCoached: true,
+        openedContracts: true,
+        acceptedBounty: true,
+        openedGear: true,
+        dismissed: true,
+      }),
     );
   });
   await page.goto(base, { waitUntil: "domcontentloaded", timeout: 30000 });

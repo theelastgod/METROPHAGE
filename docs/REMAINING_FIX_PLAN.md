@@ -1,33 +1,22 @@
 # Remaining problems plan (ex-mainnet)
 
-Scope: product/ops issues **except** mainnet arming (`METRO_MAINNET_ARMED`).
+## Status (current)
 
-## Status (2026-07-14)
+| Area | Status |
+|------|--------|
+| Soul Character | **Dropped** — no HF credits; use `public/assets/promo/` stills |
+| Economy sinks | Tuned (vendor/NPC/forge/market/death tax) — recheck `/economy` after traffic |
+| Bridge pre-CA | Dual-path checklist live; mint CA still ops-configured |
+| Content | Bounties/dailies/boss roster expanded; per-boss raid variants |
+| Social | Context menu + pin + `/contacts` |
+| Cache / build stamp | Pages `_headers` + Options build id |
+| Mainnet | **Out of scope** (counsel) |
 
-| Problem | Status |
-|---------|--------|
-| Social UX chat-command heavy | **Done** — player context menu + pin contacts + `/contacts` |
-| ESC dumps to menu | **Done** (prior) |
-| Pathfind big maps | **Done** (prior) |
-| Guild chat hops drop | **Done** (prior) |
-| Content depth thin | **Done** — more bounties, dailies, VOID HERALD boss, coach funnel |
-| Bridge pre-CA unfinished | **Done** — dual-path checklist + clearer phases (testnet without mainnet) |
-| D1 / economy sinks | **Done** — higher vendor prices, lower kill/daily emit, supply_kit pure sink |
-| Mobile | **Done** — cache headers, coach, panel smoke in CI (physical QA still recommended) |
-| Cache after deploy | **Done** — `_headers` + build stamp in Options |
-| Soul / identity promo | **Partial** — promo stills from cast; Soul train needs HF credits |
-| Mainnet arm | **Out of scope** (counsel) |
+## Ops still external
 
-## Testnet mint (no mainnet)
-
-```sh
-cd server
-npx wrangler secret put METRO_MINT          # 0x… RH testnet CA or base58 Solana
-npx wrangler secret put METRO_TREASURY_SECRET
-npx wrangler deploy
-# Client: VITE_METRO_MINT=<same> VITE_METRO_CLUSTER=robinhood-testnet npm run deploy:client
-# Leave METRO_MAINNET_ARMED unset
-```
+1. Set testnet mint when ready (`docs/METRO_CHAIN_CHOICE.md`) — leave `METRO_MAINNET_ARMED` off.
+2. Real-device mobile QA checklist: `docs/MOBILE-QA.md`.
+3. Mainnet arm only with counsel + CA.
 
 ## Verify
 

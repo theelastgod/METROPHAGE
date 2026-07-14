@@ -66,9 +66,9 @@ export default class OnlineChatPanel {
     drawPanelFrame(this.frame, this.x, this.y, this.w, this.h);
 
     this.title = this.scene.add
-      .text(this.x + uiDim(12), this.y + uiDim(8), "◢ CHAT", {
+      .text(this.x + uiDim(12), this.y + uiDim(8), "◢ CHAT  ·  /w · /c contacts · /p party", {
         fontFamily: "Courier New, monospace",
-        fontSize: uiFont(11),
+        fontSize: uiFont(10),
         color: "#00e5ff",
         fontStyle: "bold",
       })

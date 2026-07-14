@@ -68,19 +68,19 @@ export interface NpcServiceDef {
   color: string;
 }
 
-/** Quieter copy + slightly softer economy than the first pass. */
+/** Street services — costs are sinks vs kill emit (CREDITS_PER_KILL). */
 export const NPC_SERVICES: Record<NpcServiceId, NpcServiceDef> = {
   chat: { id: "chat", label: "Talk", hint: "just talk", cost: 0, cooldownSec: 0, color: "#9aa3b2" },
   bounty: { id: "bounty", label: "Job", hint: "work for them", cost: 0, cooldownSec: 0, color: "#d4c45a" },
-  heal_paid: { id: "heal_paid", label: "Patch", hint: "₵30 · full heal", cost: 30, cooldownSec: 15, color: "#5fd49a" },
+  heal_paid: { id: "heal_paid", label: "Patch", hint: "₵45 · full heal", cost: 45, cooldownSec: 15, color: "#5fd49a" },
   heal_charity: { id: "heal_charity", label: "Free patch", hint: "partial heal · cooldown", cost: 0, cooldownSec: 180, color: "#7abf98" },
-  meal: { id: "meal", label: "Eat", hint: "₵10 · small heal", cost: 10, cooldownSec: 40, color: "#c49a5a" },
-  cool_down: { id: "cool_down", label: "Vent", hint: "₵12 · clear HEAT", cost: 12, cooldownSec: 45, color: "#5aa8b8" },
-  rumor: { id: "rumor", label: "Tip", hint: "₵15 · a street tip", cost: 15, cooldownSec: 90, color: "#a87898" },
-  intel: { id: "intel", label: "Intel", hint: "₵35 · a deeper tip", cost: 35, cooldownSec: 150, color: "#b06898" },
-  train: { id: "train", label: "Spar", hint: "₵40 · a little XP", cost: 40, cooldownSec: 300, color: "#6a8ab8" },
-  buy_core: { id: "buy_core", label: "Buy core", hint: "₵85 · +1 core", cost: 85, cooldownSec: 20, color: "#5a98b0" },
-  sell_core: { id: "sell_core", label: "Fence core", hint: "−1 core · +₵35", cost: 0, coresCost: 1, cooldownSec: 10, color: "#b07060" },
+  meal: { id: "meal", label: "Eat", hint: "₵18 · small heal", cost: 18, cooldownSec: 40, color: "#c49a5a" },
+  cool_down: { id: "cool_down", label: "Vent", hint: "₵20 · clear HEAT", cost: 20, cooldownSec: 45, color: "#5aa8b8" },
+  rumor: { id: "rumor", label: "Tip", hint: "₵22 · a street tip", cost: 22, cooldownSec: 90, color: "#a87898" },
+  intel: { id: "intel", label: "Intel", hint: "₵50 · a deeper tip", cost: 50, cooldownSec: 150, color: "#b06898" },
+  train: { id: "train", label: "Spar", hint: "₵55 · a little XP", cost: 55, cooldownSec: 300, color: "#6a8ab8" },
+  buy_core: { id: "buy_core", label: "Buy core", hint: "₵110 · +1 core", cost: 110, cooldownSec: 20, color: "#5a98b0" },
+  sell_core: { id: "sell_core", label: "Fence core", hint: "−1 core · +₵22", cost: 0, coresCost: 1, cooldownSec: 10, color: "#b07060" },
   bless: { id: "bless", label: "Blessing", hint: "brief cover · long CD", cost: 0, cooldownSec: 360, color: "#8870b0" },
   open_vendor: { id: "open_vendor", label: "Stall", hint: "vendor stock", cost: 0, cooldownSec: 0, color: "#5aa8b8" },
   open_forge: { id: "open_forge", label: "Forge", hint: "workbench", cost: 0, cooldownSec: 0, color: "#b06898" },
@@ -354,7 +354,7 @@ export function npcServiceXp(service: NpcServiceId, level: number): number {
   }
 }
 
-export const SELL_CORE_PAYOUT = 35;
+export const SELL_CORE_PAYOUT = 22;
 export const HEAL_PAID_COST = NPC_SERVICES.heal_paid.cost;
 export const HEAL_CHARITY_FRAC = 0.4;
 export const MEAL_HEAL_FRAC = 0.22;

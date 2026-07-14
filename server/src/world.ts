@@ -4,6 +4,7 @@ import { NET_TICK_MS, PROTOCOL_VERSION, type ClientMsg, type PlayerLook } from "
 import {
   stepMove,
   tileIsWall,
+  resolveOpenSpawn,
   dist2,
   segPointDist2,
   gridDims,
@@ -116,7 +117,7 @@ import { listingFee, metroListingFee, MIN_PRICE, MIN_METRO_PRICE, MAX_PRICE } fr
 import { PVP_BUY_IN_METRO } from "../../src/game/pvp";
 import { fmtMetro } from "../../src/economy/metro";
 import { dailyContracts, getDaily, currentDay, repTier, type DailyObjective } from "../../src/game/dailies";
-import { RAID_SCRIPT, phaseForHp, raidHpScale } from "../../src/game/raid";
+import { phaseForHp, raidHpScale, raidScriptFor } from "../../src/game/raid";
 import { getCosmetic, applyCosmetic } from "../../src/game/cosmetics";
 import { bountyById, bountyForNpc, type BountyObjective } from "../../src/game/bounties";
 import {
@@ -577,17 +578,17 @@ interface ShopItem {
   cores?: number;
   creditsGrant?: number;
 }
-// Prices tuned up vs kill emit (CREDITS_PER_KILL=16) so vendor/forge are real sinks.
+// Prices vs kill emit (CREDITS_PER_KILL=14) — vendor is the primary sink.
 const SHOP: Record<string, ShopItem> = {
-  heal: { price: 55, label: "FIELD PATCH", heal: true },
-  cache_standard: { price: 95, label: "SALVAGE CACHE", rarity: "standard" },
-  cache_tuned: { price: 220, label: "TUNED CACHE", rarity: "tuned" },
-  cache_blackice: { price: 680, label: "BLACK-ICE CACHE", rarity: "blackice", repReq: 1 },
-  cache_singular: { price: 1650, label: "SINGULAR CACHE", rarity: "singular", repReq: 2 },
-  core_bundle: { price: 140, label: "CORE BUNDLE", cores: 3 },
-  core_crate: { price: 360, label: "CORE CRATE", cores: 8, repReq: 1 },
+  heal: { price: 65, label: "FIELD PATCH", heal: true },
+  cache_standard: { price: 120, label: "SALVAGE CACHE", rarity: "standard" },
+  cache_tuned: { price: 280, label: "TUNED CACHE", rarity: "tuned" },
+  cache_blackice: { price: 820, label: "BLACK-ICE CACHE", rarity: "blackice", repReq: 1 },
+  cache_singular: { price: 1950, label: "SINGULAR CACHE", rarity: "singular", repReq: 2 },
+  core_bundle: { price: 165, label: "CORE BUNDLE", cores: 3 },
+  core_crate: { price: 420, label: "CORE CRATE", cores: 8, repReq: 1 },
   // Pure sink kit (no credit refund) — cores only.
-  supply_kit: { price: 75, label: "SUPPLY KIT", cores: 2 },
+  supply_kit: { price: 90, label: "SUPPLY KIT", cores: 2 },
 };
 
 interface Shot {
@@ -708,9 +709,17 @@ export class WorldDO {
       const rad = Math.min(maxRad, 56 + ring * 10);
       const x = base.x + Math.cos(angle) * rad;
       const y = base.y + Math.sin(angle) * rad;
-      if (!tileIsWall(x, y, this.grid)) return { x: round2(x), y: round2(y) };
+      if (!tileIsWall(x, y, this.grid)) {
+        const open = resolveOpenSpawn(this.grid, { x, y });
+        return { x: round2(open.x), y: round2(open.y) };
+      }
     }
-    return base;
+    return resolveOpenSpawn(this.grid, base);
+  }
+
+  /** Clamp zone entrance spawn so it never sits inside walls (player radius). */
+  private finalizeZoneSpawn() {
+    this.spawn = resolveOpenSpawn(this.grid, this.spawn);
   }
 
   /** A DO instance handles exactly one zone — bind it to its district on first hit. */
@@ -727,6 +736,7 @@ export class WorldDO {
       this.spawn = TUTORIAL_SPAWN;
       this.spawnTutorial();
       void this.state.storage.put("zone", TUTORIAL_ZONE);
+      this.finalizeZoneSpawn();
       return;
     }
     if (zone === "subway") {
@@ -738,6 +748,7 @@ export class WorldDO {
       this.nodes = [];
       this.spawnSubway();
       void this.state.storage.put("zone", "subway");
+      this.finalizeZoneSpawn();
       return;
     }
     // THE PROVING — the WEEKLY vault: the deepest dive layout under a rotating affix,
@@ -754,6 +765,7 @@ export class WorldDO {
       this.spawnDive(DIVE_ZONE_IDS.length - 1);
       this.applyWeeklyAffix();
       void this.state.storage.put("zone", "vault");
+      this.finalizeZoneSpawn();
       return;
     }
     // ICE VAULT — the instanced dive (v0–v6, one per district): an indoor combat
@@ -769,6 +781,7 @@ export class WorldDO {
       this.spawn = DIVE_SPAWN;
       this.spawnDive(di);
       void this.state.storage.put("zone", this.zoneName);
+      this.finalizeZoneSpawn();
       return;
     }
     // THE LIVE CITY — shared conflict-free hub (RuneScape-scale, all players in one space).
@@ -780,6 +793,7 @@ export class WorldDO {
       this.spawn = CITY_HUB_SPAWN;
       this.nodes = [];
       void this.state.storage.put("zone", "safe");
+      this.finalizeZoneSpawn();
       return;
     }
     // THE ESTATES overworld — a no-combat residential street; each facade door opens an est{K} home.
@@ -791,6 +805,7 @@ export class WorldDO {
       this.spawn = { x: ESTATES.spawn[0] * TILE + TILE / 2, y: ESTATES.spawn[1] * TILE + TILE / 2 };
       this.nodes = [];
       void this.state.storage.put("zone", zone);
+      this.finalizeZoneSpawn();
       return;
     }
     // Private home interiors ("est{K}") — an empty room; the owner's furniture is layered on
@@ -803,6 +818,7 @@ export class WorldDO {
       this.spawn = VENUE_SPAWN;
       this.nodes = [];
       void this.state.storage.put("zone", zone);
+      this.finalizeZoneSpawn();
       return;
     }
     // Small building interiors (clinic, bar, den, shop) — no-combat rooms off the hub.
@@ -814,6 +830,7 @@ export class WorldDO {
       this.spawn = SAFEHOUSE_SPAWN;
       this.nodes = [];
       void this.state.storage.put("zone", zone);
+      this.finalizeZoneSpawn();
       return;
     }
     // Per-building district interiors ("d{N}i{K}") — walk into any district building. Each is
@@ -825,9 +842,10 @@ export class WorldDO {
       this.zoneName = zone!;
       this.districtIndex = bldg.district;
       this.grid = buildVenueRoom(zone!); // zone-hashed floor plan — must match the client's
-      this.spawn = venueSpawnFor(zone);
+      this.spawn = venueSpawnFor(zone, this.grid);
       this.nodes = [];
       void this.state.storage.put("zone", zone);
+      this.finalizeZoneSpawn();
       return;
     }
     // Hub building interiors ("h{K}") — walk into any building on the shared plaza. Each is a
@@ -837,9 +855,10 @@ export class WorldDO {
       this.zoneName = zone!;
       this.districtIndex = 0;
       this.grid = buildVenueRoom(zone!); // zone-hashed floor plan — must match the client's
-      this.spawn = venueSpawnFor(zone);
+      this.spawn = venueSpawnFor(zone, this.grid);
       this.nodes = [];
       void this.state.storage.put("zone", zone);
+      this.finalizeZoneSpawn();
       return;
     }
     const bi = parseBridgeZone(zone);
@@ -853,6 +872,7 @@ export class WorldDO {
       this.spawn = spawnPointForTravel(this.grid, this.zoneName, undefined);
       this.spawnBridge(bdef);
       this.nodes = [];
+      this.finalizeZoneSpawn();
       return;
     }
     this.bridgeIndex = -1;
@@ -872,6 +892,7 @@ export class WorldDO {
       progress: 0,
       by: NEUTRAL,
     }));
+    this.finalizeZoneSpawn();
   }
 
   /** Roll a spawn-time elite affix onto a fresh garrison unit — ARMORED / SWIFT /
@@ -1336,7 +1357,7 @@ export class WorldDO {
     }
     const target = this.nearestLivePlayer(e.x, e.y, ENEMY_AGGRO * 1.5);
     if (!target) return; // idles at its lair until someone engages
-    const script = RAID_SCRIPT;
+    const script = raidScriptFor(e.name);
     // The full raid kit (AoE / adds / phase escalation / enrage) only engages for a GROUP.
     // Solo, it fights as the classic single-target boss — fair to whittle down alone.
     let nearCount = 0;
@@ -2934,16 +2955,8 @@ export class WorldDO {
     if (proof?.from || isVenueSizedZone(this.zoneName) || isSafehouseSizedInterior(this.zoneName)) {
       const def = this.bridgeIndex >= 0 ? undefined : DISTRICTS[this.districtIndex];
       const s = spawnPointForTravel(this.grid, this.zoneName, proof?.from, def, this.spawn);
-      // Unmapped named-zone travel (subway/estates ← safe) can resolve via a district
-      // design spawn that is a WALL on this zone's real grid — never accept a
-      // wall-locked arrival; the DO's own spawn is the zone's canonical entrance.
-      if (tileIsWall(s.x, s.y, this.grid)) {
-        p.x = this.spawn.x;
-        p.y = this.spawn.y;
-      } else {
-        p.x = s.x;
-        p.y = s.y;
-      }
+      p.x = s.x;
+      p.y = s.y;
       p.dirty = true;
     } else if (
       tileIsWall(p.x, p.y, this.grid) ||
@@ -2955,6 +2968,15 @@ export class WorldDO {
       p.x = this.spawn.x;
       p.y = this.spawn.y;
       p.dirty = true;
+    }
+    // Hard guarantee: final position never collides with walls (player radius).
+    {
+      const open = resolveOpenSpawn(this.grid, { x: p.x, y: p.y });
+      if (open.x !== p.x || open.y !== p.y) {
+        p.x = open.x;
+        p.y = open.y;
+        p.dirty = true;
+      }
     }
     const lookLocked = !!p.look;
     // One-time character creation: persist a client look only when none is stored yet.
@@ -4208,6 +4230,16 @@ export class WorldDO {
       p.dead = true;
       p.respawnTick = this.tick + ticks(RESPAWN_MS);
       p.dirty = true;
+      // Death tax — burns a slice of pocket credits (sink). Never leaves veterans at 0.
+      const pocket = Math.max(0, Math.floor(p.credits));
+      if (pocket > 40) {
+        const tax = Math.min(pocket - 20, Math.max(8, Math.round(pocket * 0.06)));
+        if (tax > 0) {
+          p.credits -= tax;
+          this.eco("burn", "death_tax", tax);
+          this.sendTo(p.id, { t: "sys", text: `respawn levy −₵${tax} (insurance to the grid)` });
+        }
+      }
     }
     return true;
   }
@@ -4233,9 +4265,9 @@ export class WorldDO {
         p.cores = Math.max(p.cores, 5);
         changed = true;
       }
-      if (p.credits < 100) {
-        this.eco("emit", "floor", 100 - p.credits);
-        p.credits = Math.max(p.credits, 100);
+      if (p.credits < 60) {
+        this.eco("emit", "floor", 60 - p.credits);
+        p.credits = Math.max(p.credits, 60);
         changed = true;
       }
     }
@@ -5279,7 +5311,7 @@ export class WorldDO {
       let live = 0;
       for (const pl of this.players.values()) if (!pl.dead) live++;
       e.baseMaxHp = e.baseMaxHp ?? e.maxHp;
-      e.maxHp = Math.round(e.baseMaxHp * raidHpScale(RAID_SCRIPT, live));
+      e.maxHp = Math.round(e.baseMaxHp * raidHpScale(raidScriptFor(e.name), live));
       e.hp = e.maxHp;
     }
     e.hp -= dmg;
@@ -5454,8 +5486,9 @@ export class WorldDO {
       }
       if (p.dead) {
         if (this.tick >= p.respawnTick) {
-          p.x = this.spawn.x;
-          p.y = this.spawn.y;
+          const open = resolveOpenSpawn(this.grid, this.spawn);
+          p.x = open.x;
+          p.y = open.y;
           p.hp = p.maxHp; // respawn at full, including equipped +HP
           p.dead = false;
           p.pvpSafeUntil = this.tick + ticks(2500); // brief immunity so arenas can't be spawn-camped
@@ -5677,7 +5710,7 @@ export class WorldDO {
               let live = 0;
               for (const pl of this.players.values()) if (!pl.dead) live++;
               e.baseMaxHp = e.baseMaxHp ?? e.maxHp;
-              e.maxHp = Math.round(e.baseMaxHp * raidHpScale(RAID_SCRIPT, live));
+              e.maxHp = Math.round(e.baseMaxHp * raidHpScale(raidScriptFor(e.name), live));
               e.hp = e.maxHp; // refill to the scaled pool (the fight has only just begun)
             }
             e.hp -= dmg;

@@ -8,9 +8,9 @@ import { itemValue } from "./items";
 
 export type Currency = "credits" | "metro";
 
-/** Non-refundable listing fee (the sink): 5% of the ask, min ₵10. */
+/** Non-refundable listing fee (the sink): 8% of the ask, min ₵15. */
 export function listingFee(price: number): number {
-  return Math.max(10, Math.round(price * 0.05));
+  return Math.max(15, Math.round(price * 0.08));
 }
 
 /** A sensible default ask the client pre-fills for quick-listing (2× base value). */
@@ -25,9 +25,9 @@ export const MAX_PRICE = 100_000_000;
 /** $METRO listing floor (whole units — matches offline Black-Market scale). */
 export const MIN_METRO_PRICE = 1;
 
-/** Non-refundable $METRO listing fee: 5% of ask, min ◈1. */
+/** Non-refundable $METRO listing fee: 8% of ask, min ◈1. */
 export function metroListingFee(price: number): number {
-  return Math.max(1, Math.round(price * 0.05));
+  return Math.max(1, Math.round(price * 0.08));
 }
 
 /** Default $METRO ask for quick-list (≈ item value ÷ 25 — scarce-token scale). */

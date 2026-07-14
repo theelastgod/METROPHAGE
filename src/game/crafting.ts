@@ -22,8 +22,8 @@ export function upgradeCost(item: Item): Cost {
   const lvl = item.ilvl ?? 0;
   const m = RARITY_MULT[item.rarity];
   return {
-    credits: Math.round(38 * (lvl + 1) * m),
-    cores: 1 + Math.floor(lvl / 4) + Math.floor(rarityRank(item.rarity) / 2),
+    credits: Math.round(52 * (lvl + 1) * m),
+    cores: 1 + Math.floor(lvl / 3) + Math.floor(rarityRank(item.rarity) / 2),
   };
 }
 export function canUpgrade(item: Item): boolean {
@@ -33,7 +33,7 @@ export function canUpgrade(item: Item): boolean {
 /** REFORGE — gamble: re-roll an item's mod lines (same slot+rarity), keeping its level. */
 export function reforgeCost(item: Item): Cost {
   const m = RARITY_MULT[item.rarity];
-  return { credits: Math.round(48 * m), cores: 1 + rarityRank(item.rarity) };
+  return { credits: Math.round(72 * m), cores: 1 + rarityRank(item.rarity) };
 }
 
 /** SALVAGE — break an item down for cores + a few credits (the loot-cleanup sink). */
@@ -41,8 +41,8 @@ export function salvageYield(item: Item): Cost {
   const rank = rarityRank(item.rarity);
   const lvl = item.ilvl ?? 0;
   return {
-    cores: 2 + rank + Math.floor(lvl / 2),
-    credits: Math.round((14 + rank * 18) * (1 + lvl * 0.15)),
+    cores: 1 + rank + Math.floor(lvl / 3),
+    credits: Math.round((8 + rank * 12) * (1 + lvl * 0.12)),
   };
 }
 
@@ -52,5 +52,5 @@ export function canFuse(a: Item, b: Item): boolean {
 }
 export function fuseCost(a: Item): Cost {
   const m = RARITY_MULT[a.rarity];
-  return { credits: Math.round(150 * m), cores: 3 + rarityRank(a.rarity) * 2 };
+  return { credits: Math.round(210 * m), cores: 4 + rarityRank(a.rarity) * 2 };
 }

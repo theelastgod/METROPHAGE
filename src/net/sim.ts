@@ -112,7 +112,7 @@ export const RESPAWN_MS = 2600;
 export const XP_PER_KILL = 20; // early levels should feel — first-hour progression
 export const levelForXp = (xp: number) => 1 + Math.floor(xp / 100);
 export const xpIntoLevel = (xp: number) => xp % 100; // 0..99 toward the next level
-export const CREDITS_PER_KILL = 16; // 22→16: keep kills rewarding but raise sink efficiency (vendor/forge)
+export const CREDITS_PER_KILL = 14; // emit side of economy; sinks (vendor/forge/death tax) must outpace this
 export const LOOT_DROP_CHANCE = 0.55; // chance a cop drops a pickup
 export const PICKUP_RADIUS = 18; // walk within this to collect
 export const PICKUP_TTL_MS = 15000;
@@ -228,6 +228,52 @@ export function tileIsWall(x: number, y: number, grid: TileGrid): boolean {
   if (tx < 0 || ty < 0 || tx >= gw || ty >= gh) return true;
   const row = grid[ty];
   return !row || isWall(row[tx]);
+}
+
+/**
+ * Guaranteed open spawn: if `preferred` collides with walls (player radius), spiral-search
+ * tile centres until a free spot is found. Used on every zone enter / building interior
+ * so runners never load inside geometry.
+ */
+export function resolveOpenSpawn(
+  grid: TileGrid,
+  preferred: { x: number; y: number },
+  maxR = 28,
+): { x: number; y: number } {
+  const px = Number.isFinite(preferred.x) ? preferred.x : TILE * 1.5;
+  const py = Number.isFinite(preferred.y) ? preferred.y : TILE * 1.5;
+  if (!collides(px, py, grid)) return { x: px, y: py };
+
+  const ptx = Math.floor(px / TILE);
+  const pty = Math.floor(py / TILE);
+  const { w: gw, h: gh } = gridDims(grid);
+
+  for (let r = 0; r <= maxR; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (r > 0 && Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        const tx = ptx + dx;
+        const ty = pty + dy;
+        if (tx <= 0 || ty <= 0 || tx >= gw - 1 || ty >= gh - 1) continue;
+        if (isWall(grid[ty]?.[tx])) continue;
+        const x = tx * TILE + TILE / 2;
+        const y = ty * TILE + TILE / 2;
+        if (!collides(x, y, grid)) return { x, y };
+      }
+    }
+  }
+
+  // Last resort: first non-colliding tile centre on the map.
+  for (let ty = 1; ty < gh - 1; ty++) {
+    for (let tx = 1; tx < gw - 1; tx++) {
+      if (isWall(grid[ty][tx])) continue;
+      const x = tx * TILE + TILE / 2;
+      const y = ty * TILE + TILE / 2;
+      if (!collides(x, y, grid)) return { x, y };
+    }
+  }
+  // Absolute fallback — still return preferred (better than NaN); caller may wall-lock.
+  return { x: px, y: py };
 }
 
 export const dist2 = (ax: number, ay: number, bx: number, by: number) => {

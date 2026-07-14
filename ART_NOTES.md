@@ -213,6 +213,6 @@ node tools/higgsfield-expand-build.mjs
 | `audio/amb_*.wav` | `src/assets/music/` + `public/assets/music/` | District ambient beds (`musicTracks` amb_neon_core / sprawl / undercity) |
 | `audio/stinger_boss.wav` | music + stinger key | Boss intro sting in OnlineScene |
 
-**Soul Character:** train with `higgsfield soul-id create --name METRO_FIXER --soul-2 --image …`
-using refs in `art-source/higgsfield/soul_fixer/` (cast crops). Requires credits; use
-`--soul-id` with `text2image_soul_v2` for identity-consistent promo art.
+**Identity / promo stills (no Soul Character):** ship static promo from the cast sheet via
+`public/assets/promo/` (`fixer_identity.jpg`, `player_identity.jpg`, `launch_strip.jpg`).
+Do not depend on Higgsfield Soul training for launch identity.

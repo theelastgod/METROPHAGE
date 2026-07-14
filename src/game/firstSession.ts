@@ -226,5 +226,5 @@ export function firstSessionLine(): string | null {
 
 /** Core loop always-on reminder (after first session or alongside coach). */
 export function coreLoopLine(): string {
-  return "LOOP · FIXER → DEPLOY → KILL / NODES → GEAR / CONTRACTS → REPEAT";
+  return "LOOP · FIXER → DEPLOY → KILL / NODES → GEAR / CONTRACTS → REPEAT · /contacts for runners";
 }

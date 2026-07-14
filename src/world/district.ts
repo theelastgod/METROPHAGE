@@ -143,17 +143,34 @@ function carve(grid: TileGrid, tx: number, ty: number, tile = TILE_FLOOR) {
 /** Nearest already-walkable tile to (tx,ty), found by an expanding ring search that
  *  stays inside the outer wall ring. Returns undefined if none within `maxR`. Used so a
  *  travel entry point that lands inside a building footprint snaps to the adjacent street
- *  instead of carving a one-tile pocket that traps the runner on top of the building. */
-function nearestWalkable(grid: TileGrid, tx: number, ty: number, maxR = 12): [number, number] | undefined {
+ *  instead of carving a one-tile pocket that traps the runner on top of the building.
+ *
+ *  Prefers tiles with at least one walkable neighbour (not a 1-tile pocket). */
+function nearestWalkable(grid: TileGrid, tx: number, ty: number, maxR = 20): [number, number] | undefined {
   const gw = gridW(grid);
   const gh = gridH(grid);
   const open = (x: number, y: number) =>
     x > 0 && x < gw - 1 && y > 0 && y < gh - 1 && grid[y]?.[x] !== undefined && !isWall(grid[y][x]);
+  const hasOpenNeighbour = (x: number, y: number) =>
+    open(x - 1, y) || open(x + 1, y) || open(x, y - 1) || open(x, y + 1);
+  const good = (x: number, y: number) => open(x, y) && hasOpenNeighbour(x, y);
+
+  if (good(tx, ty)) return [tx, ty];
+  // First pass: prefer well-connected open tiles.
+  for (let r = 1; r <= maxR; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        if (good(tx + dx, ty + dy)) return [tx + dx, ty + dy];
+      }
+    }
+  }
+  // Second pass: any open tile (last resort).
   if (open(tx, ty)) return [tx, ty];
   for (let r = 1; r <= maxR; r++) {
     for (let dy = -r; dy <= r; dy++) {
       for (let dx = -r; dx <= r; dx++) {
-        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue; // ring perimeter only
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
         if (open(tx + dx, ty + dy)) return [tx + dx, ty + dy];
       }
     }
@@ -466,10 +483,19 @@ export function venueLayoutFor(zone?: string | null): VenueLayout {
   return VENUE_LAYOUTS[0];
 }
 
-/** Arrival point for a venue zone — one step above that plan's exit mat. */
-export function venueSpawnFor(zone?: string | null): { x: number; y: number } {
+/** Arrival point for a venue zone — one step above that plan's exit mat.
+ *  When `grid` is provided, snaps off any wall/furniture that would trap the runner. */
+export function venueSpawnFor(zone?: string | null, grid?: TileGrid): { x: number; y: number } {
   const L = venueLayoutFor(zone);
-  return { x: L.mat[0] * TILE + TILE / 2, y: (L.mat[1] - 1) * TILE + TILE / 2 };
+  const preferred = { x: L.mat[0] * TILE + TILE / 2, y: (L.mat[1] - 1) * TILE + TILE / 2 };
+  if (!grid) return preferred;
+  const tx = Math.floor(preferred.x / TILE);
+  const ty = Math.floor(preferred.y / TILE);
+  if (grid[ty]?.[tx] !== undefined && !isWall(grid[ty][tx])) return preferred;
+  // Mat tile blocked (odd plan) — search around the mat, then whole room.
+  const near = nearestWalkable(grid, L.mat[0], L.mat[1] - 1, Math.max(L.w, L.h));
+  if (near) return { x: near[0] * TILE + TILE / 2, y: near[1] * TILE + TILE / 2 };
+  return preferred;
 }
 
 export function buildVenueRoomFromLayout(L: VenueLayout): TileGrid {
@@ -594,9 +620,8 @@ export function buildTutorial(): TileGrid {
 /** Player start in world (pixel) coordinates, at tile center, from the district def. */
 export function spawnPoint(grid: TileGrid, def: DistrictDef = DISTRICTS[0]): { x: number; y: number } {
   const [sx, sy] = scaleTile(def.spawnTile);
-  if (grid[sy]?.[sx] !== undefined && !isWall(grid[sy][sx])) {
-    return { x: sx * TILE + TILE / 2, y: sy * TILE + TILE / 2 };
-  }
+  const open = nearestWalkable(grid, sx, sy, 24);
+  if (open) return { x: open[0] * TILE + TILE / 2, y: open[1] * TILE + TILE / 2 };
   const gw = gridW(grid);
   const gh = gridH(grid);
   for (let y = 1; y < gh - 1; y++) {
@@ -633,10 +658,17 @@ export function spawnPointForTravel(
   // mat-adjacent entry tile OF THAT ZONE'S FLOOR PLAN. Using district/safehouse coords
   // here put runners outside the walls after walking in.
   if (isVenueSizedZone(zone)) {
-    return venueSpawnFor(zone);
+    return venueSpawnFor(zone, grid);
   }
   // Named hub service interiors (clinic/bar/den/shop/vault) use the large safehouse plan.
   if (isSafehouseSizedInterior(zone)) {
+    const open = nearestWalkable(
+      grid,
+      Math.floor(SAFEHOUSE_SPAWN.x / TILE),
+      Math.floor(SAFEHOUSE_SPAWN.y / TILE),
+      16,
+    );
+    if (open) return { x: open[0] * TILE + TILE / 2, y: open[1] * TILE + TILE / 2 };
     return { x: SAFEHOUSE_SPAWN.x, y: SAFEHOUSE_SPAWN.y };
   }
   // stepping OUT of a district building interior ("d{N}i{K}") — arrive at that building's
@@ -676,9 +708,8 @@ export function spawnPointForTravel(
   if (zoneSpawn) {
     const tx = Math.floor(zoneSpawn.x / TILE);
     const ty = Math.floor(zoneSpawn.y / TILE);
-    if (grid[ty]?.[tx] !== undefined && !isWall(grid[ty][tx])) {
-      return { x: zoneSpawn.x, y: zoneSpawn.y };
-    }
+    const open = nearestWalkable(grid, tx, ty, 20);
+    if (open) return { x: open[0] * TILE + TILE / 2, y: open[1] * TILE + TILE / 2 };
   }
   if (def) return spawnPoint(grid, def);
   // Last resort: first walkable tile on this grid (never invent district coords for small rooms).
@@ -692,5 +723,7 @@ export function spawnPointForTravel(
     }
   }
   const [wx, wy] = bridgeWestTile(getBridge(0));
+  const open = nearestWalkable(grid, wx, wy, 12);
+  if (open) return { x: open[0] * TILE + TILE / 2, y: open[1] * TILE + TILE / 2 };
   return { x: wx * TILE + TILE / 2, y: wy * TILE + TILE / 2 };
 }
