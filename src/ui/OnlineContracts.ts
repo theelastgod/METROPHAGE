@@ -65,7 +65,7 @@ export default class OnlineContracts extends Modal {
       );
 
     tx("◎ DAILY CONTRACTS", x + uiDim(22), y + uiDim(16), 17, "#00e5ff", true);
-    tx(`${closeHint("J / ESC close")} · resets daily`, x + w - uiDim(20), y + uiDim(18), 12, "#9aa3b2", false, 1);
+    tx(`${closeHint("C / ESC close")} · resets daily`, x + w - uiDim(20), y + uiDim(18), 12, "#9aa3b2", false, 1);
 
     const rp = repProgress(this.rep);
     tx(`REPUTATION — ${rp.name}  (tier ${rp.tier})`, x + uiDim(22), y + uiDim(50), 13, "#f7ff3c", true);

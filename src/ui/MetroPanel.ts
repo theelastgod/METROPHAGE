@@ -180,6 +180,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
         <div class="row"><span class="muted">player</span><span id="m-player" class="mono-value">—</span></div>
         <div class="row"><span class="muted">credits</span><span id="m-credits" class="big">—</span></div>
         <div class="row"><span class="muted">cash-out value</span><span id="m-value" class="mono-value">—</span></div>
+        <div class="row"><span class="muted">daily cash-out</span><span id="m-daily" class="mono-value">—</span></div>
       </div>
 
       <div class="section">
@@ -328,16 +329,41 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
     if (!player) {
       $("m-credits").textContent = "—";
       $("m-value").textContent = "—";
+      $("m-daily").textContent = "—";
       return;
     }
     try {
-      const r = await fetch(`${metroApiBase()}/metro/account?player=${encodeURIComponent(player)}`).then((x) => x.json());
+      // Live: signed wallet. Sim harness: player id alone (server allows under ALLOW_SIM).
+      const wallet = currentWallet();
+      const qs = new URLSearchParams({ player });
+      if (pool?.settlement && pool.settlement !== "sim" && wallet && walletAvailable()) {
+        const ts = Date.now();
+        const signed = await signWalletLogin(loginMessage(wallet, ts), wallet);
+        if (!signed) {
+          status("sign-in cancelled — balance hidden");
+          return;
+        }
+        qs.set("wallet", wallet);
+        qs.set("sig", signed.signature);
+        qs.set("ts", String(ts));
+      } else if (wallet) {
+        qs.set("wallet", wallet);
+      }
+      const r = await fetch(`${metroApiBase()}/metro/account?${qs}`).then((x) => x.json());
       if (r.ok) {
         acct = r;
         $("m-credits").textContent = `₵ ${r.credits}`;
         $("m-value").textContent = `◈ ${fmtMetro(r.metroValue)}`;
+        const used = r.dailyUsedCredits ?? 0;
+        const cap = r.dailyCapCredits ?? 50_000;
+        const left = Math.max(0, cap - used);
+        $("m-daily").textContent = `₵ ${used.toLocaleString()} / ${cap.toLocaleString()} (₵${left.toLocaleString()} left)`;
+        if (r.cooldownMsLeft > 0) {
+          $("m-daily").textContent += ` · cool ${Math.ceil(r.cooldownMsLeft / 1000)}s`;
+        }
       } else {
         $("m-credits").textContent = "—";
+        $("m-daily").textContent = "—";
         status(r.reason ?? "account unavailable");
       }
     } catch {
@@ -402,10 +428,16 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
     ($("m-amt") as HTMLInputElement).value = String(max);
   };
 
-  /** Always re-sign for live money (fresh ≤2 min). */
+  /**
+   * Live settlement: re-sign every money action (fresh ≤2 min).
+   * Sim + METRO_ALLOW_SIM: server accepts player+wallet without a signature (local smoke).
+   */
   async function walletAuth(wallet: string): Promise<{ sig?: string; ts?: number; error?: string }> {
     if (pool?.simLocked || pool?.dangerousSim) return { error: "bridge locked (simulated settlement is read-only)" };
     if (pool?.settlement === "sim" || !pool?.settlement) return {};
+    if (!walletAvailable() || !connectedWallet()) {
+      return { error: "connect MetaMask to sign bridge actions" };
+    }
     const ts = Date.now();
     const signed = await signWalletLogin(loginMessage(wallet, ts), wallet);
     if (!signed) return { error: "MetaMask signature cancelled" };

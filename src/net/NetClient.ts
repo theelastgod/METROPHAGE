@@ -344,7 +344,8 @@ export default class NetClient {
   private pending: InputCmd[] = [];
   private acc = 0;
   /** Cap unacked prediction cmds so a stalled ack stream cannot grow forever. */
-  private static readonly PENDING_CAP = 48;
+  /** Unacked prediction window — ~3.2s at 20 Hz (was 2.4s) for Paid-tier lag spikes. */
+  private static readonly PENDING_CAP = 64;
   private lastFireSentAt = 0;
   /** When set, protocol mismatch hard-stopped the client (no more reconnect loops). */
   protocolBlocked = false;
@@ -1147,6 +1148,12 @@ export default class NetClient {
   reportTutorial(kind: string, n = 1) {
     if (!this.connected) return; // server owns progress — silent no-op while offline
     this.sendMsg({ t: "tutorial", action: "progress", kind, n: Math.max(1, Math.min(8, n | 0)) });
+  }
+
+  /** City NPC service (heal / meal / rumor / train / fence…). Server owns prices + cooldowns. */
+  npcService(npcId: string, service: string) {
+    if (!this.connected) return;
+    this.sendMsg({ t: "npc", action: "service", npcId: (npcId || "").slice(0, 48), service: (service || "").slice(0, 32) });
   }
 
   tradeRequest(to: string) {

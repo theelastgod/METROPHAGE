@@ -100,8 +100,12 @@ async function pickSettlement(env: Env): Promise<{ settlement: Settlement; kind:
   };
 }
 
+/** Same freshness window as game login (`auth.ts` FRESH_MS = 2 min). */
+const BRIDGE_SIG_FRESH_MS = 120_000;
+
 /** Require a wallet signature that proves `player` is the wallet owner (w:<addr>).
- *  EVM uses personal_sign; Solana uses ed25519 SIWS. */
+ *  EVM uses personal_sign; Solana uses ed25519 SIWS.
+ *  Freshness matches login (±2 min) — was 10 min for EVM, which widened replay windows. */
 async function requireWalletPlayer(
   b: { player?: string; wallet?: string; sig?: string; ts?: number },
   kind: SettlementKind,
@@ -113,23 +117,61 @@ async function requireWalletPlayer(
   if (!wallet || !sig || !Number.isFinite(ts)) {
     return { ok: false, reason: "wallet sign-in required — missing wallet/sig/ts" };
   }
-  if (kind === "evm" || /^0x[a-fA-F0-9]{40}$/.test(wallet)) {
-    const { verifyEvmLogin } = await import("./evm");
-    const age = Math.abs(Date.now() - ts);
-    if (age > 10 * 60_000) return { ok: false, reason: "wallet sign-in required — stale timestamp" };
-    const id = verifyEvmLogin(wallet, loginMessage(wallet, ts), sig);
-    if (!id) return { ok: false, reason: "wallet sign-in required — bad EVM signature" };
+  if (Math.abs(Date.now() - ts) > BRIDGE_SIG_FRESH_MS) {
+    return { ok: false, reason: "wallet sign-in required — stale timestamp" };
+  }
+  // Prefer unified verifier (EVM + Solana, 2 min freshness). Fall back to EVM helper for
+  // settlement-kind edge cases that already signed the same login message.
+  const id = verifyWalletLogin({ wallet, sig, ts });
+  if (id) {
     if (player && player !== id && player.toLowerCase() !== wallet.toLowerCase() && player !== id.slice(2)) {
       return { ok: false, reason: "player id does not match signed wallet" };
     }
     return { ok: true, player: id, wallet };
   }
-  const id = verifyWalletLogin({ wallet, sig, ts });
-  if (!id) return { ok: false, reason: "wallet sign-in required — bad or stale signature" };
-  if (player && player !== id && player !== wallet && player !== id.slice(2)) {
-    return { ok: false, reason: "player id does not match signed wallet" };
+  if (kind === "evm" || /^0x[a-fA-F0-9]{40}$/.test(wallet)) {
+    const { verifyEvmLogin } = await import("./evm");
+    const eid = verifyEvmLogin(wallet, loginMessage(wallet, ts), sig);
+    if (!eid) return { ok: false, reason: "wallet sign-in required — bad EVM signature" };
+    if (player && player !== eid && player.toLowerCase() !== wallet.toLowerCase() && player !== eid.slice(2)) {
+      return { ok: false, reason: "player id does not match signed wallet" };
+    }
+    return { ok: true, player: eid, wallet };
   }
-  return { ok: true, player: id, wallet };
+  return { ok: false, reason: "wallet sign-in required — bad or stale signature" };
+}
+
+/**
+ * Bridge auth for mutators + private account reads.
+ * - Live settlement: always wallet signature.
+ * - Sim + METRO_ALLOW_SIM=1 only: allow unsigned player+wallet (local smoke harness).
+ *   Never available when settlement is live or sim is locked.
+ */
+async function authorizeBridgeActor(
+  b: { player?: string; wallet?: string; sig?: string; ts?: number },
+  kind: SettlementKind,
+  allowSim: boolean,
+): Promise<{ ok: true; player: string; wallet: string } | { ok: false; reason: string }> {
+  const signed = await requireWalletPlayer(b, kind);
+  if (signed.ok) return signed;
+  if (kind === "sim" && allowSim) {
+    const wallet = (b.wallet || "").trim();
+    const rawPlayer = (b.player || "").trim();
+    // Guest/smoke ids are bare callsigns; wallet players are w:<addr>.
+    const player =
+      rawPlayer ||
+      (/^0x[a-fA-F0-9]{40}$/i.test(wallet)
+        ? "w:" + wallet
+        : wallet
+          ? "w:" + wallet
+          : "");
+    const { isValidWallet } = await import("./metro");
+    if (player && isValidWallet(wallet)) {
+      return { ok: true, player: player.replace(/[^A-Za-z0-9:_-]/g, "").slice(0, 64) || player, wallet };
+    }
+    return { ok: false, reason: "sim harness requires player + valid wallet (or a real signature)" };
+  }
+  return signed;
 }
 
 const json = (body: unknown, status = 200): Response =>
@@ -218,8 +260,24 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
   };
 
   try {
-    if (url.pathname === "/metro/account" && req.method === "GET")
-      return json(await getAccount(env.DB, url.searchParams.get("player") ?? "", settlement));
+    if (url.pathname === "/metro/account" && req.method === "GET") {
+      // Private balances: wallet proof on live; sim+METRO_ALLOW_SIM may use player id only.
+      const qPlayer = url.searchParams.get("player") ?? "";
+      const qWallet = url.searchParams.get("wallet") ?? "";
+      const qSig = url.searchParams.get("sig") ?? "";
+      const qTs = Number(url.searchParams.get("ts"));
+      if (kind === "sim" && allowSim && qPlayer && !qSig) {
+        // Local smoke: account by player id without MetaMask (never on live settlement).
+        return json(await getAccount(env.DB, qPlayer, settlement));
+      }
+      const auth = await authorizeBridgeActor(
+        { player: qPlayer, wallet: qWallet, sig: qSig, ts: qTs },
+        kind,
+        allowSim,
+      );
+      if (!auth.ok) return json(auth, 401);
+      return json(await getAccount(env.DB, auth.player, settlement));
+    }
     if (url.pathname === "/metro/pool" && req.method === "GET") {
       const info = (await poolInfo(env.DB)) as Record<string, unknown>;
       info.mintConfigured = !!mint;
@@ -347,22 +405,19 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
         sig?: string;
         ts?: number;
       };
-      if (live) {
-        const auth = await requireWalletPlayer(b, kind);
-        if (!auth.ok) return json(auth, 401);
-        // Money wallet must match authenticated identity
-        if (b.wallet && auth.wallet.toLowerCase() !== b.wallet.trim().toLowerCase()) {
-          return json({ ok: false, reason: "wallet must match signed identity" }, 401);
-        }
-        return json(
-          await withdraw(env.DB, settlement, {
-            player: auth.player,
-            wallet: auth.wallet,
-            credits: Number(b.credits),
-          }),
-        );
+      // Live: wallet signature required. Sim+METRO_ALLOW_SIM: unsigned player+wallet for smoke.
+      const auth = await authorizeBridgeActor(b, kind, allowSim);
+      if (!auth.ok) return json(auth, 401);
+      if (b.wallet && auth.wallet.toLowerCase() !== b.wallet.trim().toLowerCase()) {
+        return json({ ok: false, reason: "wallet must match signed identity" }, 401);
       }
-      return json(await withdraw(env.DB, settlement, { player: b.player ?? "", wallet: b.wallet ?? "", credits: Number(b.credits) }));
+      return json(
+        await withdraw(env.DB, settlement, {
+          player: auth.player,
+          wallet: auth.wallet,
+          credits: Number(b.credits),
+        }),
+      );
     }
     if (url.pathname === "/metro/withdraw/confirm" && req.method === "POST") {
       const locked = rejectIfSimLocked();
@@ -375,15 +430,11 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
         sig?: string;
         ts?: number;
       };
-      let player = b.player ?? "";
-      if (live) {
-        const auth = await requireWalletPlayer(b, kind);
-        if (!auth.ok) return json(auth, 401);
-        player = auth.player;
-      }
+      const auth = await authorizeBridgeActor(b, kind, allowSim);
+      if (!auth.ok) return json(auth, 401);
       return json(
         await confirmWithdraw(env.DB, settlement, {
-          player,
+          player: auth.player,
           withdrawId: Number(b.withdrawId),
           txSig: b.txSig ?? "",
         }),
@@ -400,28 +451,18 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
         sig?: string;
         ts?: number;
       };
-      if (live) {
-        const auth = await requireWalletPlayer(b, kind);
-        if (!auth.ok) return json(auth, 401);
-        if (b.wallet && auth.wallet.toLowerCase() !== b.wallet.trim().toLowerCase()) {
-          return json({ ok: false, reason: "wallet must match signed identity" }, 401);
-        }
-        // On-chain amount only — ignore client metro for trust (settlement re-reads logs)
-        return json(
-          await deposit(env.DB, settlement, {
-            player: auth.player,
-            wallet: auth.wallet,
-            txSig: b.txSig ?? "",
-            metro: Number(b.metro) || 0,
-          }),
-        );
+      const auth = await authorizeBridgeActor(b, kind, allowSim);
+      if (!auth.ok) return json(auth, 401);
+      if (b.wallet && auth.wallet.toLowerCase() !== b.wallet.trim().toLowerCase()) {
+        return json({ ok: false, reason: "wallet must match signed identity" }, 401);
       }
+      // On-chain amount only for live settlement; sim may use claimed metro under ALLOW_SIM.
       return json(
         await deposit(env.DB, settlement, {
-          player: b.player ?? "",
-          wallet: b.wallet ?? "",
+          player: auth.player,
+          wallet: auth.wallet,
           txSig: b.txSig ?? "",
-          metro: Number(b.metro),
+          metro: Number(b.metro) || 0,
         }),
       );
     }
@@ -455,10 +496,18 @@ export default {
     }
 
     if (url.pathname === "/health") {
-      return new Response(JSON.stringify({ ok: true, ts: Date.now() }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          ts: Date.now(),
+          paidTier: env.METRO_PAID_TIER === "1",
+          plan: env.METRO_PAID_TIER === "1" ? "workers-paid" : "workers-free",
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json", "access-control-allow-origin": "*" },
+        },
+      );
     }
 
     // Ops: forward a per-zone metrics probe to that zone's DO.

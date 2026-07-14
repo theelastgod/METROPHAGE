@@ -32,9 +32,11 @@ must land before its Worker code. For the first escrow rollout,
 empty/disconnect THE CRUCIBLE arenas first: an in-memory pot created by an older
 Worker cannot be retroactively journaled after the deploy.
 
-The DO ships as `new_sqlite_classes` (see `wrangler.toml`) — SQLite-backed, which
-is free-tier eligible and Cloudflare's recommended default. No Workers Paid plan
-required. (It has never been deployed, so this was a free choice made at creation.)
+The DO ships as `new_sqlite_classes` (see `wrangler.toml`) — SQLite-backed,
+Cloudflare's recommended default. **Workers Paid ($5)** is recommended for live
+multiplayer: higher CPU/DO request budget, smart placement, and looser snapshot
+thresholds (full 20 Hz through ~100 players per zone). `METRO_PAID_TIER=1` is set
+in wrangler `[vars]` for ops visibility (`/health` reports `plan`).
 
 Optional (without these, the public $METRO bridge remains read-only and fails
 closed; simulated mutation is available only through local `npm run dev:sim`):
@@ -93,7 +95,7 @@ require a small treasury ETH balance for gas:
 | Treasury token balance         | player deposits only (fixed supply, mint revoked — dev *can't* seed it) |
 | Deposit network fees           | the depositing player's wallet                                      |
 | Withdrawal gas                 | treasury ETH float on Robinhood Chain                               |
-| Hosting                        | Cloudflare Workers/D1/DO **free tier** (SQLite-backed DO); public Robinhood RPC |
+| Hosting                        | Cloudflare Workers/D1/DO (**Paid $5** recommended for MMO load; SQLite-backed DO); public Robinhood RPC |
 
 The treasury never holds or spends SOL on the Robinhood path. It does need a
 small ETH gas float before cash-outs can succeed. Pending claims auto-refund

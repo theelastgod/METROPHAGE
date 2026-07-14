@@ -10,8 +10,10 @@ trade/market/PvP, weekly PROVING vault, $METRO token bridge (dormant).
 ## LIVE (deployed 2026-07-07)
 
 - **Game: https://metrophagev1.pages.dev** (CF Pages, project `metrophagev1`, production branch `main`)
-- **Server: https://metrophage-server.wendellphillips.workers.dev** (free tier — SQLite-backed DO)
+- **Server: https://metrophage-server.wendellphillips.workers.dev** (Workers Paid $5 — SQLite-backed DO, 20 Hz zones)
 - wrangler OAuth for this account works from the shell on this machine.
+- Paid headroom: full snapshot rate through ~100 concurrent players/zone, ~1.2s persist,
+  5s DO supervisor alarm, smart Worker placement (`wrangler.toml`).
 
 **Redeploy server:** `cd server && npx wrangler deploy`
 **Redeploy client:**

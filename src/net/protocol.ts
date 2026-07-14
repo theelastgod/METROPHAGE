@@ -119,6 +119,8 @@ export type ClientMsg =
   | { t: "cosmetic"; action: "buy" | "equip" | "unequip" | "list"; id?: string }
   // authored NPC bounties — accept a quest-giver's repeatable job (server validates + grants)
   | { t: "bounty"; action: "accept"; id: string }
+  /** City NPC services (heal / meal / rumor / train / fence…) — server validates price + cooldown. */
+  | { t: "npc"; action: "service"; npcId: string; service: string }
   // personal campaign — accept a quest from THE FIXER or resolve a talk beat
   | { t: "quest"; action: "accept"; id?: string }
   | { t: "quest"; action: "talk" }

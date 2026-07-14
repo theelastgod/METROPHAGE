@@ -123,8 +123,9 @@ export const PICKUP_CORE = 1;
 /** Area-of-interest radius — the server only sends a client the entities within
  *  this distance of its player. Bigger than the ~960×540 view so nothing pops in
  *  at the edge; the mechanism is what matters (it's what makes scale possible). */
-/** AOI for entity snapshots — sized for superscaled zones (city + districts). */
-export const AOI_RADIUS = 1040;
+/** AOI for entity snapshots — sized for superscaled zones (city + districts).
+ *  Slightly larger on Workers Paid bandwidth budget so edge pop-in is rarer. */
+export const AOI_RADIUS = 1200;
 
 // ── Territory control + faction war (Step 4a) ──
 /** The four cells = the four classes. A player fights for one of them. */

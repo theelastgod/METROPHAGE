@@ -3,24 +3,37 @@ main = "src/index.ts"
 compatibility_date = "2025-06-01"
 compatibility_flags = ["nodejs_compat"]
 
+# Workers Paid ($5) — higher CPU budget, DO request volume, D1 ops. Keep SQLite-backed
+# Durable Objects (recommended); Paid unlocks headroom for 20 Hz multiplayer zones.
+[limits]
+# Standard Workers Paid CPU ceiling (ms) for the front-door Worker (HTTP/WS routing).
+cpu_ms = 30000
+
+# Route the Worker nearer to players when possible (Paid). DO simulation still pins
+# per-zone by name; this mainly helps /metro, /identity, /leaderboard, /health.
+[placement]
+mode = "smart"
+
 # Authoritative per-zone simulation lives in a Durable Object.
 [[durable_objects.bindings]]
 name = "WORLD"
 class_name = "WorldDO"
 
-# SQLite-backed DO (not new_classes): free-tier eligible + Cloudflare's recommended
-# default. Every storage API WorldDO uses — state.storage get/put, alarms, and the
-# Hibernation WebSocket set — is supported on SQLite-backed Durable Objects, so this
-# is a strictly-better choice made at creation (the class has never been deployed).
+# SQLite-backed DO (not new_classes): Cloudflare's recommended default. Every storage
+# API WorldDO uses — state.storage get/put, alarms, and the Hibernation WebSocket set —
+# is supported on SQLite-backed Durable Objects.
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["WorldDO"]
 
-# Durable source of truth. database_id is a placeholder for local dev — `wrangler
-# dev` / `d1 migrations apply --local` use a local SQLite file under .wrangler/state
-# and ignore it. A real id gets filled in at deploy time (Step 7).
+# Durable source of truth. database_id is set for the live D1 database.
 [[d1_databases]]
 binding = "DB"
 database_name = "metrophage"
 database_id = "7f030a09-a0d0-44f5-8192-cf657bd04253"
 migrations_dir = "migrations"
+
+# Runtime flags visible to the Worker (non-secret). Secrets stay in `wrangler secret`.
+[vars]
+# Signals Paid-tier tuning paths (snapshot headroom, faster persist). Harmless if free.
+METRO_PAID_TIER = "1"

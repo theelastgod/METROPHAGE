@@ -10,7 +10,7 @@ const SKUS: { sku: string; label: string; price: number; desc: string; color: st
   { sku: "supply_kit", label: "SUPPLY KIT", price: 50, desc: "+₵30 credits + 1 core", color: "#f7ff3c" },
   { sku: "core_bundle", label: "CORE BUNDLE", price: 95, desc: "+3 data cores for forging", color: "#29e7ff" },
   { sku: "cache_standard", label: "SALVAGE CACHE", price: 60, desc: "a Standard gear roll", color: "#9aa3b2" },
-  { sku: "cache_tuned", label: "TUNED CACHE", price: 180, desc: "a Tuned gear roll", color: "#39ff88" },
+  { sku: "cache_tuned", label: "TUNED CACHE", price: 150, desc: "a Tuned gear roll", color: "#39ff88" },
   { sku: "core_crate", label: "CORE CRATE", price: 240, desc: "+8 cores — bulk forge fuel", color: "#00e5ff", repReq: 1 },
   { sku: "cache_blackice", label: "BLACK-ICE CACHE", price: 480, desc: "a Black-ICE gear roll", color: "#29e7ff", repReq: 1 },
   { sku: "cache_singular", label: "SINGULAR CACHE", price: 1200, desc: "a Singular gear roll", color: "#ff2bd6", repReq: 2 },

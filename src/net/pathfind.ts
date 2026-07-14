@@ -34,6 +34,7 @@ function heuristic(ax: number, ay: number, bx: number, by: number) {
 /**
  * A* pathfind on the tile grid — returns world-space waypoints (tile centres).
  * RuneScape-style click-to-walk uses this on both client prediction and UI.
+ * Default budget scales with grid size so 120×90 districts are pathable (400 was too low).
  */
 export function findPath(
   grid: TileGrid,
@@ -41,8 +42,12 @@ export function findPath(
   startY: number,
   endX: number,
   endY: number,
-  maxNodes = 400,
+  maxNodes?: number,
 ): Array<{ x: number; y: number }> | null {
+  const gw = grid[0]?.length ?? 0;
+  const gh = grid.length;
+  // ~half the open tiles is enough for cross-district walks without hanging a frame.
+  const budget = maxNodes ?? Math.max(4000, Math.min(14_000, Math.floor((gw * gh) / 3) || 4000));
   const start = worldToTile(startX, startY);
   const goal = worldToTile(endX, endY);
   if (!isWalkable(grid, goal.tx, goal.ty)) {
@@ -75,7 +80,7 @@ export function findPath(
   open.push({ tx: start.tx, ty: start.ty, g: 0, f: heuristic(start.tx, start.ty, goal.tx, goal.ty) });
 
   let expanded = 0;
-  while (open.length > 0 && expanded < maxNodes) {
+  while (open.length > 0 && expanded < budget) {
     open.sort((a, b) => a.f - b.f);
     const cur = open.shift()!;
     expanded++;

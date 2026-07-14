@@ -208,20 +208,23 @@ export async function withdraw(
 ): Promise<BridgeResponse> {
   const id = normId(args.player);
   const wallet = (args.wallet || "").trim();
-  const credits = Math.floor(args.credits);
+  const credits = Math.floor(Number(args.credits) || 0);
   if (!isValidWallet(wallet)) return { ok: false, reason: "invalid wallet address" };
   if (!Number.isFinite(credits) || credits < BRIDGE.minWithdrawCredits)
     return { ok: false, reason: `minimum withdraw is ${BRIDGE.minWithdrawCredits} credits` };
   await reclaimExpired(db, settlement); // abandoned claims release their pool reservation first
 
-  // server-authoritative anti-abuse: cooldown + rolling daily cap
+  // Pre-check for friendly errors (authoritative gates live in the INSERT below).
+  const now = Date.now();
+  const dayStart = now - DAY_MS;
+  const cooldownCutoff = now - BRIDGE.withdrawCooldownMs;
   const agg = await db
     .prepare(
       "SELECT COALESCE(SUM(credits),0) AS used, COALESCE(MAX(created_at),0) AS last FROM metro_withdrawals WHERE player = ? AND status != 'failed' AND created_at >= ?",
     )
-    .bind(id, Date.now() - DAY_MS)
+    .bind(id, dayStart)
     .first<{ used: number; last: number }>();
-  if (Date.now() - (agg?.last ?? 0) < BRIDGE.withdrawCooldownMs)
+  if (now - (agg?.last ?? 0) < BRIDGE.withdrawCooldownMs)
     return { ok: false, reason: "withdraw cooldown — try again shortly" };
   if ((agg?.used ?? 0) + credits > BRIDGE.dailyCapCredits) return { ok: false, reason: "daily withdraw cap reached" };
 
@@ -232,23 +235,49 @@ export async function withdraw(
     .run();
   if (debit.meta.changes === 0) return { ok: false, reason: "insufficient credits" };
 
-  // ATOMIC pool reservation — the row only inserts if the player-funded pool still
-  // covers this payout at insert time (single statement, so concurrent withdrawals
-  // cannot both pass a stale check). No dev seeding exists: the pool is deposits
-  // minus prior payouts, and the bridge never promises more than it holds.
+  // ATOMIC pool + daily-cap + cooldown reservation in one INSERT.
+  // Concurrent withdraws cannot both pass stale cap/cooldown checks.
   const metro = creditsToMetro(credits);
   const ins = await db
     .prepare(
       `INSERT INTO metro_withdrawals (player, wallet, credits, metro, status, created_at)
        SELECT ?,?,?,?,'pending',?
        WHERE (SELECT COALESCE(SUM(metro),0) FROM metro_deposits)
-           - (SELECT COALESCE(SUM(metro),0) FROM metro_withdrawals WHERE status != 'failed') >= ?`,
+           - (SELECT COALESCE(SUM(metro),0) FROM metro_withdrawals WHERE status != 'failed') >= ?
+         AND (SELECT COALESCE(SUM(credits),0) FROM metro_withdrawals
+              WHERE player = ? AND status != 'failed' AND created_at >= ?) + ? <= ?
+         AND (SELECT COALESCE(MAX(created_at),0) FROM metro_withdrawals
+              WHERE player = ? AND status != 'failed') <= ?`,
     )
-    .bind(id, wallet, credits, metro, Date.now(), metro)
+    .bind(
+      id,
+      wallet,
+      credits,
+      metro,
+      now,
+      metro,
+      id,
+      dayStart,
+      credits,
+      BRIDGE.dailyCapCredits,
+      id,
+      cooldownCutoff,
+    )
     .run();
   if (ins.meta.changes === 0) {
     await db.prepare("UPDATE players SET credits = credits + ? WHERE id = ?").bind(credits, id).run();
     const pool = await poolMetro(db);
+    // Distinguish cap/cooldown race vs pool — re-check for a clear reason.
+    const again = await db
+      .prepare(
+        "SELECT COALESCE(SUM(credits),0) AS used, COALESCE(MAX(created_at),0) AS last FROM metro_withdrawals WHERE player = ? AND status != 'failed' AND created_at >= ?",
+      )
+      .bind(id, dayStart)
+      .first<{ used: number; last: number }>();
+    if (now - (again?.last ?? 0) < BRIDGE.withdrawCooldownMs)
+      return { ok: false, reason: "withdraw cooldown — try again shortly" };
+    if ((again?.used ?? 0) + credits > BRIDGE.dailyCapCredits)
+      return { ok: false, reason: "daily withdraw cap reached" };
     return {
       ok: false,
       reason:
@@ -357,21 +386,21 @@ export async function reclaimExpired(db: D1Database, settlement?: Settlement): P
   }
   let reclaimed = 0;
   for (const r of results) {
-    // conditional flip first so a concurrent confirm cannot race the refund
+    // EVM: burn treasury nonce BEFORE flipping status / refunding. If burn fails, leave
+    // the row pending so we retry — never refund while a pre-signed claimTx may still land.
+    if (r.claim_nonce != null && settlement?.invalidateNonce) {
+      try {
+        await settlement.invalidateNonce(r.claim_nonce);
+      } catch {
+        continue; // still pending; next reclaimExpired will retry
+      }
+    }
+    // Conditional flip so a concurrent confirm cannot race the refund.
     const flip = await db
       .prepare("UPDATE metro_withdrawals SET status = 'failed' WHERE id = ? AND status = 'pending'")
       .bind(r.id)
       .run();
     if (flip.meta.changes === 0) continue;
-    // Burn EVM nonce BEFORE refunding credits — otherwise a player can broadcast the
-    // abandoned signed transfer and keep the refund.
-    if (r.claim_nonce != null && settlement?.invalidateNonce) {
-      try {
-        await settlement.invalidateNonce(r.claim_nonce);
-      } catch {
-        /* best-effort; nonce may already be used */
-      }
-    }
     await db.prepare("UPDATE players SET credits = credits + ? WHERE id = ?").bind(r.credits, r.player).run();
     reclaimed++;
   }
@@ -395,8 +424,10 @@ export async function deposit(
   const v = await settlement.verifyDeposit(txSig, wallet, args.metro);
   if (!v.ok) return { ok: false, reason: v.reason ?? "deposit not verified on-chain" };
   const metro = roundMetro(v.metro ?? args.metro);
-  if (!(metro > 0)) return { ok: false, reason: "bad deposit amount" };
+  if (!(metro > 0) || !Number.isFinite(metro)) return { ok: false, reason: "bad deposit amount" };
   const credits = metroToCredits(metro);
+  // Reject dust that would grant 0 credits (don't inflate metro ledger with Math.max(1,…)).
+  if (credits < 1) return { ok: false, reason: "deposit too small — need at least 0.01 $METRO for 1 credit" };
 
   // CLAIM-ONCE: tx_sig is the PRIMARY KEY, so a transfer can only ever credit once.
   const claim = await db
@@ -405,7 +436,8 @@ export async function deposit(
     .run();
   if (claim.meta.changes === 0) return { ok: false, reason: "deposit already claimed" };
 
-  const metroUnits = Math.max(1, Math.round(metro));
+  // Ledger metro counter tracks whole units without inventing 1 metro for sub-1 deposits.
+  const metroUnits = Math.max(0, Math.round(metro));
   await db
     .prepare("UPDATE players SET credits = credits + ?, metro = metro + ? WHERE id = ?")
     .bind(credits, metroUnits, id)

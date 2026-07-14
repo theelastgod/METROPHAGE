@@ -86,7 +86,18 @@ import {
 import { DISTRICTS } from "../../src/game/districts";
 import { DISTRICT_SCALE, PLAYER, HEAT } from "../../src/config";
 import { ONLINE_CITY, CITY_HUB_SPAWN } from "../../src/world/city";
-import { rollItem, rollModsFor, effectiveMods, nextRarity, makeWeaponItem, SLOTS, type Item, type Slot, type Rarity } from "../../src/game/items";
+import {
+  rollItem,
+  rollModsFor,
+  effectiveMods,
+  nextRarity,
+  makeWeaponItem,
+  SLOTS,
+  RARITIES,
+  type Item,
+  type Slot,
+  type Rarity,
+} from "../../src/game/items";
 import { getWeapon, weaponHitDamage } from "../../src/game/weapons";
 import {
   upgradeCost,
@@ -107,7 +118,21 @@ import { fmtMetro } from "../../src/economy/metro";
 import { dailyContracts, getDaily, currentDay, repTier, type DailyObjective } from "../../src/game/dailies";
 import { RAID_SCRIPT, phaseForHp, raidHpScale } from "../../src/game/raid";
 import { getCosmetic, applyCosmetic } from "../../src/game/cosmetics";
-import { bountyById, type BountyObjective } from "../../src/game/bounties";
+import { bountyById, bountyForNpc, type BountyObjective } from "../../src/game/bounties";
+import {
+  BLESS_IFRAME_TICKS,
+  CLIENT_OPEN_SERVICES,
+  HEAL_CHARITY_FRAC,
+  MEAL_HEAL_FRAC,
+  MEAL_HEAT_DUMP,
+  NPC_SERVICES,
+  RUMOR_TIPS,
+  INTEL_TIPS,
+  SELL_CORE_PAYOUT,
+  npcServiceXp,
+  servicesForNpc,
+  type NpcServiceId,
+} from "../../src/game/npcServices";
 import { verifyWalletLogin, walletPlayerId } from "./auth";
 import { allDiscoverableZones, isGodPlayerId } from "./godMode";
 import { COSMETICS } from "../../src/game/cosmetics";
@@ -177,8 +202,8 @@ import {
 import type { QuestTriggerType, QuestReward } from "../../src/game/quests";
 import { rollElite, type EliteModifier } from "../../src/game/elites";
 
-// Server-only tuning.
-const PERSIST_EVERY_TICKS = 40; // ~2s snapshot cadence
+// Server-only tuning (Workers Paid $5 headroom — was free-tier conservative).
+const PERSIST_EVERY_TICKS = 24; // ~1.2s durable flush (was 2s) — less loss on DO recycle
 const INTENT_EXPIRE_TICKS = 3;
 // Step 7 (ops): a durable "supervisor" alarm. It is NOT the game tick — a 20Hz
 // real-time loop runs hot as an in-memory interval (cheaper + more precise than
@@ -186,15 +211,15 @@ const INTENT_EXPIRE_TICKS = 3;
 // isolate was recycled mid-session (alarms survive eviction; setInterval does
 // not) and heartbeat-persists, so the loop is supervised + durable, not
 // fire-and-forget.
-const SUPERVISOR_ALARM_MS = 10_000;
+const SUPERVISOR_ALARM_MS = 5_000; // was 10s — faster resume after eviction on Paid
 // Step 7 (anti-cheat): per-socket wall-clock flood guard. Legit play is ~1 input
 // per render frame plus the odd fire/chat, so even a 144fps client stays below it.
 // Movement is already flood-immune (intent is integrated once per server tick, not
 // per message) and fire is already server-rate-limited — this only stops a socket
 // from exhausting CPU/bandwidth with raw message volume.
 const MAX_MSG_BYTES = 4096; // reject oversized payloads outright
-const MSG_SOFT_PER_WINDOW = 400; // soft-drop past this many msgs per ~1s window
-const MSG_KILL_PER_WINDOW = 600; // close only a genuine per-socket flood
+const MSG_SOFT_PER_WINDOW = 520; // Paid: room for high-FPS clients + kit spam
+const MSG_KILL_PER_WINDOW = 780; // close only a genuine per-socket flood
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const clampUnit = (n: number) => (n > 1 ? 1 : n < -1 ? -1 : Number.isFinite(n) ? n : 0);
 const ticks = (ms: number) => Math.ceil(ms / NET_TICK_MS);
@@ -285,6 +310,8 @@ export interface Env {
   METRO_ALLOW_SIM?: string;
   /** Force settlement family: robinhood | solana | auto (default auto = detect from mint shape). */
   METRO_SETTLEMENT?: string;
+  /** "1" when Workers Paid is provisioned — ops /health only (tuning is compile-time). */
+  METRO_PAID_TIER?: string;
 }
 
 interface PlayerState {
@@ -394,6 +421,8 @@ interface PlayerState {
   // authored NPC bounty — one active at a time, persisted cross-zone in D1
   bounty: { id: string; progress: number } | null;
   bountyDirty: boolean;
+  /** Session cooldowns for NPC services (`npcId:service` → last use ms). Not persisted. */
+  npcCd: Map<string, number>;
   // appearance (relayed to other clients so they render this player's customization)
   look?: PlayerLook;
 }
@@ -1530,6 +1559,7 @@ export class WorldDO {
     if (msg.t === "market") return this.onMarket(ws, msg);
     if (msg.t === "cosmetic") return this.onCosmetic(ws, msg);
     if (msg.t === "bounty") return this.onBounty(ws, msg);
+    if (msg.t === "npc") return this.onNpcService(ws, msg);
     if (msg.t === "quest") return this.onQuest(ws, msg);
     if (msg.t === "tutorial") return this.onTutorial(ws, msg);
     if (msg.t === "party") return this.onParty(ws, msg);
@@ -1566,7 +1596,7 @@ export class WorldDO {
       if (id !== playerId) continue;
       if (fromId) {
         const r = this.players.get(id);
-        if (r?.muted.has(fromId)) continue;
+        if (fromId && (r?.muted.has(fromId) || r?.muted.has(fromId.toLowerCase()))) continue;
       }
       try {
         sock.send(JSON.stringify(msg));
@@ -1598,13 +1628,13 @@ export class WorldDO {
       out.y = round2(p.y);
     }
     if (msg.ch === "whisper") {
-      const to = (msg.to || "").toLowerCase();
-      if (!this.players.has(to)) {
+      const target = this.resolvePlayer(msg.to);
+      if (!target) {
         this.send(ws, { t: "sys", text: `no such player: ${msg.to}` });
         return;
       }
-      this.sendTo(to, out, p.id);
-      this.send(ws, { ...out, from: `you → ${msg.to}` }); // echo to sender
+      this.sendTo(target.id, out, p.id);
+      this.send(ws, { ...out, from: `you → ${target.name}` }); // echo to sender
     } else if (msg.ch === "party") {
       if (p.party < 0) {
         this.send(ws, { t: "sys", text: "you're not in a party" });
@@ -1619,9 +1649,10 @@ export class WorldDO {
       }
       this.guildBroadcast(p.guildId, out, p.id);
     } else {
-      // zone — everyone in this DO, respecting mutes
+      // zone — everyone in this DO, respecting mutes (id + lowercase for wallet casing)
       for (const [sock, id] of this.sessions) {
-        if (this.players.get(id)?.muted.has(p.id)) continue;
+        const viewer = this.players.get(id);
+        if (viewer?.muted.has(p.id) || viewer?.muted.has(p.id.toLowerCase())) continue;
         try {
           sock.send(JSON.stringify(out));
         } catch {
@@ -1635,8 +1666,7 @@ export class WorldDO {
     const p = this.playerFor(ws);
     if (!p) return;
     if (msg.action === "invite") {
-      const to = (msg.to || "").toLowerCase();
-      const target = this.players.get(to);
+      const target = this.resolvePlayer(msg.to);
       if (!target || target.id === p.id) {
         this.send(ws, { t: "sys", text: "can't invite that player" });
         return;
@@ -1666,12 +1696,19 @@ export class WorldDO {
         this.send(ws, { t: "sys", text: "can't revive right now" });
         return;
       }
-      const to = (msg.to || "").toLowerCase();
+      const toRaw = (msg.to || "").trim();
+      const toLower = toRaw.toLowerCase();
       let target: PlayerState | undefined;
       for (const m of this.parties.get(p.party) ?? []) {
         const ally = this.players.get(m);
         if (!ally || ally.id === p.id || !ally.dead) continue;
-        if (to && ally.id !== to && ally.name.toLowerCase() !== to) continue;
+        if (
+          toRaw &&
+          ally.id !== toRaw &&
+          ally.id.toLowerCase() !== toLower &&
+          ally.name.toLowerCase() !== toLower
+        )
+          continue;
         const d = Math.hypot(ally.x - p.x, ally.y - p.y);
         if (d < 90) {
           target = ally;
@@ -1697,10 +1734,13 @@ export class WorldDO {
   private onMute(ws: WebSocket, msg: Extract<ClientMsg, { t: "mute" }>) {
     const p = this.playerFor(ws);
     if (!p) return;
-    const to = (msg.to || "").toLowerCase();
-    if (to && to !== p.id) {
-      p.muted.add(to);
-      this.send(ws, { t: "sys", text: `muted ${msg.to}` });
+    const target = this.resolvePlayer(msg.to);
+    const id = target?.id ?? (msg.to || "").trim();
+    if (id && id !== p.id) {
+      p.muted.add(id);
+      // Also mute by lowercased id so guest lookups still match.
+      p.muted.add(id.toLowerCase());
+      this.send(ws, { t: "sys", text: `muted ${target?.name ?? msg.to}` });
     }
   }
 
@@ -1735,7 +1775,7 @@ export class WorldDO {
     for (const [sock, id] of this.sessions) {
       const r = this.players.get(id);
       if (!r || r.guildId !== gid) continue;
-      if (fromId && r.muted.has(fromId)) continue;
+      if (fromId && (r.muted.has(fromId) || r.muted.has(fromId.toLowerCase()))) continue;
       try {
         sock.send(JSON.stringify(msg));
       } catch {
@@ -1855,10 +1895,14 @@ export class WorldDO {
         await this.sendGuild(ws, p);
       } else if (msg.action === "invite") {
         if (!isOfficer) return sys("only a leader/officer can invite");
-        const to = (msg.to || "").toLowerCase().replace(/[^a-z0-9_:-]/g, "");
-        if (!to) return sys("invite who? (/ginvite <id>)");
+        const target = this.resolvePlayer(msg.to);
+        // Prefer live id; fall back to sanitized token so offline invites still land in D1.
+        const to =
+          target?.id ??
+          (msg.to || "").trim().replace(/[^A-Za-z0-9_:-]/g, "").slice(0, 64);
+        if (!to) return sys("invite who? (/ginvite <name or id>)");
         await DB.prepare("INSERT OR REPLACE INTO guild_invites (player, guild_id, at) VALUES (?,?,?)").bind(to, p.guildId, Date.now()).run();
-        sys(`invited ${to} to the cell`);
+        sys(`invited ${target?.name ?? to} to the cell`);
         this.sendTo(to, { t: "sys", text: `you've been invited to a cell — type /gjoin` });
       } else if (msg.action === "accept") {
         if (p.guildId) return sys("leave your current cell first");
@@ -1888,8 +1932,8 @@ export class WorldDO {
         this.guildBroadcast(gid, { t: "sys", text: `${p.name} left the cell` });
       } else if (msg.action === "deposit") {
         if (!p.guildId) return sys("join a cell first");
-        const c = Math.max(0, Math.floor(msg.credits ?? 0));
-        const k = Math.max(0, Math.floor(msg.cores ?? 0));
+        const c = this.durableAmt(msg.credits);
+        const k = this.durableAmt(msg.cores);
         if (c === 0 && k === 0) return sys("deposit how much? (/gdep <credits> [cores])");
         if (p.credits < c || p.cores < k) return sys("insufficient balance");
         p.credits -= c;
@@ -1909,8 +1953,8 @@ export class WorldDO {
         await this.sendGuild(ws, p);
       } else if (msg.action === "withdraw") {
         if (!isOfficer) return sys("only a leader/officer can withdraw");
-        const c = Math.max(0, Math.floor(msg.credits ?? 0));
-        const k = Math.max(0, Math.floor(msg.cores ?? 0));
+        const c = this.durableAmt(msg.credits);
+        const k = this.durableAmt(msg.cores);
         if (c === 0 && k === 0) return sys("withdraw how much? (/gwd <credits> [cores])");
         // atomic guarded decrement — dupe-proof against the live bank balance
         const r = await DB.prepare(
@@ -1926,23 +1970,29 @@ export class WorldDO {
         await this.sendGuild(ws, p);
       } else if (msg.action === "promote" || msg.action === "demote") {
         if (p.guildRank !== "leader") return sys("only the leader can change ranks");
-        const to = (msg.to || "").toLowerCase();
+        const target = this.resolvePlayer(msg.to);
+        const to =
+          target?.id ??
+          (msg.to || "").trim().replace(/[^A-Za-z0-9_:-]/g, "").slice(0, 64);
         const m = await DB.prepare("SELECT rank FROM guild_members WHERE player = ? AND guild_id = ?").bind(to, p.guildId).first();
         if (!m || to === p.id) return sys("pick another cell member");
         const newRank = msg.action === "promote" ? "officer" : "member";
         await DB.prepare("UPDATE guild_members SET rank = ? WHERE player = ? AND guild_id = ?").bind(newRank, to, p.guildId).run();
-        const op = this.players.get(to);
+        const op = target ?? this.players.get(to);
         if (op) op.guildRank = newRank;
-        sys(`${to} is now ${newRank}`);
+        sys(`${target?.name ?? to} is now ${newRank}`);
         await this.sendGuild(ws, p);
       } else if (msg.action === "kick") {
         if (p.guildRank !== "leader") return sys("only the leader can kick");
-        const to = (msg.to || "").toLowerCase();
-        if (to === p.id) return sys("can't kick yourself — use /gleave");
+        const target = this.resolvePlayer(msg.to);
+        const to =
+          target?.id ??
+          (msg.to || "").trim().replace(/[^A-Za-z0-9_:-]/g, "").slice(0, 64);
+        if (!to || to === p.id) return sys("can't kick yourself — use /gleave");
         const m = await DB.prepare("SELECT player FROM guild_members WHERE player = ? AND guild_id = ?").bind(to, p.guildId).first();
         if (!m) return sys("not a cell member");
         await DB.prepare("DELETE FROM guild_members WHERE player = ? AND guild_id = ?").bind(to, p.guildId).run();
-        const op = this.players.get(to);
+        const op = target ?? this.players.get(to);
         if (op) {
           op.guildId = 0;
           op.guildRank = "";
@@ -1950,7 +2000,7 @@ export class WorldDO {
           this.sendTo(to, { t: "guild", state: "none" });
           this.sendTo(to, { t: "sys", text: "you were removed from the cell" });
         }
-        sys(`kicked ${to}`);
+        sys(`kicked ${target?.name ?? to}`);
         await this.sendGuild(ws, p);
       } else if (msg.action === "info") {
         await this.sendGuild(ws, p);
@@ -1961,14 +2011,75 @@ export class WorldDO {
   }
 
   // ── auction house — cross-zone player market (D1); item escrowed, buy is atomic ──
+  /** Finite non-negative currency amount (blocks NaN / Infinity poison). */
+  private durableAmt(value: unknown): number {
+    const n = Math.floor(Number(value) || 0);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  }
+
+  /**
+   * Resolve a chat/trade target by player id (case-insensitive for wallets) or callsign.
+   * Guest ids are lowercase names; wallet ids are `w:0x…` checksummed.
+   */
+  private resolvePlayer(token: string | undefined | null): PlayerState | undefined {
+    const raw = (token || "").trim();
+    if (!raw) return undefined;
+    const direct = this.players.get(raw) ?? this.players.get(raw.toLowerCase());
+    if (direct) return direct;
+    const lower = raw.toLowerCase();
+    for (const pl of this.players.values()) {
+      if (pl.id.toLowerCase() === lower) return pl;
+      if (pl.name.toLowerCase() === lower) return pl;
+    }
+    return undefined;
+  }
+
   private parseItemJson(raw: string | null | undefined): Item | null {
     if (!raw) return null;
     try {
       const v = JSON.parse(raw);
-      return v && typeof v === "object" && !Array.isArray(v) ? (v as Item) : null;
+      return this.sanitizeMarketItem(v);
     } catch {
       return null;
     }
+  }
+
+  /** Clamp auction/mailbox item JSON so inflated mods / bogus weapons cannot equip. */
+  private sanitizeMarketItem(v: unknown): Item | null {
+    if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+    const o = v as Record<string, unknown>;
+    const id = typeof o.id === "string" ? o.id.slice(0, 64) : "";
+    const name = typeof o.name === "string" ? o.name.slice(0, 48) : "";
+    const slot = o.slot as Slot;
+    const rarity = o.rarity as Rarity;
+    if (!id || !name) return null;
+    if (!SLOTS.includes(slot)) return null;
+    if (!RARITIES[rarity]) return null;
+    const modsIn = o.mods && typeof o.mods === "object" && !Array.isArray(o.mods) ? (o.mods as Record<string, unknown>) : {};
+    const mods: Partial<ModBag> = {};
+    for (const key of Object.keys(ZERO_MODS) as (keyof ModBag)[]) {
+      const n = Number(modsIn[key]);
+      if (!Number.isFinite(n)) continue;
+      // Hard caps: pct lines ±2.0, flat HP-like ±500, ult heat discount 0..40.
+      if (key === "ultHeatDiscount") {
+        mods[key] = Math.max(0, Math.min(40, Math.round(n)));
+      } else if (String(key).endsWith("Pct")) {
+        mods[key] = Math.max(-1.5, Math.min(2, Math.round(n * 100) / 100));
+      } else {
+        mods[key] = Math.max(-200, Math.min(500, Math.round(n)));
+      }
+    }
+    let weaponId: string | undefined;
+    if (slot === "weapon" && typeof o.weaponId === "string") {
+      const w = o.weaponId.slice(0, 32);
+      if (getWeapon(w)) weaponId = w;
+    }
+    const ilvlRaw = Math.floor(Number(o.ilvl) || 0);
+    const ilvl = Number.isFinite(ilvlRaw) ? Math.max(0, Math.min(UPGRADE_MAX, ilvlRaw)) : 0;
+    const item: Item = { id, name, slot, rarity, mods };
+    if (weaponId) item.weaponId = weaponId;
+    if (ilvl > 0) item.ilvl = ilvl;
+    return item;
   }
 
   /** Push the current open listings (newest first) to one viewer. */
@@ -2320,8 +2431,7 @@ export class WorldDO {
     const p = this.playerFor(ws);
     if (!p) return;
     if (msg.action === "request") {
-      const to = (msg.to || "").toLowerCase();
-      const target = this.players.get(to);
+      const target = this.resolvePlayer(msg.to);
       if (!target || target.id === p.id) {
         this.send(ws, { t: "sys", text: "can't trade that player" });
         return;
@@ -2355,8 +2465,8 @@ export class WorldDO {
     if (msg.action === "accept") {
       this.pushTrade(tr);
     } else if (msg.action === "offer") {
-      const credits = Math.max(0, Math.floor(msg.credits ?? 0));
-      const cores = Math.max(0, Math.floor(msg.cores ?? 0));
+      const credits = this.durableAmt(msg.credits);
+      const cores = this.durableAmt(msg.cores);
       if (isA) tr.offerA = { credits, cores };
       else tr.offerB = { credits, cores };
       tr.confirmA = false; // any change voids both confirmations
@@ -2412,12 +2522,21 @@ export class WorldDO {
       this.endTrade(tr, "cancelled", "trade partner left");
       return;
     }
+    // Re-sanitize offers (session may predate durableAmt hardening).
+    const oA = { credits: this.durableAmt(tr.offerA.credits), cores: this.durableAmt(tr.offerA.cores) };
+    const oB = { credits: this.durableAmt(tr.offerB.credits), cores: this.durableAmt(tr.offerB.cores) };
+    tr.offerA = oA;
+    tr.offerB = oB;
     // DUPE-PROOF: validate against LIVE balances at execution time, not the offer.
     if (
-      a.credits < tr.offerA.credits ||
-      a.cores < tr.offerA.cores ||
-      b.credits < tr.offerB.credits ||
-      b.cores < tr.offerB.cores
+      !Number.isFinite(a.credits) ||
+      !Number.isFinite(a.cores) ||
+      !Number.isFinite(b.credits) ||
+      !Number.isFinite(b.cores) ||
+      a.credits < oA.credits ||
+      a.cores < oA.cores ||
+      b.credits < oB.credits ||
+      b.cores < oB.cores
     ) {
       tr.confirmA = false;
       tr.confirmB = false;
@@ -2427,10 +2546,10 @@ export class WorldDO {
       return;
     }
     // all-or-nothing swap
-    a.credits += tr.offerB.credits - tr.offerA.credits;
-    a.cores += tr.offerB.cores - tr.offerA.cores;
-    b.credits += tr.offerA.credits - tr.offerB.credits;
-    b.cores += tr.offerA.cores - tr.offerB.cores;
+    a.credits += oB.credits - oA.credits;
+    a.cores += oB.cores - oA.cores;
+    b.credits += oA.credits - oB.credits;
+    b.cores += oA.cores - oB.cores;
     a.dirty = true;
     b.dirty = true;
     this.endTrade(tr, "done", "trade complete");
@@ -3190,6 +3309,7 @@ export class WorldDO {
       cosmeticEquipped,
       bounty,
       bountyDirty,
+      npcCd: new Map(),
       look,
     };
   }
@@ -3974,7 +4094,9 @@ export class WorldDO {
     return true;
   }
 
-  /** Starter melee + resources for live-city players. */
+  /** Starter melee + resources for live-city players.
+   *  Credit/core floor is once-only (true new shell: zero XP). Re-login after spending
+   *  does NOT re-mint the floor — was an unbounded faucet. */
   private ensureStarterKit(p: PlayerState) {
     if (this.inTutorial()) return;
     let changed = false;
@@ -3986,14 +4108,18 @@ export class WorldDO {
       while (p.inventory.length < 2) p.inventory.push(rollItem(Math.max(1, p.level), 0.35));
       changed = true;
     }
-    if (p.cores < 5) {
-      p.cores = Math.max(p.cores, 5);
-      changed = true;
-    }
-    if (p.credits < 100) {
-      this.eco("emit", "floor", 100 - p.credits);
-      p.credits = Math.max(p.credits, 100);
-      changed = true;
+    // Floor only for brand-new runners (no XP yet). Veterans who spent to 0 stay broke.
+    const brandNew = (p.xp | 0) === 0 && p.level <= 1;
+    if (brandNew) {
+      if (p.cores < 5) {
+        p.cores = Math.max(p.cores, 5);
+        changed = true;
+      }
+      if (p.credits < 100) {
+        this.eco("emit", "floor", 100 - p.credits);
+        p.credits = Math.max(p.credits, 100);
+        changed = true;
+      }
     }
     if (changed) {
       p.dirty = true;
@@ -4033,6 +4159,169 @@ export class WorldDO {
       this.send(ws, { t: "sys", text: `accepted: ${b.name}` });
       this.pushBounty(p);
     }
+  }
+
+  /**
+   * City NPC services — heal / meal / rumor / train / fence / bless.
+   * Server owns prices, cooldowns, and whether this NPC actually offers the service.
+   * Client-only opens (vendor/forge panels) never hit this path.
+   */
+  private onNpcService(ws: WebSocket, msg: Extract<ClientMsg, { t: "npc" }>) {
+    const p = this.playerFor(ws);
+    if (!p || p.dead) return;
+    if (msg.action !== "service") return;
+    const npcId = (msg.npcId || "").replace(/[^a-zA-Z0-9_:-]/g, "").slice(0, 48);
+    const service = (msg.service || "").replace(/[^a-z0-9_]/g, "").slice(0, 32) as NpcServiceId;
+    if (!npcId || !service) return;
+    // Panel opens are client-side; bounty uses the dedicated path (but accept alias ok).
+    if (CLIENT_OPEN_SERVICES.has(service) && service !== "bounty") return;
+    const offered = servicesForNpc(npcId);
+    if (!offered.includes(service)) {
+      this.send(ws, { t: "sys", text: "they don't offer that" });
+      return;
+    }
+    const def = NPC_SERVICES[service];
+    if (!def) return;
+
+    if (service === "bounty") {
+      const b = bountyForNpc(npcId);
+      if (!b) {
+        this.send(ws, { t: "sys", text: "no job on the table" });
+        return;
+      }
+      void this.onBounty(ws, { t: "bounty", action: "accept", id: b.id });
+      return;
+    }
+
+    const cdKey = `${npcId}:${service}`;
+    if (!p.npcCd) p.npcCd = new Map();
+    const last = p.npcCd.get(cdKey) ?? 0;
+    const waitMs = Math.max(0, def.cooldownSec) * 1000;
+    const now = Date.now();
+    if (waitMs > 0 && now - last < waitMs) {
+      const left = Math.ceil((waitMs - (now - last)) / 1000);
+      this.send(ws, { t: "sys", text: `cooldown — try again in ${left}s` });
+      return;
+    }
+
+    const cost = Math.max(0, Math.floor(Number(def.cost) || 0));
+    const coresCost = Math.max(0, Math.floor(Number(def.coresCost) || 0));
+    if (cost > 0 && p.credits < cost) {
+      this.send(ws, { t: "sys", text: `need ₵${cost}` });
+      return;
+    }
+    if (coresCost > 0 && p.cores < coresCost) {
+      this.send(ws, { t: "sys", text: "need a data core" });
+      return;
+    }
+
+    // Apply effects
+    let ok = true;
+    let line = "";
+    switch (service) {
+      case "heal_paid": {
+        if (p.hp >= p.maxHp) {
+          this.send(ws, { t: "sys", text: "you're already patched" });
+          return;
+        }
+        p.credits -= cost;
+        this.eco("burn", "npc_heal", cost);
+        p.hp = p.maxHp;
+        line = `patched to full for ₵${cost}`;
+        break;
+      }
+      case "heal_charity": {
+        if (p.hp >= p.maxHp) {
+          this.send(ws, { t: "sys", text: "you're already whole" });
+          return;
+        }
+        const before = p.hp;
+        p.hp = Math.min(p.maxHp, p.hp + Math.max(8, Math.floor(p.maxHp * HEAL_CHARITY_FRAC)));
+        line = p.hp > before ? "free patch — hold still" : "nothing to patch";
+        if (p.hp <= before) return;
+        break;
+      }
+      case "meal": {
+        p.credits -= cost;
+        this.eco("burn", "npc_meal", cost);
+        p.hp = Math.min(p.maxHp, p.hp + Math.max(6, Math.floor(p.maxHp * MEAL_HEAL_FRAC)));
+        p.heat = Math.max(0, p.heat - MEAL_HEAT_DUMP);
+        line = `meal ₵${cost} — belly full, HEAT down`;
+        break;
+      }
+      case "cool_down": {
+        if (p.heat <= 0) {
+          this.send(ws, { t: "sys", text: "HEAT's already cold" });
+          return;
+        }
+        p.credits -= cost;
+        this.eco("burn", "npc_vent", cost);
+        p.heat = 0;
+        line = `vented HEAT for ₵${cost}`;
+        break;
+      }
+      case "rumor": {
+        p.credits -= cost;
+        this.eco("burn", "npc_rumor", cost);
+        const xp = npcServiceXp("rumor", p.level);
+        p.xp += xp;
+        p.level = levelForXp(p.xp);
+        const tip = RUMOR_TIPS[Math.floor(Math.random() * RUMOR_TIPS.length)];
+        line = `rumor (+${xp} XP): ${tip}`;
+        break;
+      }
+      case "intel": {
+        p.credits -= cost;
+        this.eco("burn", "npc_intel", cost);
+        const xp = npcServiceXp("intel", p.level);
+        p.xp += xp;
+        p.level = levelForXp(p.xp);
+        const tip = INTEL_TIPS[Math.floor(Math.random() * INTEL_TIPS.length)];
+        line = `intel (+${xp} XP): ${tip}`;
+        break;
+      }
+      case "train": {
+        p.credits -= cost;
+        this.eco("burn", "npc_train", cost);
+        const xp = npcServiceXp("train", p.level);
+        p.xp += xp;
+        p.level = levelForXp(p.xp);
+        line = `drill complete — +${xp} XP (₵${cost})`;
+        break;
+      }
+      case "buy_core": {
+        p.credits -= cost;
+        this.eco("burn", "npc_core", cost);
+        p.cores += 1;
+        line = `bought a data core for ₵${cost}`;
+        break;
+      }
+      case "sell_core": {
+        p.cores -= coresCost;
+        p.credits += SELL_CORE_PAYOUT;
+        this.eco("emit", "npc_fence", SELL_CORE_PAYOUT);
+        this.bumpStat(p, "credits", SELL_CORE_PAYOUT);
+        line = `fenced a core for ₵${SELL_CORE_PAYOUT}`;
+        break;
+      }
+      case "bless": {
+        p.iframeUntilTick = Math.max(p.iframeUntilTick, this.tick + BLESS_IFRAME_TICKS);
+        p.pvpSafeUntil = Math.max(p.pvpSafeUntil, this.tick + BLESS_IFRAME_TICKS);
+        p.heat = Math.max(0, p.heat - 15);
+        line = "blessing — brief invulnerability";
+        break;
+      }
+      default:
+        ok = false;
+        break;
+    }
+    if (!ok) {
+      this.send(ws, { t: "sys", text: "service unavailable" });
+      return;
+    }
+    p.npcCd.set(cdKey, now);
+    p.dirty = true;
+    this.send(ws, { t: "sys", text: line });
   }
 
   /** Advance the active NPC bounty on a matching event; auto-grant credits + rep on completion. */
@@ -4205,10 +4494,14 @@ export class WorldDO {
     if (msg.action === "buy") {
       if (e.owner === p.id) return sys("you already own this home");
       if (e.owner && !e.forSale) return sys("this home isn't for sale");
-      const price = e.owner ? e.price : ESTATE_BASE_PRICE;
+      const price = Math.max(0, Math.floor(Number(e.owner ? e.price : ESTATE_BASE_PRICE) || 0));
+      if (!(price > 0) || !Number.isFinite(price)) return sys("invalid home price");
       if (p.credits < price) return sys(`not enough credits — this home costs ₵${price}`);
       const prevOwner = e.owner;
-      // CAS claim on D1 first — only the winning buyer is charged.
+      // Debit first (matches market buy) so concurrent spends cannot drive balance negative
+      // after a successful D1 ownership claim.
+      p.credits -= price;
+      p.dirty = true;
       try {
         let won = false;
         if (prevOwner) {
@@ -4232,13 +4525,15 @@ export class WorldDO {
             .run();
           won = (claim.meta.changes ?? 0) > 0;
         }
-        if (!won) return sys("someone else just bought this home");
+        if (!won) {
+          p.credits += price;
+          return sys("someone else just bought this home");
+        }
       } catch {
+        p.credits += price;
         return sys("estate registry unavailable — try again");
       }
-      p.credits -= price;
       if (!prevOwner) this.eco("burn", "estates", price); // resale is a transfer (mailbox), not a burn
-      p.dirty = true;
       if (prevOwner) {
         try {
           await this.env.DB.prepare("INSERT INTO mailbox (player, credits, reason, created_at) VALUES (?,?,?,?)")
@@ -5947,6 +6242,15 @@ export class WorldDO {
    * Inventory/other fields only write when this zone still owns session_zone.
    */
   private async upsertPlayer(p: PlayerState, opts?: { zoneOverride?: string }): Promise<boolean> {
+    // Refuse to persist poisoned balances (NaN from malformed trade/guild amounts).
+    if (!Number.isFinite(p.credits) || !Number.isFinite(p.cores) || !Number.isFinite(p.metro)) {
+      console.error(`[${this.zoneName}] refuse upsert for ${p.id}: non-finite balance`, p.credits, p.cores, p.metro);
+      p.credits = Number.isFinite(p.credits) ? p.credits : 0;
+      p.cores = Number.isFinite(p.cores) ? p.cores : 0;
+      p.metro = Number.isFinite(p.metro) ? p.metro : 0;
+      p.dirty = true;
+      return false;
+    }
     const zone = opts?.zoneOverride ?? this.zoneName;
     try {
       // Absorb any bridge/external D1 moves before computing our delta.

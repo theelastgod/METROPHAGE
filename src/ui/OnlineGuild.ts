@@ -73,7 +73,7 @@ export default class OnlineGuild extends Modal {
     };
 
     tx("⬡ CELL", x + uiDim(20), y + uiDim(14), 17, "#39ff88", true);
-    tx(closeHint("C / ESC close"), x + w - uiDim(20), y + uiDim(16), 12, "#9aa3b2", false, 1);
+    tx(closeHint("U / ESC close"), x + w - uiDim(20), y + uiDim(16), 12, "#9aa3b2", false, 1);
 
     if (!this.guild) {
       tx("You're not in a Cell.", x + uiDim(26), y + uiDim(60), 14, "#cfe8ff", true);

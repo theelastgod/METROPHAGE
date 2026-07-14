@@ -173,6 +173,12 @@ import { applyCosmetic } from "../game/cosmetics";
 import { npcDef, AMBIENT_NPCS, INTERIOR_PLAN, keeperFor, districtResident, hubResident, campaignAllyLines, STORY_ALLIES } from "../game/cityNpcs";
 import { portraitFor, portraitForName, type PortraitRef } from "../game/portraits";
 import { bountyForNpc } from "../game/bounties";
+import {
+  CLIENT_OPEN_SERVICES,
+  npcHasMenu,
+  type NpcServiceId,
+} from "../game/npcServices";
+import NpcTalkPanel from "../ui/NpcTalkPanel";
 import type { PlayerLook } from "../net/protocol";
 import { setOnlinePlayer } from "../economy/session";
 import {
@@ -275,6 +281,7 @@ export default class OnlineScene extends Phaser.Scene {
   private market!: OnlineMarket; // auction house — cross-zone player market (D1-backed)
   private contracts!: OnlineContracts; // daily contracts + reputation track (D1-backed)
   private fixerBrief!: FixerBrief; // campaign brief (THE WAKE) — never the dailies board
+  private npcTalk!: NpcTalkPanel; // multi-choice citizen services (heal / job / rumor…)
   private cosmetics!: OnlineCosmetics; // wardrobe / transmog (cosmetic-only, wallet-owned)
   private stashPanel!: OnlineStash; // TENEMENT lockbox — personal safe storage (D1-backed)
   private mapPanel!: OnlineMap; // fast-travel map with per-account discovery fog
@@ -1137,6 +1144,8 @@ export default class OnlineScene extends Phaser.Scene {
     };
     this.contracts = new OnlineContracts(this);
     this.fixerBrief = new FixerBrief(this);
+    this.npcTalk = new NpcTalkPanel(this);
+    this.npcTalk.onPick = (service, npcId, npcName) => this.applyNpcService(service, npcId, npcName);
     this.net.onContracts = () => {
       if (this.contracts.open) this.contracts.setState(this.net.contracts, this.net.rep);
       this.shop.setRep(this.net.repTier); // higher vendor caches unlock with reputation
@@ -1372,6 +1381,7 @@ export default class OnlineScene extends Phaser.Scene {
     reg(() => !!this.stashPanel?.open, () => this.stashPanel.close());
     reg(() => !!this.contracts?.open, () => this.contracts.close());
     reg(() => !!this.fixerBrief?.isOpen, () => this.fixerBrief.close());
+    reg(() => !!this.npcTalk?.isOpen, () => this.npcTalk.close());
     reg(() => !!this.board?.open, () => this.board.close());
     reg(() => !!this.guildPanel?.open, () => this.guildPanel.close());
     reg(() => !!this.cosmetics?.open, () => this.cosmetics.close());
@@ -1403,6 +1413,8 @@ export default class OnlineScene extends Phaser.Scene {
         this.handleRightClick(pointer);
         return;
       }
+      // Furnishing mode owns world clicks (place/remove) — never pathfind underneath.
+      if (this.homeEditing) return;
       if (!this.usingRsControls()) return;
       // Virtual stick / action buttons own the gesture — never pathfind under thumbs.
       if (this.mobilePad?.containsScreen(pointer.x, pointer.y)) return;
@@ -1604,7 +1616,7 @@ export default class OnlineScene extends Phaser.Scene {
         this.toggleRegistry();
         return;
       }
-      // home controls run BEFORE the global B=shop / G=guild bindings, or they'd shadow
+      // home controls run BEFORE the global B=shop / G=forge bindings, or they'd shadow
       // these inside an est{K} home: (F)urnish, (B)uy, si(G)n the guestbook
       if ((e.key === "f" || e.key === "F") && this.homeIdx >= 0 && this.net.estate?.mine && !this.homeEditing) {
         this.startFurnishing();
@@ -1650,6 +1662,15 @@ export default class OnlineScene extends Phaser.Scene {
         this.forge.close();
         return;
       }
+      // U = Cell (guild) — C is dailies; G is forge.
+      if (e.key === "u" || e.key === "U") {
+        this.tryOpenCitySystem(() => {
+          this.net.guildAction("info");
+          this.guildPanel.toggle(this.net.guild, this.net.id);
+          if (this.guildPanel.open) this.reportTutorialPanel("guild");
+        });
+        return;
+      }
       if (e.key === "'" || e.key === '"') {
         this.rsSkillsPanel.toggle();
         return;
@@ -1667,14 +1688,6 @@ export default class OnlineScene extends Phaser.Scene {
       }
       if (this.board.open && e.key === "Escape") {
         this.board.close();
-        return;
-      }
-      if (e.key === "c" || e.key === "C") {
-        this.tryOpenCitySystem(() => {
-          this.net.guildAction("info");
-          this.guildPanel.toggle(this.net.guild, this.net.id);
-          if (this.guildPanel.open) this.reportTutorialPanel("guild");
-        });
         return;
       }
       if (this.guildPanel.open && e.key === "Escape") {
@@ -1706,21 +1719,19 @@ export default class OnlineScene extends Phaser.Scene {
         return;
       }
       if (e.key === "c" || e.key === "C") {
-        // Daily contracts board (separate from quest log).
-        if (this.isTutorial) {
-          this.tryOpenCitySystem(() => {
-            this.contracts.toggle(this.net.contracts, this.net.rep);
-            if (this.contracts.open) this.reportTutorialPanel("contracts");
-          });
-        } else {
-          this.tryOpenCitySystem(() => {
-            this.contracts.toggle(this.net.contracts, this.net.rep);
-          });
-        }
+        // Daily contracts (action-bar "Dailies" · C). Cell/guild opens via service NPC or /ginfo.
+        this.tryOpenCitySystem(() => {
+          this.contracts.toggle(this.net.contracts, this.net.rep);
+          if (this.contracts.open) this.reportTutorialPanel("contracts");
+        });
         return;
       }
       if (this.fixerBrief?.isOpen && e.key === "Escape") {
         this.fixerBrief.close();
+        return;
+      }
+      if (this.npcTalk?.isOpen && e.key === "Escape") {
+        this.npcTalk.close();
         return;
       }
       if (this.contracts.open && e.key === "Escape") {
@@ -1790,6 +1801,23 @@ export default class OnlineScene extends Phaser.Scene {
       if (e.key === "Enter" || e.key === "t" || e.key === "T") {
         this.openChat();
       } else if (e.key === "Escape") {
+        // Story toast first (bounty / memory) — don't dump to menu mid-dialogue.
+        if (this.storyHoldUntil > performance.now() || this.storyPanel?.visible) {
+          this.storyHoldUntil = 0;
+          this.storyPanel?.setVisible(false);
+          return;
+        }
+        // Cancel home furnish before quitting to title.
+        if (this.homeEditing) {
+          this.homeEditing = false;
+          this.homeSelKind = null;
+          this.homeDraft = [];
+          this.homeGhostG?.clear();
+          this.refreshHome();
+          this.showBubble(this.me.x, this.me.y, "furnish cancelled");
+          return;
+        }
+        if (this.closeTopPanel()) return;
         this.net.disconnect();
         this.scene.start("Select");
       } else {
@@ -2188,7 +2216,7 @@ export default class OnlineScene extends Phaser.Scene {
         this.market.toggle(n.marketListings, n.inventory, n.id, n.credits, n.metro);
         break;
       case "contracts":
-        // FIXER is campaign first (THE WAKE + talk beats). Daily contracts = J key.
+        // FIXER is campaign first (THE WAKE + talk beats). Daily contracts = C key.
         this.engageFixer();
         break;
       case "board":
@@ -2618,7 +2646,14 @@ export default class OnlineScene extends Phaser.Scene {
     const [gx, gy] = [b.guideTile[0] * 2, b.guideTile[1] * 2];
     const gpx = gx * TILE + TILE / 2;
     const gpy = gy * TILE + TILE / 2;
-    this.makeTalkNpc("TRAIL SCRAPPER", hubLook({ color: b.accent, head: "beret", skin: 0xa9794a, hair: "braids", cloak: "coat" }), b.guideLines, gpx, gpy);
+    this.makeTalkNpc(
+      "TRAIL SCRAPPER",
+      hubLook({ color: b.accent, head: "beret", skin: 0xa9794a, hair: "braids", cloak: "coat" }),
+      b.guideLines,
+      gpx,
+      gpy,
+      "arc_tech", // quiet vent HEAT — not a job board
+    );
     this.dressBridgeWilds(b);
   }
 
@@ -2653,6 +2688,7 @@ export default class OnlineScene extends Phaser.Scene {
       [`Fire's warm, ${b.name} isn't. Patrols run heavier past the midpoint.`, "Sit a minute. Nobody crosses the wilds in a straight line."],
       seatA.x,
       seatA.y,
+      "amb_drifter",
     );
     this.makeTalkNpc(
       "WAYFARER JUNE",
@@ -2660,6 +2696,7 @@ export default class OnlineScene extends Phaser.Scene {
       ["Counted the pylons on the way in. Two are dark. That's new.", "The scrapper knows the safe cuts — worth the toll."],
       seatB.x,
       seatB.y,
+      "amb_courier",
     );
 
     // ── scattered rocks + a burnt-out wreck: the trail reads travelled, not empty ──
@@ -2827,51 +2864,146 @@ export default class OnlineScene extends Phaser.Scene {
       .setScale(1.12)
       .setInteractive({ useHandCursor: true });
     spr.on("pointerdown", () => this.talkNpc(npc));
-    const givesBounty = npcId && bountyForNpc(npcId);
+    // Labels: job givers and story allies only — not every tip/meal NPC.
+    const givesBounty = !!(npcId && bountyForNpc(npcId));
+    const marked = important || givesBounty;
     const label = this.add
-      .text(px, py - 26, givesBounty ? `${name} ◈` : important ? `◈ ${name}` : name, {
+      .text(px, py - 26, givesBounty ? `${name} ·` : important ? name : name, {
         fontFamily: "Courier New, monospace",
         fontSize: "10px",
-        color: givesBounty ? "#f7ff3c" : important ? "#9fe8ff" : "#9aa3b2",
-        fontStyle: important || givesBounty ? "bold" : "normal",
+        color: givesBounty ? "#c8b85a" : important ? "#9aa8b8" : "#7a8494",
+        fontStyle: marked ? "bold" : "normal",
       })
       .setOrigin(0.5)
       .setDepth(9)
-      .setAlpha(important || givesBounty ? 0.55 : 0);
+      .setAlpha(marked ? 0.4 : 0);
     spr.on("pointerover", () => label.setAlpha(1));
-    spr.on("pointerout", () => label.setAlpha(important || givesBounty ? 0.55 : 0));
+    spr.on("pointerout", () => label.setAlpha(marked ? 0.4 : 0));
     this.npcs.push(npc);
   }
 
-  /** Interact with a citizen: a quest-giver offers/updates their bounty, others bark flavour. */
+  /** Talk: most people bark a line; a few open a small choice menu. */
   private talkNpc(npc: { npcId?: string; name: string; lines?: string[]; lineIdx?: number; x: number; y: number }) {
-    const b = npc.npcId ? bountyForNpc(npc.npcId) : undefined;
-    if (b) {
-      const face = this.bubblePortrait(npc.npcId, npc.name);
+    const line = this.advanceLine(npc);
+    this.showBubble(npc.x, npc.y, `${npc.name}: ${line}`, this.bubblePortrait(npc.npcId, npc.name));
+
+    if (!npc.npcId) return;
+    const hasBounty = !!bountyForNpc(npc.npcId);
+    if (!npcHasMenu(npc.npcId, hasBounty)) return;
+
+    if (this.npcTalk?.isOpen) this.npcTalk.close();
+    this.npcTalk.show({
+      npcId: npc.npcId,
+      name: npc.name,
+      line,
+      credits: this.net.credits,
+      cores: this.net.cores,
+      hasBountyActive: !!this.net.bounty,
+      activeBountyId: this.net.bounty?.id ?? null,
+    });
+  }
+
+  private advanceLine(npc: { lines?: string[]; lineIdx?: number }): string {
+    if (!npc.lines || npc.lines.length === 0) return "…";
+    const line = npc.lines[(npc.lineIdx ?? 0) % npc.lines.length];
+    npc.lineIdx = (npc.lineIdx ?? 0) + 1;
+    return line;
+  }
+
+  /**
+   * Resolve a chosen NPC service: client opens panels locally; server owns
+   * paid/cooldowned effects (heal, meal, rumor, train, fence, bless, bounty).
+   */
+  private applyNpcService(service: NpcServiceId, npcId: string, npcName: string) {
+    const face = this.bubblePortrait(npcId, npcName);
+    const px = this.nearNpc?.x ?? this.me?.x ?? 0;
+    const py = this.nearNpc?.y ?? this.me?.y ?? 0;
+
+    if (service === "chat") {
+      // Extra bark — menu already showed one line.
+      const def = npcDef(npcId);
+      if (def?.lines?.length) {
+        const i = Math.floor(Math.random() * def.lines.length);
+        this.showBubble(px, py, `${npcName}: ${def.lines[i]}`, face);
+      }
+      return;
+    }
+
+    if (service === "bounty") {
       if (!this.net.connected) {
-        this.showBubble(npc.x, npc.y, `${npc.name}: …link the city first — I don't hand jobs offline.`, face);
+        this.showBubble(px, py, `${npcName}: …link the city first — I don't hand jobs offline.`, face);
+        return;
+      }
+      const b = bountyForNpc(npcId);
+      if (!b) {
+        this.showBubble(px, py, `${npcName}: nothing on the board right now.`, face);
         return;
       }
       const active = this.net.bounty;
-      if (active && active.id === b.id) this.showBubble(npc.x, npc.y, `${npc.name}: still on it — ${active.progress}/${active.count}.`, face);
-      else if (active) this.showBubble(npc.x, npc.y, `${npc.name}: finish your current job first.`, face);
-      else {
-        this.net.bountyAccept(b.id);
-        this.showBubble(npc.x, npc.y, `${npc.name}: ${b.offer}`, face);
-        // Mirror bounty offer into the story banner so it isn't a one-line bubble only.
-        this.net.story = {
-          quest: b.name,
-          stage: "bounty",
-          title: npc.name,
-          text: b.offer,
-          journal: b.offer,
-          objective: b.desc,
-          done: false,
-          at: performance.now(),
-        };
-        this.presentStoryBeat();
+      if (active && active.id === b.id) {
+        this.showBubble(px, py, `${npcName}: still on it — ${active.progress}/${active.count}.`, face);
+        return;
       }
-    } else this.sayLine(npc);
+      if (active) {
+        this.showBubble(px, py, `${npcName}: finish your current job first.`, face);
+        return;
+      }
+      this.net.bountyAccept(b.id);
+      this.showBubble(px, py, `${npcName}: ${b.offer}`, face);
+      this.net.story = {
+        quest: b.name,
+        stage: "bounty",
+        title: npcName,
+        text: b.offer,
+        journal: b.offer,
+        objective: b.desc,
+        done: false,
+        at: performance.now(),
+      };
+      this.presentStoryBeat();
+      return;
+    }
+
+    // Panel hand-offs (no server trip)
+    if (CLIENT_OPEN_SERVICES.has(service) && service.startsWith("open_")) {
+      const map: Record<string, string> = {
+        open_vendor: "vendor",
+        open_forge: "forge",
+        open_market: "market",
+        open_guild: "guild",
+        open_contracts: "contracts",
+        open_stash: "stash",
+        open_board: "board",
+        open_cosmetics: "cosmetics",
+      };
+      const svc = map[service];
+      if (svc) {
+        this.showBubble(px, py, `${npcName}: right this way.`, face);
+        this.openService(svc);
+      }
+      return;
+    }
+
+    // Server-authoritative services
+    if (!this.net.connected) {
+      this.showBubble(px, py, `${npcName}: grid's dark — I can't do that offline.`, face);
+      return;
+    }
+    this.net.npcService(npcId, service);
+    // Optimistic flavour — server sys line carries the real outcome.
+    const pending: Partial<Record<NpcServiceId, string>> = {
+      heal_paid: "hold still.",
+      heal_charity: "easy — this one's free.",
+      meal: "here.",
+      cool_down: "breathe.",
+      rumor: "heard this…",
+      intel: "don't repeat it.",
+      train: "again.",
+      buy_core: "one core.",
+      sell_core: "done.",
+      bless: "…go careful.",
+    };
+    if (pending[service]) this.showBubble(px, py, `${npcName}: ${pending[service]}`, face);
   }
 
   /**
@@ -4527,14 +4659,6 @@ export default class OnlineScene extends Phaser.Scene {
       x: this.net.pred.x + Math.cos(angle) * dist,
       y: this.net.pred.y + Math.sin(angle) * dist,
     };
-  }
-
-  /** Speak an authored citizen's next flavour line in a floating bubble (cycles their lines). */
-  private sayLine(npc: { npcId?: string; name: string; lines?: string[]; lineIdx?: number; x: number; y: number }) {
-    if (!npc.lines || npc.lines.length === 0) return;
-    const line = npc.lines[(npc.lineIdx ?? 0) % npc.lines.length];
-    npc.lineIdx = (npc.lineIdx ?? 0) + 1;
-    this.showBubble(npc.x, npc.y, `${npc.name}: ${line}`, this.bubblePortrait(npc.npcId, npc.name));
   }
 
   /** Retint the LOCAL avatar to the equipped transmog (remotes get it via the relayed look). */
@@ -6597,6 +6721,7 @@ export default class OnlineScene extends Phaser.Scene {
     return (
       this.chatOpen ||
       this.emoteWheelOpen ||
+      this.homeEditing ||
       !!this.options?.isOpen ||
       this.inv?.open ||
       this.shop?.open ||
@@ -6605,6 +6730,7 @@ export default class OnlineScene extends Phaser.Scene {
       this.board?.open ||
       this.contracts?.open ||
       this.fixerBrief?.isOpen ||
+      this.npcTalk?.isOpen ||
       this.rsSkillsPanel?.open ||
       this.mapPanel?.open ||
       this.questLog?.open ||
