@@ -356,15 +356,24 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
         }
       }
       if (!live) {
-        if (simLocked) {
-          info.reason = "LOCKED — simulated settlement is read-only (prevents fake deposits)";
+        if (!mint) {
+          info.reason = "awaiting mint CA — set METRO_MINT (in-game ₵ is fully live meanwhile)";
+          info.phaseHint = "awaiting_ca";
+        } else if (simLocked) {
+          info.reason =
+            "pre-live — simulated settlement is read-only on public hosts (set METRO_ALLOW_SIM=1 only for local harness)";
+          info.phaseHint = "pre_live";
         } else if (hasTreasury && mint && rpcIsMainnet(rpc, cid ?? undefined) && !armed) {
           info.reason = "mainnet RPC set but METRO_MAINNET_ARMED is off — settlement stays sim";
-        } else if (!mint) {
-          info.reason = "awaiting mint CA — set METRO_MINT to an ERC-20 on Robinhood Chain";
+          info.phaseHint = "mainnet_gated";
         } else if (!hasTreasury) {
           info.reason = "awaiting METRO_TREASURY_SECRET (EVM hex key)";
+          info.phaseHint = "awaiting_treasury";
         }
+      } else if ((info.poolMetro as number) <= 0) {
+        info.phaseHint = "bootstrap";
+      } else {
+        info.phaseHint = "open";
       }
       return json(info);
     }

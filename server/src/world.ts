@@ -1428,6 +1428,26 @@ export class WorldDO {
         headers: { "content-type": "application/json" },
       });
     }
+    // Cross-zone Cell chat relay — internal DO→DO only (same Worker script).
+    if (url.pathname === "/guild-relay" && req.method === "POST") {
+      try {
+        const body = (await req.json()) as {
+          guildId?: number;
+          fromId?: string;
+          msg?: unknown;
+        };
+        const gid = Math.floor(Number(body.guildId) || 0);
+        if (gid > 0 && body.msg) this.guildBroadcastLocal(gid, body.msg, body.fromId);
+        return new Response(JSON.stringify({ ok: true }), {
+          headers: { "content-type": "application/json" },
+        });
+      } catch (e) {
+        return new Response(JSON.stringify({ ok: false, reason: String(e) }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      }
+    }
     if (req.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
       return new Response("expected websocket", { status: 426 });
     }
@@ -1642,12 +1662,13 @@ export class WorldDO {
       }
       for (const mid of this.parties.get(p.party) ?? []) this.sendTo(mid, out, p.id);
     } else if (msg.ch === "guild") {
-      // Cell chat — reaches guildmates in THIS zone (cross-zone fanout would need a hub DO).
+      // Cell chat — this zone immediately, other zones via session_zone DO relay.
       if (!p.guildId) {
         this.send(ws, { t: "sys", text: "you're not in a cell" });
         return;
       }
-      this.guildBroadcast(p.guildId, out, p.id);
+      this.guildBroadcastLocal(p.guildId, out, p.id);
+      void this.guildRelayCrossZone(p.guildId, out, p.id);
     } else {
       // zone — everyone in this DO, respecting mutes (id + lowercase for wallet casing)
       for (const [sock, id] of this.sessions) {
@@ -1771,7 +1792,7 @@ export class WorldDO {
 
   // ── guilds ("Cells") — cross-zone registry in D1; this DO mutates rows for its members ──
   /** Send a message to every connected member of a guild in THIS zone (optionally mute-aware). */
-  private guildBroadcast(gid: number, msg: unknown, fromId?: string) {
+  private guildBroadcastLocal(gid: number, msg: unknown, fromId?: string) {
     for (const [sock, id] of this.sessions) {
       const r = this.players.get(id);
       if (!r || r.guildId !== gid) continue;
@@ -1782,6 +1803,51 @@ export class WorldDO {
         /* dropped */
       }
     }
+  }
+
+  /**
+   * Fan Cell chat to guildmates in OTHER zones via their session_zone DO.
+   * Paid Workers budget covers a few stub.fetch hops per message; we de-dupe by zone.
+   */
+  private async guildRelayCrossZone(gid: number, msg: unknown, fromId: string): Promise<void> {
+    try {
+      const { results } = await this.env.DB.prepare(
+        `SELECT DISTINCT p.session_zone AS zone
+         FROM guild_members m
+         JOIN players p ON p.id = m.player
+         WHERE m.guild_id = ?
+           AND p.session_zone IS NOT NULL AND p.session_zone != ''
+           AND p.session_zone != ?`,
+      )
+        .bind(gid, this.zoneName)
+        .all<{ zone: string }>();
+      const zones = (results ?? []).map((r) => r.zone).filter(Boolean);
+      if (zones.length === 0) return;
+      const payload = JSON.stringify({ guildId: gid, fromId, msg });
+      await Promise.all(
+        zones.map(async (zone) => {
+          try {
+            const stub = this.env.WORLD.get(this.env.WORLD.idFromName(zone));
+            await stub.fetch(
+              new Request(`https://world/guild-relay?zone=${encodeURIComponent(zone)}`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: payload,
+              }),
+            );
+          } catch {
+            /* remote zone DO cold / gone — drop that hop */
+          }
+        }),
+      );
+    } catch {
+      /* D1 or pre-migration without session_zone — local broadcast only */
+    }
+  }
+
+  /** @deprecated alias — prefer guildBroadcastLocal + guildRelayCrossZone for chat */
+  private guildBroadcast(gid: number, msg: unknown, fromId?: string) {
+    this.guildBroadcastLocal(gid, msg, fromId);
   }
 
   /** Push a player their current cell summary + roster (or "none"). */

@@ -104,6 +104,7 @@ import {
   noteHeatCoached,
   firstHourSystemsLocked,
   getFirstSession,
+  noteCampaignProgress,
 } from "../game/firstSession";
 import { fadeInScene, transitionTo } from "../systems/transitions";
 import { juiceShake, juiceFlash, juiceHitStop, juiceZoomPunch, juiceNeonPulse } from "../systems/juice";
@@ -1059,6 +1060,8 @@ export default class OnlineScene extends Phaser.Scene {
     this.net.onCampaign = () => {
       this.refreshAllyLines(); // story allies re-react as the questline advances
       if (this.questLog?.open) this.refreshQuestLog();
+      // Returning players / wiped localStorage: unlock hub systems if campaign is live.
+      noteCampaignProgress(!!this.net.campaignQuest || (this.net.campaignCompleted?.length ?? 0) > 0);
     };
     this.net.onStory = () => this.presentStoryBeat();
     const tutorialMode =

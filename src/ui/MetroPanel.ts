@@ -183,7 +183,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
         <div class="row"><span class="muted">daily cash-out</span><span id="m-daily" class="mono-value">—</span></div>
       </div>
 
-      <div class="section">
+      <div class="section" id="m-sec-deposit">
         <div class="section-title"><span>Deposit</span><span class="hint">$METRO → ₵</span></div>
         <div class="field-row two"><input id="m-dep-amt" type="number" min="0" step="any" placeholder="$METRO amount"/>
           <button id="m-send" class="accent">Send via MetaMask</button></div>
@@ -191,7 +191,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
         <div class="action-row"><button id="m-deposit">Claim deposit</button><button id="m-refresh" class="secondary">Refresh</button></div>
       </div>
 
-      <div class="section">
+      <div class="section" id="m-sec-withdraw">
         <div class="section-title"><span>Withdraw</span><span class="hint">₵ → $METRO</span></div>
         <div class="field-row two"><input id="m-amt" type="number" min="0" placeholder="credits to cash out"/><button id="m-max" class="secondary">MAX</button></div>
         <div class="action-row"><button id="m-withdraw" class="accent">Withdraw</button><button id="m-refresh-bottom" class="secondary">Refresh</button></div>
@@ -255,27 +255,57 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
       phaseEl.classList.remove("warn", "ok");
       phasePill.classList.remove("warn", "ok");
       fab.classList.remove("warn");
-      if (p.simLocked || p.dangerousSim) {
+      const secDep = $("m-sec-deposit");
+      const secWd = $("m-sec-withdraw");
+      const setActions = (depositOn: boolean, withdrawOn: boolean) => {
+        secDep.style.opacity = depositOn ? "1" : "0.45";
+        secWd.style.opacity = withdrawOn ? "1" : "0.45";
+        for (const id of ["m-send", "m-deposit", "m-dep-amt", "m-txsig"] as const) {
+          const el = $(id) as HTMLButtonElement | HTMLInputElement;
+          el.disabled = !depositOn;
+        }
+        for (const id of ["m-withdraw", "m-amt", "m-max"] as const) {
+          const el = $(id) as HTMLButtonElement | HTMLInputElement;
+          el.disabled = !withdrawOn;
+        }
+      };
+
+      // Honest phases: awaiting CA ≠ broken; empty pool ≠ broken; sim lock is expected pre-mint.
+      const mintReady = !!(p.mintConfigured || METRO_MINT);
+      const live = p.settlement && p.settlement !== "sim" && !p.simLocked && !p.dangerousSim;
+      if (!mintReady || p.readyForCa || p.family === "off") {
+        phasePill.textContent = "AWAITING CA";
+        phaseEl.textContent =
+          "Bridge is standing by. In-game ₵ works fully — $METRO deposit/withdraw turns on when the mint CA is configured on the server. Earn credits, gear up, run contracts.";
+        setActions(false, false);
+        status("earn ₵ in-game · $METRO cash-out opens with the token CA");
+      } else if (p.simLocked || p.dangerousSim) {
         phaseEl.classList.add("warn");
         phasePill.classList.add("warn");
-        phasePill.textContent = "LOCKED";
+        phasePill.textContent = "PRE-LIVE";
         phaseEl.textContent =
-          "⚠ BRIDGE LOCKED — simulated settlement is read-only. Deposits and cash-outs are rejected. Configure live server settlement or unset the client mint.";
+          "Settlement is not live yet (sim locked). Your ₵ balance is real server-side — chain deposit/cash-out stays off until live mint + treasury are armed. This is intentional, not a crash.";
         fab.classList.add("warn");
+        setActions(false, false);
+        status("₵ economy is live · chain bridge arms with mint + settlement");
       } else if (p.phase === "bootstrap" || (p.poolMetro ?? 0) <= 0) {
         phaseEl.classList.add("warn");
         phasePill.classList.add("warn");
-        phasePill.textContent = "POOL EMPTY";
+        phasePill.textContent = "BOOTSTRAP";
         phaseEl.textContent =
-          "Insufficient $METRO in the treasury — cash-outs paused. Come back and try later: it refills as runners deposit on Robinhood Chain. Earn ₵ meanwhile. Not a faucet.";
+          "Player-funded pool is empty — cash-outs pause until someone deposits $METRO into the treasury. You can still deposit to fill the pool and earn ₵ from play. Not a faucet.";
+        setActions(!!live, false);
+        status("deposit $METRO to open cash-outs · or keep earning ₵");
       } else if (p.settlement === "sim") {
         phasePill.textContent = "SIM";
-        phaseEl.textContent = "REHEARSAL (sim) — not real chain value. OK for local smoke only.";
+        phaseEl.textContent = "Rehearsal settlement (local/dev). Not real chain value.";
+        setActions(true, true);
       } else {
         phaseEl.classList.add("ok");
         phasePill.classList.add("ok");
         phasePill.textContent = "OPEN";
         phaseEl.textContent = `POOL OPEN on ${p.networkName || "Robinhood Chain"} — deposit via MetaMask · cash-out is treasury-signed (treasury pays ETH gas).`;
+        setActions(true, true);
       }
 
       if (p.getMetroHint) $("m-get-hint").textContent = p.getMetroHint;

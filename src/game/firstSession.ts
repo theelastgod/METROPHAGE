@@ -101,8 +101,10 @@ export function noteReturnedToHub() {
 }
 
 /**
- * Secondary city systems (market/forge/guild/…) stay locked until the player has
- * met THE FIXER — keeps the first ten minutes on FIXER → WAKE → DEPLOY.
+ * Soft first-session funnel: only the *very first* hub moment locks secondary
+ * panels (before talking to THE FIXER). Once they've met the FIXER *or* deployed
+ * out of the hub, market/forge/guild/etc. unlock — players were bouncing off the
+ * hard lock after already accepting THE WAKE.
  */
 /** Operator override — set from NetClient.godMode so first-hour gates never brick admins. */
 let godUnlock = false;
@@ -115,9 +117,28 @@ export function setGodSessionUnlock(on: boolean) {
   }
 }
 
+/**
+ * Optional server-side progress (campaign already running) unlocks systems even if
+ * localStorage was wiped mid-session.
+ */
+let campaignUnlocked = false;
+export function noteCampaignProgress(hasActiveOrCompleted: boolean) {
+  if (hasActiveOrCompleted) {
+    campaignUnlocked = true;
+    if (!state.talkedFixer) {
+      state.talkedFixer = true;
+      if (state.step === "meet_fixer") state.step = "deploy";
+      save();
+    }
+  }
+}
+
 export function firstHourSystemsLocked(): boolean {
-  if (godUnlock) return false;
-  return !state.talkedFixer;
+  if (godUnlock || campaignUnlocked) return false;
+  // Unlock after FIXER talk OR after leaving the hub (deploy) — never gate forever.
+  if (state.talkedFixer || state.deployed) return false;
+  if (state.step !== "meet_fixer") return false;
+  return true;
 }
 
 /** One-line coach copy for the HUD strip. */
