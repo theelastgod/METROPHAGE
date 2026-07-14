@@ -14,8 +14,6 @@ import {
   getBridge,
 } from "../game/bridges";
 import {
-  TUTORIAL_CHAMBERS,
-  TUTORIAL_DIVIDERS,
   TUTORIAL_SPAWN,
   TUTORIAL_PORTAL,
   TUTORIAL_PORTAL_RADIUS,
@@ -23,7 +21,13 @@ import {
   TUTORIAL_COP_TILE,
   TUTORIAL_NODE_TILE,
   TUTORIAL_PORTAL_TILE,
+  tutorialChambers,
+  tutorialDividers,
+  tutorialGridW,
+  tutorialPortalTile,
+  tutorialPortalPos,
 } from "../game/tutorialLayout";
+import type { TutorialMode } from "../net/tutorial";
 
 export {
   TUTORIAL_SPAWN,
@@ -33,6 +37,7 @@ export {
   TUTORIAL_COP_TILE,
   TUTORIAL_NODE_TILE,
   TUTORIAL_PORTAL_TILE,
+  tutorialPortalPos,
 };
 
 // Indices into the code-authored tileset (textures.ts; 256×128, 32 cells of 32×32).
@@ -586,32 +591,41 @@ export const DIVE_CORE_TILE: [number, number] = [33, 15];
 
 /**
  * THE DRILL YARD — linear training facility with distinct west→east chambers.
- * Shared by client render and server sim (zone "tutorial").
+ * Shared by client render and server sim (zone "tutorial" / "tutorial_full").
+ * Full training uses a longer systems hall so every instructor has room.
  */
-export function buildTutorial(): TileGrid {
+export function buildTutorial(mode: TutorialMode = "quick"): TileGrid {
+  const gw = tutorialGridW(mode);
+  const gh = GRID_H;
+  const chambers = tutorialChambers(mode);
+  const dividers = tutorialDividers(mode);
+  const portalTx = tutorialPortalTile(mode)[0];
   const g: TileGrid = [];
-  for (let y = 0; y < GRID_H; y++) {
+  for (let y = 0; y < gh; y++) {
     const row: number[] = [];
-    for (let x = 0; x < GRID_W; x++) {
-      const border = x < 3 || x >= GRID_W - 3 || y < 2 || y >= GRID_H - 2;
+    for (let x = 0; x < gw; x++) {
+      const border = x < 3 || x >= gw - 3 || y < 2 || y >= gh - 2;
       row.push(border ? TILE_INNER_WALL : TILE_INNER_FLOOR);
     }
     g.push(row);
   }
-  for (const ch of TUTORIAL_CHAMBERS) {
+  for (const ch of chambers) {
     for (let y = ch.y1; y <= ch.y2; y++) {
       for (let x = ch.x1; x <= ch.x2; x++) {
         if (g[y]?.[x] !== TILE_INNER_WALL) g[y][x] = ch.floor;
       }
     }
   }
-  for (let x = 4; x <= 36; x++) {
-    for (let y = 14; y <= 16; y++) g[y][x] = TILE_CROSSWALK;
+  // Main corridor to the deploy gate (extends further in full training).
+  for (let x = 4; x <= portalTx; x++) {
+    for (let y = 14; y <= 16; y++) {
+      if (g[y]?.[x] !== undefined && g[y][x] !== TILE_INNER_WALL) g[y][x] = TILE_CROSSWALK;
+    }
   }
-  for (const dx of TUTORIAL_DIVIDERS) {
+  for (const dx of dividers) {
     for (let y = 5; y <= 25; y++) {
       if (y >= 14 && y <= 16) continue;
-      g[y][dx] = TILE_INNER_WALL;
+      if (g[y]?.[dx] !== undefined) g[y][dx] = TILE_INNER_WALL;
     }
   }
   return g;

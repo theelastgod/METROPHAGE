@@ -523,7 +523,7 @@ export default class SelectScene extends Phaser.Scene {
           sub: `${drillLbl()} · every city system`,
           color: 0xb06bff,
           primary: false,
-          fn: () => this.deployOnline("tutorial", "full"),
+          fn: () => this.deployOnline("tutorial_full", "full"),
         },
         {
           label: "◌ NEW RUNNER",
@@ -753,7 +753,7 @@ export default class SelectScene extends Phaser.Scene {
           sub: `${drillLbl()} · every city system`,
           color: 0xb06bff,
           primary: false,
-          fn: () => this.deployOnline("tutorial", "full"),
+          fn: () => this.deployOnline("tutorial_full", "full"),
         },
       ]),
       showDisconnect: true,

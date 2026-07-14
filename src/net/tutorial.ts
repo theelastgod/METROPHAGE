@@ -2,8 +2,23 @@
 // before the one-way portal into the live city. Shared by client UI and the server.
 
 export const TUTORIAL_ZONE = "tutorial";
+/** Full-training yard uses a longer systems hallway (own DO / zone id). */
+export const TUTORIAL_FULL_ZONE = "tutorial_full";
 
 export type TutorialMode = "quick" | "full";
+
+/** Zone id for a drill mode — full gets a longer hall so instructors aren't crammed. */
+export function tutorialZoneForMode(mode: TutorialMode): string {
+  return mode === "full" ? TUTORIAL_FULL_ZONE : TUTORIAL_ZONE;
+}
+
+export function isTutorialZone(z: string | null | undefined): boolean {
+  return z === TUTORIAL_ZONE || z === TUTORIAL_FULL_ZONE;
+}
+
+export function tutorialModeFromZone(z: string | null | undefined): TutorialMode {
+  return z === TUTORIAL_FULL_ZONE ? "full" : "quick";
+}
 
 export type TutorialKind =
   | "move"

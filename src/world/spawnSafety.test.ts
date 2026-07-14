@@ -79,7 +79,8 @@ describe("resolveOpenSpawn never places inside walls", () => {
       ["safehouse", buildSafehouse(), SAFEHOUSE_SPAWN],
       ["subway", buildSubway(), SUBWAY_SPAWN],
       ["dive", buildDive(), DIVE_SPAWN],
-      ["tutorial", buildTutorial(), TUTORIAL_SPAWN],
+      ["tutorial", buildTutorial("quick"), TUTORIAL_SPAWN],
+      ["tutorial_full", buildTutorial("full"), TUTORIAL_SPAWN],
       ["hub", ONLINE_CITY.grid, CITY_HUB_SPAWN],
     ];
     for (const [name, grid, pref] of cases) {

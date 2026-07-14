@@ -25,11 +25,32 @@ export const tpx = (tx: number, ty: number) => ({ x: tx * TILE + TILE / 2, y: ty
 export const TUTORIAL_SPAWN_TILE: [number, number] = [5, 15];
 export const TUTORIAL_COP_TILE: [number, number] = [16, 15];
 export const TUTORIAL_NODE_TILE: [number, number] = [24, 15];
+/** Quick drill: compact yard ending at systems court. */
 export const TUTORIAL_PORTAL_TILE: [number, number] = [36, 15];
+/**
+ * Full training: systems hall stretches east so every instructor has room.
+ * Grid is wider than the base 40-tile city grid (see buildTutorial).
+ */
+export const TUTORIAL_FULL_GRID_W = 62;
+export const TUTORIAL_FULL_PORTAL_TILE: [number, number] = [58, 15];
+/** Systems court starts after commissary (shared) and runs to portal-1. */
+export const TUTORIAL_FULL_SYSTEMS_X1 = 31;
+export const TUTORIAL_FULL_SYSTEMS_X2 = 56;
 
 export const TUTORIAL_SPAWN = tpx(...TUTORIAL_SPAWN_TILE);
 export const TUTORIAL_PORTAL = tpx(...TUTORIAL_PORTAL_TILE);
+export const TUTORIAL_FULL_PORTAL = tpx(...TUTORIAL_FULL_PORTAL_TILE);
 export const TUTORIAL_PORTAL_RADIUS = 80;
+
+export function tutorialPortalTile(mode: TutorialMode): [number, number] {
+  return mode === "full" ? TUTORIAL_FULL_PORTAL_TILE : TUTORIAL_PORTAL_TILE;
+}
+export function tutorialPortalPos(mode: TutorialMode): { x: number; y: number } {
+  return tpx(...tutorialPortalTile(mode));
+}
+export function tutorialGridW(mode: TutorialMode): number {
+  return mode === "full" ? TUTORIAL_FULL_GRID_W : 40; // matches config GRID_W for quick
+}
 
 export interface TutorialChamber {
   id: string;
@@ -44,7 +65,7 @@ export interface TutorialChamber {
   labelTile: [number, number];
 }
 
-/** West→east chambers along the main corridor (y ≈ 15). */
+/** West→east chambers for QUICK drill (compact systems court). */
 export const TUTORIAL_CHAMBERS: TutorialChamber[] = [
   { id: "briefing", title: "◢ BRIEFING", subtitle: "intent & movement", x1: 4, x2: 7, y1: 5, y2: 25, floor: FLOOR.plaza, accent: 0x39ff88, labelTile: [5, 7] },
   { id: "range", title: "◢ FIRING RANGE", subtitle: "melee practice", x1: 9, x2: 12, y1: 5, y2: 25, floor: FLOOR.grate, accent: 0xff7a18, labelTile: [10, 7] },
@@ -56,8 +77,49 @@ export const TUTORIAL_CHAMBERS: TutorialChamber[] = [
   { id: "deploy", title: "◢ DEPLOY GATE", subtitle: "one way · live city", x1: 36, x2: 36, y1: 10, y2: 20, floor: FLOOR.lane, accent: 0x29e7ff, labelTile: [36, 9] },
 ];
 
+/**
+ * Full training chambers — same early yard, then a long SYSTEMS HALL so every
+ * instructor has breathing room before the deploy gate.
+ */
+export const TUTORIAL_CHAMBERS_FULL: TutorialChamber[] = [
+  ...TUTORIAL_CHAMBERS.filter((c) => c.id !== "systems" && c.id !== "deploy"),
+  {
+    id: "systems",
+    title: "◢ SYSTEMS HALL",
+    subtitle: "every city service · walk the row",
+    x1: TUTORIAL_FULL_SYSTEMS_X1,
+    x2: TUTORIAL_FULL_SYSTEMS_X2,
+    y1: 5,
+    y2: 25,
+    floor: FLOOR.sidewalk,
+    accent: 0x6b9bff,
+    labelTile: [Math.floor((TUTORIAL_FULL_SYSTEMS_X1 + TUTORIAL_FULL_SYSTEMS_X2) / 2), 7],
+  },
+  {
+    id: "deploy",
+    title: "◢ DEPLOY GATE",
+    subtitle: "one way · live city",
+    x1: TUTORIAL_FULL_PORTAL_TILE[0],
+    x2: TUTORIAL_FULL_PORTAL_TILE[0],
+    y1: 10,
+    y2: 20,
+    floor: FLOOR.lane,
+    accent: 0x29e7ff,
+    labelTile: [TUTORIAL_FULL_PORTAL_TILE[0], 9],
+  },
+];
+
 /** Vertical wall columns between chambers — doorway on the main corridor (y 14–16). */
 export const TUTORIAL_DIVIDERS = [8, 13, 18, 22, 26, 30, 35];
+/** Full yard: divider after commissary only — systems hall is open length. */
+export const TUTORIAL_DIVIDERS_FULL = [8, 13, 18, 22, 26, 30];
+
+export function tutorialChambers(mode: TutorialMode): TutorialChamber[] {
+  return mode === "full" ? TUTORIAL_CHAMBERS_FULL : TUTORIAL_CHAMBERS;
+}
+export function tutorialDividers(mode: TutorialMode): number[] {
+  return mode === "full" ? TUTORIAL_DIVIDERS_FULL : TUTORIAL_DIVIDERS;
+}
 
 function look(p: Partial<PlayerLook>): PlayerLook {
   return {
@@ -239,7 +301,10 @@ export const TUTORIAL_INSTRUCTORS: TutorialInstructor[] = [
   },
 ];
 
-/** Extra instructors for FULL training — seated in Systems Court. Talk (E) clears briefing lessons. */
+/**
+ * Extra instructors for FULL training — spaced along the long SYSTEMS HALL
+ * (north row y=11, south row y=19, ~3 tiles apart). Talk (E) clears briefing lessons.
+ */
 export const TUTORIAL_INSTRUCTORS_FULL: TutorialInstructor[] = [
   {
     id: "cell",
@@ -247,7 +312,7 @@ export const TUTORIAL_INSTRUCTORS_FULL: TutorialInstructor[] = [
     tag: "FACTIONS",
     chamber: "systems",
     kind: "faction",
-    tile: [32, 10],
+    tile: [32, 11],
     color: 0xff79c6,
     fullOnly: true,
     look: look({ color: 0xff79c6, head: "beret", sex: "f", skin: 0xe6b58c, hair: "short", hairColor: 0x1b1820, cloak: "coat" }),
@@ -263,7 +328,7 @@ export const TUTORIAL_INSTRUCTORS_FULL: TutorialInstructor[] = [
     tag: "FORGE",
     chamber: "systems",
     kind: "craft",
-    tile: [34, 10],
+    tile: [35, 11],
     color: 0xff2bd6,
     fullOnly: true,
     look: look({ color: 0xff2bd6, sex: "f", gloves: "wraps", skin: 0xc98a5e, hair: "undercut", hairColor: 0x1b1820, cloak: "coat" }),
@@ -275,7 +340,7 @@ export const TUTORIAL_INSTRUCTORS_FULL: TutorialInstructor[] = [
     tag: "VENDOR",
     chamber: "systems",
     kind: "vendor",
-    tile: [32, 13],
+    tile: [38, 11],
     color: 0xf7ff3c,
     fullOnly: true,
     look: look({ color: 0xf7ff3c, head: "cap", strap: true, skin: 0xc98a5e, hair: "short", beard: "stubble", cloak: "coat" }),
@@ -287,7 +352,7 @@ export const TUTORIAL_INSTRUCTORS_FULL: TutorialInstructor[] = [
     tag: "MARKET",
     chamber: "systems",
     kind: "market",
-    tile: [34, 13],
+    tile: [41, 11],
     color: 0xff7a18,
     fullOnly: true,
     look: look({ color: 0xff7a18, head: "hood", cloak: "coat", skin: 0x7c4f30 }),
@@ -299,7 +364,7 @@ export const TUTORIAL_INSTRUCTORS_FULL: TutorialInstructor[] = [
     tag: "CONTRACTS",
     chamber: "systems",
     kind: "contracts",
-    tile: [32, 16],
+    tile: [44, 11],
     color: 0x39ff88,
     fullOnly: true,
     look: look({ color: 0x39ff88, head: "hood", skin: 0x4f3220, hair: "long", hairColor: 0xc7cdd8, cloak: "coat" }),
@@ -311,7 +376,7 @@ export const TUTORIAL_INSTRUCTORS_FULL: TutorialInstructor[] = [
     tag: "WARDROBE",
     chamber: "systems",
     kind: "cosmetics",
-    tile: [34, 16],
+    tile: [47, 11],
     color: 0xff5fa2,
     fullOnly: true,
     look: look({ color: 0xff5fa2, head: "beret", skin: 0xf3d2b8, hair: "bun", hairColor: 0xff5fb0 }),
@@ -323,7 +388,7 @@ export const TUTORIAL_INSTRUCTORS_FULL: TutorialInstructor[] = [
     tag: "CELL GUILD",
     chamber: "systems",
     kind: "guild",
-    tile: [32, 19],
+    tile: [50, 11],
     color: 0x4d8cff,
     fullOnly: true,
     look: look({ color: 0x4d8cff, head: "cap", skin: 0xf3d2b8, hair: "short", hairColor: 0x4a2f1c, cloak: "coat" }),
@@ -335,7 +400,7 @@ export const TUTORIAL_INSTRUCTORS_FULL: TutorialInstructor[] = [
     tag: "BOARD",
     chamber: "systems",
     kind: "board",
-    tile: [34, 19],
+    tile: [53, 11],
     color: 0x00e5ff,
     fullOnly: true,
     look: look({ color: 0x00e5ff, head: "beret", skin: 0xa9794a, hair: "bun", hairColor: 0x1b1820 }),
@@ -347,7 +412,7 @@ export const TUTORIAL_INSTRUCTORS_FULL: TutorialInstructor[] = [
     tag: "MAP",
     chamber: "systems",
     kind: "map",
-    tile: [32, 22],
+    tile: [32, 19],
     color: 0x2cf5c8,
     fullOnly: true,
     look: look({ color: 0x2cf5c8, head: "cap", skin: 0xa9794a, hair: "dreads" }),
@@ -359,7 +424,7 @@ export const TUTORIAL_INSTRUCTORS_FULL: TutorialInstructor[] = [
     tag: "EMOTES",
     chamber: "systems",
     kind: "emote",
-    tile: [34, 22],
+    tile: [35, 19],
     color: 0xc04bff,
     fullOnly: true,
     look: look({ color: 0xc04bff, head: "cap", skin: 0x7c4f30, hair: "spiky", hairColor: 0x1b1820, cloak: "coat" }),
@@ -371,7 +436,7 @@ export const TUTORIAL_INSTRUCTORS_FULL: TutorialInstructor[] = [
     tag: "CAMPAIGN",
     chamber: "systems",
     kind: "campaign",
-    tile: [31, 11],
+    tile: [38, 19],
     color: 0xeafdff,
     fullOnly: true,
     look: look({ color: 0xeafdff, cloak: "cape", skin: 0x4f3220, hair: "long", beard: "full", hairColor: 0xc7cdd8 }),
@@ -387,7 +452,7 @@ export const TUTORIAL_INSTRUCTORS_FULL: TutorialInstructor[] = [
     tag: "PVP",
     chamber: "systems",
     kind: "pvp",
-    tile: [35, 11],
+    tile: [41, 19],
     color: 0xff3b6b,
     fullOnly: true,
     look: look({ color: 0xff3b6b, build: "normal", head: "cap", skin: 0xc98a5e, hair: "short", hairColor: 0x1b1820, beard: "stubble", cloak: "coat" }),
@@ -403,7 +468,7 @@ export const TUTORIAL_INSTRUCTORS_FULL: TutorialInstructor[] = [
     tag: "TRADE",
     chamber: "systems",
     kind: "trade",
-    tile: [35, 22],
+    tile: [44, 19],
     color: 0x9dff3c,
     fullOnly: true,
     look: look({ color: 0x9dff3c, gloves: "wraps", strap: true, skin: 0x7c4f30 }),
@@ -419,7 +484,7 @@ export const TUTORIAL_INSTRUCTORS_FULL: TutorialInstructor[] = [
     tag: "$METRO",
     chamber: "systems",
     kind: "metro",
-    tile: [33, 19],
+    tile: [47, 19],
     color: 0xff2bd6,
     fullOnly: true,
     look: look({ color: 0xff2bd6, head: "hood", cloak: "coat", gloves: "wraps", skin: 0xa9794a, hair: "undercut", hairColor: 0x0f1020, visor: "mono", accentColor: 0x00e5ff }),
@@ -435,7 +500,7 @@ export const TUTORIAL_INSTRUCTORS_FULL: TutorialInstructor[] = [
     tag: "TRAVEL",
     chamber: "systems",
     kind: "travel",
-    tile: [33, 22],
+    tile: [50, 19],
     color: 0x8fe9ff,
     fullOnly: true,
     look: look({ color: 0x8fe9ff, head: "cap", cloak: "coat", legGear: "greaves", skin: 0xe6b58c, hair: "buzz", hairColor: 0x1b1820 }),
@@ -448,25 +513,30 @@ export const TUTORIAL_INSTRUCTORS_FULL: TutorialInstructor[] = [
 ];
 
 export function tutorialInstructorsFor(mode: TutorialMode): TutorialInstructor[] {
-  if (mode === "full") return [...TUTORIAL_INSTRUCTORS, ...TUTORIAL_INSTRUCTORS_FULL];
-  return TUTORIAL_INSTRUCTORS;
+  if (mode !== "full") return TUTORIAL_INSTRUCTORS;
+  // Nex stands mid-hall on the corridor so systems openers aren't piled on one tile.
+  const core = TUTORIAL_INSTRUCTORS.map((i) =>
+    i.id === "nex" ? { ...i, tile: [53, 15] as [number, number] } : i,
+  );
+  return [...core, ...TUTORIAL_INSTRUCTORS_FULL];
 }
 
 export function instructorForStep(kind: TutorialKind, mode: TutorialMode): TutorialInstructor | undefined {
   return tutorialInstructorsFor(mode).find((i) => i.kind === kind);
 }
 
-export function chamberForKind(kind: TutorialKind): TutorialChamber | undefined {
-  const inst = TUTORIAL_INSTRUCTORS.find((i) => i.kind === kind) ?? TUTORIAL_INSTRUCTORS_FULL.find((i) => i.kind === kind);
+export function chamberForKind(kind: TutorialKind, mode: TutorialMode = "quick"): TutorialChamber | undefined {
+  const chambers = tutorialChambers(mode);
+  const inst = tutorialInstructorsFor(mode).find((i) => i.kind === kind);
   if (!inst) {
-    if (kind === "portal") return TUTORIAL_CHAMBERS.find((c) => c.id === "deploy");
-    if (kind === "kit") return TUTORIAL_CHAMBERS.find((c) => c.id === "combat");
+    if (kind === "portal") return chambers.find((c) => c.id === "deploy");
+    if (kind === "kit") return chambers.find((c) => c.id === "combat");
     return undefined;
   }
-  return TUTORIAL_CHAMBERS.find((c) => c.id === inst.chamber);
+  return chambers.find((c) => c.id === inst.chamber);
 }
 
 /** Chamber accent colour for the active lesson (HUD arrow). */
-export function chamberAccentForKind(kind: TutorialKind): number {
-  return chamberForKind(kind)?.accent ?? 0x29e7ff;
+export function chamberAccentForKind(kind: TutorialKind, mode: TutorialMode = "quick"): number {
+  return chamberForKind(kind, mode)?.accent ?? 0x29e7ff;
 }

@@ -77,7 +77,6 @@ import {
   DIVE_CORE_TILE,
   buildTutorial,
   SAFEHOUSE_SPAWN,
-  TUTORIAL_PORTAL,
   TUTORIAL_PORTAL_RADIUS,
   TUTORIAL_SPAWN,
   isVenueSizedZone,
@@ -94,13 +93,21 @@ import {
   type BridgeDef,
 } from "../game/bridges";
 import { scatterWildernessProps } from "../render/wildernessScatter";
-import { TUTORIAL_ZONE, tutorialStepAt, isTutorialTalkKind, type TutorialMode } from "../net/tutorial";
 import {
-  TUTORIAL_CHAMBERS,
+  TUTORIAL_ZONE,
+  isTutorialZone,
+  tutorialModeFromZone,
+  tutorialStepAt,
+  isTutorialTalkKind,
+  type TutorialMode,
+} from "../net/tutorial";
+import {
+  tutorialChambers,
   tutorialInstructorsFor,
   instructorForStep,
   chamberAccentForKind,
   chamberForKind,
+  tutorialPortalPos,
   tpx,
 } from "../game/tutorialLayout";
 import { getSettings, effectiveLowFx } from "../systems/Settings";
@@ -492,7 +499,7 @@ export default class OnlineScene extends Phaser.Scene {
     const named =
       !!INTERIOR_TITLES[rawZone] ||
       rawZone === "subway" ||
-      rawZone === TUTORIAL_ZONE ||
+      isTutorialZone(rawZone) ||
       rawZone === ESTATES_ZONE ||
       !!parseBuildingInterior(rawZone) ||
       parseHubInterior(rawZone) !== null ||
@@ -500,7 +507,7 @@ export default class OnlineScene extends Phaser.Scene {
       this.isBridge ||
       this.isDive;
     this.zone = this.isBridge ? rawZone : named ? rawZone : "d" + this.parseZone(data?.zone);
-    this.isTutorial = this.zone === TUTORIAL_ZONE;
+    this.isTutorial = isTutorialZone(this.zone);
     // Fresh skip state each time we enter the drill (registry survives zone hops).
     if (this.isTutorial) this.registry.remove("tutorialSkipFired");
     this.interior =
@@ -567,7 +574,12 @@ export default class OnlineScene extends Phaser.Scene {
 
     // Real world — same tile grid the server simulates against.
     const grid = this.isTutorial
-      ? buildTutorial()
+      ? buildTutorial(
+          (data?.tutorialMode as TutorialMode | undefined) ??
+            tutorialModeFromZone(this.zone) ??
+            (this.registry.get("tutorialMode") as TutorialMode | undefined) ??
+            getSettings().tutorialMode,
+        )
       : this.isSubway
         ? buildSubway()
         : this.isDive
@@ -2445,7 +2457,7 @@ export default class OnlineScene extends Phaser.Scene {
       .setDepth(6);
 
     const chamberG = this.add.graphics().setDepth(5);
-    for (const ch of TUTORIAL_CHAMBERS) {
+    for (const ch of tutorialChambers(mode)) {
       const lx = tpx(ch.labelTile[0], ch.labelTile[1]).x;
       const ly = ch.labelTile[1] * TILE + 8;
       const hex = "#" + (ch.accent & 0xffffff).toString(16).padStart(6, "0");
@@ -2465,8 +2477,9 @@ export default class OnlineScene extends Phaser.Scene {
       this.makeTutorialInstructor(inst);
     }
 
-    const px = TUTORIAL_PORTAL.x;
-    const py = TUTORIAL_PORTAL.y;
+    const portal = tutorialPortalPos(mode);
+    const px = portal.x;
+    const py = portal.y;
     const g = this.add.graphics().setDepth(7);
     g.fillStyle(COLORS.neonCyan, 0.12).fillRect(px - 28, py - 40, 56, 80);
     g.lineStyle(2, COLORS.neonCyan, 0.85).strokeRect(px - 28, py - 40, 56, 80);
@@ -4474,7 +4487,7 @@ export default class OnlineScene extends Phaser.Scene {
 
   /** Travel into another zone (door/interior/transit) — organic arrival unlocks fast travel. */
   private enterZone(dest: string) {
-    if (dest === TUTORIAL_ZONE) return;
+    if (isTutorialZone(dest)) return;
     const r = grantSkillXp(this.rsSkills, "exploration", 22);
     this.rsSkillsPanel.setSkills(this.rsSkills);
     if (r.leveled) this.pops?.popHeal(this.me.x, this.me.y - 36, `Exploration ${r.level}!`);
@@ -4487,7 +4500,7 @@ export default class OnlineScene extends Phaser.Scene {
 
   private fastTravel(zone: string) {
     this.registry.set("pendingMapDest", null);
-    if (zone === TUTORIAL_ZONE || zone === this.zone) return;
+    if (isTutorialZone(zone) || zone === this.zone) return;
     if (!this.zoneUnlocked(zone)) {
       this.showTravelDenied(zone);
       return;
@@ -4531,7 +4544,7 @@ export default class OnlineScene extends Phaser.Scene {
     const destNamed =
       !!INTERIOR_TITLES[zone] ||
       zone === "subway" ||
-      zone === TUTORIAL_ZONE ||
+      isTutorialZone(zone) ||
       zone === ESTATES_ZONE ||
       destBridge >= 0 ||
       destDive >= 0 ||
@@ -4540,7 +4553,7 @@ export default class OnlineScene extends Phaser.Scene {
       estateInt !== null;
     const di = bldgInt ? bldgInt.district : destNamed && destBridge < 0 ? 0 : destBridge >= 0 ? destBridge : this.parseZone(zone);
     const accent =
-      zone === TUTORIAL_ZONE
+      isTutorialZone(zone)
         ? 0x29e7ff
         : zone === "subway"
           ? 0xff3b6b
@@ -5256,7 +5269,7 @@ export default class OnlineScene extends Phaser.Scene {
       const count = step?.count ?? 1;
       const prog = this.net.tutorialProgress;
       const inst = step ? instructorForStep(step.kind, this.net.tutorialMode) : undefined;
-      const chamber = step ? chamberForKind(step.kind) : undefined;
+      const chamber = step ? chamberForKind(step.kind, this.net.tutorialMode) : undefined;
       const teach = this.net.tutorialTeach || step?.teach || "";
       const hint = this.net.tutorialHint || step?.hint || "";
       let body: string;
@@ -5282,7 +5295,7 @@ export default class OnlineScene extends Phaser.Scene {
       if (this.tutorialChamberG) {
         this.tutorialChamberG.clear();
         if (chamber) {
-          const accent = chamberAccentForKind(step!.kind);
+          const accent = chamberAccentForKind(step!.kind, this.net.tutorialMode);
           this.tutorialChamberG
             .fillStyle(accent, 0.1)
             .fillRect(chamber.x1 * TILE, chamber.y1 * TILE, (chamber.x2 - chamber.x1 + 1) * TILE, (chamber.y2 - chamber.y1 + 1) * TILE);
@@ -5298,7 +5311,8 @@ export default class OnlineScene extends Phaser.Scene {
       const mx = this.me.x;
       const my = this.me.y;
       const pr = TUTORIAL_PORTAL_RADIUS;
-      const d2 = (mx - TUTORIAL_PORTAL.x) ** 2 + (my - TUTORIAL_PORTAL.y) ** 2;
+      const portal = tutorialPortalPos(this.net.tutorialMode ?? tutorialModeFromZone(this.zone));
+      const d2 = (mx - portal.x) ** 2 + (my - portal.y) ** 2;
       this.nearPortal = d2 < pr * pr;
 
       let near: ZoneNpc | null = null;

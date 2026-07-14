@@ -62,10 +62,10 @@ import {
   parseDiveZone,
   buildTutorial,
   TUTORIAL_SPAWN,
-  TUTORIAL_PORTAL,
   TUTORIAL_PORTAL_RADIUS,
   TUTORIAL_COP_TILE,
   TUTORIAL_NODE_TILE,
+  tutorialPortalPos,
   isVenueSizedZone,
   isSafehouseSizedInterior,
   type TileGrid,
@@ -78,6 +78,9 @@ import {
 } from "../../src/game/bridges";
 import {
   TUTORIAL_ZONE,
+  TUTORIAL_FULL_ZONE,
+  isTutorialZone,
+  tutorialModeFromZone,
   tutorialStepAt,
   tutorialTotal,
   tutorialReadyForPortal,
@@ -268,7 +271,15 @@ import {
 
 export const INTERIOR_ZONES = new Set(["safe", "clinic", "bar", "den", "shop", ESTATES_ZONE]);
 /** All named (non-district) zones the Worker routes by name — interiors + subway + wilderness bridges. */
-export const NAMED_ZONES = new Set([...INTERIOR_ZONES, "subway", "vault", TUTORIAL_ZONE, ...BRIDGE_ZONE_IDS, ...DIVE_ZONE_IDS]);
+export const NAMED_ZONES = new Set([
+  ...INTERIOR_ZONES,
+  "subway",
+  "vault",
+  TUTORIAL_ZONE,
+  TUTORIAL_FULL_ZONE,
+  ...BRIDGE_ZONE_IDS,
+  ...DIVE_ZONE_IDS,
+]);
 
 /** Per-building district interior — zone id "d{district}i{buildingIndex}". Each is its own
  *  no-combat DO reusing the safehouse room; H returns to the parent district. Bounded so a
@@ -751,14 +762,15 @@ export class WorldDO {
     this.zoneReady = true;
     // THE UNDERLINE — the subway dungeon: an indoor COMBAT zone (no PvP/weather via the
     // interior flag, but it DOES populate a tough HSS garrison + a boss).
-    if (zone === TUTORIAL_ZONE) {
+    if (isTutorialZone(zone)) {
       this.interior = false;
-      this.zoneName = TUTORIAL_ZONE;
+      this.zoneName = zone!;
       this.districtIndex = 0;
-      this.grid = buildTutorial();
+      const tMode = tutorialModeFromZone(zone);
+      this.grid = buildTutorial(tMode);
       this.spawn = TUTORIAL_SPAWN;
       this.spawnTutorial();
-      void this.state.storage.put("zone", TUTORIAL_ZONE);
+      void this.state.storage.put("zone", zone!);
       this.finalizeZoneSpawn();
       return;
     }
@@ -1364,7 +1376,7 @@ export class WorldDO {
   }
 
   private inTutorial(): boolean {
-    return this.zoneName === TUTORIAL_ZONE;
+    return isTutorialZone(this.zoneName);
   }
 
   /** Raid-tier boss tick: HP-gated phase escalation, telegraphed AoE, summoned adds, enrage. */
@@ -5818,7 +5830,10 @@ export class WorldDO {
         }
         if (
           tutorialReadyForPortal(p.tutorialStep, p.tutorialMode ?? "quick") &&
-          dist2(p.x, p.y, TUTORIAL_PORTAL.x, TUTORIAL_PORTAL.y) <= TUTORIAL_PORTAL_RADIUS * TUTORIAL_PORTAL_RADIUS
+          (() => {
+            const portal = tutorialPortalPos(p.tutorialMode ?? tutorialModeFromZone(this.zoneName));
+            return dist2(p.x, p.y, portal.x, portal.y) <= TUTORIAL_PORTAL_RADIUS * TUTORIAL_PORTAL_RADIUS;
+          })()
         ) {
           void this.graduateTutorial(p, this.socketForPlayer(p.id), false);
         }
