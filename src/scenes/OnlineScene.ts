@@ -1131,6 +1131,7 @@ export default class OnlineScene extends Phaser.Scene {
     if (this.isTutorial) this.registry.set("tutorialMode", tutorialMode);
 
     this.net.onConnectionState = (state) => {
+      const wasReconnecting = this.connectionState === "reconnecting" || this.connectionState === "offline";
       this.connectionState = state;
       if (state === "connected") {
         this.connectStartedAt = Date.now();
@@ -1140,12 +1141,16 @@ export default class OnlineScene extends Phaser.Scene {
         } catch {
           /* not yet logged in */
         }
+        if (wasReconnecting) {
+          this.rsGameMessage?.show("Link restored", { ttlMs: 1800, color: "#39ff88" });
+        }
       }
       if (state === "reconnecting") {
-        this.rsGameMessage?.show("Reconnecting to the grid…", { ttlMs: 2800, color: "#f7ff3c" });
+        const n = this.net.reconnectTry || 1;
+        this.rsGameMessage?.show(`Reconnecting to the grid… (${n}/20)`, { ttlMs: 3200, color: "#f7ff3c" });
       }
       if (state === "offline") {
-        this.rsGameMessage?.show("Link lost — solo preview until rejoin · R retry", { ttlMs: 4000, color: "#ff7a9a" });
+        this.rsGameMessage?.show("Link lost — solo preview · R retry · ESC menu", { ttlMs: 5000, color: "#ff7a9a" });
       }
       this.hudRefreshAcc = OnlineScene.HUD_REFRESH_MS;
       this.minimapRefreshAcc = OnlineScene.MINIMAP_REFRESH_MS;

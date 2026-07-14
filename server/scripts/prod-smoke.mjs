@@ -25,6 +25,7 @@ if (/127\.0\.0\.1|localhost/i.test(LIVE) && process.env.ALLOW_LOCAL_PROD_SMOKE !
 
 // Standalone modes — never battery-order dependent.
 // market omitted by default (needs D1 seed credits on prod); override with PROD_SMOKE_MODES.
+// combat can flake mid-battery if a world event kills the bot — re-run standalone.
 const MODES = (process.env.PROD_SMOKE_MODES || "launch,move,combat,abuse,reconnect,stash")
   .split(",")
   .map((s) => s.trim())

@@ -35,7 +35,13 @@ curl -sS 'https://metrophage-server.wendellphillips.workers.dev/stats?zone=safe'
 curl -sS 'https://metrophage-server.wendellphillips.workers.dev/economy' | jq .
 ```
 
-`/health` includes: `build`, `flags`, sample zone player counts / tickMs / flood kills.
+`/health` includes: `build`, `flags`, sample zone player counts / tickMs / flood kills,
+`economy` snapshot (emit/burn/sinkEfficiency7d), and `warnings` (e.g. `sink_efficiency_low`).
+
+```sh
+npm run watch:health:once    # single probe
+npm run watch:health         # poll every 60s
+```
 
 ## Smoke gates
 

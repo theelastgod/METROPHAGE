@@ -496,7 +496,16 @@ export default class NetClient {
         this.onGuestAuthFailed?.(this.lastSysText || "sign-in rejected");
         return;
       }
-      // 4002/4003 = server replaced this session (another tab / other zone) — reconnect cleanly.
+      // 4002/4003 = server replaced this session (another tab / other zone).
+      if (ev.code === 4002 || ev.code === 4003) {
+        this.pushChat({
+          from: "",
+          ch: "sys",
+          text: "session replaced — another tab or zone took control; re-linking…",
+          faction: -1,
+          sys: true,
+        });
+      }
       if (!this.manualClose) this.scheduleReconnect();
     };
     ws.onerror = () => {
@@ -505,15 +514,27 @@ export default class NetClient {
     };
   }
 
+  /** Current reconnect attempt (0 = first connect / connected). */
+  get reconnectTry(): number {
+    return this.reconnectAttempts;
+  }
+
   private scheduleReconnect() {
     if (this.manualClose || this.protocolBlocked) return;
     // More attempts + faster backoff — free-tier DO hibernation can take 10–20s;
     // giving up after 8 tries left players stuck on "cold start" forever.
-    if (this.reconnectAttempts >= 16) {
+    if (this.reconnectAttempts >= 20) {
       this.onConnectionState?.("offline");
+      this.pushChat({
+        from: "",
+        ch: "sys",
+        text: "link dead after 20 tries — press R to retry or ESC for menu",
+        faction: -1,
+        sys: true,
+      });
       return;
     }
-    const delay = Math.min(8000, Math.round(400 * Math.pow(1.45, this.reconnectAttempts)));
+    const delay = Math.min(10_000, Math.round(350 * Math.pow(1.4, this.reconnectAttempts)));
     this.reconnectAttempts++;
     this.onConnectionState?.("reconnecting");
     this.reconnectTimer = setTimeout(() => {

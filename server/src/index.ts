@@ -534,15 +534,49 @@ export default {
       }
       const { launchFlagsFromEnv } = await import("../../src/game/featureFlags");
       const flags = launchFlagsFromEnv(env);
+      // Lightweight economy snapshot for launch dashboards (never fail health).
+      let economy: Record<string, unknown> | null = null;
+      const warnings: string[] = [];
+      try {
+        const { handleEconomy } = await import("./economy");
+        const ecoRes = await handleEconomy(env);
+        if (ecoRes.ok) {
+          const body = (await ecoRes.json()) as {
+            credits?: { emittedToday?: number; burnedToday?: number; sinkEfficiency7d?: number; emitted7d?: number; burned7d?: number };
+          };
+          const c = body.credits ?? {};
+          economy = {
+            emittedToday: c.emittedToday ?? 0,
+            burnedToday: c.burnedToday ?? 0,
+            emitted7d: c.emitted7d ?? 0,
+            burned7d: c.burned7d ?? 0,
+            sinkEfficiency7d: c.sinkEfficiency7d ?? 0,
+          };
+          const sink = Number(c.sinkEfficiency7d) || 0;
+          const emit7 = Number(c.emitted7d) || 0;
+          if (emit7 > 500 && sink < 0.05) warnings.push("sink_efficiency_low");
+          if ((c.emittedToday ?? 0) > 5000 && (c.burnedToday ?? 0) === 0) warnings.push("emit_spike_no_burn");
+        }
+      } catch {
+        warnings.push("economy_unavailable");
+      }
+      for (const z of zones) {
+        if (Number((z as { tickMsAvg?: number }).tickMsAvg) > 40) warnings.push(`tick_hot:${(z as { zone?: string }).zone}`);
+        if ((z as { hubFull?: boolean }).hubFull) warnings.push("hub_full");
+      }
+      if (errTotal > 50) warnings.push("err_elevated");
       return new Response(
         JSON.stringify({
           ok: true,
+          degraded: warnings.length > 0,
           ts: Date.now(),
           build: env.METRO_BUILD || "unset",
           paidTier: env.METRO_PAID_TIER === "1",
           plan: env.METRO_PAID_TIER === "1" ? "workers-paid" : "workers-free",
           flags,
           sample: { playersTotal, errTotal, zones },
+          economy,
+          warnings,
         }),
         {
           status: 200,

@@ -2664,6 +2664,7 @@ export class WorldDO {
       if (items.length) this.sendTo(p.id, { t: "inv", items: p.inventory });
       return true;
     } catch {
+      this.errCount++;
       return false;
     }
   }
@@ -3844,11 +3845,9 @@ export class WorldDO {
           if (p.dead) continue;
           p.xp += ev.def.reward.xp;
           p.level = levelForXp(p.xp);
-          p.credits += ev.def.reward.currency;
-          this.eco("emit", "event", ev.def.reward.currency);
-          p.dirty = true;
+          const paid = this.grantEmit(p, "event", ev.def.reward.currency);
           this.campaignEvent(p, "event"); // SKYLINK BREAK's storm beat — survived together
-          this.sendTo(p.id, { t: "sys", text: `◈ ${ev.def.name} weathered — +${ev.def.reward.xp} XP  ₵${ev.def.reward.currency}` });
+          this.sendTo(p.id, { t: "sys", text: `◈ ${ev.def.name} weathered — +${ev.def.reward.xp} XP  ₵${paid}` });
         }
         this.broadcastEvent(ev.def, "end", 0);
         this.worldEvent = null;
@@ -3922,8 +3921,7 @@ export class WorldDO {
     const isNew = !p.fragments.includes(fid);
     if (isNew) {
       p.fragments.push(fid);
-      p.credits += 150;
-      this.eco("emit", "fragment", 150);
+      this.grantEmit(p, "fragment", 150);
       p.xp += 60;
       p.level = levelForXp(p.xp);
       p.dirty = true;
@@ -3948,8 +3946,7 @@ export class WorldDO {
       const flag = `vaultwk${wk}`;
       if (!p.campaign.hasFlag(flag)) {
         p.campaign.flags.add(flag);
-        p.credits += 750;
-        this.eco("emit", "quest", 750);
+        this.grantEmit(p, "quest", 750);
         p.xp += 220;
         p.level = levelForXp(p.xp);
         p.dirty = true;
@@ -4215,6 +4212,7 @@ export class WorldDO {
       );
       await this.env.DB.batch(rows.map(([k, c]) => stmt.bind(day, this.zoneName, k.split(":")[0], k.split(":")[1], c)));
     } catch {
+      this.errCount++;
       // Telemetry must never break gameplay (e.g. migration not yet applied) —
       // re-queue nothing; a lost interval of counters is acceptable.
     }
@@ -4495,8 +4493,11 @@ export class WorldDO {
         changed = true;
       }
       if (p.credits < 60) {
-        this.eco("emit", "floor", 60 - p.credits);
-        p.credits = Math.max(p.credits, 60);
+        const need = 60 - p.credits;
+        const got = this.grantEmit(p, "floor", need);
+        // Floor is a soft guarantee for brand-new shells; if daily cap is already hit
+        // (edge: recreated accounts), still lift them to 60 without double-counting emit.
+        if (got < need) p.credits = Math.max(p.credits, 60);
         changed = true;
       }
     }

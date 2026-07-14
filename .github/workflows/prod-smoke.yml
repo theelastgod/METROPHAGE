@@ -22,7 +22,12 @@ jobs:
       - name: Health probe
         run: |
           curl -sfS https://metrophage-server.wendellphillips.workers.dev/health | tee /tmp/health.json
-          node -e "const h=require('/tmp/health.json'); if(!h.ok) process.exit(1); console.log('build', h.build, 'players', h.sample?.playersTotal);"
+          node -e "
+            const h=require('/tmp/health.json');
+            if(!h.ok) process.exit(1);
+            console.log('build', h.build, 'players', h.sample?.playersTotal, 'warnings', h.warnings||[]);
+            if ((h.warnings||[]).includes('economy_unavailable')) process.exit(1);
+          "
 
       - name: Prod smoke suite
         env:
