@@ -1,0 +1,7 @@
+# Cloudflare Pages — HTML always revalidated; hashed /assets/* long-cache (immutable).
+/
+  Cache-Control: public, max-age=0, must-revalidate
+/index.html
+  Cache-Control: public, max-age=0, must-revalidate
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable

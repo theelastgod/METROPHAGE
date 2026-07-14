@@ -117,6 +117,7 @@ export const CREST_ICON_KEYS = [
   "crest_wintermute",
   "crest_swarm",
 ] as const;
+export const METRO_TOKEN_KEY = "metro_token";
 // Painted menu backdrop + per-class select-card art (same Higgsfield build).
 export const MENU_BG_KEY = "menu_bg";
 export const classArtKey = (classId: string) => "classart_" + classId;
@@ -227,6 +228,7 @@ export const ASSETS: Record<string, AssetEntry[]> = {
     ...ABILITY_ICON_KEYS.map((k) => ({ key: k, file: `assets/ui/${k}.png` })),
     ...LOOT_ICON_KEYS.map((k) => ({ key: k, file: `assets/ui/${k}.png` })),
     ...CREST_ICON_KEYS.map((k) => ({ key: k, file: `assets/ui/${k}.png` })),
+    { key: METRO_TOKEN_KEY, file: "assets/ui/metro_token.png" },
     { key: MENU_BG_KEY, file: "assets/ui/menu_bg.jpg" }, // painted menu key art
     // Class cards are loaded by SelectScene, where they are first used. First-time
     // players no longer download ~0.5 MB of menu art before the cold open.

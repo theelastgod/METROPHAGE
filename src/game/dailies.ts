@@ -17,23 +17,29 @@ export interface DailyContract {
 
 /** The guaranteed daily is always a kill bounty (rotating size) so there's a reliable
  *  on-ramp; the other two rotate from the wider pool. */
+// Rewards slightly trimmed vs emit volume so contracts don't flood ₵ relative to sinks.
 const KILL_DAILIES: DailyContract[] = [
-  { id: "k_sweep_s", name: "STREET SWEEP", desc: "Purge 5 HSS units", objective: "kill", count: 5, rewardCredits: 150, rewardRep: 12 },
-  { id: "k_sweep_m", name: "PURGE QUOTA", desc: "Purge 7 HSS units", objective: "kill", count: 7, rewardCredits: 210, rewardRep: 16 },
-  { id: "k_sweep_l", name: "CULL ORDER", desc: "Purge 9 HSS units", objective: "kill", count: 9, rewardCredits: 280, rewardRep: 20 },
+  { id: "k_sweep_s", name: "STREET SWEEP", desc: "Purge 5 HSS units", objective: "kill", count: 5, rewardCredits: 130, rewardRep: 12 },
+  { id: "k_sweep_m", name: "PURGE QUOTA", desc: "Purge 7 HSS units", objective: "kill", count: 7, rewardCredits: 185, rewardRep: 16 },
+  { id: "k_sweep_l", name: "CULL ORDER", desc: "Purge 9 HSS units", objective: "kill", count: 9, rewardCredits: 245, rewardRep: 20 },
 ];
 
 const POOL: DailyContract[] = [
-  { id: "k_grind", name: "ATTRITION", desc: "Purge 25 HSS units", objective: "kill", count: 25, rewardCredits: 600, rewardRep: 30 },
-  { id: "cap_2", name: "GROUND GAME", desc: "Capture 2 territory nodes", objective: "capture", count: 2, rewardCredits: 350, rewardRep: 22 },
-  { id: "cap_4", name: "TERRITORIAL", desc: "Capture 4 territory nodes", objective: "capture", count: 4, rewardCredits: 650, rewardRep: 38 },
-  { id: "boss_1", name: "DECAPITATION", desc: "Fell a world boss", objective: "boss", count: 1, rewardCredits: 800, rewardRep: 45 },
-  { id: "k_elite", name: "DEEP PURGE", desc: "Purge 40 HSS units", objective: "kill", count: 40, rewardCredits: 1000, rewardRep: 55 },
-  { id: "k_docks", name: "TIDAL SWEEP", desc: "Purge 18 HSS in any district", objective: "kill", count: 18, rewardCredits: 420, rewardRep: 24 },
-  { id: "cap_6", name: "DOMINION", desc: "Capture 6 territory nodes", objective: "capture", count: 6, rewardCredits: 900, rewardRep: 48 },
-  { id: "boss_2", name: "DOUBLE DECAP", desc: "Fell 2 world bosses", objective: "boss", count: 2, rewardCredits: 1400, rewardRep: 70 },
-  { id: "k_wastes", name: "OUTER RING CULL", desc: "Purge 50 HSS units", objective: "kill", count: 50, rewardCredits: 1200, rewardRep: 62 },
-  { id: "cap_3", name: "TRI-NODE", desc: "Capture 3 territory nodes", objective: "capture", count: 3, rewardCredits: 500, rewardRep: 30 },
+  { id: "k_grind", name: "ATTRITION", desc: "Purge 25 HSS units", objective: "kill", count: 25, rewardCredits: 520, rewardRep: 30 },
+  { id: "cap_2", name: "GROUND GAME", desc: "Capture 2 territory nodes", objective: "capture", count: 2, rewardCredits: 320, rewardRep: 22 },
+  { id: "cap_4", name: "TERRITORIAL", desc: "Capture 4 territory nodes", objective: "capture", count: 4, rewardCredits: 580, rewardRep: 38 },
+  { id: "boss_1", name: "DECAPITATION", desc: "Fell a world boss", objective: "boss", count: 1, rewardCredits: 720, rewardRep: 45 },
+  { id: "k_elite", name: "DEEP PURGE", desc: "Purge 40 HSS units", objective: "kill", count: 40, rewardCredits: 880, rewardRep: 55 },
+  { id: "k_docks", name: "TIDAL SWEEP", desc: "Purge 18 HSS in any district", objective: "kill", count: 18, rewardCredits: 380, rewardRep: 24 },
+  { id: "cap_6", name: "DOMINION", desc: "Capture 6 territory nodes", objective: "capture", count: 6, rewardCredits: 800, rewardRep: 48 },
+  { id: "boss_2", name: "DOUBLE DECAP", desc: "Fell 2 world bosses", objective: "boss", count: 2, rewardCredits: 1200, rewardRep: 70 },
+  { id: "k_wastes", name: "OUTER RING CULL", desc: "Purge 50 HSS units", objective: "kill", count: 50, rewardCredits: 1050, rewardRep: 62 },
+  { id: "cap_3", name: "TRI-NODE", desc: "Capture 3 territory nodes", objective: "capture", count: 3, rewardCredits: 450, rewardRep: 30 },
+  // New rotation entries — more capture/boss mix so days don't feel samey.
+  { id: "k_mid", name: "MIDTOWN CULL", desc: "Purge 15 HSS units", objective: "kill", count: 15, rewardCredits: 340, rewardRep: 22 },
+  { id: "cap_1", name: "FOOT HOLD", desc: "Capture 1 territory node", objective: "capture", count: 1, rewardCredits: 180, rewardRep: 14 },
+  { id: "boss_night", name: "NIGHT COMMAND", desc: "Fell a world boss", objective: "boss", count: 1, rewardCredits: 760, rewardRep: 48 },
+  { id: "k_blitz", name: "BLITZ QUOTA", desc: "Purge 12 HSS units", objective: "kill", count: 12, rewardCredits: 290, rewardRep: 18 },
 ];
 
 export const DAILY_COUNT = 3;

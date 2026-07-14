@@ -112,7 +112,7 @@ export const RESPAWN_MS = 2600;
 export const XP_PER_KILL = 20; // early levels should feel — first-hour progression
 export const levelForXp = (xp: number) => 1 + Math.floor(xp / 100);
 export const xpIntoLevel = (xp: number) => xp % 100; // 0..99 toward the next level
-export const CREDITS_PER_KILL = 22; // kills pay visibly (12→18→22) — progress should feel earned, not ground
+export const CREDITS_PER_KILL = 16; // 22→16: keep kills rewarding but raise sink efficiency (vendor/forge)
 export const LOOT_DROP_CHANCE = 0.55; // chance a cop drops a pickup
 export const PICKUP_RADIUS = 18; // walk within this to collect
 export const PICKUP_TTL_MS = 15000;

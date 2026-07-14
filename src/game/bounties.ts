@@ -39,6 +39,17 @@ export const BOUNTIES: Record<string, Bounty> = {
   res_wren: { id: "wren_parts", npc: "res_wren", name: "SPARE PARTS", desc: "Purge 10 HSS units", objective: "kill", count: 10, rewardCredits: 340, rewardRep: 18, offer: "Chrome doesn't grow on trees. Drop ten HSS and salvage what walks." },
   res_mercy: { id: "mercy_field", npc: "res_mercy", name: "FIELD TRIAGE", desc: "Purge 8 HSS units", objective: "kill", count: 8, rewardCredits: 280, rewardRep: 15, offer: "Fewer corpses on my floor if the streets are quieter. Eight HSS." },
   res_quill: { id: "quill_record", npc: "res_quill", name: "TRUE RECORD", desc: "Fell a world boss", objective: "boss", count: 1, rewardCredits: 820, rewardRep: 42, offer: "History needs a body count. Fell a world boss — I'll write it true." },
+  // Depth pass — profession / ambient variety
+  street_kid: { id: "kid_scavenge", npc: "street_kid", name: "POCKET CORES", desc: "Collect 3 data cores", objective: "collect", count: 3, rewardCredits: 200, rewardRep: 12, offer: "Three cores. Don't ask who owned them. I'll split the take." },
+  subway_warden: { id: "warden_line", npc: "subway_warden", name: "CLEAR THE LINE", desc: "Purge 14 HSS units", objective: "kill", count: 14, rewardCredits: 400, rewardRep: 22, offer: "Trains don't run through corpses. Fourteen HSS off my tracks." },
+  amb_courier: { id: "courier_run", npc: "amb_courier", name: "DEAD DROP", desc: "Collect 5 data cores", objective: "collect", count: 5, rewardCredits: 310, rewardRep: 18, offer: "Package needs five cores as ballast. No receipt." },
+  amb_vendor: { id: "vendor_heat", npc: "amb_vendor", name: "STALL HEAT", desc: "Purge 9 HSS units", objective: "kill", count: 9, rewardCredits: 270, rewardRep: 15, offer: "They keep scaring customers. Nine HSS and the broth's on me." },
+  keep_bar: { id: "bar_quiet", npc: "keep_bar", name: "LAST CALL", desc: "Purge 11 HSS units", objective: "kill", count: 11, rewardCredits: 330, rewardRep: 18, offer: "Quiet night means full till. Eleven HSS gone." },
+  keep_clinic: { id: "clinic_field", npc: "keep_clinic", name: "TRIAGE PRESSURE", desc: "Collect 4 data cores", objective: "collect", count: 4, rewardCredits: 290, rewardRep: 16, offer: "Med-bay scanners run on cores. Four. Patients don't wait." },
+  keep_guild: { id: "guild_trial", npc: "keep_guild", name: "CELL TRIAL", desc: "Fell a world boss", objective: "boss", count: 1, rewardCredits: 880, rewardRep: 44, offer: "Prove you're more than a solo. Drop a world boss for the cell board." },
+  res_nix: { id: "nix_ghost", npc: "res_nix", name: "GHOST WALK", desc: "Collect today's HIGH-VALUE TARGET bounty", objective: "hvt", count: 1, rewardCredits: 950, rewardRep: 40, offer: "Today's HVT walks my alley. End them. I'll vanish the body." },
+  res_static: { id: "static_noise", npc: "res_static", name: "STATIC SWEEP", desc: "Purge 22 HSS units", objective: "kill", count: 22, rewardCredits: 560, rewardRep: 28, offer: "Noise floor's too high. Twenty-two HSS. Make it quiet." },
+  res_velvet: { id: "velvet_tab", npc: "res_velvet", name: "OPEN TAB", desc: "Collect 7 data cores", objective: "collect", count: 7, rewardCredits: 450, rewardRep: 24, offer: "Seven cores covers your tab and mine. Deliver." },
 };
 
 export function bountyForNpc(npcId: string): Bounty | undefined {

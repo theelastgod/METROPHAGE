@@ -1,13 +1,16 @@
 // METROPHAGE — first-session coach. Pure local progress so the hub always has a
 // "what next" line even before the server campaign loads. Complements campaignHud.
 
-const KEY = "metrophage_first_session_v3";
+const KEY = "metrophage_first_session_v4";
 
 export type FirstStep =
   | "meet_fixer" // talk to THE FIXER / accept THE WAKE
   | "deploy" // leave hub via deploy gate
   | "combat" // kill at least one HSS unit
   | "heat" // learned HEAT / ultimate once
+  | "contracts" // open daily contracts once
+  | "bounty" // accept an NPC bounty once
+  | "gear" // open bag / vendor once
   | "return" // back to hub (optional)
   | "done";
 
@@ -17,6 +20,9 @@ export interface FirstSessionState {
   talkedFixer: boolean;
   deployed: boolean;
   heatCoached: boolean;
+  openedContracts: boolean;
+  acceptedBounty: boolean;
+  openedGear: boolean;
   dismissed: boolean; // player hid the coach
 }
 
@@ -26,13 +32,24 @@ const DEFAULT: FirstSessionState = {
   talkedFixer: false,
   deployed: false,
   heatCoached: false,
+  openedContracts: false,
+  acceptedBounty: false,
+  openedGear: false,
   dismissed: false,
 };
 
 function load(): FirstSessionState {
   try {
     const raw = localStorage.getItem(KEY);
-    if (!raw) return { ...DEFAULT };
+    if (!raw) {
+      // migrate v3 if present
+      const legacy = localStorage.getItem("metrophage_first_session_v3");
+      if (legacy) {
+        const p = JSON.parse(legacy) as Partial<FirstSessionState>;
+        return { ...DEFAULT, ...p };
+      }
+      return { ...DEFAULT };
+    }
     return { ...DEFAULT, ...(JSON.parse(raw) as Partial<FirstSessionState>) };
   } catch {
     return { ...DEFAULT };
@@ -47,6 +64,24 @@ function save() {
   } catch {
     /* private mode */
   }
+}
+
+function advanceAfterCombatLoop() {
+  // After first kill + heat, funnel into systems that create sinks and depth.
+  if (!state.openedContracts) {
+    state.step = "contracts";
+    return;
+  }
+  if (!state.acceptedBounty) {
+    state.step = "bounty";
+    return;
+  }
+  if (!state.openedGear) {
+    state.step = "gear";
+    return;
+  }
+  state.step = state.deployed ? "return" : "deploy";
+  if (state.kills >= 3 && state.openedContracts && state.openedGear) state.step = "done";
 }
 
 export function getFirstSession(): FirstSessionState {
@@ -78,25 +113,48 @@ export function noteDeployed() {
 export function noteKill() {
   state.kills++;
   if (state.step === "combat" || state.step === "deploy") {
-    if (state.kills >= 1) state.step = state.heatCoached ? "return" : "heat";
+    if (state.kills >= 1) state.step = state.heatCoached ? "contracts" : "heat";
   }
-  if (state.kills >= 3 && state.heatCoached) state.step = "done";
+  if (state.kills >= 1 && state.heatCoached && state.step === "heat") advanceAfterCombatLoop();
+  if (state.kills >= 5 && state.openedContracts && state.openedGear) state.step = "done";
   save();
 }
 
-/** HEAT meter hit the ult threshold once — teach R once, then release the coach. */
+/** HEAT meter hit the ult threshold once — teach R once, then systems funnel. */
 export function noteHeatCoached() {
   if (state.heatCoached) return;
   state.heatCoached = true;
   if (state.step === "heat" || state.step === "combat") {
-    state.step = state.kills >= 1 ? "return" : "combat";
+    advanceAfterCombatLoop();
   }
-  if (state.kills >= 3) state.step = "done";
+  save();
+}
+
+export function noteOpenedContracts() {
+  state.openedContracts = true;
+  if (state.step === "contracts") advanceAfterCombatLoop();
+  save();
+}
+
+export function noteAcceptedBounty() {
+  state.acceptedBounty = true;
+  if (state.step === "bounty") advanceAfterCombatLoop();
+  save();
+}
+
+export function noteOpenedGear() {
+  state.openedGear = true;
+  if (state.step === "gear") advanceAfterCombatLoop();
+  if (state.kills >= 2 && state.openedContracts) state.step = "done";
   save();
 }
 
 export function noteReturnedToHub() {
-  if (state.step === "return" || state.kills >= 1) state.step = "done";
+  if (state.step === "return" || state.kills >= 1) {
+    if (!state.openedContracts) state.step = "contracts";
+    else if (!state.openedGear) state.step = "gear";
+    else state.step = "done";
+  }
   save();
 }
 
@@ -153,6 +211,12 @@ export function firstSessionLine(): string | null {
       return "▶ ATTACK: hold LEFT CLICK or hold F · aim with mouse · SPACE dash · drop an HSS unit";
     case "heat":
       return "▶ HEAT builds on hits — at orange, press R for your ultimate";
+    case "contracts":
+      return "▶ Press J — claim a daily CONTRACT (reliable ₵ + rep)";
+    case "bounty":
+      return "▶ Talk to a named NPC (Rin, Doc, Vex…) — accept their BOUNTY job";
+    case "gear":
+      return "▶ Open BAG (I) or a vendor stall — equip loot, spend ₵ on caches";
     case "return":
       return "▶ H or map back to METRO CITY when ready · gear up · repeat";
     default:
@@ -162,5 +226,5 @@ export function firstSessionLine(): string | null {
 
 /** Core loop always-on reminder (after first session or alongside coach). */
 export function coreLoopLine(): string {
-  return "LOOP · FIXER → DEPLOY → KILL / NODES → GEAR → REPEAT";
+  return "LOOP · FIXER → DEPLOY → KILL / NODES → GEAR / CONTRACTS → REPEAT";
 }

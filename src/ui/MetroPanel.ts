@@ -138,7 +138,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
         </div>
         <button class="x" id="m-x" aria-label="Close">×</button>
       </div>
-      <div class="sub">${st.networkName}${st.chainId ? ` · id ${st.chainId}` : ""} · player-funded pool · testnet ready without mainnet · mainnet ${st.mainnetLive ? "LIVE" : "counsel-gated"}</div>
+      <div class="sub">${st.networkName}${st.chainId ? ` · id ${st.chainId}` : ""} · player-funded pool · dual-path ready (RH + SOL) · mainnet ${st.mainnetLive ? "LIVE" : "counsel-gated"}</div>
     </div>
     <div class="body">
       <div class="pool-band">
@@ -152,6 +152,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
         </div>
       </div>
       <div class="notice" id="m-phase">Loading pool status…</div>
+      <div class="notice" id="m-checklist" style="display:none"></div>
       <div class="notice" id="m-treasury-health" style="display:none"></div>
       <div class="notice" id="m-economy" style="display:none"></div>
 
@@ -234,6 +235,12 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
     treasuryMetro?: string;
     getMetroHint?: string;
     note?: string;
+    mintConfigured?: boolean;
+    treasuryConfigured?: boolean;
+    readyForCa?: boolean;
+    family?: string;
+    dualPathReady?: { robinhood?: boolean; solana?: boolean };
+    mint?: string;
   } | null = null;
 
   const refreshPool = async () => {
@@ -273,12 +280,25 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
       // Honest phases: awaiting CA ≠ broken; empty pool ≠ broken; sim lock is expected pre-mint.
       const mintReady = !!(p.mintConfigured || METRO_MINT);
       const live = p.settlement && p.settlement !== "sim" && !p.simLocked && !p.dangerousSim;
+      // Dual-path readiness strip (no mainnet required).
+      const ck = $("m-checklist");
+      if (ck) {
+        const rh = p.dualPathReady?.robinhood ? "ready" : "—";
+        const sol = p.dualPathReady?.solana ? "ready" : "—";
+        const mint = mintReady ? "configured" : "awaiting CA";
+        const treas = p.treasuryConfigured || p.treasury ? "ok" : "missing";
+        ck.style.display = "block";
+        ck.textContent =
+          `Paths · Robinhood ERC-20: ${rh} · Solana SPL: ${sol} · mint: ${mint} · treasury: ${treas}. ` +
+          `Testnet rehearsal: set METRO_MINT (0x… or base58) + treasury secret, leave mainnet arm OFF. See docs/METRO_CHAIN_CHOICE.md.`;
+      }
+
       if (!mintReady || p.readyForCa || p.family === "off") {
         phasePill.textContent = "AWAITING CA";
         phaseEl.textContent =
-          "Bridge is standing by. In-game ₵ works fully — $METRO deposit/withdraw turns on when the mint CA is configured on the server. Earn credits, gear up, run contracts.";
+          "Bridge is standing by (not broken). In-game ₵ is fully live — deposit/withdraw arms when ops set the mint CA on the Worker. Earn credits, gear up, run contracts. Empty pool is normal until the first deposit.";
         setActions(false, false);
-        status("earn ₵ in-game · $METRO cash-out opens with the token CA");
+        status("earn ₵ in-game · $METRO cash-out opens with the token CA (testnet OK)");
       } else if (p.simLocked || p.dangerousSim) {
         phaseEl.classList.add("warn");
         phasePill.classList.add("warn");

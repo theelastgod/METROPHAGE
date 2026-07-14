@@ -29,6 +29,16 @@ interface Fade {
   stopAtEnd: boolean;
 }
 
+/** Optional Seed Audio ambient underlay for music beds (layered, quieter). */
+const AMBIENT_UNDER: Partial<Record<MusicEnv, MusicEnv>> = {
+  city: "amb_neon_core",
+  online: "amb_neon_core",
+  district_downtown: "amb_neon_core",
+  district_stacks: "district_sprawl",
+  district_spire: "district_undercity",
+  district_core: "amb_neon_core",
+};
+
 export default class MusicDirector {
   /** Fetch the shared director (created in BootScene). */
   static for(scene: Phaser.Scene): MusicDirector | undefined {
@@ -39,6 +49,7 @@ export default class MusicDirector {
 
   private mgr: Phaser.Sound.BaseSoundManager;
   private current?: Phaser.Sound.BaseSound;
+  private ambient?: Phaser.Sound.BaseSound;
   private currentEnv?: MusicEnv;
   private ducked = false;
   private fades: Fade[] = [];
@@ -61,12 +72,19 @@ export default class MusicDirector {
 
     if (!this.hasTrack(scene, env)) {
       this.fadeOutCurrent();
+      this.fadeOutAmbient();
       synth?.setMusicEnabled(true); // procedural fallback covers this environment
       this.lazyLoad(env, scene); // …while the real bed streams in (menu ships in boot)
+      // Prefetch ambient underlay so layering is ready when the bed lands.
+      const under = AMBIENT_UNDER[env];
+      if (under) this.lazyLoad(under, scene);
       return;
     }
     synth?.setMusicEnabled(false); // a real bed is taking over — mute procedural music
     this.startTrack(env);
+    // Ensure underlay is cached even if startAmbientUnder no-ops this frame.
+    const under = AMBIENT_UNDER[env];
+    if (under && !this.hasTrack(scene, under)) this.lazyLoad(under, scene);
   }
 
   /** Beds ship OUTSIDE the boot payload (menu excepted) to keep time-to-first-play
@@ -96,6 +114,9 @@ export default class MusicDirector {
     if (this.current && this.currentEnv) {
       this.fadeTo(this.current, this.target(this.currentEnv), 80, false);
     }
+    if (this.ambient && this.currentEnv) {
+      this.fadeTo(this.ambient, this.ambientTarget(this.currentEnv), 80, false);
+    }
   }
 
   /** Duck the bed under dialogue / the meltdown VO so spoken lines read clearly. */
@@ -104,6 +125,9 @@ export default class MusicDirector {
     this.ducked = on;
     if (this.current && this.currentEnv) {
       this.fadeTo(this.current, this.target(this.currentEnv), DUCK_MS, false);
+    }
+    if (this.ambient && this.currentEnv) {
+      this.fadeTo(this.ambient, this.ambientTarget(this.currentEnv), DUCK_MS, false);
     }
   }
 
@@ -117,6 +141,7 @@ export default class MusicDirector {
   /** Fade out and forget the current bed (e.g. returning to a procedural scene). */
   stop() {
     this.fadeOutCurrent();
+    this.fadeOutAmbient();
     this.currentEnv = undefined;
   }
 
@@ -132,16 +157,47 @@ export default class MusicDirector {
     const begin = () => {
       if (this.currentEnv !== env) return; // env changed before the audio unlocked
       this.fadeOutCurrent();
+      this.fadeOutAmbient();
       const snd = this.mgr.add(t.key, { loop: true, volume: 0 });
       this.setVol(snd, 0); // belt-and-braces: never let a bed blare for a frame pre-fade
       snd.play();
       this.trimLoop(snd); // make the loop sample-accurate (strip codec padding)
       this.current = snd;
       this.fadeTo(snd, this.target(env), FADE_MS, false);
+      this.startAmbientUnder(env);
     };
     // Browsers block audio until a user gesture; Phaser fires UNLOCKED on the first.
     if (this.mgr.locked) this.mgr.once(Phaser.Sound.Events.UNLOCKED, begin);
     else begin();
+  }
+
+  /** Quiet ambient loop under the main bed when both tracks exist. */
+  private startAmbientUnder(env: MusicEnv) {
+    const under = AMBIENT_UNDER[env];
+    if (!under || under === env) return;
+    const t = MUSIC_BY_ENV[under];
+    if (!t || !this.mgr.game.cache.audio.exists(t.key)) return;
+    try {
+      const snd = this.mgr.add(t.key, { loop: true, volume: 0 });
+      this.setVol(snd, 0);
+      snd.play();
+      this.trimLoop(snd);
+      this.ambient = snd;
+      this.fadeTo(snd, this.ambientTarget(env), FADE_MS, false);
+    } catch {
+      /* optional layer */
+    }
+  }
+
+  private fadeOutAmbient() {
+    if (!this.ambient) return;
+    this.fadeTo(this.ambient, 0, FADE_MS, true);
+    this.ambient = undefined;
+  }
+
+  private ambientTarget(_env: MusicEnv): number {
+    const s = getSettings();
+    return 0.22 * s.music * s.master * (this.ducked ? DUCK_LEVEL : 1);
   }
 
   /**

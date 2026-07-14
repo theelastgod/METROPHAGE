@@ -102,6 +102,9 @@ import {
   noteTalkedFixer,
   noteDeployed,
   noteKill,
+  noteOpenedContracts,
+  noteAcceptedBounty,
+  noteOpenedGear,
   setGodSessionUnlock,
   noteReturnedToHub,
   noteHeatCoached,
@@ -177,6 +180,7 @@ import { applyCosmetic } from "../game/cosmetics";
 import { npcDef, AMBIENT_NPCS, INTERIOR_PLAN, keeperFor, districtResident, hubResident, campaignAllyLines, STORY_ALLIES } from "../game/cityNpcs";
 import { portraitFor, portraitForName, portraitForBoss, type PortraitRef } from "../game/portraits";
 import { bountyForNpc } from "../game/bounties";
+import { noteRecentPlayer, listRecentPlayers, pinRecentPlayer } from "../game/recentPlayers";
 import {
   CLIENT_OPEN_SERVICES,
   npcHasMenu,
@@ -1620,6 +1624,7 @@ export default class OnlineScene extends Phaser.Scene {
       }
       if (e.key === "i" || e.key === "I") {
         this.inv.toggle();
+        if (this.inv.open) noteOpenedGear();
         return;
       }
       if (this.inv.open && e.key === "Escape") {
@@ -1736,7 +1741,10 @@ export default class OnlineScene extends Phaser.Scene {
         // Daily contracts (action-bar "Dailies" · C). Cell/guild opens via service NPC or /ginfo.
         this.tryOpenCitySystem(() => {
           this.contracts.toggle(this.net.contracts, this.net.rep);
-          if (this.contracts.open) this.reportTutorialPanel("contracts");
+          if (this.contracts.open) {
+            noteOpenedContracts();
+            this.reportTutorialPanel("contracts");
+          }
         });
         return;
       }
@@ -2209,7 +2217,25 @@ export default class OnlineScene extends Phaser.Scene {
     else if (s === "/tcancel") this.net.tradeCancel();
     else if (s === "/quest talk") this.net.questTalk();
     else if (s.startsWith("/quest accept")) this.net.questAccept();
-    else this.net.sendChat("zone", undefined, s);
+    // Friends-lite — local recent / pinned contacts (no server graph).
+    else if (s === "/contacts" || s === "/c") {
+      const list = listRecentPlayers();
+      if (!list.length) {
+        this.pushKillFeed("no contacts yet — right-click a runner to pin");
+        this.rsGameMessage?.show("No contacts yet — right-click a runner → Pin", { ttlMs: 3200, color: "#d4c45a" });
+      } else {
+        const lines = list.slice(0, 12).map((p) => `${p.pinned ? "★" : "·"} ${p.name}  (${p.id.slice(0, 16)})`);
+        this.rsGameMessage?.show(`CONTACTS · /w <id> msg · ${list.length} saved`, { ttlMs: 4000, color: "#9fe8ff" });
+        for (const line of lines) this.pushKillFeed(line);
+      }
+    } else if (s.startsWith("/pin ")) {
+      const id = s.slice(5).trim();
+      if (id) {
+        pinRecentPlayer(id, true);
+        noteRecentPlayer(id, id);
+        this.rsGameMessage?.show(`Pinned ${id}`, { ttlMs: 2000, color: "#d4c45a" });
+      }
+    } else this.net.sendChat("zone", undefined, s);
   }
 
   private parseZone(z?: string): number {
@@ -2226,6 +2252,8 @@ export default class OnlineScene extends Phaser.Scene {
       this.pointBlockedPlayerToFixer();
       return;
     }
+    if (svc === "contracts") noteOpenedContracts();
+    if (svc === "vendor" || svc === "forge" || svc === "market" || svc === "cosmetics") noteOpenedGear();
     switch (svc) {
       case "forge":
         this.forge.setState(n.inventory, n.equipped, n.credits, n.cores);
@@ -2972,6 +3000,7 @@ export default class OnlineScene extends Phaser.Scene {
         return;
       }
       this.net.bountyAccept(b.id);
+      noteAcceptedBounty();
       this.showBubble(px, py, `${npcName}: ${b.offer}`, face);
       this.net.story = {
         quest: b.name,
@@ -5505,6 +5534,8 @@ export default class OnlineScene extends Phaser.Scene {
     this.chatPanel.setMessages(this.net.chatLog);
     // Roster: real players first; when solo, show ambient "runners" so the city feels lived-in.
     const others = this.net.roster.filter((r) => r.id !== this.net.id);
+    // Friends-lite: remember runners we share a zone with.
+    for (const r of others.slice(0, 12)) noteRecentPlayer(r.id, r.id);
     const simple = getSettings().uiDensity === "new";
     if (simple && others.length === 0) {
       // Simple HUD: one whisper line, not a column.
@@ -6898,6 +6929,7 @@ export default class OnlineScene extends Phaser.Scene {
         },
       });
       if (this.net.connected) {
+        noteRecentPlayer(id, label);
         actions.push({
           label: `Whisper ${label}`,
           color: "#9fe8ff",
@@ -6920,6 +6952,15 @@ export default class OnlineScene extends Phaser.Scene {
           onPick: () => {
             this.net.tradeRequest(id);
             this.rsGameMessage?.show(`Trade request → ${label}`, { ttlMs: 2200, color: "#f7ff3c" });
+          },
+        });
+        actions.push({
+          label: `Pin contact`,
+          color: "#d4c45a",
+          onPick: () => {
+            pinRecentPlayer(id, true);
+            noteRecentPlayer(id, label);
+            this.rsGameMessage?.show(`Pinned ${label} (contacts in chat /c)`, { ttlMs: 2400, color: "#d4c45a" });
           },
         });
         actions.push({

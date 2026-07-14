@@ -561,6 +561,8 @@ const BOSS_ROSTER: WorldBoss[] = [
   { name: "SKYLINK BEACON", tint: 0x6b9bff, hp: 780 },
   { name: "SCRAP SOVEREIGN", tint: 0xffb13c, hp: 840 },
   { name: "HELIOS WARDEN", tint: 0xffe08a, hp: 920 },
+  // Extra elite commander (matches bosses_sheet frame 8 / void_herald art).
+  { name: "VOID HERALD", tint: 0xc44dff, hp: 1000 },
 ];
 
 /** Vendor — the credits sink. A field-patch heal, and gear "caches" that roll an item of
@@ -575,15 +577,17 @@ interface ShopItem {
   cores?: number;
   creditsGrant?: number;
 }
+// Prices tuned up vs kill emit (CREDITS_PER_KILL=16) so vendor/forge are real sinks.
 const SHOP: Record<string, ShopItem> = {
-  heal: { price: 40, label: "FIELD PATCH", heal: true },
-  cache_standard: { price: 60, label: "SALVAGE CACHE", rarity: "standard" },
-  cache_tuned: { price: 150, label: "TUNED CACHE", rarity: "tuned" },
-  cache_blackice: { price: 480, label: "BLACK-ICE CACHE", rarity: "blackice", repReq: 1 },
-  cache_singular: { price: 1200, label: "SINGULAR CACHE", rarity: "singular", repReq: 2 },
-  core_bundle: { price: 95, label: "CORE BUNDLE", cores: 3 },
-  core_crate: { price: 240, label: "CORE CRATE", cores: 8, repReq: 1 },
-  supply_kit: { price: 50, label: "SUPPLY KIT", creditsGrant: 30, cores: 1 },
+  heal: { price: 55, label: "FIELD PATCH", heal: true },
+  cache_standard: { price: 95, label: "SALVAGE CACHE", rarity: "standard" },
+  cache_tuned: { price: 220, label: "TUNED CACHE", rarity: "tuned" },
+  cache_blackice: { price: 680, label: "BLACK-ICE CACHE", rarity: "blackice", repReq: 1 },
+  cache_singular: { price: 1650, label: "SINGULAR CACHE", rarity: "singular", repReq: 2 },
+  core_bundle: { price: 140, label: "CORE BUNDLE", cores: 3 },
+  core_crate: { price: 360, label: "CORE CRATE", cores: 8, repReq: 1 },
+  // Pure sink kit (no credit refund) — cores only.
+  supply_kit: { price: 75, label: "SUPPLY KIT", cores: 2 },
 };
 
 interface Shot {

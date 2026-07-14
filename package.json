@@ -17,6 +17,7 @@
     "smoke:trusted": "cd server && node scripts/smoke.mjs move && node scripts/smoke.mjs combat && node scripts/smoke.mjs kit && node scripts/smoke.mjs quest && node scripts/smoke.mjs abuse",
     "smoke:load": "cd server && node scripts/smoke.mjs load",
     "smoke:panels": "node tools/panel-smoke.mjs",
+    "verify:ship": "npm run typecheck && npm test && npm run smoke:panels",
     "scan:dead": "node tools/dead-code-scan.mjs",
     "sim:economy": "node tools/economy-sim.mjs",
     "report:economy": "node tools/economy-report.mjs",

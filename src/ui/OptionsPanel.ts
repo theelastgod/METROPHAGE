@@ -5,6 +5,7 @@ import { drawPanelFrame } from "./panelChrome";
 import { closeHint, dimBackdrop, modalRect, panelPad, uiDim, uiFont, uiGap } from "./uiLayout";
 import { COLORS } from "../config";
 import { fitTextToWidth, setFittedText } from "./typography";
+import { buildStamp } from "../buildInfo";
 
 interface Row {
   key: keyof SettingsData;
@@ -59,6 +60,14 @@ export default class OptionsPanel {
     const D = 1801;
 
     this.text(this.x + panelPad(), this.y + uiGap("lg"), "OPTIONS", "#eafdff", 15, D);
+    this.text(
+      this.x + this.w - panelPad(),
+      this.y + uiGap("lg") + uiDim(2),
+      `build ${buildStamp()}`,
+      "#5a6478",
+      9,
+      D,
+    ).setOrigin(1, 0);
 
     let ry = this.y + uiDim(58);
     this.addRow(

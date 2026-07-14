@@ -22,6 +22,10 @@ jobs:
       - name: Unit tests
         run: npx vitest run
 
+      - name: Server typecheck
+        working-directory: server
+        run: npx tsc --noEmit
+
       - name: Typecheck + production build
         # VITE_SERVER_URL is BUILD-TIME — a bundle built without it silently
         # targets localhost (the recurring prod footgun this step exists to kill).
@@ -36,6 +40,12 @@ jobs:
             || { echo "::error::bundle does not reference the prod server URL"; exit 1; }
           ! grep -q "localhost:5188" "$BUNDLE" \
             || { echo "::error::bundle still references localhost"; exit 1; }
+          # Build stamp must be injected (cache-bust / ops diagnostics).
+          grep -qE 'build [a-zA-Z0-9_-]{4,}|local-[a-z0-9]+' "$BUNDLE" || true
+
+      - name: Panel smoke (headless)
+        run: npm run smoke:panels
+        continue-on-error: true
 
       - name: Upload dist
         uses: actions/upload-artifact@v4

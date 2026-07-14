@@ -40,10 +40,21 @@ export default defineConfig(({ command, mode }) => {
     assertProductionServerUrl(env.VITE_SERVER_URL);
   }
 
+  const buildId =
+    process.env.CF_PAGES_COMMIT_SHA ||
+    process.env.GITHUB_SHA ||
+    process.env.VITE_BUILD_ID ||
+    `local-${Date.now().toString(36)}`;
+  const buildTime = new Date().toISOString();
+
   return {
     // Relative asset URLs so the static build runs from any path — domain root
     // (Cloudflare Pages / Netlify) OR a subpath / itch.io zip (which serves from a CDN root).
     base: "./",
+    define: {
+      __BUILD_ID__: JSON.stringify(buildId),
+      __BUILD_TIME__: JSON.stringify(buildTime),
+    },
     server: {
       host: true,
       port: 5173,
