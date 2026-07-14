@@ -11,14 +11,22 @@ export interface DistrictMod {
   enemyHpMult: number;
   enemySpeedMult: number;
   creditMult: number; // kill-credit multiplier while the condition holds
+  /** Optional player HEAT gain mult while in this district (client can mirror). */
+  heatGainMult?: number;
 }
 
 export const DISTRICT_MODS: DistrictMod[] = [
   { id: "surge", name: "SURGE PRICING", blurb: "corp bounties pay fat today — the garrison knows it", enemyHpMult: 1.1, enemySpeedMult: 1, creditMult: 1.5 },
   { id: "lockdown", name: "LOCKDOWN", blurb: "double plating on every unit; hazard pay to match", enemyHpMult: 1.35, enemySpeedMult: 1, creditMult: 1.3 },
   { id: "ghostgrid", name: "GHOST GRID", blurb: "units run silent and fast — keep your head moving", enemyHpMult: 1, enemySpeedMult: 1.2, creditMult: 1.25 },
-  { id: "overclock", name: "OVERCLOCK", blurb: "everything runs hot, both ways", enemyHpMult: 1.15, enemySpeedMult: 1.15, creditMult: 1.4 },
+  { id: "overclock", name: "OVERCLOCK", blurb: "everything runs hot, both ways", enemyHpMult: 1.15, enemySpeedMult: 1.15, creditMult: 1.4, heatGainMult: 1.25 },
   { id: "brownout", name: "BROWNOUT", blurb: "half the grid is asleep — easy pickings, light pay", enemyHpMult: 0.85, enemySpeedMult: 1, creditMult: 0.9 },
+  // Deeper city weather — same fields, more identity per day.
+  { id: "acid_rain", name: "ACID RAIN", blurb: "neon rain bites chrome — garrison slows, pay rises", enemyHpMult: 1.05, enemySpeedMult: 0.9, creditMult: 1.35 },
+  { id: "drone_swarm", name: "DRONE SWARM", blurb: "Anduril dens spit extras — denser packs, denser pay", enemyHpMult: 1.0, enemySpeedMult: 1.1, creditMult: 1.2 },
+  { id: "signal_jolt", name: "SIGNAL JOLT", blurb: "the grid glitches — glass cannons with fat bounties", enemyHpMult: 0.9, enemySpeedMult: 1.25, creditMult: 1.45 },
+  { id: "curfew", name: "CURFEW", blurb: "heavy boots, heavy armor — slow hunters, big purses", enemyHpMult: 1.4, enemySpeedMult: 0.85, creditMult: 1.35 },
+  { id: "contagion_bloom", name: "CONTAGION BLOOM", blurb: "infection flecks every kill — light units, bonus cores feel", enemyHpMult: 0.95, enemySpeedMult: 1.05, creditMult: 1.15 },
 ];
 
 /** UTC day index — the rotation clock. */

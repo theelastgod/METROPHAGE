@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { COLORS } from "../config";
 import { GUILD_CREATE_COST, guildXpForLevel } from "../game/guilds";
+import { weeklyGuildGoal } from "../game/guildGoals";
 import Modal from "./Modal";
 import { closeHint, dimBackdrop, modalRect, uiDim, uiFont } from "./uiLayout";
 
@@ -74,18 +75,21 @@ export default class OnlineGuild extends Modal {
 
     tx("⬡ CELL", x + uiDim(20), y + uiDim(14), 17, "#39ff88", true);
     tx(closeHint("U / ESC close"), x + w - uiDim(20), y + uiDim(16), 12, "#9aa3b2", false, 1);
+    const goal = weeklyGuildGoal();
+    tx(`WEEKLY · ${goal.name}: ${goal.desc}`, x + uiDim(20), y + uiDim(36), 10, "#d4c45a");
+    tx(`Reward ₵${goal.rewardCredits} + ${goal.rewardRep} rep (server tallies cell activity)`, x + uiDim(20), y + uiDim(50), 9, "#7a8190");
 
     if (!this.guild) {
-      tx("You're not in a Cell.", x + uiDim(26), y + uiDim(60), 14, "#cfe8ff", true);
-      tx("A Cell is a player-run resistance group — a shared bank, a level, and a", x + uiDim(26), y + uiDim(90), 12, "#9aa3b2");
-      tx("credit-find perk for every member. Found one or accept an invite:", x + uiDim(26), y + uiDim(108), 12, "#9aa3b2");
+      tx("You're not in a Cell.", x + uiDim(26), y + uiDim(72), 14, "#cfe8ff", true);
+      tx("A Cell is a player-run resistance group — a shared bank, a level, and a", x + uiDim(26), y + uiDim(102), 12, "#9aa3b2");
+      tx("credit-find perk for every member. Found one or accept an invite:", x + uiDim(26), y + uiDim(120), 12, "#9aa3b2");
       const cmds = [
         [`/gcreate <TAG> <name>`, `found a Cell (costs ₵${GUILD_CREATE_COST})`],
         ["/gjoin", "accept your latest invite"],
         ["/ginvite <id>", "invite a player (leader/officer)"],
         ["/g <message>", "Cell chat"],
       ];
-      let cy = y + uiDim(142);
+      let cy = y + uiDim(154);
       for (const [c, d] of cmds) {
         tx(c, x + uiDim(32), cy, 13, "#f7ff3c", true);
         tx(d, x + uiDim(260), cy, 12, "#9aa3b2");

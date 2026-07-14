@@ -10,6 +10,7 @@ import OnlineInventory from "../ui/OnlineInventory";
 import OnlineShop from "../ui/OnlineShop";
 import OnlineForge from "../ui/OnlineForge";
 import OnlineBoard from "../ui/OnlineBoard";
+import OnlineJournal from "../ui/OnlineJournal";
 import OnlineGuild from "../ui/OnlineGuild";
 import OnlineMarket from "../ui/OnlineMarket";
 import OnlineStash from "../ui/OnlineStash";
@@ -106,6 +107,7 @@ import { getSettings, effectiveLowFx } from "../systems/Settings";
 import {
   firstSessionLine,
   coreLoopLine,
+  getFirstSession,
   noteTalkedFixer,
   noteDeployed,
   noteKill,
@@ -116,9 +118,19 @@ import {
   noteReturnedToHub,
   noteHeatCoached,
   firstHourSystemsLocked,
-  getFirstSession,
   noteCampaignProgress,
 } from "../game/firstSession";
+import {
+  secondHourLine,
+  noteSecondBuyCache,
+  noteSecondForge,
+  noteSecondBountyDone,
+  noteSecondBossTouch,
+} from "../game/secondHour";
+import { noteNpcTalk, noteNpcBountyDone, npcMemoryLine } from "../game/npcMemory";
+import { buildStamp } from "../buildInfo";
+import { raidScriptFor } from "../game/raid";
+import { dailyDistrictMod } from "../game/districtMods";
 import { fadeInScene, transitionTo } from "../systems/transitions";
 import { juiceShake, juiceFlash, juiceHitStop, juiceZoomPunch, juiceNeonPulse } from "../systems/juice";
 import Particles from "../render/Particles";
@@ -291,9 +303,11 @@ export default class OnlineScene extends Phaser.Scene {
   private shop!: OnlineShop; // vendor panel (credits sink)
   private forge!: OnlineForge; // gear forge — upgrade/reforge/fuse/salvage (credits+cores sink)
   private board!: OnlineBoard; // achievements + cross-zone leaderboards (D1-backed, HTTP)
+  private journal!: OnlineJournal; // memory fragments codex
   private guildPanel!: OnlineGuild; // guild ("Cell") bank/roster/level (D1-backed)
   private market!: OnlineMarket; // auction house — cross-zone player market (D1-backed)
   private contracts!: OnlineContracts; // daily contracts + reputation track (D1-backed)
+  private buildBannerShown = false;
   private fixerBrief!: FixerBrief; // campaign brief (THE WAKE) — never the dailies board
   private npcTalk!: NpcTalkPanel; // multi-choice citizen services (heal / job / rumor…)
   private cosmetics!: OnlineCosmetics; // wardrobe / transmog (cosmetic-only, wallet-owned)
@@ -1085,6 +1099,16 @@ export default class OnlineScene extends Phaser.Scene {
       noteCampaignProgress(!!this.net.campaignQuest || (this.net.campaignCompleted?.length ?? 0) > 0);
     };
     this.net.onStory = () => this.presentStoryBeat();
+    this.net.onBounty = () => {
+      const b = this.net.bounty;
+      if (b && b.progress >= b.count) {
+        noteSecondBountyDone();
+        const npcId = b.id.includes("_") ? b.id.split("_")[0] : "";
+        // Best-effort memory key from bounty id prefix
+        if (npcId) noteNpcBountyDone(npcId);
+      }
+      this.journal?.setOwned(this.net.fragments);
+    };
     const tutorialMode =
       data?.tutorialMode ?? (this.registry.get("tutorialMode") as TutorialMode | undefined) ?? getSettings().tutorialMode;
     if (this.isTutorial) this.registry.set("tutorialMode", tutorialMode);
@@ -1092,6 +1116,12 @@ export default class OnlineScene extends Phaser.Scene {
     this.net.onConnectionState = (state) => {
       this.connectionState = state;
       if (state === "connected") this.connectStartedAt = Date.now();
+      if (state === "reconnecting") {
+        this.rsGameMessage?.show("Reconnecting to the grid…", { ttlMs: 2800, color: "#f7ff3c" });
+      }
+      if (state === "offline") {
+        this.rsGameMessage?.show("Link lost — solo preview until rejoin", { ttlMs: 3500, color: "#ff7a9a" });
+      }
       this.hudRefreshAcc = OnlineScene.HUD_REFRESH_MS;
       this.minimapRefreshAcc = OnlineScene.MINIMAP_REFRESH_MS;
     };
@@ -1101,6 +1131,23 @@ export default class OnlineScene extends Phaser.Scene {
       this.me.setPosition(x, y).setVisible(true);
       this.cameras.main.startFollow(this.me, true, 0.18, 0.18);
       setOnlinePlayer(this.net.id);
+      this.journal?.setOwned(this.net.fragments);
+      if (!this.buildBannerShown) {
+        this.buildBannerShown = true;
+        this.time.delayedCall(400, () => {
+          this.rsGameMessage?.show(`build ${buildStamp()} · N memory · L dossier · /contacts`, {
+            ttlMs: 4200,
+            color: "#9fe8ff",
+          });
+        });
+      }
+      // District condition callout (combat zones)
+      if (/^d\d+$/.test(this.zone)) {
+        const mod = dailyDistrictMod(this.districtIndex);
+        this.time.delayedCall(900, () => {
+          this.rsGameMessage?.show(`◈ ${mod.name} — ${mod.blurb}`, { ttlMs: 4500, color: "#f7ff3c" });
+        });
+      }
       if (this.isTutorial) this.net.setTutorialMode(tutorialMode);
       if (this.net.godMode) {
         setGodSessionUnlock(true);
@@ -1146,6 +1193,7 @@ export default class OnlineScene extends Phaser.Scene {
     // HTTP base for cross-zone reads (leaderboards): ws(s)://host/ws → http(s)://host
     const httpBase = SERVER_URL.replace(/^ws/, "http").replace(/\/ws$/, "");
     this.board = new OnlineBoard(this, httpBase);
+    this.journal = new OnlineJournal(this);
     this.guildPanel = new OnlineGuild(this);
     this.guildPanel.onAction = (action, c, k) => {
       if (action === "leave") this.net.guildAction("leave");
@@ -1679,7 +1727,10 @@ export default class OnlineScene extends Phaser.Scene {
         this.tryOpenCitySystem(() => {
           this.forge.setState(this.net.inventory, this.net.equipped, this.net.credits, this.net.cores);
           this.forge.toggle();
-          if (this.forge.open) this.reportTutorialPanel("craft");
+          if (this.forge.open) {
+            noteSecondForge();
+            this.reportTutorialPanel("craft");
+          }
         });
         return;
       }
@@ -1713,6 +1764,15 @@ export default class OnlineScene extends Phaser.Scene {
       }
       if (this.board.open && e.key === "Escape") {
         this.board.close();
+        return;
+      }
+      if (e.key === "n" || e.key === "N") {
+        // Memory journal — fragments from ICE dives (always allowed; discovery loop).
+        this.journal.toggle(this.net.fragments);
+        return;
+      }
+      if (this.journal?.open && e.key === "Escape") {
+        this.journal.close();
         return;
       }
       if (this.guildPanel.open && e.key === "Escape") {
@@ -2263,6 +2323,8 @@ export default class OnlineScene extends Phaser.Scene {
     }
     if (svc === "contracts") noteOpenedContracts();
     if (svc === "vendor" || svc === "forge" || svc === "market" || svc === "cosmetics") noteOpenedGear();
+    if (svc === "vendor") noteSecondBuyCache();
+    if (svc === "forge") noteSecondForge();
     switch (svc) {
       case "forge":
         this.forge.setState(n.inventory, n.equipped, n.credits, n.cores);
@@ -2944,8 +3006,10 @@ export default class OnlineScene extends Phaser.Scene {
 
   /** Talk: most people bark a line; a few open a small choice menu. */
   private talkNpc(npc: { npcId?: string; name: string; lines?: string[]; lineIdx?: number; x: number; y: number }) {
-    const line = this.advanceLine(npc);
-    this.showBubble(npc.x, npc.y, `${npc.name}: ${line}`, this.bubblePortrait(npc.npcId, npc.name));
+    if (npc.npcId) noteNpcTalk(npc.npcId);
+    const mem = npc.npcId ? npcMemoryLine(npc.npcId, npc.name) : null;
+    const line = mem ?? `${npc.name}: ${this.advanceLine(npc)}`;
+    this.showBubble(npc.x, npc.y, line.startsWith(npc.name) ? line : `${npc.name}: ${line}`, this.bubblePortrait(npc.npcId, npc.name));
 
     if (!npc.npcId) return;
     const hasBounty = !!bountyForNpc(npc.npcId);
@@ -2955,7 +3019,7 @@ export default class OnlineScene extends Phaser.Scene {
     this.npcTalk.show({
       npcId: npc.npcId,
       name: npc.name,
-      line,
+      line: mem ?? this.advanceLine(npc),
       credits: this.net.credits,
       cores: this.net.cores,
       hasBountyActive: !!this.net.bounty,
@@ -3010,6 +3074,7 @@ export default class OnlineScene extends Phaser.Scene {
       }
       this.net.bountyAccept(b.id);
       noteAcceptedBounty();
+      noteNpcTalk(npcId);
       this.showBubble(px, py, `${npcName}: ${b.offer}`, face);
       this.net.story = {
         quest: b.name,
@@ -5930,14 +5995,19 @@ export default class OnlineScene extends Phaser.Scene {
       return;
     }
     const coach = firstSessionLine();
+    const fs = getFirstSession();
+    const hour2 = secondHourLine(fs.step === "done" || fs.kills >= 3);
     const simple = getSettings().uiDensity === "new";
-    // New players: coach only. Full mode: coach + core loop.
-    const line = coach ?? (simple ? null : coreLoopLine());
+    // New players: coach only. Then second-hour beats. Full mode: core loop.
+    const line = coach ?? hour2 ?? (simple ? null : coreLoopLine());
     if (!line) {
       this.coachText.setVisible(false);
       return;
     }
-    this.coachText.setVisible(true).setText(line).setColor(coach ? "#39ff88" : "#6b7184");
+    this.coachText
+      .setVisible(true)
+      .setText(line)
+      .setColor(coach ? "#39ff88" : hour2 ? "#f7ff3c" : "#6b7184");
   }
 
   private pushKillFeed(line: string) {
@@ -6359,6 +6429,9 @@ export default class OnlineScene extends Phaser.Scene {
   /** Boss title card — letterbox bars sweep in, splash portrait + name land with a
    *  sting, holds a beat, and sweeps out. Once per boss per zone visit. */
   private playBossIntro(name: string) {
+    noteSecondBossTouch();
+    const script = raidScriptFor(name);
+    const phase0 = script.phases[0]?.name ?? "ASSAULT";
     const w = this.scale.width;
     const h = this.scale.height;
     const barH = uiDim(52);
@@ -6385,7 +6458,12 @@ export default class OnlineScene extends Phaser.Scene {
       .setScale(1.35);
     title.setShadow(0, 0, "#2a0510", 10, true, true);
     const tag = this.add
-      .text(w / 2, h / 2 + uiDim(portrait ? 86 : 30), "— HSS COMMANDER UNIT —", hudFont(11, { color: "#9aa3b2" }))
+      .text(
+        w / 2,
+        h / 2 + uiDim(portrait ? 86 : 30),
+        `— HSS COMMANDER · PHASE ${phase0} —`,
+        hudFont(11, { color: "#9aa3b2" }),
+      )
       .setOrigin(0.5)
       .setScrollFactor(0)
       .setDepth(D + 1)

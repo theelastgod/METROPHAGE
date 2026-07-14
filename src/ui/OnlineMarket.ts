@@ -19,7 +19,7 @@ import {
 } from "./studioChrome";
 
 type Currency = "credits" | "metro";
-type Filter = "all" | Currency;
+type Filter = "all" | Currency | "weapon" | "armor" | "rare";
 
 interface Listing {
   id: number;
@@ -104,7 +104,14 @@ export default class OnlineMarket extends Modal {
 
     const itemLine = (it: Item) => `${RARITIES[it.rarity].name} · ${SLOT_NAMES[it.slot]}${(it.ilvl ?? 0) > 0 ? ` +${it.ilvl}` : ""}`;
     const priceLabel = (l: Listing) => (l.currency === "metro" ? `◈${fmtMetro(l.price)}` : `₵${l.price}`);
-    const matchesFilter = (l: Listing) => this.filter === "all" || l.currency === this.filter;
+    const matchesFilter = (l: Listing) => {
+      if (this.filter === "all") return true;
+      if (this.filter === "credits" || this.filter === "metro") return l.currency === this.filter;
+      if (this.filter === "weapon") return l.item.slot === "weapon";
+      if (this.filter === "armor") return l.item.slot === "armor" || l.item.slot === "implant";
+      if (this.filter === "rare") return l.item.rarity === "blackice" || l.item.rarity === "singular";
+      return true;
+    };
 
     const headerEnd = drawStudioHeaderBand(
       g,
@@ -131,7 +138,6 @@ export default class OnlineMarket extends Modal {
     tx("/list <slot> <price> [metro]", x + w - uiDim(22), chipY + uiDim(8), 10, STUDIO.dim, false, 1, w - uiDim(392));
 
     const tabY = headerEnd + uiDim(36);
-    const tabW = uiDim(108);
     drawStudioTabs(
       g,
       scene,
@@ -139,11 +145,14 @@ export default class OnlineMarket extends Modal {
       tabY,
       [
         { id: "all", label: "ALL", color: COLORS.neonCyan },
-        { id: "credits", label: "₵ CREDITS", color: COLORS.neonYellow },
-        { id: "metro", label: "◈ $METRO", color: COLORS.neonMagenta },
+        { id: "credits", label: "₵", color: COLORS.neonYellow },
+        { id: "metro", label: "◈", color: COLORS.neonMagenta },
+        { id: "weapon", label: "WEP", color: COLORS.neonGreen },
+        { id: "armor", label: "ARM", color: 0x6b9bff },
+        { id: "rare", label: "RARE", color: COLORS.neonMagenta },
       ],
       this.filter,
-      tabW,
+      uiDim(72),
       (id) => {
         this.filter = id as Filter;
         this.build();

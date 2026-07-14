@@ -432,6 +432,81 @@ export const QUESTS: QuestDef[] = [
     reward: { xp: 480, currency: 340, loot: 2, lootBoost: 1.4 },
     setsFlag: "wastes_done",
   },
+
+  // ── SIDE — STREET DEBTS (available after THE WAKE starts) ─────────────────
+  {
+    id: "street_debts",
+    name: "STREET DEBTS",
+    giver: "fixer",
+    offerTree: "street_debts_offer",
+    requiresFlag: "wake_done",
+    stages: [
+      {
+        id: "collect",
+        journal:
+          "Rin's crew is short three cores and a body count. Not for THE FIXER — for people who still breathe without a lease.",
+        objective: "Purge 8 HSS units",
+        on: { type: "kill", count: 8 },
+      },
+      {
+        id: "return",
+        journal: "The debt's paid in chrome. THE FIXER wants the receipt.",
+        objective: "Return to the FIXER",
+        on: { type: "talk" },
+        talkTree: "street_debts_final",
+      },
+    ],
+    reward: { xp: 160, currency: 140, loot: 1, lootBoost: 1.1 },
+    setsFlag: "street_debts_done",
+  },
+  {
+    id: "node_war",
+    name: "NODE WAR",
+    giver: "fixer",
+    offerTree: "node_war_offer",
+    requiresFlag: "street_debts_done",
+    stages: [
+      {
+        id: "flip",
+        journal: "Three nodes. Three neighborhoods that stop paying Helios rent for a night.",
+        objective: "Capture 3 territory nodes",
+        on: { type: "secure", count: 3 },
+      },
+      {
+        id: "report",
+        journal: "The map bleeds our colour. Tell THE FIXER before the corps repaint it.",
+        objective: "Return to the FIXER",
+        on: { type: "talk" },
+        talkTree: "node_war_final",
+      },
+    ],
+    reward: { xp: 220, currency: 200, loot: 1, lootBoost: 1.15 },
+    setsFlag: "node_war_done",
+  },
+  {
+    id: "ghost_sheet",
+    name: "GHOST SHEET",
+    giver: "fixer",
+    offerTree: "ghost_sheet_offer",
+    requiresFlag: "node_war_done",
+    stages: [
+      {
+        id: "hvt",
+        journal: "GHOST's kill sheet and THE FIXER's map agree for once. Bring down a world boss.",
+        objective: "Fell a world boss",
+        on: { type: "boss", count: 1 },
+      },
+      {
+        id: "close",
+        journal: "The sheet is shorter. The city is not safer. Just honest.",
+        objective: "Return to the FIXER",
+        on: { type: "talk" },
+        talkTree: "ghost_sheet_final",
+      },
+    ],
+    reward: { xp: 300, currency: 280, loot: 2, lootBoost: 1.25 },
+    setsFlag: "ghost_sheet_done",
+  },
 ];
 
 export function getQuest(id: string): QuestDef | undefined {

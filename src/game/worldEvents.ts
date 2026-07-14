@@ -3,7 +3,14 @@
 // Heat / Singularity. The WorldEvents scheduler picks one, warns, runs it, pays
 // out; GameScene implements the actual effects (WorldEventHost).
 
-export type WorldEventId = "neon_storm" | "blackout" | "purge_wave" | "contagion_outbreak";
+export type WorldEventId =
+  | "neon_storm"
+  | "blackout"
+  | "purge_wave"
+  | "contagion_outbreak"
+  | "heat_spike"
+  | "repo_siren"
+  | "market_glitch";
 
 export interface WorldEventDef {
   id: WorldEventId;
@@ -66,6 +73,42 @@ export const WORLD_EVENTS: WorldEventDef[] = [
     minHeatNorm: 0,
     weight: 0.9,
     reward: { xp: 55, currency: 40 },
+  },
+  {
+    id: "heat_spike",
+    name: "HEAT SPIKE",
+    tagline: "ult meters climb — the district wants blood",
+    color: 0xff9d3c,
+    hex: "#ff9d3c",
+    telegraphMs: 2200,
+    durationMs: 12000,
+    minHeatNorm: 0.15,
+    weight: 1,
+    reward: { xp: 50, currency: 45 },
+  },
+  {
+    id: "repo_siren",
+    name: "REPO SIREN",
+    tagline: "HSS dens spawn denser — stay loud or die quiet",
+    color: 0xff3b6b,
+    hex: "#ff3b6b",
+    telegraphMs: 3000,
+    durationMs: 14000,
+    minHeatNorm: 0.2,
+    weight: 0.95,
+    reward: { xp: 70, currency: 55 },
+  },
+  {
+    id: "market_glitch",
+    name: "MARKET GLITCH",
+    tagline: "vendor caches feel cheap for a window — spend or regret",
+    color: 0xf7ff3c,
+    hex: "#f7ff3c",
+    telegraphMs: 2000,
+    durationMs: 16000,
+    minHeatNorm: 0,
+    weight: 0.7,
+    reward: { xp: 40, currency: 30 },
   },
 ];
 

@@ -120,6 +120,9 @@ import { dailyContracts, getDaily, currentDay, repTier, type DailyObjective } fr
 import { phaseForHp, raidHpScale, raidScriptFor } from "../../src/game/raid";
 import { getCosmetic, applyCosmetic } from "../../src/game/cosmetics";
 import { bountyById, bountyForNpc, type BountyObjective } from "../../src/game/bounties";
+import { rollBossSignature, bossLootBlurb } from "../../src/game/bossLoot";
+import { maybeNamedLoot } from "../../src/game/namedLoot";
+import { weeklyGuildGoal, currentGuildWeek, guildGoalProgressKey } from "../../src/game/guildGoals";
 import {
   BLESS_IFRAME_TICKS,
   CLIENT_OPEN_SERVICES,
@@ -5376,19 +5379,23 @@ export class WorldDO {
         for (const [aid, ae] of this.enemies) if (ae.add && !ae.boss) this.enemies.delete(aid);
       }
       if (isBoss || e.elite || wasHvt || Math.random() < arch.loot.chance) {
-        const drop = rollItem(killer.level, isBoss ? 2.5 : wasHvt ? 2.2 : arch.loot.boost + (e.elite?.lootBonus ?? 0));
-        if (killer.inventory.length >= INVENTORY_CAP) {
-          // Never destroy loot — mail it for later claim.
-          void this.env.DB.prepare("INSERT INTO mailbox (player, item, reason, created_at) VALUES (?,?,?,?)")
-            .bind(killer.id, JSON.stringify(drop), "bag full loot", Date.now())
-            .run();
-          this.sendTo(killer.id, { t: "sys", text: "bag full — loot mailed (open market/board later to claim)" });
-        } else {
-          killer.inventory.push(drop);
-          this.sendTo(killer.id, { t: "inv", items: killer.inventory });
-        }
+        let drop = rollItem(killer.level, isBoss ? 2.5 : wasHvt ? 2.2 : arch.loot.boost + (e.elite?.lootBonus ?? 0));
+        drop = maybeNamedLoot(drop, killer.level);
+        this.grantLoot(killer, drop, "bag full loot");
       }
-      if (isBoss) this.broadcast({ t: "sys", text: `▲ ${killer.name} slew ${e.name} — it will reform soon` });
+      // World-boss signature piece — guaranteed on kill (on top of the normal roll).
+      if (isBoss) {
+        const sig = rollBossSignature(e.name, killer.level);
+        if (sig) {
+          this.grantLoot(killer, sig, "bag full boss loot");
+          const blurb = bossLootBlurb(e.name);
+          this.sendTo(killer.id, {
+            t: "sys",
+            text: `◆ SIGNATURE LOOT — ${sig.name}${blurb ? ` · ${blurb}` : ""}`,
+          });
+        }
+        this.broadcast({ t: "sys", text: `▲ ${killer.name} slew ${e.name} — it will reform soon` });
+      }
     } else {
       this.eliteDeath(e);
     }
@@ -5404,6 +5411,29 @@ export class WorldDO {
     if (killer && Math.random() < 0.08) {
       killer.cores += 1;
       killer.dirty = true;
+    }
+    // Contagion bloom day: extra core chance on kill.
+    if (killer && /^d\d+$/.test(this.zoneName)) {
+      const mod = dailyDistrictMod(this.districtIndex, this.modDay >= 0 ? this.modDay : dayIndex());
+      if (mod.id === "contagion_bloom" && Math.random() < 0.12) {
+        killer.cores += 1;
+        killer.dirty = true;
+        this.sendTo(killer.id, { t: "sys", text: "◈ contagion bloom — +1 core fleck" });
+      }
+    }
+  }
+
+  /** Put an item in bag or mailbox — never silently destroy drops. */
+  private grantLoot(killer: PlayerState, drop: Item, mailReason: string) {
+    if (killer.inventory.length >= INVENTORY_CAP) {
+      void this.env.DB.prepare("INSERT INTO mailbox (player, item, reason, created_at) VALUES (?,?,?,?)")
+        .bind(killer.id, JSON.stringify(drop), mailReason, Date.now())
+        .run();
+      this.sendTo(killer.id, { t: "sys", text: "bag full — loot mailed" });
+    } else {
+      killer.inventory.push(drop);
+      killer.dirty = true;
+      this.sendTo(killer.id, { t: "inv", items: killer.inventory });
     }
   }
 
