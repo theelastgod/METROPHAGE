@@ -8,7 +8,7 @@ description: The field manual for a neon-noir cyberpunk action-MMO in the browse
 
 > Every mind in Metro City is leased. You are a **Blank** — a repossessed mind that booted free. The Human Security System wants you back on the ledger. **Push the Singularity. Wake the rest.**
 
-**METROPHAGE** is a top-down, neon-noir cyberpunk **action-MMO** that runs in the browser. One shared, **server-authoritative** city; a personal campaign about waking the minds the corps froze; four classes with full combat kits; and a player-funded **$METRO** economy on Solana.
+**METROPHAGE** is a top-down, neon-noir cyberpunk **action-MMO** that runs in the browser. One shared, **server-authoritative** city; a personal campaign about waking the minds the corps froze; four classes with full combat kits; and a player-funded **$METRO** economy on Robinhood Chain.
 
 The client never decides anything that matters. Movement is intent-only, and every hit, drop, cooldown, quest beat, trade, and settlement resolves on the server. Your job is simpler: **survive the districts, break the vaults, wake the city.**
 
@@ -35,7 +35,7 @@ The client never decides anything that matters. Movement is intent-only, and eve
 * **World** — one shared Metro City hub + **8 combat districts** + **8 ICE Vaults**
 * **Classes** — 4, each with a primary, a Q ability, and a HEAT-gated E ultimate
 * **Campaign** — a **9-act** questline, _THE WAKE → OUTER RING_, run inside the live world
-* **Economy** — off-chain `credits` (₵) bridged to a tradeable **$METRO** (◈) token on Solana
+* **Economy** — off-chain `credits` (₵) bridged to a tradeable **$METRO** (◈) ERC-20 token on Robinhood Chain
 * **Endgame** — world bosses, elites, the PvP Crucible, guilds, the weekly vault, and a save-wide **seasonal meltdown**
 
 > **Play:** [metrophagev1.pages.dev](https://metrophagev1.pages.dev)

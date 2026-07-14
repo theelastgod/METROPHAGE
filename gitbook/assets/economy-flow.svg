@@ -7,13 +7,13 @@
   </defs>
   <rect width="1040" height="560" fill="url(#ec-bg)"/>
   <text x="40" y="52" font-size="24" font-weight="700" letter-spacing="6" fill="#eafaff">THE $METRO ECONOMY</text>
-  <text x="40" y="76" font-size="11" letter-spacing="3" fill="#7fd4e0">TRADEABLE SOLANA SPL TOKEN ◈ BRIDGED TO OFF-CHAIN GAME CREDITS ₵ · POOL IS 100% PLAYER-FUNDED</text>
+  <text x="40" y="76" font-size="11" letter-spacing="3" fill="#7fd4e0">TRADEABLE ROBINHOOD CHAIN ERC-20 ◈ BRIDGED TO OFF-CHAIN CREDITS ₵ · POOL IS 100% PLAYER-FUNDED</text>
 
   <!-- WALLET -->
   <g transform="translate(60,150)">
     <rect x="0" y="0" width="240" height="150" rx="12" fill="#0d0820" stroke="#9b5cff" stroke-width="1.8"/>
     <text x="20" y="34" font-size="16" font-weight="700" letter-spacing="2" fill="#bf95ff" filter="url(#ec-glow)">◈ YOUR WALLET</text>
-    <text x="20" y="58" font-size="10" letter-spacing="1.5" fill="#b7a7e0">PHANTOM · SOLANA</text>
+    <text x="20" y="58" font-size="10" letter-spacing="1.5" fill="#b7a7e0">METAMASK · ROBINHOOD CHAIN</text>
     <line x1="20" y1="72" x2="220" y2="72" stroke="#2e2440"/>
     <text x="20" y="96" font-size="11" fill="#e9dcff">$METRO — on-chain,</text>
     <text x="20" y="114" font-size="11" fill="#e9dcff">tradeable, real value</text>
@@ -64,10 +64,10 @@
       <text x="24" y="84">◈  Withdraw rate  125 ₵ → 1 ◈  (the spread refills the pool)</text>
       <text x="24" y="108">◈  Minimum cash-out  250 ₵  (2 ◈)</text>
       <text x="24" y="132">◈  Daily cap  50,000 ₵ per player</text>
-      <text x="500" y="60">▸  Cash-outs are CLAIMS — the player pays the SOL fee</text>
-      <text x="500" y="84">▸  Treasury only SIGNS — it never holds or spends SOL</text>
+      <text x="500" y="60">▸  Cash-outs are CLAIMS — treasury-signed on Robinhood Chain</text>
+      <text x="500" y="84">▸  Deposits cost a little ETH gas, paid via MetaMask</text>
       <text x="500" y="108">▸  Mainnet stays DISARMED until counsel signs off</text>
-      <text x="500" y="132">▸  Devnet rehearsal first; server secrets before client mint</text>
+      <text x="500" y="132">▸  Testnet rehearsal first; server secrets before client mint</text>
     </g>
   </g>
 </svg>

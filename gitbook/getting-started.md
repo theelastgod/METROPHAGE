@@ -35,7 +35,7 @@ handle abilities. The whole game is designed to run on a phone.
 
 - **Guest** — pick a callsign and play immediately. Your progress is bound to your
   device so nobody else can log in as you.
-- **Wallet** — connect **Phantom** on Solana and sign a **free message** (no gas). This
+- **Wallet** — connect **MetaMask** on Robinhood Chain and sign a **free message** (no gas). This
   gives you a durable identity that survives across devices and unlocks the
   [$METRO bridge](economy.md).
 

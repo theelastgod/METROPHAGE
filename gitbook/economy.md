@@ -1,13 +1,13 @@
 # The $METRO Economy
 
-METROPHAGE has two currencies: off-chain **credits (₵)** that you earn and spend in the game, and a tradeable **$METRO (◈)** token on Solana. The bridge between them is player-funded and deliberately honest about when it's open.
+METROPHAGE has two currencies: off-chain **credits (₵)** that you earn and spend in the game, and a tradeable **$METRO (◈)** token on **Robinhood Chain**. The bridge between them is player-funded and deliberately honest about when it's open.
 
 ![The $METRO economy](.gitbook/assets/economy-flow.svg)
 
 ## Two currencies
 
 * **Credits (₵)** — off-chain, **server-authoritative** in-game currency. You earn them by playing and spend them at the forge, market, vendors, and Crucible. **Playing is the only faucet.**
-* **$METRO (◈)** — an on-chain **Solana SPL** token with real, tradeable value. Sign-up is a free Phantom message (no gas). _(Robinhood Chain ERC-20 remains as a legacy path.)_
+* **$METRO (◈)** — an on-chain **ERC-20** token on **Robinhood Chain** (an Ethereum L2) with real, tradeable value. Wallet is **MetaMask**, and sign-up is a free signature (no gas).
 
 ## The bridge, in one picture
 
@@ -26,15 +26,15 @@ The **\~20% spread** between deposit and withdraw stays in the pool. The pool **
 | Withdraw rate    | **125 ₵ → 1 ◈**         |
 | Minimum cash-out | **250 ₵** (2 ◈)         |
 | Daily cap        | **50,000 ₵ per player** |
-| Settlement       | Solana SPL (primary)    |
+| Settlement       | Robinhood Chain (ERC-20)    |
 
 ## How claims stay safe
 
 Cash-outs are **claims**, and the security model is strict:
 
-* **The player pays the SOL fee.** You are the fee payer on your own withdrawal.
-* **The treasury only signs — it never holds or spends SOL.** It can't be drained of gas because it never has any to spend.
-* **Mainnet stays disarmed** until counsel signs off; devnet rehearsal comes first, and server secrets are configured before the client mint so nobody can fabricate credits against an un-armed bridge.
+* **Deposits cost only a little ETH gas**, paid through MetaMask — your $METRO goes straight into the player-funded pool.
+* **Cash-outs are treasury-signed claims** settled on Robinhood Chain. The server checks your credits balance, daily cap, and the pool before the treasury ever signs, so a claim can't mint value that isn't there.
+* **Mainnet stays disarmed** until counsel signs off; testnet rehearsal comes first, and server secrets are configured before the client mint so nobody can fabricate credits against an un-armed bridge.
 
 > **In plain terms:** the on-chain layer is dormant until it's deliberately switched on, the pool only ever contains real player deposits, and no single wallet is trusted to hold the keys to the vault. Until then, the entire ₵ economy — earning, forging, trading, PvP — is fully live and playable off-chain.
 
