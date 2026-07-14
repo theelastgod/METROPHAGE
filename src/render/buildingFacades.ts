@@ -135,11 +135,33 @@ export function buildingExteriorAccent(kind: BuildingKind): number {
   return KIND_STYLE[kind].accent;
 }
 
+/** Higgsfield baked top-down building art, keyed by building kind. Kinds absent here
+ *  fall back to the procedural façade. hospital reuses the clinic art (green cross). */
+const BUILDING_SPRITE: Partial<Record<BuildingKind, string>> = {
+  bar: "hf_building_bar",
+  clinic: "hf_building_clinic",
+  hospital: "hf_building_clinic",
+  subway: "hf_building_subway",
+  shop: "hf_building_shop",
+};
+
 /** Distinct exteriors for city-hub buildings (kind + landmark aware). */
 export function paintCityBuildingFacades(scene: Phaser.Scene, buildings: CityBuilding[], depth = 3.2): void {
   for (const b of buildings) {
     const style = KIND_STYLE[b.kind];
     paintFacade(scene, b.rect, b.door, style.accent, style.sign, style.glyph, depth, LANDMARK_KINDS.includes(b.kind));
+    // Overlay the baked building art when present; procedural façade stays as fallback.
+    const spriteKey = BUILDING_SPRITE[b.kind];
+    if (spriteKey && scene.textures.exists(spriteKey)) {
+      const X1 = b.rect.x1 * TILE;
+      const Y1 = b.rect.y1 * TILE;
+      const w = (b.rect.x2 + 1) * TILE - X1;
+      const h = (b.rect.y2 + 1) * TILE - Y1;
+      scene.add
+        .image(X1 + w / 2, Y1 + h / 2, spriteKey)
+        .setDisplaySize(w, h)
+        .setDepth(depth + 0.05);
+    }
   }
 }
 

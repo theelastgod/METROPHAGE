@@ -111,6 +111,10 @@ export const classArtKey = (classId: string) => "classart_" + classId;
 export const VO_MELTDOWN_KEY = "vo_meltdown";
 /** Higgsfield top-down prop pack (12 cells, tools/higgsfield-hud-build.mjs). */
 export const HF_PROP_KEYS = Array.from({ length: 12 }, (_, i) => "hf_prop_" + String(i + 1).padStart(2, "0"));
+/** Higgsfield top-down landmark building props (tools/higgsfield-building-build.mjs). */
+export const HF_BUILDING_SLUGS = ["bar", "clinic", "subway", "shop"] as const;
+export const hfBuildingKey = (slug: string) => "hf_building_" + slug;
+export const HF_BUILDING_KEYS = HF_BUILDING_SLUGS.map(hfBuildingKey);
 
 // Top-down character sheet frame order (drop-in pack): 0=down 1=left 2=right 3=up.
 const CHAR: Pick<AssetEntry, "frameWidth" | "frameHeight"> = {
@@ -221,6 +225,8 @@ export const ASSETS: Record<string, AssetEntry[]> = {
     { key: PROP_PICKUP_KEY, file: "assets/objects/prop_pickup.png" },
     { key: PROP_VAN_KEY, file: "assets/objects/prop_van.png" },
     ...HOLO_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
+    // Higgsfield top-down landmark buildings (tools/higgsfield-building-build.mjs).
+    ...HF_BUILDING_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
   ],
   // Real isometric cyberpunk crates/containers — non-colliding cargo decals (asset-drop).
   decals: [
