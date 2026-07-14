@@ -3,7 +3,7 @@
 Single ordered checklist for turning on the player-funded cash-out bridge.
 Follow **top to bottom**. Do not skip the server-before-client rule.
 
-Related docs: `MAINNET_GO_LIVE.md`, `ROBINHOOD_GO_LIVE.md`, `SHIPPING.md` §5.
+Related docs: `MAINNET_GO_LIVE.md`, `ROBINHOOD_GO_LIVE.md`, `METRO_CHAIN_CHOICE.md` (RH vs Solana), `SHIPPING.md` §5.
 
 ---
 

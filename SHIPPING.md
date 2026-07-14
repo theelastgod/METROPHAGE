@@ -105,7 +105,10 @@ settlement). Ordinary `npm run dev` keeps simulated ledger mutations locked.
 
 **Full ordered checklist:** `docs/BRIDGE_GO_LIVE.md` (testnet rehearsal → mainnet arm → monitor).
 
-Preferred chain: **Robinhood Chain** (ETH L2 / Arbitrum Orbit) ERC-20.
+**Dual-path ready:** Robinhood Chain ERC-20 **or** Solana SPL — pick when the CA lands
+(`docs/METRO_CHAIN_CHOICE.md`). Auto-detect from mint shape (`0x…` → RH, base58 → SOL).
+
+Preferred default for MetaMask UX: **Robinhood Chain** (ETH L2 / Arbitrum Orbit) ERC-20.
 
 | Network | Chain ID | RPC |
 | --- | --- | --- |

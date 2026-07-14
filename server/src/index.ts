@@ -3,6 +3,7 @@ import { getAccount, quote, withdraw, confirmWithdraw, deposit, poolInfo, simSet
 import { verifyWalletLogin } from "./auth";
 import { loginMessage } from "../../src/net/protocol";
 import { simulatedSettlementLocked } from "./bridgePolicy";
+import { resolveSettlementFamily, settlementFamilyLabel } from "./settlementFamily";
 
 export { WorldDO };
 
@@ -54,22 +55,23 @@ function defaultEvmChainId(env: Env): number {
 export type SettlementKind = "sim" | "evm" | "solana";
 
 /**
- * Choose the bridge settlement.
- * - ERC-20 (0x mint) → Robinhood Chain / EVM when treasury key set
- * - Solana mint (base58) → legacy SPL settlement
- * - Mainnet RPC/chain (incl. Robinhood 4663) requires METRO_MAINNET_ARMED=1
- * - Otherwise sim (read-only unless METRO_ALLOW_SIM=1 is explicitly set)
+ * Choose the bridge settlement (dual-path: Robinhood ERC-20 OR Solana SPL).
+ * Family from mint shape (0x → RH/EVM, base58 → Solana) or METRO_SETTLEMENT force.
+ * Mainnet requires METRO_MAINNET_ARMED=1. Missing mint/treasury → sim.
  */
-async function pickSettlement(env: Env): Promise<{ settlement: Settlement; kind: SettlementKind }> {
+async function pickSettlement(env: Env): Promise<{ settlement: Settlement; kind: SettlementKind; family: string }> {
   const mint = metroMint(env);
   const secret = env.METRO_TREASURY_SECRET?.trim();
-  if (!mint || !secret) return { settlement: simSettlement, kind: "sim" };
+  const family = resolveSettlementFamily(mint, env);
+  if (!mint || !secret || family === "off") {
+    return { settlement: simSettlement, kind: "sim", family: family === "off" ? "off" : family };
+  }
 
-  if (isEvmMintAddr(mint)) {
+  if (family === "robinhood" || isEvmMintAddr(mint)) {
     const chainId = defaultEvmChainId(env);
     const rpc = (env.METRO_RPC || defaultEvmRpc(chainId)).trim();
     if (rpcIsMainnet(rpc, chainId) && env.METRO_MAINNET_ARMED !== "1") {
-      return { settlement: simSettlement, kind: "sim" };
+      return { settlement: simSettlement, kind: "sim", family: "robinhood" };
     }
     const { makeEvmSettlement, robinhoodRpcs } = await import("./evm");
     return {
@@ -81,17 +83,20 @@ async function pickSettlement(env: Env): Promise<{ settlement: Settlement; kind:
         db: env.DB,
       }),
       kind: "evm",
+      family: "robinhood",
     };
   }
 
+  // Solana SPL path (active alternate when CA is base58).
   const rpc = (env.METRO_RPC || "https://api.devnet.solana.com").trim();
   if (rpcIsMainnet(rpc) && env.METRO_MAINNET_ARMED !== "1") {
-    return { settlement: simSettlement, kind: "sim" };
+    return { settlement: simSettlement, kind: "sim", family: "solana" };
   }
   const { makeSolanaSettlement } = await import("./solana");
   return {
     settlement: makeSolanaSettlement({ rpc, mint, treasurySecretB64: secret }),
     kind: "solana",
+    family: "solana",
   };
 }
 
@@ -186,7 +191,7 @@ async function handleLeaderboard(url: URL, env: Env): Promise<Response> {
  * is the devnet sim for now (step 2a); step 2b selects a real settlement when armed.
  */
 async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> {
-  const { settlement, kind } = await pickSettlement(env);
+  const { settlement, kind, family } = await pickSettlement(env);
   const mint = metroMint(env);
   const hasTreasury = !!(env.METRO_TREASURY_SECRET && env.METRO_TREASURY_SECRET.trim());
   const rpc = (env.METRO_RPC || "").trim();
@@ -221,22 +226,46 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
       info.treasuryConfigured = hasTreasury;
       info.mainnetArmed = armed;
       info.rpc = rpc || null;
-      const cid = mint && isEvmMintAddr(mint) ? defaultEvmChainId(env) : null;
-      info.chain = mint && isEvmMintAddr(mint) ? (cid === 4663 || cid === 46630 ? "robinhood" : "evm") : mint ? "solana" : null;
+      const cid = family === "robinhood" || (mint && isEvmMintAddr(mint)) ? defaultEvmChainId(env) : null;
+      info.family = family;
+      info.familyLabel = settlementFamilyLabel(family as "robinhood" | "solana" | "off");
+      info.chain =
+        family === "robinhood" || (mint && isEvmMintAddr(mint))
+          ? cid === 4663 || cid === 46630
+            ? "robinhood"
+            : "evm"
+          : family === "solana" || mint
+            ? "solana"
+            : null;
       info.chainId = cid;
       info.networkName =
-        cid === 4663 ? "Robinhood Chain" : cid === 46630 ? "Robinhood Chain Testnet" : info.chain;
+        family === "solana"
+          ? /mainnet/i.test(rpc)
+            ? "Solana Mainnet"
+            : "Solana Devnet"
+          : cid === 4663
+            ? "Robinhood Chain"
+            : cid === 46630
+              ? "Robinhood Chain Testnet"
+              : info.chain;
       info.readyForCa = hasTreasury && !mint;
       info.liveBridge = live;
       info.settlement = kind;
       info.simLocked = simLocked;
       info.simAllowed = allowSim;
+      info.dualPathReady = { robinhood: true, solana: true };
       info.note =
-        "Robinhood Chain ≠ Robinhood app. Use MetaMask on chain " + (cid ?? "46630") + " to deposit/withdraw.";
+        family === "solana"
+          ? "Solana SPL $METRO — Phantom (or Solana wallet) signs claims; player pays SOL fee."
+          : "Robinhood Chain ≠ Robinhood app. Use MetaMask on chain " +
+            (cid ?? "46630") +
+            " to deposit/withdraw.";
       info.getMetroHint =
-        cid === 4663
-          ? "Trade $METRO on Robinhood Chain DEXes or peer transfers — not the Robinhood stock app."
-          : "Testnet: mint/get test $METRO on RH testnet, then deposit via MetaMask in this panel.";
+        family === "solana"
+          ? "Get $METRO SPL, deposit to treasury ATA, confirm in this panel."
+          : cid === 4663
+            ? "Trade $METRO on Robinhood Chain DEXes or peer transfers — not the Robinhood stock app."
+            : "Testnet: mint/get test $METRO on RH testnet, then deposit via MetaMask in this panel.";
       if (hasTreasury) {
         const treasuryIsEvm = (mint && isEvmMintAddr(mint)) || (!mint && isEvmTreasurySecret(env.METRO_TREASURY_SECRET));
         if (treasuryIsEvm) {

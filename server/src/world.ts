@@ -283,6 +283,8 @@ export interface Env {
   METRO_MAINNET_ARMED?: string;
   /** Harness only: allow deposit/withdraw while settlement is sim with a mint set. */
   METRO_ALLOW_SIM?: string;
+  /** Force settlement family: robinhood | solana | auto (default auto = detect from mint shape). */
+  METRO_SETTLEMENT?: string;
 }
 
 interface PlayerState {

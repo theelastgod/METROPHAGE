@@ -1,10 +1,10 @@
 // METROPHAGE — $METRO on-chain layer gate (Phase 5).
 //
-// Preferred settlement: **Robinhood Chain** (Ethereum L2, Arbitrum Orbit) ERC-20.
-// - Testnet (46630) default for rehearsal
-// - Mainnet (4663) requires METRO_MAINNET_ARMED (counsel)
-// Legacy: Solana SPL still works if mint is base58.
-// Empty mint → pure off-chain credits.
+// Dual-path settlement (pick when CA is known — see docs/METRO_CHAIN_CHOICE.md):
+//   • Robinhood Chain ERC-20 (0x mint)  — MetaMask / RH L2
+//   • Solana SPL (base58 mint)          — Phantom / Solana
+// Auto-detect from mint shape, or force VITE_METRO_SETTLEMENT=robinhood|solana.
+// Empty mint → pure off-chain credits. Mainnet requires METRO_MAINNET_ARMED.
 
 import {
   ROBINHOOD_MAINNET,
@@ -12,6 +12,8 @@ import {
   type RobinhoodCluster,
   robinhoodNetwork,
 } from "./robinhoodChain";
+import { getDualChainProfile, dualChainSummary, type DualChainProfile } from "./chainProfile";
+import { isSolanaPubkey } from "./solanaChain";
 
 const env: Record<string, string | undefined> =
   (typeof import.meta !== "undefined" &&
@@ -108,6 +110,7 @@ function base58Decode(s: string): number[] | null {
 }
 
 export function isValidSolanaMint(s: string): boolean {
+  if (isSolanaPubkey(s)) return true;
   if (!s || s.length < 32 || s.length > 44) return false;
   const bytes = base58Decode(s);
   return bytes != null && bytes.length === 32;
@@ -119,8 +122,14 @@ export function isValidMetroMint(s: string): boolean {
 
 export const metroEnabled = isValidMetroMint(METRO_MINT);
 export const metroIsEvm = isEvmAddress(METRO_MINT);
-export const metroIsRobinhood =
-  METRO_CLUSTER === "robinhood" || METRO_CLUSTER === "robinhood-testnet" || (metroIsEvm && !env.VITE_METRO_CLUSTER);
+/** Dual-path profile (RH + SOL adapters; only one family active per mint). */
+export const dualChain: DualChainProfile = getDualChainProfile({
+  mint: METRO_MINT,
+  cluster: METRO_CLUSTER,
+  mainnetArmed: METRO_MAINNET_ARMED,
+});
+export const metroIsRobinhood = dualChain.family === "robinhood";
+export const metroIsSolana = dualChain.family === "solana";
 
 export interface MetroStatus {
   enabled: boolean;
@@ -131,27 +140,31 @@ export interface MetroStatus {
   networkName: string;
   mainnetArmed: boolean;
   mainnetLive: boolean;
+  /** Dual-path metadata for UI / debug. */
+  dual: DualChainProfile;
+  summary: string;
 }
 
 export function getMetroStatus(): MetroStatus {
+  const dual = getDualChainProfile({
+    mint: METRO_MINT,
+    cluster: METRO_CLUSTER,
+    mainnetArmed: METRO_MAINNET_ARMED,
+  });
   const rh = activeRobinhoodNetwork();
-  const mainnetCluster =
-    METRO_CLUSTER === "robinhood" || METRO_CLUSTER === "mainnet" || METRO_CLUSTER === "mainnet-beta";
-  let chain: MetroStatus["chain"] = "off";
-  if (metroEnabled) {
-    if (rh || metroIsRobinhood) chain = "robinhood";
-    else if (metroIsEvm) chain = "evm";
-    else chain = "solana";
-  }
+  let chain: MetroStatus["chain"] = dual.family === "off" ? "off" : dual.family === "solana" ? "solana" : "robinhood";
+  if (dual.family === "robinhood" && !rh && metroIsEvm) chain = "evm";
   return {
-    enabled: metroEnabled,
+    enabled: dual.family !== "off" && dual.mint.length > 0,
     cluster: METRO_CLUSTER,
     mint: METRO_MINT,
     chain,
-    chainId: metroChainId(),
-    networkName: rh?.name ?? (metroIsEvm ? "EVM" : metroEnabled ? "Solana" : "off"),
+    chainId: dual.chainId ?? metroChainId(),
+    networkName: dual.label,
     mainnetArmed: METRO_MAINNET_ARMED,
-    mainnetLive: metroEnabled && mainnetCluster && METRO_MAINNET_ARMED,
+    mainnetLive: dual.mainnet && dual.mainnetArmed && dual.family !== "off",
+    dual,
+    summary: dualChainSummary(dual),
   };
 }
 
@@ -209,3 +222,5 @@ export function getMetroBridge(): MetroBridge {
 
 // re-export for callers that need network add params
 export { robinhoodNetwork, ROBINHOOD_MAINNET, ROBINHOOD_TESTNET };
+export { getDualChainProfile, dualChainSummary, settlementForce } from "./chainProfile";
+export { solanaNetwork, SOLANA_DEVNET, SOLANA_MAINNET, isSolanaPubkey } from "./solanaChain";
