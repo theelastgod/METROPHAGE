@@ -123,6 +123,7 @@ import { bountyById, bountyForNpc, type BountyObjective } from "../../src/game/b
 import { rollBossSignature, bossLootBlurb } from "../../src/game/bossLoot";
 import { maybeNamedLoot } from "../../src/game/namedLoot";
 import { weeklyGuildGoal, currentGuildWeek } from "../../src/game/guildGoals";
+import { currentDistrictWar, warMetaKey } from "../../src/game/districtWar";
 import {
   BLESS_IFRAME_TICKS,
   CLIENT_OPEN_SERVICES,
@@ -582,17 +583,19 @@ interface ShopItem {
   cores?: number;
   creditsGrant?: number;
 }
-// Prices vs kill emit (CREDITS_PER_KILL=14) — vendor is the primary sink.
+// Prices vs kill emit (CREDITS_PER_KILL=10) — vendor is the primary sink (~2× prior).
 const SHOP: Record<string, ShopItem> = {
-  heal: { price: 65, label: "FIELD PATCH", heal: true },
-  cache_standard: { price: 120, label: "SALVAGE CACHE", rarity: "standard" },
-  cache_tuned: { price: 280, label: "TUNED CACHE", rarity: "tuned" },
-  cache_blackice: { price: 820, label: "BLACK-ICE CACHE", rarity: "blackice", repReq: 1 },
-  cache_singular: { price: 1950, label: "SINGULAR CACHE", rarity: "singular", repReq: 2 },
-  core_bundle: { price: 165, label: "CORE BUNDLE", cores: 3 },
-  core_crate: { price: 420, label: "CORE CRATE", cores: 8, repReq: 1 },
+  heal: { price: 95, label: "FIELD PATCH", heal: true },
+  cache_standard: { price: 180, label: "SALVAGE CACHE", rarity: "standard" },
+  cache_tuned: { price: 420, label: "TUNED CACHE", rarity: "tuned" },
+  cache_blackice: { price: 1180, label: "BLACK-ICE CACHE", rarity: "blackice", repReq: 1 },
+  cache_singular: { price: 2800, label: "SINGULAR CACHE", rarity: "singular", repReq: 2 },
+  core_bundle: { price: 240, label: "CORE BUNDLE", cores: 3 },
+  core_crate: { price: 620, label: "CORE CRATE", cores: 8, repReq: 1 },
   // Pure sink kit (no credit refund) — cores only.
-  supply_kit: { price: 90, label: "SUPPLY KIT", cores: 2 },
+  supply_kit: { price: 140, label: "SUPPLY KIT", cores: 2 },
+  // Mid-game sink: insurance reprint chip (no heal — pure burn for QoL buff later sessions).
+  reprint_chip: { price: 220, label: "REPRINT CHIP", creditsGrant: 0 },
 };
 
 interface Shot {
@@ -987,13 +990,18 @@ export class WorldDO {
    *  archetype is rotated across posts (and biased by district threat) so every zone
    *  fields a varied garrison: patrol/wasp/lancer/hound. */
   private spawnEnemies(def: (typeof DISTRICTS)[number]) {
-    // Rotation patterns by threat tier — tougher districts skew toward lancers/hounds.
+    // District identity patterns — each depth feels like a different security doctrine.
+    // 0: street watch + one enforcer; 1: sniper lanes; 2-3: hound packs; 4+: wraith deep.
     const pattern =
       this.districtIndex <= 0
-        ? [0, 4, 1, 2, 0, 1] // early: a heavy ENFORCER joins the grunts
+        ? [0, 0, 1, 4, 0, 2] // early: patrol density + one ENFORCER
         : this.districtIndex === 1
-          ? [0, 1, 2, 3, 5, 4, 1] // mid: SNIPER + ENFORCER
-          : [2, 3, 4, 5, 6, 2, 0, 6]; // deep: the full bestiary incl. WRAITH elites
+          ? [0, 1, 5, 5, 2, 4, 1] // midtown: SNIPER lanes + enforcer
+          : this.districtIndex === 2
+            ? [1, 2, 3, 3, 2, 0, 4] // stacks: HOUND packs
+            : this.districtIndex === 3
+              ? [2, 4, 5, 3, 1, 2, 5] // spire: mixed heavy
+              : [2, 3, 4, 5, 6, 6, 2, 0]; // deep core: WRAITH + full bestiary
     let i = 0;
     for (const [tx, ty] of def.copPosts) {
       const stx = tx * DISTRICT_SCALE;
@@ -4384,23 +4392,23 @@ export class WorldDO {
       p.dead = true;
       p.respawnTick = this.tick + ticks(RESPAWN_MS);
       p.dirty = true;
-      // Death tax — burns a slice of pocket credits (sink). Never leaves veterans at 0.
+      // Death tax — primary risk sink (~10% pocket, floor 12). Never leaves veterans at 0.
       const pocket = Math.max(0, Math.floor(p.credits));
       let tax = 0;
-      if (pocket > 40) {
-        tax = Math.min(pocket - 20, Math.max(8, Math.round(pocket * 0.06)));
+      if (pocket > 30) {
+        tax = Math.min(pocket - 15, Math.max(12, Math.round(pocket * 0.1)));
         if (tax > 0) {
           p.credits -= tax;
           this.eco("burn", "death_tax", tax);
         }
       }
-      // Clear death card: tax amount + where reprint happens.
+      // Clear death card: tax amount + where reprint happens + re-engage hint.
       this.sendTo(p.id, {
         t: "sys",
         text:
           tax > 0
-            ? `DEATH · levy −₵${tax} · reprint at zone spawn · bag kept (stash was safe)`
-            : `DEATH · no levy · reprint at zone spawn · bag kept (stash was safe)`,
+            ? `DEATH · levy −₵${tax} · reprint at zone spawn · bag kept · re-engage objective`
+            : `DEATH · no levy · reprint at zone spawn · bag kept · re-engage objective`,
       });
     }
     return true;
@@ -4886,13 +4894,28 @@ export class WorldDO {
       await this.persistEstate();
       this.broadcastEstate();
     } else if (msg.action === "sign") {
-      // visitors sign the book; the stamp is server-chosen so nothing player-written persists
+      // visitors sign the book; the stamp is server-chosen so nothing player-written persists.
+      // Tip: visitor burns ₵25 (sink); host mails ₵15 (partial transfer, net burn ₵10).
       if (!e.owner) return sys("nobody lives here yet — nothing to sign");
       if (e.owner === p.id) return sys("it's your own guestbook, choom");
+      const TIP = 25;
+      const HOST = 15;
+      if (p.credits < TIP) return sys(`guestbook tip is ₵${TIP} — earn more on the street`);
+      p.credits -= TIP;
+      this.eco("burn", "guestbook_tip", TIP - HOST);
+      // Host share is a transfer via mailbox (not full emit).
+      try {
+        await this.env.DB.prepare("INSERT INTO mailbox (player, credits, reason, created_at) VALUES (?,?,?,?)")
+          .bind(e.owner, HOST, "guestbook tip", Date.now())
+          .run();
+      } catch {
+        /* tip still burns if mail fails */
+      }
+      p.dirty = true;
       const stamp = GUEST_STAMPS[Math.floor(Math.random() * GUEST_STAMPS.length)];
       e.guests = [{ n: p.name, at: Date.now(), s: stamp }, ...e.guests.filter((g) => g.n !== p.name)].slice(0, 24);
       await this.persistEstate();
-      sys(`◈ signed — "${p.name} ${stamp}"`);
+      sys(`◈ signed — "${p.name} ${stamp}" · tipped ₵${TIP}`);
       this.broadcastEstate();
     }
   }
@@ -4983,6 +5006,9 @@ export class WorldDO {
     } else if (sku.cores) {
       p.cores += sku.cores;
       this.send(ws, { t: "sys", text: `bought ${sku.label} — +◈${sku.cores}` });
+    } else if (msg.sku === "reprint_chip") {
+      // Pure sink — insurance stamp with no refund (economy burn).
+      this.send(ws, { t: "sys", text: `bought ${sku.label} — grid insurance stamped (₵ burned)` });
     }
     if (sku.creditsGrant) {
       p.credits += sku.creditsGrant;
@@ -6019,8 +6045,8 @@ export class WorldDO {
             p.level = levelForXp(p.xp);
             this.bountyEvent(p, "collect", 1);
           } else {
-            p.credits += 6;
-            this.eco("emit", "pickup", 6);
+            p.credits += 4;
+            this.eco("emit", "pickup", 4);
           }
           if (!this.inTutorial()) p.dirty = true;
           this.pickups.delete(pid);
@@ -6080,6 +6106,26 @@ export class WorldDO {
                 this.bumpStat(pl, "captures", 1);
                 this.contractEvent(pl, "capture", 1);
                 if (pl.guildId) void this.bumpGuildGoal(pl.guildId, "captures", 1);
+                // District War weekly bonus (focus district only, once per war week).
+                const war = currentDistrictWar();
+                if (this.districtIndex === war.focusDistrict && /^d\d+$/.test(this.zoneName)) {
+                  const wkey = `war_cap_${war.week}`;
+                  if (!pl.stats[wkey]) {
+                    pl.stats[wkey] = 1;
+                    pl.statDelta[wkey] = (pl.statDelta[wkey] ?? 0) + 1;
+                    pl.credits += war.captureBonus;
+                    this.eco("emit", "district_war", war.captureBonus);
+                    this.bumpMeta(warMetaKey(war.week, pl.faction), 2);
+                    this.bumpMeta("f" + pl.faction, FACTION_CAPTURE_SCORE); // double-score focus
+                    pl.dirty = true;
+                    this.sendTo(pl.id, {
+                      t: "sys",
+                      text: `⚔ DISTRICT WAR · ${war.name} · +₵${war.captureBonus} focus capture`,
+                    });
+                  } else {
+                    this.bumpMeta(warMetaKey(war.week, pl.faction), 1);
+                  }
+                }
               }
             }
           }

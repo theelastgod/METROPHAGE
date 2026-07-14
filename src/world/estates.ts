@@ -138,30 +138,30 @@ export interface FurnitureKind {
 
 export const FURNITURE: FurnitureKind[] = [
   // ids are persisted in saved layouts — never rename, only append
-  { id: "bed", name: "Bed", glyph: "BD", color: 0x4d8cff, w: 2, h: 1, price: 40, buff: { regenPerSec: 2.5 } },
-  { id: "sofa", name: "Sofa", glyph: "SF", color: 0xff79c6, w: 2, h: 1, price: 60, buff: { regenPerSec: 1.2 } },
-  { id: "table", name: "Table", glyph: "TB", color: 0xffb13c, w: 1, h: 1, price: 30 },
-  { id: "chair", name: "Chair", glyph: "CH", color: 0xf7ff3c, w: 1, h: 1, price: 15 },
-  { id: "rug", name: "Rug", glyph: "RG", color: 0xb06bff, w: 2, h: 2, price: 35 },
-  { id: "plant", name: "Plant", glyph: "PL", color: 0x39ff88, w: 1, h: 1, price: 20, buff: { heatDecayPct: 0.05 } },
-  { id: "lamp", name: "Lamp", glyph: "LP", color: 0xffe08a, w: 1, h: 1, price: 25 },
-  { id: "shelf", name: "Shelf", glyph: "SH", color: 0x9dff3c, w: 1, h: 1, price: 30 },
-  { id: "locker", name: "Locker", glyph: "LK", color: 0x8dfff0, w: 1, h: 1, price: 45, buff: { shieldHome: 8 } },
-  { id: "terminal", name: "Terminal", glyph: "TM", color: 0x00e5ff, w: 1, h: 1, price: 70, buff: { heatDecayPct: 0.08 } },
-  { id: "poster", name: "Poster", glyph: "PS", color: 0xff3b6b, w: 1, h: 1, price: 18 },
-  { id: "crate", name: "Crate", glyph: "CR", color: 0x9aa3b2, w: 1, h: 1, price: 12 },
-  { id: "holo_tv", name: "Holo-TV", glyph: "TV", color: 0x29e7ff, w: 2, h: 1, price: 90 },
-  { id: "bar_counter", name: "Bar counter", glyph: "BA", color: 0x9dff3c, w: 2, h: 1, price: 80, buff: { regenPerSec: 0.8 } },
-  { id: "bookcase", name: "Bookcase", glyph: "BK", color: 0xd9a066, w: 1, h: 1, price: 45 },
-  { id: "desk", name: "Desk", glyph: "DK", color: 0x8fb8ff, w: 2, h: 1, price: 55 },
-  { id: "aquarium", name: "Aquarium", glyph: "AQ", color: 0x66e0ff, w: 2, h: 1, price: 110, buff: { heatDecayPct: 0.1 } },
-  { id: "neon_sign", name: "Neon sign", glyph: "NS", color: 0xff2bd6, w: 1, h: 1, price: 65 },
-  { id: "arcade", name: "Arcade cab", glyph: "AR", color: 0xf7ff3c, w: 1, h: 1, price: 95 },
-  { id: "jukebox", name: "Jukebox", glyph: "JB", color: 0xff79c6, w: 1, h: 1, price: 85 },
-  { id: "vending", name: "Vending unit", glyph: "VN", color: 0x39ff88, w: 1, h: 1, price: 60, buff: { regenPerSec: 0.6 } },
-  { id: "weapon_rack", name: "Weapon rack", glyph: "WR", color: 0xff3b6b, w: 1, h: 1, price: 75, buff: { movePct: 0.03 } },
-  { id: "trophy", name: "Trophy case", glyph: "TR", color: 0xffd24a, w: 1, h: 1, price: 120, buff: { shieldHome: 12 } },
-  { id: "server_rack", name: "Server rack", glyph: "SV", color: 0x00e5ff, w: 1, h: 1, price: 100, buff: { heatDecayPct: 0.12, shieldHome: 6 } },
+  { id: "bed", name: "Bed", glyph: "BD", color: 0x4d8cff, w: 2, h: 1, price: 64, buff: { regenPerSec: 2.5 } },
+  { id: "sofa", name: "Sofa", glyph: "SF", color: 0xff79c6, w: 2, h: 1, price: 96, buff: { regenPerSec: 1.2 } },
+  { id: "table", name: "Table", glyph: "TB", color: 0xffb13c, w: 1, h: 1, price: 48 },
+  { id: "chair", name: "Chair", glyph: "CH", color: 0xf7ff3c, w: 1, h: 1, price: 24 },
+  { id: "rug", name: "Rug", glyph: "RG", color: 0xb06bff, w: 2, h: 2, price: 56 },
+  { id: "plant", name: "Plant", glyph: "PL", color: 0x39ff88, w: 1, h: 1, price: 32, buff: { heatDecayPct: 0.05 } },
+  { id: "lamp", name: "Lamp", glyph: "LP", color: 0xffe08a, w: 1, h: 1, price: 40 },
+  { id: "shelf", name: "Shelf", glyph: "SH", color: 0x9dff3c, w: 1, h: 1, price: 48 },
+  { id: "locker", name: "Locker", glyph: "LK", color: 0x8dfff0, w: 1, h: 1, price: 72, buff: { shieldHome: 8 } },
+  { id: "terminal", name: "Terminal", glyph: "TM", color: 0x00e5ff, w: 1, h: 1, price: 112, buff: { heatDecayPct: 0.08 } },
+  { id: "poster", name: "Poster", glyph: "PS", color: 0xff3b6b, w: 1, h: 1, price: 29 },
+  { id: "crate", name: "Crate", glyph: "CR", color: 0x9aa3b2, w: 1, h: 1, price: 19 },
+  { id: "holo_tv", name: "Holo-TV", glyph: "TV", color: 0x29e7ff, w: 2, h: 1, price: 144 },
+  { id: "bar_counter", name: "Bar counter", glyph: "BA", color: 0x9dff3c, w: 2, h: 1, price: 128, buff: { regenPerSec: 0.8 } },
+  { id: "bookcase", name: "Bookcase", glyph: "BK", color: 0xd9a066, w: 1, h: 1, price: 72 },
+  { id: "desk", name: "Desk", glyph: "DK", color: 0x8fb8ff, w: 2, h: 1, price: 88 },
+  { id: "aquarium", name: "Aquarium", glyph: "AQ", color: 0x66e0ff, w: 2, h: 1, price: 176, buff: { heatDecayPct: 0.1 } },
+  { id: "neon_sign", name: "Neon sign", glyph: "NS", color: 0xff2bd6, w: 1, h: 1, price: 104 },
+  { id: "arcade", name: "Arcade cab", glyph: "AR", color: 0xf7ff3c, w: 1, h: 1, price: 152 },
+  { id: "jukebox", name: "Jukebox", glyph: "JB", color: 0xff79c6, w: 1, h: 1, price: 136 },
+  { id: "vending", name: "Vending unit", glyph: "VN", color: 0x39ff88, w: 1, h: 1, price: 96, buff: { regenPerSec: 0.6 } },
+  { id: "weapon_rack", name: "Weapon rack", glyph: "WR", color: 0xff3b6b, w: 1, h: 1, price: 120, buff: { movePct: 0.03 } },
+  { id: "trophy", name: "Trophy case", glyph: "TR", color: 0xffd24a, w: 1, h: 1, price: 192, buff: { shieldHome: 12 } },
+  { id: "server_rack", name: "Server rack", glyph: "SV", color: 0x00e5ff, w: 1, h: 1, price: 160, buff: { heatDecayPct: 0.12, shieldHome: 6 } },
 ];
 
 /** Sum home buffs from a furniture layout (stack soft-capped). */
@@ -192,7 +192,7 @@ export interface FurniturePiece {
 }
 
 /** Default asking price for a never-owned estate (credits). */
-export const ESTATE_BASE_PRICE = 2500;
+export const ESTATE_BASE_PRICE = 3800;
 
 // ── guestbook ────────────────────────────────────────────────────────────────
 /** One signature in a home's visitor book. */

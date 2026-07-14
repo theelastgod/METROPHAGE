@@ -3,7 +3,7 @@
 // group with a shared bank; its bank deposits feed cell XP → cell level → a credit-find perk.
 
 /** Founding a Cell costs credits (a sink + a commitment gate). */
-export const GUILD_CREATE_COST = 500;
+export const GUILD_CREATE_COST = 800;
 
 export type GuildRank = "leader" | "officer" | "member";
 export const RANK_LABEL: Record<GuildRank, string> = { leader: "LEADER", officer: "OFFICER", member: "MEMBER" };

@@ -36,7 +36,7 @@ export const WORLD_EVENTS: WorldEventDef[] = [
     durationMs: 11000,
     minHeatNorm: 0,
     weight: 1,
-    reward: { xp: 55, currency: 40 },
+    reward: { xp: 55, currency: 22 },
   },
   {
     id: "blackout",
@@ -48,7 +48,7 @@ export const WORLD_EVENTS: WorldEventDef[] = [
     durationMs: 10000,
     minHeatNorm: 0,
     weight: 0.8,
-    reward: { xp: 45, currency: 35 },
+    reward: { xp: 45, currency: 19 },
   },
   {
     id: "purge_wave",
@@ -60,7 +60,7 @@ export const WORLD_EVENTS: WorldEventDef[] = [
     durationMs: 9000,
     minHeatNorm: 0.35, // only when the district is already hot
     weight: 1.1,
-    reward: { xp: 75, currency: 60 },
+    reward: { xp: 75, currency: 33 },
   },
   {
     id: "contagion_outbreak",
@@ -72,7 +72,7 @@ export const WORLD_EVENTS: WorldEventDef[] = [
     durationMs: 10000,
     minHeatNorm: 0,
     weight: 0.9,
-    reward: { xp: 55, currency: 40 },
+    reward: { xp: 55, currency: 22 },
   },
   {
     id: "heat_spike",
@@ -84,7 +84,7 @@ export const WORLD_EVENTS: WorldEventDef[] = [
     durationMs: 12000,
     minHeatNorm: 0.15,
     weight: 1,
-    reward: { xp: 50, currency: 45 },
+    reward: { xp: 50, currency: 25 },
   },
   {
     id: "repo_siren",
@@ -96,7 +96,7 @@ export const WORLD_EVENTS: WorldEventDef[] = [
     durationMs: 14000,
     minHeatNorm: 0.2,
     weight: 0.95,
-    reward: { xp: 70, currency: 55 },
+    reward: { xp: 70, currency: 30 },
   },
   {
     id: "market_glitch",
@@ -108,7 +108,7 @@ export const WORLD_EVENTS: WorldEventDef[] = [
     durationMs: 16000,
     minHeatNorm: 0,
     weight: 0.7,
-    reward: { xp: 40, currency: 30 },
+    reward: { xp: 40, currency: 16 },
   },
 ];
 

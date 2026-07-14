@@ -131,6 +131,9 @@ import {
 } from "../game/secondHour";
 import { downloadShareCard } from "../ui/ShareCard";
 import { systemsHintLine, dismissSystemsHint, cityChatterLine } from "../game/systemsHint";
+import { thirdHourLine, noteThirdWarCapture, noteThirdHomeVisit, noteThirdCellDeposit, noteThirdMarketList } from "../game/thirdHour";
+import { currentDistrictWar } from "../game/districtWar";
+import { cityPulseAt } from "../game/cityPulse";
 import { noteNpcTalk, noteNpcBountyDone, npcMemoryLine } from "../game/npcMemory";
 import { buildStamp } from "../buildInfo";
 import { raidScriptFor } from "../game/raid";
@@ -1157,6 +1160,14 @@ export default class OnlineScene extends Phaser.Scene {
       // Clear stale node-capture tracking across reconnects / zone hops.
       this.prevNodeOwners.clear();
       this.prevNodeProgress.clear();
+      // Mid-game appointment: weekly war banner once per zone entry.
+      try {
+        const war = currentDistrictWar();
+        this.pushKillFeed(`⚔ ${war.name}`);
+        this.rsGameMessage?.show(war.blurb, { ttlMs: 4200, color: "#ff9d3c" });
+      } catch {
+        /* */
+      }
       if (!this.buildBannerShown) {
         this.buildBannerShown = true;
         this.time.delayedCall(400, () => {
@@ -1231,12 +1242,16 @@ export default class OnlineScene extends Phaser.Scene {
     this.market = new OnlineMarket(this);
     this.market.onBuy = (id) => {
       this.net.marketBuy(id);
+      noteThirdMarketList();
       const r = grantSkillXp(this.rsSkills, "trading", 18);
       this.rsSkillsPanel.setSkills(this.rsSkills);
       if (r.leveled) this.pops?.popHeal(this.me.x, this.me.y - 30, `Trading ${r.level}!`);
     };
     this.market.onCancel = (id) => this.net.marketCancel(id);
-    this.market.onList = (itemId, price, currency) => this.net.marketList(itemId, price, currency);
+    this.market.onList = (itemId, price, currency) => {
+      this.net.marketList(itemId, price, currency);
+      noteThirdMarketList();
+    };
     this.market.onRefresh = () => this.net.marketBrowse();
     this.net.onMarket = () => {
       if (this.market.open) this.market.setState(this.net.marketListings, this.net.inventory, this.net.id, this.net.credits, this.net.metro);
@@ -5681,10 +5696,12 @@ export default class OnlineScene extends Phaser.Scene {
     const others = this.net.roster.filter((r) => r.id !== this.net.id);
     // Friends-lite: remember runners we share a zone with.
     for (const r of others.slice(0, 12)) noteRecentPlayer(r.id, r.id);
-    // City chatter ticker — rotates every ~12s so solo never feels dead-air.
-    if (this.time.now - this.cityChatterAt > 12000) {
+    // City pulse ticker — war/goal/system facts rotate so solo still feels wired-in.
+    if (this.time.now - this.cityChatterAt > 11000) {
       this.cityChatterAt = this.time.now;
-      this.cityChatterLine = cityChatterLine(Math.floor(this.time.now / 12000) + this.phantomOnline);
+      const seed = Math.floor(this.time.now / 11000) + this.phantomOnline;
+      this.cityChatterLine =
+        seed % 3 === 0 ? cityPulseAt(seed) : cityChatterLine(seed);
     }
     const simple = getSettings().uiDensity === "new";
     if (simple && others.length === 0) {
@@ -6078,15 +6095,16 @@ export default class OnlineScene extends Phaser.Scene {
     const sh = getSecondHour();
     const secondDone =
       sh.buyCache && sh.forgeOnce && sh.finishBounty && sh.captureNode && sh.touchBoss;
-    const systems = systemsHintLine((fs.step === "done" || fs.kills >= 3) && secondDone);
+    const hour3 = thirdHourLine((fs.step === "done" || fs.kills >= 3) && secondDone);
+    const systems = systemsHintLine((fs.step === "done" || fs.kills >= 3) && secondDone && !hour3);
     if (systems && !this.systemsHintTimerArmed) {
       this.systemsHintTimerArmed = true;
       // Auto-dismiss after first display so it doesn't stick forever.
       this.time.delayedCall(14000, () => dismissSystemsHint());
     }
     const simple = getSettings().uiDensity === "new";
-    // New players: coach → 2nd hour → systems map → core loop (full HUD only).
-    const line = coach ?? hour2 ?? systems ?? (simple ? null : coreLoopLine());
+    // New → 2nd → 3rd hour (district war / market / cell / home) → systems map → core loop.
+    const line = coach ?? hour2 ?? hour3 ?? systems ?? (simple ? null : coreLoopLine());
     if (!line) {
       this.coachText.setVisible(false);
       return;
@@ -6094,7 +6112,9 @@ export default class OnlineScene extends Phaser.Scene {
     this.coachText
       .setVisible(true)
       .setText(line)
-      .setColor(coach ? "#39ff88" : hour2 ? "#f7ff3c" : systems ? "#29e7ff" : "#6b7184");
+      .setColor(
+        coach ? "#39ff88" : hour2 ? "#f7ff3c" : hour3 ? "#ff9d3c" : systems ? "#29e7ff" : "#6b7184",
+      );
   }
 
   private pushKillFeed(line: string) {
@@ -6138,6 +6158,22 @@ export default class OnlineScene extends Phaser.Scene {
     this.pushKillFeed("HEAT · R ultimate ready");
   }
 
+  /** After death, aim quest waypoint at a nearby fight so reboot isn't empty running. */
+  private queueDeathReengage() {
+    const boss = this.net.boss;
+    if (boss?.alive) {
+      this.questTarget = { x: boss.x, y: boss.y, label: boss.name || "BOSS" };
+      return;
+    }
+    let best: { x: number; y: number; d: number } | null = null;
+    for (const n of this.net.nodes.values()) {
+      if (n.owner === this.net.faction) continue;
+      const d = Math.hypot(n.x - this.me.x, n.y - this.me.y);
+      if (!best || d < best.d) best = { x: n.x, y: n.y, d };
+    }
+    if (best) this.questTarget = { x: best.x, y: best.y, label: "NODE" };
+  }
+
   /** Detect territory flips we helped channel (second-hour capture coach). */
   private trackNodeCaptures() {
     if (!this.net.connected || this.isTutorial) return;
@@ -6173,7 +6209,20 @@ export default class OnlineScene extends Phaser.Scene {
     if (!text) return;
     if (text.startsWith("DEATH ·")) {
       this.lastDeathTaxLine = text;
+      // Re-engage: point quest waypoint at nearest node / boss if present.
+      this.queueDeathReengage();
       return;
+    }
+    if (text.includes("DISTRICT WAR")) {
+      noteThirdWarCapture();
+      this.pushKillFeed(text.slice(0, 42));
+      return;
+    }
+    if (text.includes("deposited") || text.includes("CELL BANK") || /deposited ₵/.test(text)) {
+      noteThirdCellDeposit();
+    }
+    if (text.includes("guestbook") || text.includes("signed —") || text.includes("tipped")) {
+      noteThirdHomeVisit();
     }
     if (text.includes("CELL GOAL") || text.includes("cell goal")) {
       // Refresh Cell panel data so progress/claim state stays live.

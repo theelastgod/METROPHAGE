@@ -112,7 +112,41 @@ const STYLE = `
 `;
 
 export function mountMetroPanel(getPlayerId: () => string | null): void {
-  if (!metroEnabled) return;
+  // Always mount a clear offline chip when CA is not configured — never look broken/scammy.
+  if (!metroEnabled) {
+    const style = document.createElement("style");
+    style.textContent = STYLE;
+    document.head.appendChild(style);
+    const fab = document.createElement("button");
+    fab.id = "metro-fab";
+    fab.className = "warn";
+    fab.textContent = "◈ $METRO OFF";
+    fab.title = "On-chain $METRO is offline until a contract address is configured (counsel). Credits gameplay is fully live.";
+    document.body.appendChild(fab);
+    const panel = document.createElement("div");
+    panel.id = "metro-panel";
+    panel.innerHTML = `
+      <div class="head">
+        <div class="titlebar">
+          <div>
+            <div class="eyebrow">bridge offline</div>
+            <h3>◈ $METRO</h3>
+          </div>
+          <button class="x" id="m-x" aria-label="Close">×</button>
+        </div>
+        <div class="sub">No contract address is live. In-game ₵ credits, cells, market, and combat are fully playable offline.</div>
+      </div>
+      <div class="body">
+        <div class="notice warn">OFFLINE — token mint not armed. This is intentional until counsel configures a CA. Nothing is broken; the bridge is simply dormant.</div>
+        <div class="notice">Play the city: vendor (B), forge (G), market (K), cells (U), estates street. $METRO cash-out will appear here when the mint is set.</div>
+      </div>`;
+    document.body.appendChild(panel);
+    const open = () => panel.classList.add("open");
+    const close = () => panel.classList.remove("open");
+    fab.onclick = () => (panel.classList.contains("open") ? close() : open());
+    panel.querySelector("#m-x")?.addEventListener("click", close);
+    return;
+  }
   const st = getMetroStatus();
 
   const style = document.createElement("style");

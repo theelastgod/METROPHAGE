@@ -5,6 +5,8 @@ Shipped without mint / CA work.
 ## Progression
 - **First session** (`firstSession.ts`): FIXER → deploy → kill → HEAT → contracts → bounty → gear
 - **Second hour** (`secondHour.ts`): finish bounty, vendor, forge, node, boss tease
+- **Third hour** (`thirdHour.ts`): District War capture, Cell deposit, Market, estate guestbook tip
+- **District War** (`districtWar.ts`): weekly focus district, capture bonus + double faction score
 
 ## Combat identity
 - **Per-boss raid scripts** (`raid.ts` + `raidScriptFor`)

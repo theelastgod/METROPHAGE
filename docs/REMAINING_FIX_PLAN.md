@@ -18,6 +18,10 @@
 | Solo presence | Ambient roster + rotating city chatter |
 | Discoverability | Systems hint strip after 2nd hour |
 | Boss telegraphs | Thicker pulsing rings |
+| Economy sinks | Kill 10₵, death ~10%, vendor/forge/market/furniture up; dailies/ach down |
+| Mid-game spine | District War + 3rd hour coach |
+| Guestbook tips | Visitor ₵25 burn, host ₵15 mail (net sink) |
+| Dormant $METRO | Offline chip explains CA not armed |
 | Mainnet | **Out of scope** (counsel) |
 
 ## Ops still external

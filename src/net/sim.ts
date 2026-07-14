@@ -112,7 +112,7 @@ export const RESPAWN_MS = 2600;
 export const XP_PER_KILL = 20; // early levels should feel — first-hour progression
 export const levelForXp = (xp: number) => 1 + Math.floor(xp / 100);
 export const xpIntoLevel = (xp: number) => xp % 100; // 0..99 toward the next level
-export const CREDITS_PER_KILL = 14; // emit side of economy; sinks (vendor/forge/death tax) must outpace this
+export const CREDITS_PER_KILL = 10; // emit side; sinks (vendor/forge/death tax) must outpace this (was 14; live sink eff ~2%)
 export const LOOT_DROP_CHANCE = 0.55; // chance a cop drops a pickup
 export const PICKUP_RADIUS = 18; // walk within this to collect
 export const PICKUP_TTL_MS = 15000;

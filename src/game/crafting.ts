@@ -21,8 +21,9 @@ export interface Cost {
 export function upgradeCost(item: Item): Cost {
   const lvl = item.ilvl ?? 0;
   const m = RARITY_MULT[item.rarity];
+  // ~40% higher than launch curve so forge is a real sink vs kill emit.
   return {
-    credits: Math.round(52 * (lvl + 1) * m),
+    credits: Math.round(74 * (lvl + 1) * m),
     cores: 1 + Math.floor(lvl / 3) + Math.floor(rarityRank(item.rarity) / 2),
   };
 }
@@ -33,16 +34,17 @@ export function canUpgrade(item: Item): boolean {
 /** REFORGE — gamble: re-roll an item's mod lines (same slot+rarity), keeping its level. */
 export function reforgeCost(item: Item): Cost {
   const m = RARITY_MULT[item.rarity];
-  return { credits: Math.round(72 * m), cores: 1 + rarityRank(item.rarity) };
+  return { credits: Math.round(105 * m), cores: 1 + rarityRank(item.rarity) };
 }
 
-/** SALVAGE — break an item down for cores + a few credits (the loot-cleanup sink). */
+/** SALVAGE — break an item down for cores + a few credits (cleanup; not a faucet). */
 export function salvageYield(item: Item): Cost {
   const rank = rarityRank(item.rarity);
   const lvl = item.ilvl ?? 0;
   return {
     cores: 1 + rank + Math.floor(lvl / 3),
-    credits: Math.round((8 + rank * 12) * (1 + lvl * 0.12)),
+    // Credits returned are intentionally low so salvage is a core path, not re-emit.
+    credits: Math.round((4 + rank * 7) * (1 + lvl * 0.08)),
   };
 }
 
@@ -52,5 +54,5 @@ export function canFuse(a: Item, b: Item): boolean {
 }
 export function fuseCost(a: Item): Cost {
   const m = RARITY_MULT[a.rarity];
-  return { credits: Math.round(210 * m), cores: 4 + rarityRank(a.rarity) * 2 };
+  return { credits: Math.round(300 * m), cores: 5 + rarityRank(a.rarity) * 2 };
 }
