@@ -192,3 +192,27 @@ files; procedural bakers in `textures.ts` only fill keys still missing after loa
 painted HUD panel is applied via `ensureHudPanelImage` (Phaser NineSlice) so desktop wide
 panels and compact mobile sizes share one art source without stretch artifacts. Mobile
 action pads tint the circular ring + ability icons for thumb readability.
+
+## Higgsfield expand pack (bosses / interact NPCs / district+infected / icons / audio)
+
+Third pass — drop raw sheets into `art-source/higgsfield/`, audio into
+`art-source/higgsfield/audio/`, then:
+
+```sh
+node tools/higgsfield-expand-build.mjs
+```
+
+| Raw input | Shipped | Used by |
+| --------- | ------- | ------- |
+| `sheet_bosses.png` (3×3) | `portraits/bosses_sheet.jpg` + `portraits/bosses/*.jpg` | Boss title-card splash (`portraitForBoss`) |
+| `sheet_npc_interact.png` (4×3) | `portraits/interact_sheet.jpg` + `portraits/interact/*.jpg` | npcServices cast dialogue faces |
+| `sheet_buildings_district.png` (3×2) | `objects/hf_building_dist_*.png` | District combat façades (NEON CORE / SPRAWL / UNDERCITY / …) |
+| `sheet_buildings_infected.png` (3×2) | `objects/hf_building_inf_*.png` | High-contagion / undercity damaged exteriors |
+| `sheet_icons_expand.png` (4×4) | `ui/ability_hf_*`, `loot_*`, `crest_*` | Ability icons (promoted over older keys), loot, faction crests |
+| `audio/sfx_*.wav` | `public/assets/sfx/` | `SfxBank` sample overrides (hit/cast/heat/pickup/ui/core/dash/ult) |
+| `audio/amb_*.wav` | `src/assets/music/` + `public/assets/music/` | District ambient beds (`musicTracks` amb_neon_core / sprawl / undercity) |
+| `audio/stinger_boss.wav` | music + stinger key | Boss intro sting in OnlineScene |
+
+**Soul Character:** train with `higgsfield soul-id create --name METRO_FIXER --soul-2 --image …`
+using refs in `art-source/higgsfield/soul_fixer/` (cast crops). Requires credits; use
+`--soul-id` with `text2image_soul_v2` for identity-consistent promo art.

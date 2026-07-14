@@ -25,6 +25,9 @@ export type MusicEnv =
   | "district_stacks" // Anduril Yards — yellow, smog, industrial
   | "district_spire" // Argus Spire — cyan, surveillance
   | "district_core" // The Kernel — red, embers, final
+  | "district_sprawl" // Seed Audio ambient — scrapyards / THE SPRAWL
+  | "district_undercity" // Seed Audio ambient — wet tunnels
+  | "amb_neon_core" // Seed Audio ambient — neon city core bed
   | "meltdown"; // city meltdown climax
 
 export interface MusicTrack {
@@ -74,6 +77,11 @@ const BASE_TRACKS: Omit<MusicTrack, "url">[] = [
   { env: "district_stacks", key: "mus_stacks", stem: "district_stacks", gain: 0.58 },
   { env: "district_spire", key: "mus_spire", stem: "district_spire", gain: 0.58 },
   { env: "district_core", key: "mus_core", stem: "district_core", gain: 0.62 },
+  // Seed Audio 1.0 district ambients (tools/higgsfield-expand-build.mjs) — expand the
+  // existing m4a set for sprawl / undercity / neon-core identity beds.
+  { env: "district_sprawl", key: "mus_sprawl", stem: "amb_sprawl", gain: 0.52 },
+  { env: "district_undercity", key: "mus_undercity", stem: "amb_undercity", gain: 0.52 },
+  { env: "amb_neon_core", key: "mus_amb_core", stem: "amb_neon_core", gain: 0.5 },
   { env: "meltdown", key: "mus_meltdown", stem: "meltdown", gain: 0.7 },
 ];
 
@@ -94,14 +102,18 @@ export function districtEnv(id: string): MusicEnv {
     case "spire":
       return "district_spire";
     case "core":
-      return "district_core";
+      // Prefer Seed Audio neon-core ambient when present; falls back via MusicDirector.
+      return "amb_neon_core";
     case "docks":
+      return "district_sprawl";
     case "undercity":
-      return "district_spire";
+      return "district_undercity";
     case "relay":
       return "district_stacks";
     case "wastes":
       return "district_core";
+    case "downtown":
+      return "district_downtown";
     default:
       return "district_downtown";
   }

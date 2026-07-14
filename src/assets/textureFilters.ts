@@ -56,7 +56,10 @@ export function applyTextureFilters(scene: Phaser.Scene): void {
       key.startsWith("portraits_") ||
       key.startsWith("portrait_") ||
       key.startsWith("ability_") ||
+      key.startsWith("loot_") ||
+      key.startsWith("crest_") ||
       key.startsWith("hf_prop_") ||
+      key.startsWith("hf_building_") ||
       key.startsWith("gun_hf_") ||
       key.startsWith("identity_");
     const mode = painted ? Phaser.Textures.FilterMode.LINEAR : Phaser.Textures.FilterMode.NEAREST;

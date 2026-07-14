@@ -151,14 +151,78 @@ const BUILDING_SPRITE: Partial<Record<BuildingKind, string>> = {
   den: "hf_building_den",
 };
 
+/** Contagion-damaged variants (tools/higgsfield-expand-build.mjs). */
+const BUILDING_INFECTED: Partial<Record<BuildingKind, string>> = {
+  bar: "hf_building_inf_bar",
+  clinic: "hf_building_inf_clinic",
+  hospital: "hf_building_inf_clinic",
+  shop: "hf_building_inf_shop",
+  den: "hf_building_inf_den",
+  guild: "hf_building_inf_guild",
+  home: "hf_building_inf_home",
+};
+
+/** District exterior kit (NEON CORE / SPRAWL / UNDERCITY / …) by district id or Env name. */
+const DIST_KIT: Record<string, string> = {
+  core: "hf_building_dist_core",
+  downtown: "hf_building_dist_core",
+  corporate: "hf_building_dist_core",
+  arcology: "hf_building_dist_core",
+  stacks: "hf_building_dist_stacks",
+  industrial: "hf_building_dist_stacks",
+  relay: "hf_building_dist_stacks",
+  sprawl: "hf_building_dist_sprawl",
+  slum: "hf_building_dist_sprawl",
+  residential: "hf_building_dist_sprawl",
+  undercity: "hf_building_dist_undercity",
+  docks: "hf_building_dist_docks",
+  market: "hf_building_dist_docks",
+  helios: "hf_building_dist_helios",
+  wastes: "hf_building_dist_helios",
+  spire: "hf_building_dist_core",
+  park: "hf_building_dist_sprawl",
+};
+
+function pickBuildingSprite(
+  scene: Phaser.Scene,
+  kind: BuildingKind,
+  opts?: { districtId?: string; infected?: boolean; preferDistrictKit?: boolean },
+): string | undefined {
+  if (opts?.infected) {
+    const inf = BUILDING_INFECTED[kind];
+    if (inf && scene.textures.exists(inf)) return inf;
+  }
+  // Combat districts: show the district kit as the primary exterior language.
+  if (opts?.preferDistrictKit && opts.districtId) {
+    const kit = DIST_KIT[opts.districtId];
+    if (kit && scene.textures.exists(kit)) return kit;
+  }
+  const base = BUILDING_SPRITE[kind];
+  if (base && scene.textures.exists(base)) return base;
+  // Hub fallback: env-zone kit when a kind has no dedicated landmark art.
+  if (opts?.districtId) {
+    const kit = DIST_KIT[opts.districtId];
+    if (kit && scene.textures.exists(kit)) return kit;
+  }
+  return undefined;
+}
+
 /** Distinct exteriors for city-hub buildings (kind + landmark aware). */
-export function paintCityBuildingFacades(scene: Phaser.Scene, buildings: CityBuilding[], depth = 3.2): void {
+export function paintCityBuildingFacades(
+  scene: Phaser.Scene,
+  buildings: CityBuilding[],
+  depth = 3.2,
+  opts?: { infected?: boolean },
+): void {
   for (const b of buildings) {
     const style = KIND_STYLE[b.kind];
     paintFacade(scene, b.rect, b.door, style.accent, style.sign, style.glyph, depth, LANDMARK_KINDS.includes(b.kind));
     // Overlay the baked building art when present; procedural façade stays as fallback.
-    const spriteKey = BUILDING_SPRITE[b.kind];
-    if (spriteKey && scene.textures.exists(spriteKey)) {
+    const spriteKey = pickBuildingSprite(scene, b.kind, {
+      districtId: b.env,
+      infected: opts?.infected,
+    });
+    if (spriteKey) {
       const X1 = b.rect.x1 * TILE;
       const Y1 = b.rect.y1 * TILE;
       const w = (b.rect.x2 + 1) * TILE - X1;
@@ -181,12 +245,16 @@ const DISTRICT_KIND_CYCLE: BuildingKind[] = ["shop", "home", "guild", "den", "ba
  *  ⚠ `buildings` are 1/3-res DESIGN rects (buildGrid scales walls ×DISTRICT_SCALE); the
  *  crown/plaque must be scaled to match or they float off the building (the old bug).
  *  Doors are NOT drawn here — OnlineScene draws the enterable doorway at the scaled
- *  south face; drawing them here too would double up + land in the wrong place. */
+ *  south face; drawing them here too would double up + land in the wrong place.
+ *
+ *  When `districtId` is set and a district kit texture exists, landmark buildings get
+ *  the HF exterior overlay; high-contagion zones can pass `infected` for damaged art. */
 export function paintDistrictBuildingFacades(
   scene: Phaser.Scene,
   buildings: Rect[],
   _zoneAccent: number,
   depth = 3.2,
+  opts?: { districtId?: string; infected?: boolean },
 ): void {
   const S = DISTRICT_SCALE;
   const g = scene.add.graphics().setDepth(depth);
@@ -221,5 +289,21 @@ export function paintDistrictBuildingFacades(
     const sy = Y2 - 5;
     g.fillStyle(0x0a0e18, 0.7).fillRect(sx - 8, sy - 5, 16, 8);
     g.fillStyle(sign, 0.85).fillRect(sx - 6, sy - 3, 12, 1);
+
+    // District kit / infected overlay on landmarks (and every 2nd block for variety).
+    if (landmark || i % 2 === 0) {
+      const spriteKey = pickBuildingSprite(scene, kind, {
+        districtId: opts?.districtId,
+        infected: opts?.infected || (opts?.districtId === "undercity" && i % 3 === 0),
+        preferDistrictKit: true,
+      });
+      if (spriteKey) {
+        scene.add
+          .image(X1 + w / 2, Y1 + h / 2, spriteKey)
+          .setDisplaySize(w * 0.92, h * 0.92)
+          .setDepth(depth + 0.05)
+          .setAlpha(0.92);
+      }
+    }
   }
 }

@@ -303,18 +303,29 @@ export default class Synth {
   dash() {
     this.sfxBank.play("dash");
   }
-  /** Class ability cast — a taut synth zap (Q/E, all classes). */
+  /** Class ability cast — Seed Audio sample when loaded, else synth zap. */
   cast() {
-    this.blip("square", 700, 210, 0.16, 0.08);
+    this.sfxBank.play("cast");
   }
   /** Level up — rising two-note flourish. */
   levelUp() {
     this.sfxBank.play("levelUp");
   }
-  /** Heat tier crossed — a rising power swell (bigger at the top tiers). */
+  /** Heat tier crossed — Seed Audio warning tone, scaled by tier. */
   tierUp(tier: number) {
-    const base = 300 + tier * 130;
-    this.blip("sawtooth", base, base * 2.2, 0.2, 0.06 + tier * 0.01);
+    this.sfxBank.play("heat", { pitch: 0.9 + tier * 0.08, gain: 0.7 + tier * 0.08 });
+  }
+  /** Ultimate / overdrive detonation. */
+  ult() {
+    this.sfxBank.play("ult");
+  }
+  /** Data-core collect chime. */
+  corePickup() {
+    this.sfxBank.play("core");
+  }
+  /** Soft UI click. */
+  ui() {
+    this.sfxBank.play("ui");
   }
   /** ICE core shattered — bright crack + glassy burst. */
   iceShatter() {

@@ -25,6 +25,10 @@ export interface TerrainLayerOpts {
   ambientFloors?: boolean;
   /** District/combat building rects — paints distinct façades when provided. */
   buildings?: Rect[];
+  /** Campaign district id (downtown/stacks/undercity/…) for district building kits. */
+  districtId?: string;
+  /** Prefer contagion-damaged building variants when textures exist. */
+  infected?: boolean;
   /** Large city hub: thinner wet-street pass (skips per-tile puddles). */
   lightweight?: boolean;
 }
@@ -67,7 +71,12 @@ export function createTerrainLayer(
   if (opts.wallShade ?? d.wallShade) shadeWalls(scene, grid, accent, 2.5, REAL_ART_TILES);
   if (opts.wetStreets ?? d.wetStreets) paintWetStreets(scene, grid, accentAt, 2, { lightweight: opts.lightweight });
   if (opts.ambientFloors ?? d.ambientFloors) paintAmbientFloors(scene, grid, accent);
-  if (opts.buildings?.length) paintDistrictBuildingFacades(scene, opts.buildings, accent);
+  if (opts.buildings?.length) {
+    paintDistrictBuildingFacades(scene, opts.buildings, accent, 3.2, {
+      districtId: opts.districtId,
+      infected: opts.infected,
+    });
+  }
 
   return layer;
 }

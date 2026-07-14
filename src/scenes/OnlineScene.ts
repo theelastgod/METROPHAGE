@@ -37,6 +37,9 @@ import {
   PORTRAIT_CAST_KEY,
   PORTRAIT_KEEPERS_KEY,
   PORTRAIT_RESIDENTS_KEY,
+  PORTRAIT_BOSSES_KEY,
+  PORTRAIT_INTERACT_KEY,
+  STINGER_BOSS_KEY,
 } from "../assets/manifest";
 import { driveChar } from "../assets/anim";
 import {
@@ -172,7 +175,7 @@ import {
 } from "./online/sceneConfig";
 import { applyCosmetic } from "../game/cosmetics";
 import { npcDef, AMBIENT_NPCS, INTERIOR_PLAN, keeperFor, districtResident, hubResident, campaignAllyLines, STORY_ALLIES } from "../game/cityNpcs";
-import { portraitFor, portraitForName, type PortraitRef } from "../game/portraits";
+import { portraitFor, portraitForName, portraitForBoss, type PortraitRef } from "../game/portraits";
 import { bountyForNpc } from "../game/bounties";
 import {
   CLIENT_OPEN_SERVICES,
@@ -419,6 +422,8 @@ export default class OnlineScene extends Phaser.Scene {
       [PORTRAIT_CAST_KEY, "assets/portraits/cast_sheet.jpg"],
       [PORTRAIT_KEEPERS_KEY, "assets/portraits/keepers_sheet.jpg"],
       [PORTRAIT_RESIDENTS_KEY, "assets/portraits/residents_sheet.jpg"],
+      [PORTRAIT_INTERACT_KEY, "assets/portraits/interact_sheet.jpg"],
+      [PORTRAIT_BOSSES_KEY, "assets/portraits/bosses_sheet.jpg"],
     ] as const;
     for (const [key, file] of sheets) {
       if (!this.textures.exists(key)) this.load.spritesheet(key, file, { frameWidth: 256, frameHeight: 256 });
@@ -580,6 +585,9 @@ export default class OnlineScene extends Phaser.Scene {
           : undefined,
       buildings:
         !this.isCityHub && !this.interior && !this.isSubway && !this.isDive && !this.isTutorial && !this.isBridge ? districtBuildings(def) : undefined,
+      districtId: def?.id,
+      // High-contagion districts (undercity / core / wastes) get infected exteriors mixed in.
+      infected: !!def && (def.id === "undercity" || def.id === "wastes" || def.contagion >= 14),
       lightweight: this.isCityHub,
     });
     if (this.isCityHub) {
@@ -4576,9 +4584,13 @@ export default class OnlineScene extends Phaser.Scene {
     this.prevHp = n.hp;
 
     if (n.credits > this.prevCredits || n.cores > this.prevCores) {
-      this.synth?.pickup();
-      if (n.cores > this.prevCores) this.pops?.popPickup(this.me.x, this.me.y - 16, `◈ +${n.cores - this.prevCores}`);
-      else if (n.credits > this.prevCredits) this.pops?.popPickup(this.me.x, this.me.y - 16, `₵ +${n.credits - this.prevCredits}`);
+      if (n.cores > this.prevCores) {
+        this.synth?.corePickup();
+        this.pops?.popPickup(this.me.x, this.me.y - 16, `◈ +${n.cores - this.prevCores}`);
+      } else {
+        this.synth?.pickup();
+        if (n.credits > this.prevCredits) this.pops?.popPickup(this.me.x, this.me.y - 16, `₵ +${n.credits - this.prevCredits}`);
+      }
       this.particles?.spark(this.me.x, this.me.y - 8, 0xf7ff3c, 1.2);
       juiceShake(this, 60, 0.002);
     }
@@ -6304,8 +6316,8 @@ export default class OnlineScene extends Phaser.Scene {
     }
   }
 
-  /** Boss title card — letterbox bars sweep in, the name lands with a sting, holds a
-   *  beat, and sweeps out. Once per boss per zone visit, triggered on first approach. */
+  /** Boss title card — letterbox bars sweep in, splash portrait + name land with a
+   *  sting, holds a beat, and sweeps out. Once per boss per zone visit. */
   private playBossIntro(name: string) {
     const w = this.scale.width;
     const h = this.scale.height;
@@ -6313,8 +6325,19 @@ export default class OnlineScene extends Phaser.Scene {
     const D = 1600;
     const top = this.add.rectangle(0, -barH, w, barH, 0x02030a, 0.92).setOrigin(0).setScrollFactor(0).setDepth(D);
     const bot = this.add.rectangle(0, h, w, barH, 0x02030a, 0.92).setOrigin(0).setScrollFactor(0).setDepth(D);
+    const bossPort = portraitForBoss(name);
+    let portrait: Phaser.GameObjects.Image | undefined;
+    if (bossPort && this.textures.exists(bossPort.key)) {
+      portrait = this.add
+        .image(w / 2, h / 2 - uiDim(36), bossPort.key, bossPort.frame)
+        .setDisplaySize(uiDim(148), uiDim(148))
+        .setScrollFactor(0)
+        .setDepth(D + 1)
+        .setAlpha(0)
+        .setScale(1.2);
+    }
     const title = this.add
-      .text(w / 2, h / 2, name, displayFont(34, { color: "#ff3b6b", fontStyle: "bold" }))
+      .text(w / 2, h / 2 + (portrait ? uiDim(56) : 0), name, displayFont(34, { color: "#ff3b6b", fontStyle: "bold" }))
       .setOrigin(0.5)
       .setScrollFactor(0)
       .setDepth(D + 1)
@@ -6322,20 +6345,32 @@ export default class OnlineScene extends Phaser.Scene {
       .setScale(1.35);
     title.setShadow(0, 0, "#2a0510", 10, true, true);
     const tag = this.add
-      .text(w / 2, h / 2 + uiDim(30), "— HSS COMMANDER UNIT —", hudFont(11, { color: "#9aa3b2" }))
+      .text(w / 2, h / 2 + uiDim(portrait ? 86 : 30), "— HSS COMMANDER UNIT —", hudFont(11, { color: "#9aa3b2" }))
       .setOrigin(0.5)
       .setScrollFactor(0)
       .setDepth(D + 1)
       .setAlpha(0);
     this.synth?.kill();
+    // Seed Audio boss stinger when present; otherwise Synth.kill() covers the hit.
+    if (this.cache.audio.exists(STINGER_BOSS_KEY)) {
+      try {
+        this.sound.play(STINGER_BOSS_KEY, { volume: getSettings().sfx * getSettings().master * 0.85 });
+      } catch {
+        /* audio unlock / decode edge */
+      }
+    }
     juiceShake(this, 240, 0.006);
     juiceNeonPulse(this, 0.3, 500);
     this.tweens.add({ targets: top, y: 0, duration: 260, ease: "Quad.Out" });
     this.tweens.add({ targets: bot, y: h - barH, duration: 260, ease: "Quad.Out" });
+    if (portrait) {
+      this.tweens.add({ targets: portrait, alpha: 1, scale: 1, duration: 360, delay: 80, ease: "Back.Out" });
+    }
     this.tweens.add({ targets: title, alpha: 1, scale: 1, duration: 320, delay: 140, ease: "Back.Out" });
     this.tweens.add({ targets: tag, alpha: 1, duration: 260, delay: 320 });
     this.time.delayedCall(2300, () => {
-      this.tweens.add({ targets: [title, tag], alpha: 0, duration: 260 });
+      const fade = portrait ? [title, tag, portrait] : [title, tag];
+      this.tweens.add({ targets: fade, alpha: 0, duration: 260 });
       this.tweens.add({ targets: top, y: -barH, duration: 300, ease: "Quad.In" });
       this.tweens.add({
         targets: bot,
@@ -6347,6 +6382,7 @@ export default class OnlineScene extends Phaser.Scene {
           bot.destroy();
           title.destroy();
           tag.destroy();
+          portrait?.destroy();
         },
       });
     });

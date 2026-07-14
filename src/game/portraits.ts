@@ -1,12 +1,17 @@
 // METROPHAGE — painted dialogue portraits (Higgsfield sheets, 12 frames each).
 //
-// Three 4×3 spritesheets ship in assets/portraits/ (256px frames, row-major):
-// the named story cast, the venue keepers, and the street residents. Every city
-// NPC resolves to a stable {key, frame} here — named characters map directly,
-// everyone else hashes onto a body-type-matched cell of the residents sheet, so
-// a given NPC always shows the same face without shipping 60 unique portraits.
+// Sheets ship in assets/portraits/ (256px frames, row-major):
+//   cast / keepers / residents / interact NPCs / world-boss splash.
+// Named characters map directly; everyone else hashes onto a body-type-matched
+// cell of the residents sheet so a given NPC always shows the same face.
 
-import { PORTRAIT_CAST_KEY, PORTRAIT_KEEPERS_KEY, PORTRAIT_RESIDENTS_KEY } from "../assets/manifest";
+import {
+  PORTRAIT_CAST_KEY,
+  PORTRAIT_KEEPERS_KEY,
+  PORTRAIT_RESIDENTS_KEY,
+  PORTRAIT_INTERACT_KEY,
+  PORTRAIT_BOSSES_KEY,
+} from "../assets/manifest";
 
 export interface PortraitRef {
   key: string;
@@ -43,6 +48,55 @@ const KEEPERS: Record<string, number> = {
   keep_stadium: 9,
   keep_citycenter: 10,
   porter: 11,
+};
+
+/**
+ * Interact / npcServices cast — interact_sheet.jpg (4×3) frame order.
+ * tools/higgsfield-expand-build.mjs NPC_INTERACT list.
+ */
+const INTERACT: Record<string, number> = {
+  porter: 0,
+  tunnel_rat: 1,
+  scrap_boss: 2,
+  hawker: 3,
+  preacher: 4,
+  street_kid: 5,
+  amb_tech: 6,
+  amb_vendor: 7,
+  subway_warden: 8,
+  amb_courier: 9,
+  keep_den: 10,
+  keep_citycenter: 11,
+  // aliases used in service overrides / hub names
+  arc_tech: 6,
+  amb_drifter: 5,
+  amb_dockhand: 0,
+  amb_arc_clerk: 6,
+};
+
+/**
+ * World-boss splash — bosses_sheet.jpg (3×3). Keys are slug + display-name tokens.
+ * Frame order matches BOSS_ROSTER on the server (void_herald is extra art).
+ */
+const BOSSES: Record<string, number> = {
+  gutter_king: 0,
+  "the gutter king": 0,
+  anduril_sentinel: 1,
+  "anduril sentinel": 1,
+  palantir_oracle: 2,
+  "palantir oracle": 2,
+  tidal_leviathan: 3,
+  "tidal leviathan": 3,
+  the_maw: 4,
+  "the maw": 4,
+  skylink_beacon: 5,
+  "skylink beacon": 5,
+  scrap_sovereign: 6,
+  "scrap sovereign": 6,
+  helios_warden: 7,
+  "helios warden": 7,
+  void_herald: 8,
+  "void herald": 8,
 };
 
 /**
@@ -98,10 +152,17 @@ function hash(id: string): number {
  */
 export function portraitFor(id: string, sex?: string): PortraitRef {
   if (CAST[id] !== undefined) return { key: PORTRAIT_CAST_KEY, frame: CAST[id] };
+  // Interact sheet beats keepers for shared ids (porter / keep_den / keep_citycenter)
+  // so the new npcServices faces show in dialogue.
+  if (INTERACT[id] !== undefined) return { key: PORTRAIT_INTERACT_KEY, frame: INTERACT[id] };
   if (KEEPERS[id] !== undefined) return { key: PORTRAIT_KEEPERS_KEY, frame: KEEPERS[id] };
   if (RESIDENTS[id] !== undefined) return { key: PORTRAIT_RESIDENTS_KEY, frame: RESIDENTS[id] };
   if (id.startsWith("keep_")) {
     return { key: PORTRAIT_KEEPERS_KEY, frame: hash(id) % 11 };
+  }
+  if (id.startsWith("amb_") || id.startsWith("res_")) {
+    // Prefer interact when we have a named amb face; else hash residents.
+    if (INTERACT[id] !== undefined) return { key: PORTRAIT_INTERACT_KEY, frame: INTERACT[id] };
   }
   const svc = SERVICE_FACES[id.toLowerCase()];
   if (svc) return svc;
@@ -122,5 +183,23 @@ export function portraitForName(name: string): PortraitRef | undefined {
   const first = head.split(/\s+/)[0] ?? head;
   if (CAST[first] !== undefined) return { key: PORTRAIT_CAST_KEY, frame: CAST[first] };
   if (SERVICE_FACES[first]) return SERVICE_FACES[first];
+  if (INTERACT[first] !== undefined) return { key: PORTRAIT_INTERACT_KEY, frame: INTERACT[first] };
+  // Boss display names ("THE GUTTER KING", "ANDURIL SENTINEL")
+  const boss = portraitForBoss(name);
+  if (boss) return boss;
+  return undefined;
+}
+
+/** World-boss / elite splash portrait from display name or slug. */
+export function portraitForBoss(name: string): PortraitRef | undefined {
+  const raw = name.trim().toLowerCase().replace(/\s+/g, " ");
+  if (!raw) return undefined;
+  if (BOSSES[raw] !== undefined) return { key: PORTRAIT_BOSSES_KEY, frame: BOSSES[raw] };
+  const slug = raw.replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+  if (BOSSES[slug] !== undefined) return { key: PORTRAIT_BOSSES_KEY, frame: BOSSES[slug] };
+  // Partial match: "GUTTER KING" without THE, etc.
+  for (const [k, frame] of Object.entries(BOSSES)) {
+    if (raw.includes(k) || k.includes(raw)) return { key: PORTRAIT_BOSSES_KEY, frame };
+  }
   return undefined;
 }

@@ -9,18 +9,37 @@ type SfxName =
   | "dash"
   | "levelUp"
   | "ui"
-  | "footstep";
+  | "footstep"
+  | "cast"
+  | "heat"
+  | "core"
+  | "ult";
 
-/** Procedural one-shot SFX bank — cached AudioBuffers, routed through the sfx bus. */
+/** Map logical SFX names → Seed Audio files under /assets/sfx/ (when present). */
+const SAMPLE_URL: Partial<Record<SfxName, string>> = {
+  hit: "assets/sfx/sfx_hit.wav",
+  cast: "assets/sfx/sfx_cast.wav",
+  heat: "assets/sfx/sfx_heat.wav",
+  pickup: "assets/sfx/sfx_pickup.wav",
+  ui: "assets/sfx/sfx_ui_blip.wav",
+  core: "assets/sfx/sfx_core.wav",
+  dash: "assets/sfx/sfx_dash.wav",
+  ult: "assets/sfx/sfx_ult.wav",
+};
+
+/** Procedural one-shot SFX bank — cached AudioBuffers, routed through the sfx bus.
+ *  When Seed Audio samples are available they replace the procedural tones. */
 export default class SfxBank {
   private ctx?: AudioContext;
   private bus?: GainNode;
   private buffers = new Map<SfxName, AudioBuffer>();
+  private samplesLoading = false;
 
   attach(ctx: AudioContext, sfxBus: GainNode) {
     this.ctx = ctx;
     this.bus = sfxBus;
     this.bakeAll();
+    void this.loadSamples();
   }
 
   play(name: SfxName, opts?: { pitch?: number; gain?: number }) {
@@ -49,6 +68,31 @@ export default class SfxBank {
     this.buffers.set("levelUp", this.tone(ctx, 0.18, 330, 660, "triangle", 0.4));
     this.buffers.set("ui", this.tone(ctx, 0.04, 1200, 1800, "sine", 0.2));
     this.buffers.set("footstep", this.noise(ctx, 0.03, 400, 0.15));
+    // Procedural stand-ins until Seed Audio samples load
+    this.buffers.set("cast", this.tone(ctx, 0.12, 700, 210, "square", 0.28));
+    this.buffers.set("heat", this.tone(ctx, 0.2, 300, 900, "sawtooth", 0.22));
+    this.buffers.set("core", this.tone(ctx, 0.12, 880, 1760, "triangle", 0.3));
+    this.buffers.set("ult", this.noise(ctx, 0.18, 400, 0.55));
+  }
+
+  /** Prefer authored Seed Audio clips when the files are present. */
+  private async loadSamples() {
+    if (!this.ctx || this.samplesLoading) return;
+    this.samplesLoading = true;
+    const ctx = this.ctx;
+    await Promise.all(
+      (Object.entries(SAMPLE_URL) as [SfxName, string][]).map(async ([name, url]) => {
+        try {
+          const res = await fetch(url);
+          if (!res.ok) return;
+          const ab = await res.arrayBuffer();
+          const buf = await ctx.decodeAudioData(ab.slice(0));
+          this.buffers.set(name, buf);
+        } catch {
+          /* keep procedural fallback */
+        }
+      }),
+    );
   }
 
   private tone(

@@ -82,6 +82,10 @@ export const PORTRAIT_NPC_KEY = "portrait_npc";
 export const PORTRAIT_CAST_KEY = "portraits_cast";
 export const PORTRAIT_KEEPERS_KEY = "portraits_keepers";
 export const PORTRAIT_RESIDENTS_KEY = "portraits_residents";
+/** Boss splash sheet (3×3) — tools/higgsfield-expand-build.mjs. */
+export const PORTRAIT_BOSSES_KEY = "portraits_bosses";
+/** Interact-NPC sheet (4×3) for npcServices cast. */
+export const PORTRAIT_INTERACT_KEY = "portraits_interact";
 export const UI_FRAME_KEY = "ui_frame";
 export const UI_GUN_KEY = "ui_gun";
 /** Higgsfield neon glass HUD panel (NineSlice-friendly). */
@@ -105,10 +109,30 @@ export const ABILITY_ICON_KEYS = [
   "ability_radar",
 ] as const;
 export type AbilityIconKey = (typeof ABILITY_ICON_KEYS)[number];
+/** Loot / faction crest / token icons (expand sheet). */
+export const LOOT_ICON_KEYS = ["loot_credit", "loot_core", "loot_crate", "loot_medpatch"] as const;
+export const CREST_ICON_KEYS = [
+  "crest_metrophage",
+  "crest_kguerilla",
+  "crest_wintermute",
+  "crest_swarm",
+] as const;
 // Painted menu backdrop + per-class select-card art (same Higgsfield build).
 export const MENU_BG_KEY = "menu_bg";
 export const classArtKey = (classId: string) => "classart_" + classId;
 export const VO_MELTDOWN_KEY = "vo_meltdown";
+/** Seed Audio 1.0 one-shots (public/assets/sfx). */
+export const SFX_KEYS = [
+  "sfx_hit",
+  "sfx_cast",
+  "sfx_heat",
+  "sfx_pickup",
+  "sfx_ui_blip",
+  "sfx_core",
+  "sfx_dash",
+  "sfx_ult",
+] as const;
+export const STINGER_BOSS_KEY = "stinger_boss";
 /** Higgsfield top-down prop pack (12 cells, tools/higgsfield-hud-build.mjs). */
 export const HF_PROP_KEYS = Array.from({ length: 12 }, (_, i) => "hf_prop_" + String(i + 1).padStart(2, "0"));
 /** Higgsfield top-down landmark building props (tools/higgsfield-building-build.mjs). */
@@ -116,8 +140,18 @@ export const HF_BUILDING_SLUGS = [
   "bar", "clinic", "subway", "shop",
   "guild", "hotel", "stadium", "citycenter", "home", "den",
 ] as const;
+/** District exterior kits (NEON CORE / SPRAWL / UNDERCITY / …). */
+export const HF_DIST_BUILDING_SLUGS = [
+  "dist_core", "dist_sprawl", "dist_undercity", "dist_docks", "dist_helios", "dist_stacks",
+] as const;
+/** Contagion-damaged building variants. */
+export const HF_INF_BUILDING_SLUGS = [
+  "inf_bar", "inf_clinic", "inf_shop", "inf_den", "inf_guild", "inf_home",
+] as const;
 export const hfBuildingKey = (slug: string) => "hf_building_" + slug;
 export const HF_BUILDING_KEYS = HF_BUILDING_SLUGS.map(hfBuildingKey);
+export const HF_DIST_BUILDING_KEYS = HF_DIST_BUILDING_SLUGS.map(hfBuildingKey);
+export const HF_INF_BUILDING_KEYS = HF_INF_BUILDING_SLUGS.map(hfBuildingKey);
 
 // Top-down character sheet frame order (drop-in pack): 0=down 1=left 2=right 3=up.
 const CHAR: Pick<AssetEntry, "frameWidth" | "frameHeight"> = {
@@ -191,6 +225,8 @@ export const ASSETS: Record<string, AssetEntry[]> = {
     { key: IDENTITY_BTN_SECONDARY_KEY, file: "assets/ui/identity_btn_secondary.png" },
     { key: IDENTITY_MARK_KEY, file: "assets/ui/identity_mark.png" },
     ...ABILITY_ICON_KEYS.map((k) => ({ key: k, file: `assets/ui/${k}.png` })),
+    ...LOOT_ICON_KEYS.map((k) => ({ key: k, file: `assets/ui/${k}.png` })),
+    ...CREST_ICON_KEYS.map((k) => ({ key: k, file: `assets/ui/${k}.png` })),
     { key: MENU_BG_KEY, file: "assets/ui/menu_bg.jpg" }, // painted menu key art
     // Class cards are loaded by SelectScene, where they are first used. First-time
     // players no longer download ~0.5 MB of menu art before the cold open.
@@ -202,6 +238,9 @@ export const ASSETS: Record<string, AssetEntry[]> = {
   // to the procedural Synth. See tools/gen-vo.sh, tools/gen-music.mjs + ART_NOTES.md.
   audio: [
     { key: VO_MELTDOWN_KEY, file: "assets/audio/meltdown_vo.mp3" },
+    // Seed Audio SFX + boss stinger (lazy-friendly; small WAVs).
+    ...SFX_KEYS.map((k) => ({ key: k, file: `assets/sfx/${k}.wav` })),
+    { key: STINGER_BOSS_KEY, file: "assets/music/stinger_boss.m4a" },
     // Only the MENU bed ships in the boot payload; the other nine (~4.9MB) stream
     // in lazily on first entry to their environment (MusicDirector.lazyLoad — the
     // procedural Synth covers the gap). Cuts time-to-first-play sharply on phones
@@ -230,6 +269,9 @@ export const ASSETS: Record<string, AssetEntry[]> = {
     ...HOLO_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
     // Higgsfield top-down landmark buildings (tools/higgsfield-building-build.mjs).
     ...HF_BUILDING_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
+    // District kits + contagion-damaged variants (tools/higgsfield-expand-build.mjs).
+    ...HF_DIST_BUILDING_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
+    ...HF_INF_BUILDING_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
   ],
   // Real isometric cyberpunk crates/containers — non-colliding cargo decals (asset-drop).
   decals: [
