@@ -9,74 +9,198 @@
 // AUTHORITY: the server owns every balance and authorizes every settlement. The client
 // never mints, never reports a balance, and cannot double-spend — withdrawals debit
 // atomically (a conditional UPDATE) and deposits are claim-once (tx_sig is a PRIMARY
-// KEY). Settlement is a pluggable seam: EVM ERC-20 (preferred for ETH $METRO),
-// Solana SPL (legacy), or devnet-sim for headless smoke tests.
+// KEY). Settlement is a pluggable seam: Solana SPL (primary), EVM ERC-20 (legacy),
+// or devnet-sim for headless smoke tests.
 //
 // Wallet proof required for live settlement (personal_sign / SIWS).
 
 import type { D1Database } from "@cloudflare/workers-types";
+import {
+  BASE_DEPOSIT_CREDITS,
+  BASE_WITHDRAW_CREDITS,
+  BASE_MIN_WITHDRAW_CREDITS,
+  BASE_WITHDRAW_COOLDOWN_MS,
+  METRO_DEV_SEED_METRO,
+  TARGET_PLAYERS,
+  resolveEconomyPolicy,
+  type EconomyPolicy,
+  type PopTierId,
+} from "../../src/game/economyPolicy";
 
+/** User-facing copy when the player-funded pool (or on-chain treasury ATA) can't cover a cash-out. */
+export const POOL_EMPTY_USER_MSG = "Check back later.";
+
+/**
+ * Static defaults (healthy). Live rates come from `resolveBridge()` / economy policy
+ * so the 1% seed + deposits stay solvent under ~500 players.
+ */
 export const BRIDGE = {
-  // ── Robinhood Chain launch economics (ERC-20 on RH L2) ──────────────────
-  // Fixed-supply $METRO; developer does NOT seed the cash-out pool. Deposits fill
-  // it, withdrawals drain it, empty pool = reject + refund credits.
-  //
-  // Retail-friendly integers (RH app audience):
-  //   deposit  1 $METRO → 100 ₵
-  //   withdraw 125 ₵ → 1 $METRO
-  // Round-trip keeps 20% of the credit value in the pool (wider than the old 12%
-  // Solana/pump.fun spread) so early cash-outs from a cold pool are safer.
-  //
-  // L2 gas is cheap → lower min cash-out (2 $METRO). Daily cap is tighter at launch
-  // so one account can't empty a thin pool. On-chain ERC-20 decimals are still read
-  // live; metroDecimals is ledger rounding only.
-  //
-  // Gas: deposits paid by player; withdrawals are treasury-signed ERC-20 transfers
-  // (treasury needs a small ETH float on Robinhood Chain).
-  depositCreditsPerMetro: 100, // 1 $METRO deposited → 100 credits
-  withdrawCreditsPerMetro: 125, // 125 credits → 1 $METRO cashed out
-  minWithdrawCredits: 250, // 2 $METRO floor (L2-friendly)
-  withdrawCooldownMs: 30_000, // 30s between withdraws (snappier on L2)
-  dailyCapCredits: 50_000, // 400 $METRO/day max per player at launch
-  metroDecimals: 6, // off-chain rounding; contract decimals used for chain amounts
-  claimTtlMs: 10 * 60_000, // abandoned claims refund after 10 min
+  depositCreditsPerMetro: BASE_DEPOSIT_CREDITS,
+  withdrawCreditsPerMetro: BASE_WITHDRAW_CREDITS,
+  minWithdrawCredits: BASE_MIN_WITHDRAW_CREDITS,
+  withdrawCooldownMs: BASE_WITHDRAW_COOLDOWN_MS,
+  dailyCapCredits: 0, // unlimited
+  metroDecimals: 6,
+  claimTtlMs: 10 * 60_000,
+  devSeedMetro: METRO_DEV_SEED_METRO,
+  targetPlayers: TARGET_PLAYERS,
 } as const;
+
+export type LiveBridge = {
+  depositCreditsPerMetro: number;
+  withdrawCreditsPerMetro: number;
+  minWithdrawCredits: number;
+  withdrawCooldownMs: number;
+  dailyCapCredits: number;
+  claimTtlMs: number;
+  policy: EconomyPolicy;
+};
 
 const DAY_MS = 86_400_000;
 const roundMetro = (n: number) => {
   const p = 10 ** BRIDGE.metroDecimals;
   return Math.round(n * p) / p;
 };
-/** Withdraw direction: credits burned -> $METRO owed. */
-export const creditsToMetro = (credits: number) => roundMetro(credits / BRIDGE.withdrawCreditsPerMetro);
-/** Deposit direction: $METRO received -> credits granted. */
-export const metroToCredits = (metro: number) => Math.floor(metro * BRIDGE.depositCreditsPerMetro);
 
-/** The player-funded cash-out pool: every verified deposit adds to it, every non-failed
- *  withdrawal reserves from it. Starts at ZERO on a pump.fun launch (no dev seeding) and
- *  is the hard ceiling on what the bridge will ever promise to pay. */
+/** Withdraw direction at a specific rate. */
+export const creditsToMetroAt = (credits: number, withdrawRate: number) =>
+  roundMetro(credits / Math.max(1, withdrawRate));
+/** Deposit direction at a specific rate. */
+export const metroToCreditsAt = (metro: number, depositRate: number) =>
+  Math.floor(metro * Math.max(1, depositRate));
+
+/** Defaults (healthy) — prefer live policy via resolveBridge for mutations. */
+export const creditsToMetro = (credits: number) => creditsToMetroAt(credits, BRIDGE.withdrawCreditsPerMetro);
+export const metroToCredits = (metro: number) => metroToCreditsAt(metro, BRIDGE.depositCreditsPerMetro);
+
+/** Developer seed recorded in metro_seed (migration 0034). Falls back to 0 if table missing. */
+export async function seedMetro(db: D1Database): Promise<number> {
+  try {
+    const row = await db.prepare("SELECT COALESCE(SUM(metro),0) AS s FROM metro_seed").first<{ s: number }>();
+    return Math.max(0, roundMetro(row?.s ?? 0));
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Cash-out pool = developer seed + player deposits − non-failed withdrawals.
+ * Hard ceiling on what the bridge will ever promise to pay.
+ */
 export async function poolMetro(db: D1Database): Promise<number> {
-  const row = await db
-    .prepare(
-      "SELECT (SELECT COALESCE(SUM(metro),0) FROM metro_deposits) - (SELECT COALESCE(SUM(metro),0) FROM metro_withdrawals WHERE status != 'failed') AS pool",
-    )
-    .first<{ pool: number }>();
-  return Math.max(0, roundMetro(row?.pool ?? 0));
+  const seed = await seedMetro(db);
+  try {
+    const row = await db
+      .prepare(
+        `SELECT
+           (SELECT COALESCE(SUM(metro),0) FROM metro_deposits)
+         - (SELECT COALESCE(SUM(metro),0) FROM metro_withdrawals WHERE status != 'failed') AS flow`,
+      )
+      .first<{ flow: number }>();
+    return Math.max(0, roundMetro(seed + (row?.flow ?? 0)));
+  } catch {
+    return Math.max(0, seed);
+  }
+}
+
+/** SQL fragment: available pool (seed + deposits − withdrawals). Used in atomic INSERT. */
+const POOL_SQL = `(
+  (SELECT COALESCE((SELECT SUM(metro) FROM metro_seed), 0))
+  + (SELECT COALESCE(SUM(metro),0) FROM metro_deposits)
+  - (SELECT COALESCE(SUM(metro),0) FROM metro_withdrawals WHERE status != 'failed')
+)`;
+
+/** Fallback when metro_seed table is absent (pre-0034). */
+const POOL_SQL_LEGACY = `(
+  (SELECT COALESCE(SUM(metro),0) FROM metro_deposits)
+  - (SELECT COALESCE(SUM(metro),0) FROM metro_withdrawals WHERE status != 'failed')
+)`;
+
+async function withdrawnTodayMetro(db: D1Database, dayStart: number): Promise<number> {
+  try {
+    const row = await db
+      .prepare(
+        "SELECT COALESCE(SUM(metro),0) AS m FROM metro_withdrawals WHERE status != 'failed' AND created_at >= ?",
+      )
+      .bind(dayStart)
+      .first<{ m: number }>();
+    return Math.max(0, roundMetro(row?.m ?? 0));
+  } catch {
+    return 0;
+  }
+}
+
+async function circulatingCredits(db: D1Database): Promise<number> {
+  try {
+    const row = await db.prepare("SELECT COALESCE(SUM(credits),0) AS c FROM players").first<{ c: number }>();
+    return Math.max(0, Math.round(row?.c ?? 0));
+  } catch {
+    return 0;
+  }
+}
+
+/** Registered player count — drives population economy tiers (500/1000/1500/2500). */
+export async function registeredPlayerCount(db: D1Database): Promise<number> {
+  try {
+    const row = await db.prepare("SELECT COUNT(*) AS n FROM players").first<{ n: number }>();
+    return Math.max(0, Math.floor(row?.n ?? 0));
+  } catch {
+    return TARGET_PLAYERS;
+  }
+}
+
+/** Live rates + caps from pool health + live player population tier. */
+export async function resolveBridge(db: D1Database): Promise<LiveBridge> {
+  const pool = await poolMetro(db);
+  const seed = await seedMetro(db);
+  const circ = await circulatingCredits(db);
+  const players = await registeredPlayerCount(db);
+  const dayStart = Date.now() - DAY_MS;
+  const wdToday = await withdrawnTodayMetro(db, dayStart);
+  const policy = resolveEconomyPolicy({
+    poolMetro: pool,
+    circulatingCredits: circ,
+    activePlayers: players > 0 ? players : TARGET_PLAYERS,
+    seedMetro: seed > 0 ? seed : METRO_DEV_SEED_METRO,
+    withdrawnTodayMetro: wdToday,
+  });
+  return {
+    depositCreditsPerMetro: policy.depositCreditsPerMetro,
+    withdrawCreditsPerMetro: policy.withdrawCreditsPerMetro,
+    minWithdrawCredits: policy.minWithdrawCredits,
+    withdrawCooldownMs: policy.withdrawCooldownMs,
+    dailyCapCredits: policy.dailyWithdrawCapCredits,
+    claimTtlMs: BRIDGE.claimTtlMs,
+    policy,
+  };
 }
 
 /** Public pool status — the client renders launch-phase copy from this. */
 export async function poolInfo(db: D1Database): Promise<BridgeResponse> {
-  const pool = await poolMetro(db);
-  const minMetro = creditsToMetro(BRIDGE.minWithdrawCredits);
+  const live = await resolveBridge(db);
+  const pool = live.policy.poolMetro;
+  const minMetro = creditsToMetroAt(live.minWithdrawCredits, live.withdrawCreditsPerMetro);
   return {
     ok: true,
     poolMetro: pool,
-    // bootstrap = the pool cannot yet cover even a minimum withdrawal. Purely
-    // informational: withdrawals are gated on the actual pool balance either way.
-    phase: pool >= minMetro ? "open" : "bootstrap",
-    depositCreditsPerMetro: BRIDGE.depositCreditsPerMetro,
-    withdrawCreditsPerMetro: BRIDGE.withdrawCreditsPerMetro,
-    minWithdrawCredits: BRIDGE.minWithdrawCredits,
+    seedMetro: live.policy.devSeedMetro,
+    phase: live.policy.phase === "bootstrap" || pool < minMetro ? "bootstrap" : live.policy.phase,
+    economyPhase: live.policy.phase,
+    depositCreditsPerMetro: live.depositCreditsPerMetro,
+    withdrawCreditsPerMetro: live.withdrawCreditsPerMetro,
+    minWithdrawCredits: live.minWithdrawCredits,
+    dailyCapCredits: 0, // unlimited daily withdraw
+    dailyEmitCap: 0, // unlimited earn
+    dailyWithdrawUnlimited: true,
+    dailyEmitUnlimited: true,
+    globalDailyWithdrawMetro: null, // no global daily drain cap
+    coverageRatio: live.policy.coverageRatio,
+    targetPlayers: TARGET_PLAYERS,
+    activePlayers: live.policy.activePlayers,
+    popTier: live.policy.popTier as PopTierId,
+    popTierLabel: live.policy.popTierLabel,
+    nextPopThreshold: live.policy.nextPopThreshold,
+    note: live.policy.note,
   };
 }
 
@@ -163,6 +287,7 @@ export async function getAccount(db: D1Database, player: string, settlement?: Se
   const id = normId(player);
   const row = await db.prepare("SELECT credits, metro FROM players WHERE id = ?").bind(id).first<{ credits: number; metro: number }>();
   if (!row) return { ok: false, reason: "unknown player" };
+  const live = await resolveBridge(db);
   const agg = await db
     .prepare(
       "SELECT COALESCE(SUM(credits),0) AS used, COALESCE(MAX(created_at),0) AS last FROM metro_withdrawals WHERE player = ? AND status != 'failed' AND created_at >= ?",
@@ -171,33 +296,45 @@ export async function getAccount(db: D1Database, player: string, settlement?: Se
     .first<{ used: number; last: number }>();
   const used = agg?.used ?? 0;
   const last = agg?.last ?? 0;
-  const pool = await poolMetro(db);
+  const pool = live.policy.poolMetro;
   return {
     ok: true,
     player: id,
     credits: row.credits,
     metro: row.metro ?? 0,
-    depositCreditsPerMetro: BRIDGE.depositCreditsPerMetro,
-    withdrawCreditsPerMetro: BRIDGE.withdrawCreditsPerMetro,
-    metroValue: creditsToMetro(row.credits),
+    depositCreditsPerMetro: live.depositCreditsPerMetro,
+    withdrawCreditsPerMetro: live.withdrawCreditsPerMetro,
+    metroValue: creditsToMetroAt(row.credits, live.withdrawCreditsPerMetro),
     poolMetro: pool,
-    phase: pool >= creditsToMetro(BRIDGE.minWithdrawCredits) ? "open" : "bootstrap",
-    minWithdrawCredits: BRIDGE.minWithdrawCredits,
-    dailyCapCredits: BRIDGE.dailyCapCredits,
-    dailyUsedCredits: used,
-    cooldownMsLeft: Math.max(0, BRIDGE.withdrawCooldownMs - (Date.now() - last)),
+    seedMetro: await seedMetro(db),
+    phase: live.policy.phase === "bootstrap" || pool < creditsToMetroAt(live.minWithdrawCredits, live.withdrawCreditsPerMetro) ? "bootstrap" : "open",
+    economyPhase: live.policy.phase,
+    minWithdrawCredits: live.minWithdrawCredits,
+    dailyCapCredits: 0, // unlimited
+    dailyEmitCap: 0, // unlimited earn
+    dailyUsedCredits: used, // telemetry only
+    dailyWithdrawUnlimited: true,
+    dailyEmitUnlimited: true,
+    cooldownMsLeft: Math.max(0, live.withdrawCooldownMs - (Date.now() - last)),
+    coverageRatio: live.policy.coverageRatio,
+    globalDailyWithdrawMetro: live.policy.globalDailyWithdrawMetro,
+    activePlayers: live.policy.activePlayers,
+    popTier: live.policy.popTier,
+    popTierLabel: live.policy.popTierLabel,
+    nextPopThreshold: live.policy.nextPopThreshold,
+    note: live.policy.note,
   };
 }
 
-export function quote(credits: number): BridgeResponse {
+export function quote(credits: number, withdrawRate = BRIDGE.withdrawCreditsPerMetro, depositRate = BRIDGE.depositCreditsPerMetro): BridgeResponse {
   const c = Math.floor(credits);
   if (!Number.isFinite(c) || c <= 0) return { ok: false, reason: "bad amount" };
   return {
     ok: true,
     credits: c,
-    metro: creditsToMetro(c),
-    withdrawCreditsPerMetro: BRIDGE.withdrawCreditsPerMetro,
-    depositCreditsPerMetro: BRIDGE.depositCreditsPerMetro,
+    metro: creditsToMetroAt(c, withdrawRate),
+    withdrawCreditsPerMetro: withdrawRate,
+    depositCreditsPerMetro: depositRate,
   };
 }
 
@@ -210,23 +347,25 @@ export async function withdraw(
   const wallet = (args.wallet || "").trim();
   const credits = Math.floor(Number(args.credits) || 0);
   if (!isValidWallet(wallet)) return { ok: false, reason: "invalid wallet address" };
-  if (!Number.isFinite(credits) || credits < BRIDGE.minWithdrawCredits)
-    return { ok: false, reason: `minimum withdraw is ${BRIDGE.minWithdrawCredits} credits` };
-  await reclaimExpired(db, settlement); // abandoned claims release their pool reservation first
+  await reclaimExpired(db, settlement);
 
-  // Pre-check for friendly errors (authoritative gates live in the INSERT below).
+  const live = await resolveBridge(db);
+  if (!Number.isFinite(credits) || credits < live.minWithdrawCredits)
+    return { ok: false, reason: `minimum withdraw is ${live.minWithdrawCredits} credits` };
+
+  // Pre-check: short anti-spam cooldown only (no daily withdraw cap).
   const now = Date.now();
-  const dayStart = now - DAY_MS;
-  const cooldownCutoff = now - BRIDGE.withdrawCooldownMs;
-  const agg = await db
+  const cooldownCutoff = now - live.withdrawCooldownMs;
+  const lastWd = await db
     .prepare(
-      "SELECT COALESCE(SUM(credits),0) AS used, COALESCE(MAX(created_at),0) AS last FROM metro_withdrawals WHERE player = ? AND status != 'failed' AND created_at >= ?",
+      "SELECT COALESCE(MAX(created_at),0) AS last FROM metro_withdrawals WHERE player = ? AND status != 'failed'",
     )
-    .bind(id, dayStart)
-    .first<{ used: number; last: number }>();
-  if (now - (agg?.last ?? 0) < BRIDGE.withdrawCooldownMs)
+    .bind(id)
+    .first<{ last: number }>();
+  if (now - (lastWd?.last ?? 0) < live.withdrawCooldownMs)
     return { ok: false, reason: "withdraw cooldown — try again shortly" };
-  if ((agg?.used ?? 0) + credits > BRIDGE.dailyCapCredits) return { ok: false, reason: "daily withdraw cap reached" };
+
+  const metro = creditsToMetroAt(credits, live.withdrawCreditsPerMetro);
 
   // ATOMIC debit — succeeds only if the LIVE balance covers it (no double-spend).
   const debit = await db
@@ -235,80 +374,70 @@ export async function withdraw(
     .run();
   if (debit.meta.changes === 0) return { ok: false, reason: "insufficient credits" };
 
-  // ATOMIC pool + daily-cap + cooldown reservation in one INSERT.
-  // Concurrent withdraws cannot both pass stale cap/cooldown checks.
-  const metro = creditsToMetro(credits);
-  const ins = await db
-    .prepare(
-      `INSERT INTO metro_withdrawals (player, wallet, credits, metro, status, created_at)
-       SELECT ?,?,?,?,'pending',?
-       WHERE (SELECT COALESCE(SUM(metro),0) FROM metro_deposits)
-           - (SELECT COALESCE(SUM(metro),0) FROM metro_withdrawals WHERE status != 'failed') >= ?
-         AND (SELECT COALESCE(SUM(credits),0) FROM metro_withdrawals
-              WHERE player = ? AND status != 'failed' AND created_at >= ?) + ? <= ?
-         AND (SELECT COALESCE(MAX(created_at),0) FROM metro_withdrawals
-              WHERE player = ? AND status != 'failed') <= ?`,
-    )
-    .bind(
-      id,
-      wallet,
-      credits,
-      metro,
-      now,
-      metro,
-      id,
-      dayStart,
-      credits,
-      BRIDGE.dailyCapCredits,
-      id,
-      cooldownCutoff,
-    )
-    .run();
+  // ATOMIC pool + cooldown reservation — no daily personal or global WD caps.
+  const bindCommon = [id, wallet, credits, metro, now, metro, id, cooldownCutoff] as const;
+
+  let ins;
+  try {
+    ins = await db
+      .prepare(
+        `INSERT INTO metro_withdrawals (player, wallet, credits, metro, status, created_at)
+         SELECT ?,?,?,?,'pending',?
+         WHERE ${POOL_SQL} >= ?
+           AND (SELECT COALESCE(MAX(created_at),0) FROM metro_withdrawals
+                WHERE player = ? AND status != 'failed') <= ?`,
+      )
+      .bind(...bindCommon)
+      .run();
+  } catch {
+    // Pre-0034: no metro_seed table — fall back to deposits-only pool SQL.
+    ins = await db
+      .prepare(
+        `INSERT INTO metro_withdrawals (player, wallet, credits, metro, status, created_at)
+         SELECT ?,?,?,?,'pending',?
+         WHERE ${POOL_SQL_LEGACY} >= ?
+           AND (SELECT COALESCE(MAX(created_at),0) FROM metro_withdrawals
+                WHERE player = ? AND status != 'failed') <= ?`,
+      )
+      .bind(...bindCommon)
+      .run();
+  }
   if (ins.meta.changes === 0) {
     await db.prepare("UPDATE players SET credits = credits + ? WHERE id = ?").bind(credits, id).run();
     const pool = await poolMetro(db);
-    // Distinguish cap/cooldown race vs pool — re-check for a clear reason.
     const again = await db
       .prepare(
-        "SELECT COALESCE(SUM(credits),0) AS used, COALESCE(MAX(created_at),0) AS last FROM metro_withdrawals WHERE player = ? AND status != 'failed' AND created_at >= ?",
+        "SELECT COALESCE(MAX(created_at),0) AS last FROM metro_withdrawals WHERE player = ? AND status != 'failed'",
       )
-      .bind(id, dayStart)
-      .first<{ used: number; last: number }>();
-    if (now - (again?.last ?? 0) < BRIDGE.withdrawCooldownMs)
+      .bind(id)
+      .first<{ last: number }>();
+    if (now - (again?.last ?? 0) < live.withdrawCooldownMs)
       return { ok: false, reason: "withdraw cooldown — try again shortly" };
-    if ((again?.used ?? 0) + credits > BRIDGE.dailyCapCredits)
-      return { ok: false, reason: "daily withdraw cap reached" };
     return {
       ok: false,
-      reason:
-        pool <= 0
-          ? "insufficient $METRO in the treasury — come back and try again later (it refills as runners deposit)"
-          : `insufficient $METRO in the treasury for that amount (${pool} $METRO available) — try a smaller amount or come back later`,
+      reason: POOL_EMPTY_USER_MSG,
       poolMetro: pool,
     };
   }
   const wid = ins.meta.last_row_id;
 
-  // Build the CLAIM: a payout tx the PLAYER pays the fee on and submits. The treasury
-  // only signs — it never spends SOL ($0-launch invariant). On build failure, refund.
   const settle = await settlement.buildClaim(wallet, metro);
   if (!settle.ok || !settle.claimTx) {
     await db.prepare("UPDATE players SET credits = credits + ? WHERE id = ?").bind(credits, id).run();
     await db.prepare("UPDATE metro_withdrawals SET status = 'failed' WHERE id = ?").bind(wid).run();
-    return { ok: false, reason: settle.reason ?? "claim build failed (credits refunded)" };
+    const raw = settle.reason ?? "claim build failed (credits refunded)";
+    const poolish =
+      raw === POOL_EMPTY_USER_MSG ||
+      /treasury.*low|balance too low|Check back later|insufficient \$METRO|no \$METRO/i.test(raw);
+    return { ok: false, reason: poolish ? POOL_EMPTY_USER_MSG : raw };
   }
-  // Persist EVM nonce so TTL reclaim can burn the pre-signed claim (otherwise an
-  // abandoned signed transfer remains valid forever until the nonce advances).
   if (typeof settle.nonce === "number" && Number.isFinite(settle.nonce)) {
     try {
       await db.prepare("UPDATE metro_withdrawals SET claim_nonce = ? WHERE id = ?").bind(settle.nonce, wid).run();
     } catch {
-      /* pre-migration — reclaim cannot burn nonce until 0031 is applied */
+      /* pre-migration */
     }
   }
-  // The row stays 'pending' (reserving the pool) until /metro/withdraw/confirm proves
-  // the claim landed — or the TTL reclaims it. The tx itself is not stored: it is only
-  // valid signed-as-is, and the confirm step re-verifies everything on-chain anyway.
   return {
     ok: true,
     status: "claim",
@@ -318,7 +447,8 @@ export async function withdraw(
     metro,
     withdrawId: wid,
     claimTx: settle.claimTx,
-    expiresAt: Date.now() + BRIDGE.claimTtlMs,
+    expiresAt: Date.now() + live.claimTtlMs,
+    withdrawCreditsPerMetro: live.withdrawCreditsPerMetro,
     note: "sign + submit this tx with your wallet (you pay the network fee), then confirm",
   };
 }
@@ -348,6 +478,7 @@ export async function confirmWithdraw(
     await reclaimExpired(db, settlement);
     return { ok: false, reason: "claim expired — credits refunded" };
   }
+  // (rates frozen at claim time via stored metro amount)
 
   const v = await settlement.verifyClaim(txSig, row.wallet, row.metro);
   if (!v.ok) return { ok: false, reason: v.reason ?? "claim not found on-chain yet — try again shortly" };
@@ -425,9 +556,10 @@ export async function deposit(
   if (!v.ok) return { ok: false, reason: v.reason ?? "deposit not verified on-chain" };
   const metro = roundMetro(v.metro ?? args.metro);
   if (!(metro > 0) || !Number.isFinite(metro)) return { ok: false, reason: "bad deposit amount" };
-  const credits = metroToCredits(metro);
+  const live = await resolveBridge(db);
+  const credits = metroToCreditsAt(metro, live.depositCreditsPerMetro);
   // Reject dust that would grant 0 credits (don't inflate metro ledger with Math.max(1,…)).
-  if (credits < 1) return { ok: false, reason: "deposit too small — need at least 0.01 $METRO for 1 credit" };
+  if (credits < 1) return { ok: false, reason: "deposit too small — need more $METRO for 1 credit at current rate" };
 
   // CLAIM-ONCE: tx_sig is the PRIMARY KEY, so a transfer can only ever credit once.
   const claim = await db

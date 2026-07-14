@@ -1,9 +1,12 @@
 name: Deploy
 
-# Manual-only: production deploys stay a deliberate act.
+# Manual-only + optional schedule once $METRO is live (see metro-live job).
 # Required repo secrets (Settings → Secrets → Actions):
-#   CLOUDFLARE_API_TOKEN   — token with Workers Scripts:Edit + Pages:Edit + D1:Edit
-#   CLOUDFLARE_ACCOUNT_ID  — the account id (dash → Workers & Pages → overview)
+#   CLOUDFLARE_API_TOKEN   — Workers Scripts:Edit + Pages:Edit + D1:Edit
+#   CLOUDFLARE_ACCOUNT_ID  — account id
+#
+# Progress safety: never d1 create/delete; only additive --remote migrations;
+# fingerprint players before/after; abort if count drops.
 on:
   workflow_dispatch:
     inputs:
@@ -11,10 +14,14 @@ on:
         description: "What to deploy"
         type: choice
         options: [client, server, both]
-        default: client
+        default: both
+  # Every 3 hours — job no-ops until $METRO mint+settlement are live on the Worker.
+  schedule:
+    - cron: "0 */3 * * *"
 
 jobs:
   deploy:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,13 +39,26 @@ jobs:
         working-directory: server
         run: npm ci
 
-      - name: Deploy server (Worker + DO)
+      - name: Ship scrub (no AI/tool fingerprints)
+        run: npm run ship:scrub
+
+      - name: Migration safety scan
         if: ${{ inputs.target == 'server' || inputs.target == 'both' }}
-        working-directory: server
+        run: npm run migrations:safe
+
+      - name: Safe redeploy (progress-guarded)
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: npx wrangler deploy
+          VITE_SERVER_URL: wss://metrophage-server.wendellphillips.workers.dev/ws
+        run: |
+          if [ "${{ inputs.target }}" = "server" ]; then
+            node tools/safe-redeploy.mjs --server
+          elif [ "${{ inputs.target }}" = "client" ]; then
+            node tools/safe-redeploy.mjs --client
+          else
+            node tools/safe-redeploy.mjs
+          fi
 
       - name: Prod smoke after server deploy
         if: ${{ inputs.target == 'server' || inputs.target == 'both' }}
@@ -47,15 +67,31 @@ jobs:
           PROD_SMOKE_MODES: launch,move,combat,abuse,reconnect
         run: node server/scripts/prod-smoke.mjs
 
-      - name: Build client (prod server URL baked)
-        if: ${{ inputs.target == 'client' || inputs.target == 'both' }}
-        env:
-          VITE_SERVER_URL: wss://metrophage-server.wendellphillips.workers.dev/ws
-        run: npm run build
+  # Scheduled: only redeploy when $METRO is actually live (mint + real settlement).
+  metro-live-redeploy:
+    if: ${{ github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Deploy client (Pages)
-        if: ${{ inputs.target == 'client' || inputs.target == 'both' }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci && cd server && npm ci
+
+      - name: Ship scrub (no AI/tool fingerprints)
+        run: npm run ship:scrub
+
+      - name: Redeploy only if $METRO live
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: npx wrangler pages deploy dist --project-name=metrophagev1 --branch=main
+          VITE_SERVER_URL: wss://metrophage-server.wendellphillips.workers.dev/ws
+          # Pass client mint when secret is set (optional until CA exists)
+          VITE_METRO_MINT: ${{ secrets.VITE_METRO_MINT }}
+          VITE_METRO_CLUSTER: ${{ secrets.VITE_METRO_CLUSTER }}
+          VITE_METRO_RPC: ${{ secrets.VITE_METRO_RPC }}
+        run: node tools/metro-auto-redeploy.mjs

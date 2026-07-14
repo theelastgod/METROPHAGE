@@ -8,7 +8,8 @@
 // the bridge's fixed withdraw rate, so reward emission is directly comparable
 // to token liability.
 
-import { BRIDGE, poolMetro } from "./metro";
+import { BRIDGE, poolMetro, seedMetro, resolveBridge } from "./metro";
+import { METRO_DEV_SEED_METRO, TARGET_PLAYERS } from "../../src/game/economyPolicy";
 
 const DAY_MS = 86_400_000;
 const dayStr = (ms: number) => new Date(ms).toISOString().slice(0, 10);
@@ -90,13 +91,14 @@ export async function handleEconomy(env: { DB: D1Database }): Promise<Response> 
   const withdrawalsPerDay = ewma(wdByDay, 14);
   const netPoolPerDay = depositsPerDay - withdrawalsPerDay;
 
-  // ── token linkage: express credit flows as $METRO at the withdraw rate ──
-  const rate = BRIDGE.withdrawCreditsPerMetro;
+  const live = await resolveBridge(db).catch(() => null);
+  const rate = live?.withdrawCreditsPerMetro ?? BRIDGE.withdrawCreditsPerMetro;
   const circulating = circ?.c ?? 0;
   const impliedLiabilityMetro = Math.round((circulating / rate) * 100) / 100;
   const emit7 = sum("emit", week);
   const burn7 = sum("burn", week);
   const r2 = (n: number) => Math.round(n * 100) / 100;
+  const seed = await seedMetro(db);
 
   return new Response(
     JSON.stringify({
@@ -109,21 +111,31 @@ export async function handleEconomy(env: { DB: D1Database }): Promise<Response> 
         burnedToday: sum("burn", today),
         emitted7d: emit7,
         burned7d: burn7,
-        sinkEfficiency7d: emit7 > 0 ? r2(burn7 / emit7) : null, // share of new credits destroyed by sinks
+        sinkEfficiency7d: emit7 > 0 ? r2(burn7 / emit7) : null,
         emitByKind7d: byKind("emit", week),
         burnByKind7d: byKind("burn", week),
+        dailyEmitCap: live?.policy.dailyEmitCap ?? null,
       },
       token: {
         rateCreditsPerMetro: rate,
+        depositCreditsPerMetro: live?.depositCreditsPerMetro ?? BRIDGE.depositCreditsPerMetro,
         poolMetro: pool,
-        // if every circulating credit tried to exit at once, the covered share:
+        seedMetro: seed,
+        designSeedMetro: METRO_DEV_SEED_METRO,
+        targetPlayers: TARGET_PLAYERS,
+        activePlayers: live?.policy.activePlayers ?? circ?.n ?? null,
+        popTier: live?.policy.popTier ?? null,
+        popTierLabel: live?.policy.popTierLabel ?? null,
+        nextPopThreshold: live?.policy.nextPopThreshold ?? null,
+        economyPhase: live?.policy.phase ?? null,
         impliedLiabilityMetro,
         coverageRatio: impliedLiabilityMetro > 0 ? r2(pool / impliedLiabilityMetro) : null,
-        // reward emission expressed in token terms — what the game "promises" per week:
         emission7dMetro: r2(emit7 / rate),
+        globalDailyWithdrawMetro: live?.policy.globalDailyWithdrawMetro ?? null,
+        note: live?.policy.note ?? null,
       },
       forecast: {
-        method: "EWMA(14d, α=0.35) on bridge history",
+        method: "EWMA(14d, α=0.35) on bridge history + 1% seed",
         depositsPerDayMetro: r2(depositsPerDay),
         withdrawalsPerDayMetro: r2(withdrawalsPerDay),
         netPoolPerDayMetro: r2(netPoolPerDay),

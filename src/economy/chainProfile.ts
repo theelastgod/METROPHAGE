@@ -1,12 +1,11 @@
 // METROPHAGE — dual-path $METRO settlement profile.
 //
-// We do NOT know yet whether the live $METRO contract will be:
-//   • Robinhood Chain ERC-20 (0x… mint)  → wallet: MetaMask / EVM
-//   • Solana SPL mint (base58)           → wallet: Phantom / Solana
+// Primary launch path: Solana SPL mint (base58) → Phantom / Solana.
+// Legacy: Robinhood Chain ERC-20 (0x… mint) → MetaMask / EVM.
 //
-// Until the CA is known, both paths stay implemented and dormant.
+// Until the CA is known, both adapters stay implemented; UI defaults Solana-first.
 // When you have the address, set env (see docs/METRO_CHAIN_CHOICE.md):
-//   auto (default): detect family from mint shape
+//   auto (default): detect family from mint shape (base58 → solana, 0x → robinhood)
 //   force: VITE_METRO_SETTLEMENT=robinhood | solana
 //
 // Game credits ledger is always server-authoritative and chain-agnostic.
@@ -178,7 +177,7 @@ export function getDualChainProfile(opts?: {
 /** One-line status for logs / MetroPanel. */
 export function dualChainSummary(p: DualChainProfile = getDualChainProfile()): string {
   if (p.family === "off") {
-    return "METRO settlement OFF (no CA) — credits-only · RH+SOL adapters ready";
+    return "METRO settlement OFF (no CA) — credits-only · Solana-first · set VITE_METRO_MINT";
   }
   const arm = p.mainnet ? (p.mainnetArmed ? "ARMED" : "DISARMED") : "testnet";
   return `METRO → ${p.family} (${p.source}) · ${p.label} · ${arm}${p.settlementReady ? " · ready" : " · not ready"}`;

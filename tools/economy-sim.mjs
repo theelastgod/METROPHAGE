@@ -1,31 +1,29 @@
 #!/usr/bin/env node
-// $METRO bridge sustainability simulator.
+// $METRO bridge sustainability simulator — 1% seed + 500-player P2E.
 //
-// Model (matches server/src/metro.ts BRIDGE):
-//   deposit:  1 $METRO into the pool  → player is minted 100 ₵ (off-chain)
-//   withdraw: burn 125 ₵              → 1 $METRO paid FROM the pool
-//   min withdraw 250 ₵ (2 $METRO); withdrawals FAIL when the pool is short.
+// Model (matches src/game/economyPolicy.ts + server/src/metro.ts):
+//   pool starts with DEV_SEED (10M = 1% of 1B)
+//   deposit:  1 $METRO → 100 ₵
+//   withdraw: 150 ₵ → 1 $METRO (healthy); stress widens further
+//   daily emit cap ~1200 ₵; daily withdraw cap ~4500 ₵
+//   global daily withdraw ≤ 1.5% of pool
 //
-// The pool is 100% player-funded (fixed supply, no dev seeding), so the only
-// question that matters is: under a given mix of depositors (players converting
-// $METRO → credits to gear up) and farmers (players earning credits in-game and
-// cashing out), how long does the pool stay solvent and how much withdraw
-// demand goes unserved?
-//
-// Usage: node tools/economy-sim.mjs [days=365] [trials=500]
+// Usage: node tools/economy-sim.mjs [days=180] [trials=300]
 
-const DEP_CREDITS = 100; // credits minted per 1 $METRO deposited
-const WD_CREDITS = 125; // credits burned per 1 $METRO withdrawn
-const MIN_WD = 250; // credit floor per withdrawal (2 $METRO)
+const DEP_CREDITS = 100;
+const WD_CREDITS = 150;
+const MIN_WD = 300;
+const DEV_SEED = 10_000_000;
+const DAILY_EMIT = 1_800;
+const DAILY_WD_CAP = 6_000;
+const GLOBAL_WD_FRAC = 0.02;
 
-const DAYS = parseInt(process.argv[2] ?? "365", 10);
-const TRIALS = parseInt(process.argv[3] ?? "500", 10);
+const DAYS = parseInt(process.argv[2] ?? "180", 10);
+const TRIALS = parseInt(process.argv[3] ?? "300", 10);
 
-// Poisson-ish integer noise around a mean (cheap, good enough here).
 function noisy(mean, rng) {
   if (mean <= 0) return 0;
-  const jitter = 0.5 + rng(); // 0.5..1.5×
-  return Math.max(0, Math.round(mean * jitter));
+  return Math.max(0, Math.round(mean * (0.55 + rng())));
 }
 
 function mulberry32(seed) {
@@ -38,45 +36,52 @@ function mulberry32(seed) {
   };
 }
 
-/**
- * One trial.
- * @param s scenario: players, depositorShare, depositsPerDepositorDay ($METRO),
- *          farmerEarnPerDay (credits available to cash out), churnDay (day the
- *          depositor inflow stops — e.g. hype dies), rng seed
- */
 function trial(s, seed) {
   const rng = mulberry32(seed);
   const nDep = Math.round(s.players * s.depositorShare);
-  const nFarm = s.players - nDep;
-  let pool = 0; // $METRO
-  let credits = 0; // farmer credit stockpile waiting to cash out
-  let unserved = 0; // $METRO of withdraw demand refused (pool dry)
+  const nFarm = Math.max(0, s.players - nDep);
+  let pool = s.seed; // $METRO
+  let credits = 0;
+  let unserved = 0;
   let served = 0;
   let firstDry = -1;
+  let emitTotal = 0;
+
   for (let d = 0; d < s.days; d++) {
-    // Depositor inflow (dies after churnDay).
     if (d < s.churnDay) {
       const dep = noisy(nDep * s.depositsPerDepositorDay, rng);
       pool += dep;
     }
-    // Farmers earn credits; only `cashoutShare` of earnings is routed to the
-    // bridge (the rest is spent in-game on gear/forge/cosmetics — real sinks).
-    credits += noisy(nFarm * s.farmerEarnPerDay * s.cashoutShare, rng);
+
+    // Farmers earn up to daily emit cap; only cashoutShare hits the bridge.
+    const earn = Math.min(DAILY_EMIT, noisy(s.farmerEarnPerDay, rng));
+    emitTotal += earn * nFarm;
+    credits += Math.round(nFarm * earn * s.cashoutShare);
+
+    const globalLeft = pool * GLOBAL_WD_FRAC;
+    let dayWdMetro = 0;
+
     if (credits >= MIN_WD) {
-      const want = Math.floor(credits / WD_CREDITS); // $METRO demanded
+      // Per-player-ish cap approximation: total personal caps.
+      const personalCapMetro = (nFarm * DAILY_WD_CAP) / WD_CREDITS;
+      const want = Math.min(Math.floor(credits / WD_CREDITS), personalCapMetro, globalLeft);
       const got = Math.min(want, pool);
       pool -= got;
+      dayWdMetro += got;
       served += got;
       credits -= got * WD_CREDITS;
-      const refused = want - got;
-      if (refused > 0) {
-        unserved += refused;
-        if (firstDry < 0) firstDry = d;
-        // Refused demand stays as credits (players hold and retry).
+      const refused = Math.max(0, Math.floor(credits / WD_CREDITS) - 0);
+      // Only count refuse when pool or global cap blocked further cashout.
+      if (pool < 1 || dayWdMetro >= globalLeft - 1e-9) {
+        const stillWant = Math.floor(credits / WD_CREDITS);
+        if (stillWant > 0) {
+          unserved += stillWant;
+          if (firstDry < 0) firstDry = d;
+        }
       }
     }
   }
-  return { pool, served, unserved, firstDry };
+  return { pool, served, unserved, firstDry, emitTotal };
 }
 
 function run(name, s) {
@@ -84,6 +89,7 @@ function run(name, s) {
   let sumFirstDry = 0;
   let sumUnservedPct = 0;
   let sumEndPool = 0;
+  let sumServed = 0;
   for (let t = 0; t < TRIALS; t++) {
     const r = trial({ ...s, days: DAYS }, t * 2654435761);
     if (r.firstDry >= 0) {
@@ -93,49 +99,43 @@ function run(name, s) {
     const demand = r.served + r.unserved;
     sumUnservedPct += demand > 0 ? r.unserved / demand : 0;
     sumEndPool += r.pool;
+    sumServed += r.served;
   }
   const dryPct = (100 * dryTrials) / TRIALS;
   const avgDry = dryTrials ? Math.round(sumFirstDry / dryTrials) : null;
+  const avgServedPerPlayerDay = sumServed / TRIALS / DAYS / Math.max(1, s.players * (1 - s.depositorShare));
   console.log(
-    `${name.padEnd(34)} dry:${dryPct.toFixed(0).padStart(4)}%  firstDry:${
+    `${name.padEnd(40)} dry:${dryPct.toFixed(0).padStart(4)}%  firstDry:${
       avgDry === null ? "  never" : String(avgDry).padStart(5) + "d"
     }  unserved:${((100 * sumUnservedPct) / TRIALS).toFixed(1).padStart(6)}%  endPool:${Math.round(sumEndPool / TRIALS)
       .toString()
-      .padStart(8)} $M`,
+      .padStart(10)} $M  ~◈/farmer-day:${avgServedPerPlayerDay.toFixed(2)}`,
   );
 }
 
-console.log(`$METRO bridge sim — ${DAYS} days × ${TRIALS} trials  (deposit ${DEP_CREDITS}₵ / withdraw ${WD_CREDITS}₵ / min ${MIN_WD}₵)`);
-console.log(`equilibrium rule: pool survives iff deposited $METRO/day ≥ farmer credits/day ÷ ${WD_CREDITS}\n`);
+console.log(
+  `$METRO P2E sim — ${DAYS}d × ${TRIALS} trials · seed ${DEV_SEED.toLocaleString()}◈ (1%) · dep ${DEP_CREDITS}₵ / wd ${WD_CREDITS}₵ · emit ${DAILY_EMIT}₵ · wdCap ${DAILY_WD_CAP}₵`,
+);
+console.log(`target: 500 players · money in token terms (USD floats with market)\n`);
 
-// Farmer earn baseline: ~18₵/kill, dailies ~1200₵ → ~400₵/day casual net.
-// cashoutShare = fraction of those earnings routed to the bridge rather than
-// spent in-game. This is THE lever: in-game sinks are what keep the pool alive.
 const base = {
   players: 500,
-  depositorShare: 0.1,
-  depositsPerDepositorDay: 2,
-  farmerEarnPerDay: 400,
-  cashoutShare: 0.05,
+  seed: DEV_SEED,
+  depositorShare: 0.12,
+  depositsPerDepositorDay: 1.5,
+  farmerEarnPerDay: 1_000,
+  cashoutShare: 0.35,
   churnDay: Infinity,
 };
 
-run("baseline: 5% earnings bridged", base);
-run("10% earnings bridged", { ...base, cashoutShare: 0.1 });
-run("20% earnings bridged", { ...base, cashoutShare: 0.2 });
-run("thin whales (4%), 5% bridged", { ...base, depositorShare: 0.04 });
-run("hype dies day 30, 5% bridged", { ...base, churnDay: 30 });
-run("hype dies day 30, 10% bridged", { ...base, churnDay: 30, cashoutShare: 0.1 });
-run("small pop (50), 5% bridged", { ...base, players: 50 });
-run("small pop + hype dies day 14", { ...base, players: 50, churnDay: 14 });
-// Break-even sweep: at what bridged share does the pool tip over?
-console.log("");
-for (const cs of [0.02, 0.04, 0.06, 0.08, 0.1, 0.14]) {
-  run(`sweep: ${(cs * 100).toFixed(0)}% bridged, steady whales`, { ...base, cashoutShare: cs });
-}
+run("baseline 500p · 18% cashout · seed", base);
+run("aggressive 30% cashout", { ...base, cashoutShare: 0.3 });
+run("no depositors after seed", { ...base, depositorShare: 0, churnDay: 0 });
+run("hype dies day 45", { ...base, churnDay: 45 });
+run("thin seed 2.5M (0.25%)", { ...base, seed: 2_500_000 });
+run("100 players", { ...base, players: 100 });
+run("grind heavy earn", { ...base, farmerEarnPerDay: 1200, cashoutShare: 0.25 });
 
-console.log(`\nreading: "dry" = % of trials where a withdrawal was ever refused; "unserved" = avg share of
-withdraw demand refused. The spread (${WD_CREDITS - DEP_CREDITS}₵/round-trip) only slows drain — it cannot
-save a pool whose depositor inflow stops while farmers keep earning. Levers if unserved
-is unacceptable: raise WD rate (wider spread), daily withdraw cap, or a sink that burns
-credits before they reach the bridge (cosmetics, fees).`);
+console.log(`\nreading: endPool should stay >> 0 with 1% seed. ~◈/farmer-day is average
+successful cash-out in $METRO (price-agnostic P2E unit). Comparable web3 P2E aims for
+several tokens/day for active play when the pool is healthy.`);

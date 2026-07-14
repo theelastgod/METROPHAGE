@@ -16,9 +16,9 @@ const TIER_RESOLUTION: Record<"low" | "medium" | "high", { w: number; h: number 
 export function applyRenderTier(): void {
   const { w, h } = TIER_RESOLUTION[effectiveGraphicsQuality()];
   // On phones, keep the tier HEIGHT but widen the buffer to the device's landscape
-  // aspect. FIT (see main.ts) then fills the whole browser window edge-to-edge —
-  // no pillar-box bars — while RENDER_SCALE (height-based) keeps the vertical
-  // framing and just shows more world left↔right. Even width for clean scaling.
+  // aspect. ENVELOP (see main.ts) then covers the whole browser window edge-to-edge
+  // while RENDER_SCALE (height-based) keeps the vertical framing and just shows more
+  // world left↔right. Even width for clean scaling. main.ts re-syncs on rotate.
   const bufW = prefersMobileUx() ? Math.round((h * landscapeAspect()) / 2) * 2 : w;
   setRenderResolution(bufW, h);
 }

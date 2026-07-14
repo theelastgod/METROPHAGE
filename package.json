@@ -10,6 +10,13 @@
     "build": "tsc --noEmit && vite build",
     "build:production": "node tools/release-client.mjs --build-only",
     "deploy:client": "node tools/release-client.mjs",
+    "ship:scrub": "node tools/scrub-ship.mjs",
+    "deploy:safe": "npm run ship:scrub && node tools/safe-redeploy.mjs",
+    "deploy:safe:server": "npm run ship:scrub && node tools/safe-redeploy.mjs --server",
+    "deploy:safe:client": "npm run ship:scrub && node tools/safe-redeploy.mjs --client",
+    "deploy:safe:check": "npm run ship:scrub && node tools/safe-redeploy.mjs --dry-run",
+    "deploy:auto": "npm run ship:scrub && node tools/metro-auto-redeploy.mjs",
+    "migrations:safe": "node tools/check-migrations-safe.mjs",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -24,11 +31,13 @@
     "verify:ship": "npm run typecheck && npm test && npm run smoke:panels",
     "scan:dead": "node tools/dead-code-scan.mjs",
     "sim:economy": "node tools/economy-sim.mjs",
+    "metro:seed": "node tools/metro-seed.mjs",
     "report:economy": "node tools/economy-report.mjs",
     "gen:music": "node tools/gen-music.mjs",
     "gen:music:local": "node tools/gen-music-local.mjs"
   },
   "dependencies": {
+    "@solana/spl-token": "^0.4.15",
     "@solana/web3.js": "^1.98.4",
     "phaser": "^3.90.0"
   },

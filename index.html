@@ -80,18 +80,20 @@
         max-height: 100%;
         touch-action: none;
       }
-      /* Mobile: fill the *visible* browser window, never overflow past it.
-         (ENVELOP was growing the canvas larger than the phone viewport.) */
+      /* Mobile landscape: edge-to-edge fill of the *visible* browser window.
+         Phaser ENVELOP covers the parent; parent clips any tiny overscan. */
       .mp-mobile,
       .mp-mobile body {
         width: 100%;
         height: 100%;
         height: 100dvh;
+        height: -webkit-fill-available;
         max-width: 100vw;
         max-height: 100dvh;
         overflow: hidden;
         position: fixed;
         inset: 0;
+        background: #04020a;
       }
       .mp-mobile #game-root {
         padding: 0;
@@ -103,17 +105,21 @@
         max-height: -webkit-fill-available;
         overflow: hidden;
         box-sizing: border-box;
+        /* Cover-mode canvas may be slightly larger than the root — clip it. */
+        display: flex;
+        align-items: center;
+        justify-content: center;
       }
       .mp-mobile #game-root canvas {
-        /* Hard cap: never paint outside the phone browser window.
-           Phaser FIT sets width/height; we only clamp maxima. */
-        max-width: 100% !important;
-        max-height: 100% !important;
+        /* Do NOT max-width/height 100% — that re-letterboxes ENVELOP cover.
+           Parent overflow:hidden is the clip; Phaser sets canvas CSS size. */
+        max-width: none !important;
+        max-height: none !important;
         border-radius: 0 !important;
         box-shadow: none !important;
         filter: contrast(1.03) saturate(1.1) brightness(1.02);
         display: block;
-        margin: auto;
+        margin: 0;
       }
       /* When browser fullscreen API succeeds, stretch to the real display. */
       .mp-mobile:fullscreen #game-root,
@@ -127,8 +133,8 @@
       }
       .mp-mobile:fullscreen #game-root canvas,
       .mp-mobile:-webkit-full-screen #game-root canvas {
-        max-width: 100% !important;
-        max-height: 100% !important;
+        max-width: none !important;
+        max-height: none !important;
       }
       /* Full landscape gate — phone must be on its side to play. */
       #mp-landscape-gate {
@@ -256,6 +262,33 @@
         background: rgba(4, 2, 10, 0.78);
         outline: none;
       }
+      #mp-intro .mp-intro-sound {
+        position: absolute;
+        top: max(14px, env(safe-area-inset-top));
+        left: max(16px, env(safe-area-inset-left));
+        z-index: 2;
+        font-family: "Orbitron", sans-serif;
+        font-weight: 700;
+        font-size: 11px;
+        letter-spacing: 0.12em;
+        color: rgba(247, 255, 60, 0.92);
+        background: rgba(4, 2, 10, 0.62);
+        border: 1px solid rgba(247, 255, 60, 0.45);
+        padding: 8px 12px;
+        cursor: pointer;
+        text-shadow: 0 0 10px rgba(247, 255, 60, 0.35);
+        transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+      }
+      #mp-intro .mp-intro-sound:hover,
+      #mp-intro .mp-intro-sound:focus-visible {
+        color: #f7ff3c;
+        border-color: rgba(247, 255, 60, 0.85);
+        background: rgba(4, 2, 10, 0.82);
+        outline: none;
+      }
+      #mp-intro .mp-intro-sound[hidden] {
+        display: none !important;
+      }
       #mp-intro .mp-intro-hint {
         position: absolute;
         bottom: max(18px, env(safe-area-inset-bottom));
@@ -312,6 +345,50 @@
         box-shadow: 0 0 12px rgba(0, 229, 255, 0.45);
         transition: width 0.15s ease;
       }
+      /* Bottom-center chip — only interactive element on the boot veil. */
+      #boot .report-bugs {
+        position: absolute;
+        left: 50%;
+        bottom: max(22px, env(safe-area-inset-bottom, 0px) + 14px);
+        transform: translateX(-50%);
+        pointer-events: auto;
+        z-index: 5;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-family: "Orbitron", sans-serif;
+        font-weight: 700;
+        font-size: 10px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        text-decoration: none;
+        color: rgba(0, 229, 255, 0.78);
+        background: rgba(6, 6, 18, 0.72);
+        border: 1px solid rgba(0, 229, 255, 0.32);
+        border-radius: 999px;
+        padding: 9px 16px 9px 12px;
+        box-shadow: 0 0 18px rgba(0, 229, 255, 0.12), inset 0 0 12px rgba(0, 229, 255, 0.04);
+        transition: color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+        -webkit-tap-highlight-color: transparent;
+        touch-action: manipulation;
+      }
+      #boot .report-bugs::before {
+        content: "";
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--magenta);
+        box-shadow: 0 0 8px rgba(255, 43, 214, 0.75);
+        flex: none;
+      }
+      #boot .report-bugs:hover,
+      #boot .report-bugs:focus-visible {
+        color: #eafdff;
+        border-color: rgba(0, 229, 255, 0.72);
+        background: rgba(8, 12, 28, 0.88);
+        box-shadow: 0 0 22px rgba(0, 229, 255, 0.28), inset 0 0 14px rgba(255, 43, 214, 0.06);
+        outline: none;
+      }
       @keyframes bootPulse {
         0%,
         100% {
@@ -331,6 +408,14 @@
       <div class="logo">METROPHAGE</div>
       <div class="tag">INITIALIZING NEON GRID</div>
       <div class="bar"><span id="boot-bar"></span></div>
+      <a
+        class="report-bugs"
+        href="https://t.me/m/ralJIkw_OWMx"
+        target="_blank"
+        rel="noopener noreferrer"
+        title="Report bugs on Telegram"
+        >Report bugs</a
+      >
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

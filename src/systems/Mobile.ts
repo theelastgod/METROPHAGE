@@ -117,18 +117,27 @@ export function needsLandscape(): boolean {
 /**
  * This device's landscape aspect ratio (long edge ÷ short edge), clamped sane.
  *
- * Orientation-independent (uses max/min of the screen + window edges) so it is
- * correct even when the page is still portrait at boot — play is landscape-gated,
- * so the long edge is always horizontal in-game. We use this to widen the backing
- * buffer to the phone's real shape: FIT then fills the whole window edge-to-edge
- * instead of pillar-boxing a fixed 16:9 image. Clamped to [16:9, 21:9] — never
- * narrower than the design (would crop), never so wide the FOV gets silly.
+ * When already landscape, prefer the live *visible* viewport (visualViewport) so
+ * browser chrome / notches don't leave letterbox bars after rotate. When still
+ * portrait at boot, use long/short of the window (or screen) so the buffer is
+ * ready before the player turns the phone. Clamped to [16:9, 21:9].
  */
 export function landscapeAspect(): number {
   if (typeof window === "undefined") return 16 / 9;
-  // Prefer the live window (matches emulated viewports and the real visible area);
-  // fall back to the physical screen only if window dims are unavailable. Using
-  // long/short keeps it correct whether we boot in portrait or landscape.
+
+  const clamp = (r: number) => Math.min(Math.max(r, 16 / 9), 21 / 9);
+
+  // Live landscape: match what the player actually sees (URL bar, safe areas).
+  try {
+    const vv = window.visualViewport;
+    const w = Math.floor(vv?.width ?? window.innerWidth) || 0;
+    const h = Math.floor(vv?.height ?? window.innerHeight) || 0;
+    if (w > 0 && h > 0 && w >= h) return clamp(w / h);
+  } catch {
+    /* privacy modes */
+  }
+
+  // Portrait / unknown: long edge will be horizontal once landscape-gated.
   let long = Math.max(window.innerWidth || 0, window.innerHeight || 0);
   let short = Math.min(window.innerWidth || 0, window.innerHeight || 0);
   if (!(long > 0 && short > 0)) {
@@ -140,7 +149,34 @@ export function landscapeAspect(): number {
     }
   }
   if (!(long > 0 && short > 0)) return 16 / 9;
-  return Math.min(Math.max(long / short, 16 / 9), 21 / 9);
+  return clamp(long / short);
+}
+
+/**
+ * Visible phone viewport in CSS pixels (visualViewport when available).
+ * Used to pin #game-root edge-to-edge in landscape.
+ */
+export function mobileVisibleSize(): { w: number; h: number; left: number; top: number } {
+  if (typeof window === "undefined") return { w: 1, h: 1, left: 0, top: 0 };
+  try {
+    const vv = window.visualViewport;
+    if (vv && vv.width > 0 && vv.height > 0) {
+      return {
+        w: Math.max(1, Math.floor(vv.width)),
+        h: Math.max(1, Math.floor(vv.height)),
+        left: Math.floor(vv.offsetLeft ?? 0),
+        top: Math.floor(vv.offsetTop ?? 0),
+      };
+    }
+  } catch {
+    /* ignore */
+  }
+  return {
+    w: Math.max(1, Math.floor(window.innerWidth || 1)),
+    h: Math.max(1, Math.floor(window.innerHeight || 1)),
+    left: 0,
+    top: 0,
+  };
 }
 
 /** Bottom-left thumb region for the floating movement stick. */

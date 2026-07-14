@@ -77,26 +77,31 @@ export async function fetchWalletIdentity(proof: {
   }
 }
 
-/** Connect wallet (if needed) — does not sign or hit the server. Prefers MetaMask. */
+/** Connect wallet (if needed) — does not sign or hit the server. Solana-first (Phantom). */
 export async function ensureWalletConnected(): Promise<string | null> {
   const existing = connectedWallet();
   if (existing) return existing;
   if (!walletAvailable()) return null;
-  return connectWallet();
+  return connectWallet(); // prefers Solana when mint is SPL / no CA yet
 }
 
-/** Full MetaMask sign-up: connect + sign login message (proof for /identity and WS). */
+/** Full wallet sign-up: connect + sign login message (proof for /identity and WS). */
 export async function metaMaskSignUp(): Promise<
   | { ok: true; proof: { wallet: string; sig: string; ts: number } }
   | { ok: false; error: IdentityError; detail?: string }
 > {
-  if (!walletAvailable()) return { ok: false, error: "no_wallet", detail: "Install MetaMask" };
+  if (!walletAvailable()) {
+    return { ok: false, error: "no_wallet", detail: "Install Phantom (or MetaMask for legacy ERC-20)" };
+  }
   const addr = await ensureWalletConnected();
-  if (!addr) return { ok: false, error: "connect_failed", detail: "MetaMask connection cancelled" };
+  if (!addr) return { ok: false, error: "connect_failed", detail: "Wallet connection cancelled" };
   const proof = await signIdentityProof(addr);
-  if (!proof) return { ok: false, error: "sign_failed", detail: "MetaMask signature cancelled" };
+  if (!proof) return { ok: false, error: "sign_failed", detail: "Wallet signature cancelled" };
   return { ok: true, proof };
 }
+
+/** Alias — Solana-first sign-up (same implementation). */
+export const walletSignUp = metaMaskSignUp;
 
 export function hasWalletProvider(): boolean {
   return walletAvailable();

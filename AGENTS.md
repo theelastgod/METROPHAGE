@@ -1,83 +1,76 @@
-# METROPHAGE — project brief for Codex
+# METROPHAGE — engineering notes
 
 Top-down neon-noir cyberpunk **action-RPG MMO** in the browser. Phaser 3 + Vite + TS
 client; **server-authoritative** world on Cloudflare (Worker + per-zone Durable
 Objects at 20Hz + D1). The server owns every number — clients only render and send
-intents. 9-act questline ("THE WAKE" → REISSUE conspiracy), 4 classes with full kits
-(dash/Q/E/R + HEAT), districts/dives/world-events/bosses/elites, parties/guilds/
-trade/market/PvP, weekly PROVING vault, $METRO token bridge (dormant).
+intents. Campaign ("THE WAKE"), four classes with full kits, districts, dives,
+world events, parties/guilds/trade/market/PvP, $METRO bridge.
 
-## LIVE (deployed 2026-07-07)
+## Live endpoints
 
-- **Game: https://metrophagev1.pages.dev** (CF Pages, project `metrophagev1`, production branch `main`)
-- **Server: https://metrophage-server.wendellphillips.workers.dev** (Workers Paid $5 — SQLite-backed DO, 20 Hz zones)
-- wrangler OAuth for this account works from the shell on this machine.
-- Paid headroom: full snapshot rate through ~100 concurrent players/zone, ~1.2s persist,
-  5s DO supervisor alarm, smart Worker placement (`wrangler.toml`).
+- **Game:** https://metrophagev1.pages.dev (Cloudflare Pages, project `metrophagev1`, branch `main`)
+- **Server:** https://metrophage-server.wendellphillips.workers.dev (Workers Paid, SQLite-backed DO)
 
-**Redeploy server:** `cd server && npx wrangler deploy`
-**Redeploy client:**
+## Redeploy (progress-safe)
+
 ```sh
-VITE_SERVER_URL=wss://metrophage-server.wendellphillips.workers.dev/ws npx vite build
-npx wrangler pages deploy dist --project-name=metrophagev1 --branch=main --commit-dirty=true
+npm run deploy:safe          # D1 fingerprint → additive migrate → Worker → re-check → client
+npm run deploy:safe:server   # Worker only
+npm run deploy:safe:client   # Pages only
+npm run ship:scrub           # refuse AI/tool fingerprint markers before any ship
 ```
-⚠ `VITE_SERVER_URL` is **build-time**; forget it and the client silently targets
-localhost. Always `--branch=main` or the deploy becomes a preview URL.
 
-## Dev environment
+Never change `database_id`, never `d1 delete`, never unscoped `DELETE FROM players`
+on remote. DO migration tag must stay `v1`.
 
-- No system node: `export PATH="$HOME/.local/node/bin:$PATH"` in every shell.
-- Local server: `cd server && npm run dev` (wrangler dev :8787). Local client: vite :5188.
-- Typecheck both sides: `npx tsc --noEmit` in repo root AND in `server/`.
-- Shared sim/game code lives in `src/` and is imported by `server/src/world.ts` —
-  nothing under `src/net|game|world` may touch DOM globals (server bundles it).
+`VITE_SERVER_URL` is **build-time**. Always bake
+`wss://metrophage-server.wendellphillips.workers.dev/ws` for production client builds.
+Always `--branch=main` for Pages or the deploy becomes a preview URL.
 
-## Testing (server/scripts/smoke.mjs — ~34 modes, one per run)
+## Dev
 
-`node scripts/smoke.mjs <mode>` against a running local server. Policies learned the
-hard way:
-- **Battery failures are usually harness artifacts** (seed/flake). A mode that fails
-  in-battery but whose systems pass in sibling modes → re-run STANDALONE before
-  calling it a regression. Standalone is truth.
-- Harness pre-seeds (whale/pauper/crafter/galice/gbob/mseller/mbuyer/repvip/dresser,
-  metro ledger clears) must run with **wrangler STOPPED** — live DOs flush dirty
-  player state over your reseed.
-- Use **fresh bot identities** (`"xx" + Date.now()%1e6`) — persisted bots drift
-  across runs (corner-parking, board crowding).
-- Fresh bots fight with the MELEE starter (ranged whiffs at distance; close to ~45px).
-- Read world dims from the login welcome (`w.world`), never hardcode (districts are
-  3× scaled: 3840×2880).
+```sh
+export PATH="$HOME/.local/node/bin:$PATH"
+npm run dev                  # client
+cd server && npm run dev     # worker :8787
+npm run typecheck            # root + server separately
+```
 
-## Hard constraints (do not violate)
+Shared sim/game code under `src/` is imported by `server/src/world.ts` — nothing
+under `src/net|game|world` may touch DOM globals.
 
-- **$METRO economy (Robinhood Chain launch)**: rates **100 in / 125 out**, min **250 ₵**,
-  daily cap **50k ₵**, player-funded pool. Don't redesign mid-launch without a note.
-- **Mainnet is counsel-gated**: `METRO_MAINNET_ARMED` stays off. Devnet only.
-- CA go-live order (SHIPPING.md §5): server secrets FIRST, then client
-  `VITE_METRO_MINT` — sim settlement trusts claimed deposits, so a live panel
-  without server secrets lets players fabricate credits.
-- Treasury never holds or spends SOL (claims: player is fee payer).
-- `TILESET_PX` must equal `TILE` (32) — pixelArt NEAREST minification shimmers.
-  96px master: `public/assets/tilesets/metrophage_tiles@96.png`, re-bake per-cell.
-- Characters/cops/NPCs are **code-baked** from `src/assets/charart.ts`
-  (32×32, 4 facings × 4 steps, facing-major). Don't point their manifest entries
-  at files; don't change CHAR without touching manifest+anim+origins.
+## Testing
 
-## Verification rig (marketing/trailer-rig/)
+```sh
+cd server && node scripts/smoke.mjs <mode>
+```
 
-Headed-Chromium Playwright + injected fake wallet. `node <script>.mjs` with vite:5188
-+ wrangler:8787 up. Key scripts: terrain-audit, tier-audit (TIER=low|high),
-charview/charclose, depth-audit, coldopen-view, flicker-audit, verify-session.
-Gotchas: use CDP `Page.captureScreenshot` (page.screenshot hangs on the Google-Fonts
-import); double-shot (full-screen juice flashes eat single frames); **never press ESC
-to dismiss dialogue in the online scene — ESC quits to menu**; rig pre-sets
-`metrophage_coldopen_v2=1` (coldopen-view clears it; v1 legacy ignored).
+- Prefer standalone smoke modes when diagnosing battery flakes.
+- Reseed harness D1 only with wrangler **stopped**.
+- Fresh bot callsigns each run; melee at ~45px for combat tests.
+- World dims come from the login welcome, not hardcodes.
+
+## Economy constraints
+
+- Solana SPL primary; rates baseline **100 in / 150 out** (population tiers may
+  widen the withdraw spread). Min withdraw ~**300 ₵**.
+- **No daily earn cap. No daily withdraw cap.** Pool empty → **"Check back later."**
+- See `docs/ECONOMY_POP_TIERS.md` and `src/game/economyPolicy.ts`.
+- Mainnet: `METRO_MAINNET_ARMED` counsel-gated. CA go-live: server secrets first,
+  then client `VITE_METRO_MINT`.
+- Treasury never spends SOL (player is fee payer on claims).
+
+## Art / render constraints
+
+- `TILESET_PX` must equal `TILE` (32).
+- Characters/cops/NPCs are code-baked from `src/assets/charart.ts` (32×32,
+  4 facings × 4 steps). Don't point manifest entries at files without updating
+  anim + origins.
 
 ## Docs
 
-- `SHIPPING.md` — deploy runbook (dry-run-verified) + $0-launch table + CA go-live.
-- `docs/BRIDGE_GO_LIVE.md` — **canonical** live $METRO bridge checklist (testnet → mainnet arm).
-- `README.md` — world map, class kits, economy, smoke modes.
-- Session-scale history lives in Codex's project memory under
-  `~/.Codex/projects/-Users-wendellphillips-Desktop-Codex/memory/` (sessions
-  started in `~/Desktop/Codex` load it automatically).
+- `docs/ECONOMY_POP_TIERS.md` — population rate tiers
+- `docs/BRIDGE_GO_LIVE.md` — bridge checklist
+- `SHIPPING.md` — deploy runbook
+- `README.md` — world map, kits, smoke modes
+- `marketing/copy/opening-tweets-live.md` — launch social copy

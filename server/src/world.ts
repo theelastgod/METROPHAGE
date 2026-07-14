@@ -128,6 +128,7 @@ import { maybeNamedLoot } from "../../src/game/namedLoot";
 import { weeklyGuildGoal, currentGuildWeek } from "../../src/game/guildGoals";
 import { currentDistrictWar, warMetaKey } from "../../src/game/districtWar";
 import { launchFlagsFromEnv, emitDayKey, type LaunchFlags } from "../../src/game/featureFlags";
+
 import {
   BLESS_IFRAME_TICKS,
   CLIENT_OPEN_SERVICES,
@@ -336,7 +337,7 @@ export interface Env {
   METRO_DISABLE_DISTRICT_WAR?: string;
   /** Soft concurrent cap for hub zone "safe" (default 48). */
   METRO_HUB_CAP?: string;
-  /** Per-player daily emit cap in credits (default 2500). */
+  /** Per-player daily emit ceiling in credits (policy may tighten under pool stress). */
   METRO_DAILY_EMIT_CAP?: string;
   /** Optional build/version stamp for /health (set in wrangler vars on deploy). */
   METRO_BUILD?: string;
@@ -4183,28 +4184,17 @@ export class WorldDO {
   }
 
   /**
-   * Grant emit-side credits under the daily anti-farm cap.
-   * Returns the amount actually granted (may be 0 when capped).
+   * Grant emit-side credits from play. **No daily earn cap** — players may earn
+   * as much as they play. (Cash-out is still limited by the player-funded pool.)
    * Kinds: kill, daily, event, achievement, floor, pickup, fragment, district_war, guild_goal, …
    */
   private grantEmit(p: PlayerState, kind: string, amount: number): number {
-    const want = Math.max(0, Math.round(amount));
-    if (want <= 0) return 0;
-    const dayKey = emitDayKey();
-    const used = p.stats[dayKey] ?? 0;
-    const room = Math.max(0, this.flags.dailyEmitCap - used);
-    const give = Math.min(want, room);
-    if (give <= 0) {
-      if (used >= this.flags.dailyEmitCap && Math.random() < 0.08) {
-        this.sendTo(p.id, {
-          t: "sys",
-          text: `◈ daily emit cap (₵${this.flags.dailyEmitCap}) — sinks still work; spend or wait for UTC reset`,
-        });
-      }
-      return 0;
-    }
+    const give = Math.max(0, Math.round(amount));
+    if (give <= 0) return 0;
     p.credits += give;
-    p.stats[dayKey] = used + give;
+    // Still track per-day emit for /economy telemetry (not a hard cap).
+    const dayKey = emitDayKey();
+    p.stats[dayKey] = (p.stats[dayKey] ?? 0) + give;
     p.statDelta[dayKey] = (p.statDelta[dayKey] ?? 0) + give;
     this.eco("emit", kind, give);
     p.dirty = true;

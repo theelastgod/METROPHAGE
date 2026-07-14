@@ -1,13 +1,13 @@
-# $METRO chain choice — Robinhood vs Solana
+# $METRO chain choice — Solana (primary) vs Robinhood (legacy)
 
-We support **both** settlement adapters today. The live path is chosen by the
-**mint / contract address (CA)** (or an explicit force env). Until you have a CA,
-the game stays **credits-only** and both adapters stay ready.
+**Solana SPL is the active launch path.** Robinhood ERC-20 remains implemented as
+legacy. The live path is chosen by the **mint / contract address (CA)** (or an
+explicit force env). Until you have a CA, the game stays **credits-only**.
 
 | Family | Mint shape | Wallet | Server adapter | Client cluster |
 |--------|------------|--------|----------------|----------------|
-| **Robinhood Chain** (ETH L2) | `0x` + 40 hex | MetaMask | `server/src/evm.ts` | `VITE_METRO_CLUSTER=robinhood` or `robinhood-testnet` |
-| **Solana** | base58 pubkey (~32–44 chars) | Phantom / Solana | `server/src/solana.ts` | `VITE_METRO_CLUSTER=devnet` or `mainnet-beta` |
+| **Solana** (primary) | base58 pubkey (~32–44 chars) | Phantom / Solana | `server/src/solana.ts` | `VITE_METRO_CLUSTER=devnet` or `mainnet-beta` |
+| **Robinhood Chain** (legacy) | `0x` + 40 hex | MetaMask | `server/src/evm.ts` | `VITE_METRO_CLUSTER=robinhood` or `robinhood-testnet` |
 
 Shared ledger (always): server `credits` + D1 `metro_*` tables.  
 Rates: **1 $METRO deposit → 100 ₵**, **125 ₵ → 1 $METRO** withdraw (see `BRIDGE` in `server/src/metro.ts`).

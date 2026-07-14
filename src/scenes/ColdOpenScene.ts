@@ -1,10 +1,10 @@
-// METROPHAGE — the cold open. First boot only:
-// 1) Full-screen Cloudflare Stream intro (click / SKIP / ESC to skip → fades out)
+// METROPHAGE — cold open trailer on every site load:
+// 1) Full-screen intro video (SKIP / ESC / click to skip → fades out; soundtrack when allowed)
 // 2) Short text cinematic hook
 // 3) Fade into the title / wallet gate
 //
-// Entirely client-side (no server). The seen-flag prevents looping once finished
-// or skipped. If the Stream video fails to load, we still run the text beats.
+// Entirely client-side (no server). Always plays unless automation opts out
+// (`?skipIntro=1` or localStorage metrophage_skip_coldopen=1).
 
 import Phaser from "phaser";
 import { COLORS, VIEW_W, VIEW_H, uiDim } from "../config";
@@ -13,23 +13,29 @@ import { displayFont, bodyFont } from "../ui/typography";
 import { playIntroVideo, type IntroVideoHandle } from "../ui/IntroVideo";
 import Synth from "../audio/Synth";
 
-/** Bumped when the intro experience changes so returning players see it once. */
+/** Legacy key (no longer gates playback — trailer plays every reload). */
 export const COLD_OPEN_SEEN_KEY = "metrophage_coldopen_v2";
+/** Explicit automation bypass for trailer-rig / smoke harness. */
+export const COLD_OPEN_SKIP_KEY = "metrophage_skip_coldopen";
 
-export function coldOpenSeen(): boolean {
+/**
+ * Whether Boot should start ColdOpen.
+ * Default: **always** play on every site load. Only explicit opt-outs skip it.
+ */
+export function shouldPlayColdOpen(): boolean {
   try {
-    return localStorage.getItem(COLD_OPEN_SEEN_KEY) === "1";
+    const q = new URLSearchParams(typeof location !== "undefined" ? location.search : "");
+    if (q.get("skipIntro") === "1" || q.get("nocoldopen") === "1") return false;
+    if (localStorage.getItem(COLD_OPEN_SKIP_KEY) === "1") return false;
   } catch {
-    return true; // no storage — never trap the player in an unskippable intro loop
+    /* play anyway */
   }
+  return true;
 }
 
-function markSeen() {
-  try {
-    localStorage.setItem(COLD_OPEN_SEEN_KEY, "1");
-  } catch {
-    /* fine */
-  }
+/** @deprecated use shouldPlayColdOpen — kept so older callers compile. */
+export function coldOpenSeen(): boolean {
+  return !shouldPlayColdOpen();
 }
 
 /** One text beat of the cinematic: what it says, how it dresses, how long it holds. */
@@ -69,14 +75,13 @@ export default class ColdOpenScene extends Phaser.Scene {
   }
 
   create() {
-    markSeen(); // even a mid-intro refresh must not loop the intro
     this.done = false;
     this.beatIndex = -1;
     this.phase = "video";
     this.cameras.main.setBackgroundColor(COLORS.bgVoid);
     this.synth = this.registry.get("synth") as Synth | undefined; // shared — do not dispose
 
-    // Hide Phaser UI while the DOM Stream overlay owns the screen.
+    // Hide Phaser UI while the DOM video overlay owns the screen.
     this.cameras.main.setAlpha(0);
 
     this.backGlow = this.add
@@ -198,7 +203,6 @@ export default class ColdOpenScene extends Phaser.Scene {
     if (this.done) return;
     this.done = true;
     this.holdTimer?.remove();
-    markSeen();
     void this.intro?.dismiss();
     this.cameras.main.fadeOut(420, 2, 2, 8);
     this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {

@@ -46,18 +46,18 @@ Four classes, each with a full server-validated kit:
 ## The $METRO economy
 
 $METRO is a tradeable on-chain token bridged to server-authoritative `credits`.
-**Preferred settlement: Robinhood Chain** (Ethereum L2, chain id **4663** mainnet /
-**46630** testnet) via MetaMask. Solana SPL remains supported as legacy.
+**Preferred settlement: Solana SPL** via Phantom. Robinhood Chain ERC-20 remains as legacy.
 
 - In-game currency is off-chain `credits`.
-- Sign-up: MetaMask + free message; wallet is auto-switched to Robinhood Chain.
-- Cash-out pool is **100% player-funded** (starts empty).
-- **Rate spread** (Robinhood launch): deposit 1 ◈ → **100 ₵**, withdraw **125 ₵** → 1 ◈
+- Sign-up: Phantom + free message (no gas).
+- Cash-out pool is **100% player-funded** (starts empty). Empty/short pool →
+  **"Check back later."**
+- **Rate spread**: deposit 1 ◈ → **100 ₵**, withdraw **125 ₵** → 1 ◈
   (~20% stays in the pool). Min cash-out **250 ₵** (2 ◈). Daily cap **50k ₵** / player.
-- On Robinhood Chain, treasury signs ERC-20 payouts (needs a little ETH for gas);
-  players pay gas on deposits.
-- Mainnet stays disarmed (`METRO_MAINNET_ARMED`) until counsel signs off.
-  See `SHIPPING.md` §5.
+- Cash-outs are **claims**: player pays SOL fee; treasury only signs (never spends SOL).
+- Go-live: server `METRO_MINT` + `METRO_TREASURY_SECRET` (base64 keypair) first, then
+  client `VITE_METRO_MINT`. Mainnet stays disarmed (`METRO_MAINNET_ARMED`) until counsel
+  signs off. See `SHIPPING.md` §5 / `docs/METRO_CHAIN_CHOICE.md`.
 
 ## Develop
 

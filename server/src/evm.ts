@@ -151,7 +151,7 @@ export function makeEvmSettlement(cfg: EvmConfig): Settlement {
           }
           const tokenBal: bigint = await token.balanceOf(wallet.address);
           if (tokenBal < amount) {
-            return { ok: false, reason: "treasury $METRO balance too low for this cash-out" };
+            return { ok: false, reason: "Check back later." };
           }
           const data = iface.encodeFunctionData("transfer", [getAddress(toWallet), amount]);
           const fee = await provider.getFeeData();

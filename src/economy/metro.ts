@@ -1,10 +1,10 @@
 // METROPHAGE — $METRO on-chain layer gate (Phase 5).
 //
-// Dual-path settlement (pick when CA is known — see docs/METRO_CHAIN_CHOICE.md):
-//   • Robinhood Chain ERC-20 (0x mint)  — MetaMask / RH L2
-//   • Solana SPL (base58 mint)          — Phantom / Solana
+// Primary: Solana SPL (base58 mint) — Phantom / Solana
+// Legacy:  Robinhood Chain ERC-20 (0x mint) — MetaMask / RH L2
 // Auto-detect from mint shape, or force VITE_METRO_SETTLEMENT=robinhood|solana.
 // Empty mint → pure off-chain credits. Mainnet requires METRO_MAINNET_ARMED.
+// Go-live: set VITE_METRO_MINT (+ server METRO_MINT + METRO_TREASURY_SECRET).
 
 import {
   ROBINHOOD_MAINNET,
@@ -14,6 +14,16 @@ import {
 } from "./robinhoodChain";
 import { getDualChainProfile, dualChainSummary, type DualChainProfile } from "./chainProfile";
 import { isSolanaPubkey } from "./solanaChain";
+import {
+  METRO_TOTAL_SUPPLY as POLICY_SUPPLY,
+  METRO_P2E_DESIGN_POOL,
+  METRO_PER_PLAYER_LIFETIME_BUDGET,
+  TARGET_PLAYERS,
+  BASE_DEPOSIT_CREDITS,
+  BASE_WITHDRAW_CREDITS,
+  BASE_MIN_WITHDRAW_CREDITS,
+  METRO_DEV_SEED_METRO,
+} from "../game/economyPolicy";
 
 const env: Record<string, string | undefined> =
   (typeof import.meta !== "undefined" &&
@@ -168,20 +178,20 @@ export function getMetroStatus(): MetroStatus {
   };
 }
 
-// ── Token framing for Robinhood Chain ERC-20 launch ────────────────────────
-// Fixed 1B human units (contract may use 18 decimals; game talks in whole $METRO).
-// P2E share is smaller than the old pump.fun pitch — most supply is market float on
-// RH; the bridge only ever pays from the player-funded deposit pool, not this pool.
-export const METRO_TOTAL_SUPPLY = 1_000_000_000;
-/** Soft design budget for lifetime earn rates (not a mintable on-chain allocation). */
-export const METRO_P2E_POOL = 100_000_000; // 10% of supply — design ceiling for rewards math
-export const METRO_MAX_PLAYERS = 100_000;
-export const METRO_PER_PLAYER_BUDGET = Math.round(METRO_P2E_POOL / METRO_MAX_PLAYERS); // = 1_000
+// ── Token framing (Solana SPL primary; 1% dev seed + player deposits) ─────
+// Fixed 1B human units. Cash-out pool = 1% seed + deposits − withdrawals.
+// USD price floats with the market; game math is in $METRO + credits.
+export const METRO_TOTAL_SUPPLY = POLICY_SUPPLY;
+/** Soft design budget for lifetime earn rates (not a second on-chain allocation). */
+export const METRO_P2E_POOL = METRO_P2E_DESIGN_POOL;
+export const METRO_MAX_PLAYERS = TARGET_PLAYERS;
+export const METRO_PER_PLAYER_BUDGET = METRO_PER_PLAYER_LIFETIME_BUDGET;
+export const METRO_DEV_SEED = METRO_DEV_SEED_METRO;
 
-/** Bridge rates (must match server/src/metro.ts BRIDGE — shown in UI when pool offline). */
-export const METRO_DEPOSIT_CREDITS = 100;
-export const METRO_WITHDRAW_CREDITS = 125;
-export const METRO_MIN_WITHDRAW_CREDITS = 250;
+/** Healthy-phase bridge rates (live panel may show stress-adjusted values from /metro/pool). */
+export const METRO_DEPOSIT_CREDITS = BASE_DEPOSIT_CREDITS;
+export const METRO_WITHDRAW_CREDITS = BASE_WITHDRAW_CREDITS;
+export const METRO_MIN_WITHDRAW_CREDITS = BASE_MIN_WITHDRAW_CREDITS;
 
 export function fmtMetro(n: number): string {
   const strip = (s: string) => s.replace(/\.?0+$/, "");

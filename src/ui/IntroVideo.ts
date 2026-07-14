@@ -1,9 +1,9 @@
-// Full-screen cold-open trailer.
+// Full-screen cold-open trailer (every site load; user can skip).
 //
-// Prefer progressive MP4 (`public/assets/video/intro.mp4`) — best autoplay on
-// mobile when muted + playsinline. Fall back to Cloudflare Stream HLS / iframe
-// only if the local file fails. Mobile still fails closed (skips video) if
-// nothing is playing within a short deadline.
+// Prefer progressive MP4 (`public/assets/video/intro.mp4`) — best autoplay.
+// Fall back to Cloudflare Stream HLS / iframe if the local file fails.
+// Soundtrack: try unmuted playback; if the browser blocks it, autoplay muted
+// and offer TAP FOR SOUND (any click / key after that unmutes when possible).
 
 import { prefersMobileUx } from "../systems/Mobile";
 
@@ -92,11 +92,16 @@ function canNativeHls(video: HTMLVideoElement): boolean {
   return t === "probably" || t === "maybe";
 }
 
-function forceMuted(video: HTMLVideoElement) {
-  video.muted = true;
-  video.defaultMuted = true;
-  video.volume = 0;
-  video.setAttribute("muted", "");
+function applyMuted(video: HTMLVideoElement, muted: boolean) {
+  video.muted = muted;
+  video.defaultMuted = muted;
+  if (muted) {
+    video.volume = 0;
+    video.setAttribute("muted", "");
+  } else {
+    video.volume = 1;
+    video.removeAttribute("muted");
+  }
   video.setAttribute("autoplay", "");
   video.setAttribute("playsinline", "");
   video.setAttribute("webkit-playsinline", "");
@@ -107,7 +112,7 @@ function forceMuted(video: HTMLVideoElement) {
 
 /**
  * Mount the cold-open trailer. Prefers local progressive MP4 for autoplay.
- * On mobile, fails closed (skips video) if autoplay cannot start.
+ * Tries soundtrack; falls back to muted + TAP FOR SOUND when policy blocks audio.
  */
 export function playIntroVideo(opts: {
   onComplete: () => void;
@@ -117,6 +122,7 @@ export function playIntroVideo(opts: {
   const mobile = prefersMobileUx();
   let finished = false;
   let didPlay = false;
+  let soundOn = false;
   let usingFallback = false;
   let overlay: HTMLDivElement | null = null;
   let video: HTMLVideoElement | null = null;
@@ -126,6 +132,47 @@ export function playIntroVideo(opts: {
   let playDeadline: number | undefined;
   let hardCeiling: number | undefined;
   let dismissPromise: Promise<void> | null = null;
+  let soundBtn: HTMLButtonElement | null = null;
+  let hint: HTMLDivElement | null = null;
+
+  const setHint = (withSound: boolean) => {
+    if (!hint) return;
+    hint.textContent = withSound
+      ? "ESC / SKIP · click to skip"
+      : "ESC / SKIP · TAP FOR SOUND";
+  };
+
+  const setSoundButton = (show: boolean) => {
+    if (!soundBtn) return;
+    soundBtn.hidden = !show;
+    soundBtn.setAttribute("aria-hidden", show ? "false" : "true");
+  };
+
+  const enableSound = () => {
+    if (finished) return;
+    if (video) {
+      applyMuted(video, false);
+      void video.play().then(() => {
+        soundOn = true;
+        setSoundButton(false);
+        setHint(true);
+      }).catch(() => {
+        /* still blocked */
+      });
+    }
+    if (streamPlayer) {
+      try {
+        streamPlayer.muted = false;
+        void streamPlayer.play().then(() => {
+          soundOn = true;
+          setSoundButton(false);
+          setHint(true);
+        });
+      } catch {
+        /* ignore */
+      }
+    }
+  };
 
   const onKey = (e: KeyboardEvent) => {
     if (e.key === "Escape" || e.key === " " || e.key === "Enter") {
@@ -205,21 +252,46 @@ export function playIntroVideo(opts: {
     }
   };
 
+  /**
+   * Prefer soundtrack. If unmuted autoplay is blocked (common on first visit),
+   * fall back to muted so the picture still starts, then offer TAP FOR SOUND.
+   */
   const tryPlayVideo = () => {
     if (finished || !video) return;
-    forceMuted(video);
+
+    const playMuted = () => {
+      if (finished || !video) return;
+      applyMuted(video, true);
+      soundOn = false;
+      setSoundButton(true);
+      setHint(false);
+      void video
+        .play()
+        .then(markPlaying)
+        .catch(() => {
+          if (mobile && !didPlay) void dismiss();
+        });
+    };
+
+    // Already playing with sound — leave it.
+    if (didPlay && soundOn && !video.paused) return;
+
+    applyMuted(video, false);
     const p = video.play();
     if (p && typeof p.then === "function") {
-      void p.then(markPlaying).catch(() => {
-        if (finished || !video) return;
-        forceMuted(video);
-        void video
-          .play()
-          .then(markPlaying)
-          .catch(() => {
-            if (mobile && !didPlay) void dismiss();
-          });
-      });
+      void p
+        .then(() => {
+          soundOn = true;
+          setSoundButton(false);
+          setHint(true);
+          markPlaying();
+        })
+        .catch(() => {
+          // Unmuted blocked — picture still plays muted.
+          playMuted();
+        });
+    } else {
+      playMuted();
     }
   };
 
@@ -338,6 +410,10 @@ export function playIntroVideo(opts: {
     iframe.setAttribute("loading", "eager");
     iframe.style.pointerEvents = "none";
     overlay.insertBefore(iframe, overlay.firstChild);
+    // Stream iframe is always muted for autoplay policy.
+    soundOn = false;
+    setSoundButton(false);
+    setHint(true);
 
     void loadScript(STREAM_SDK_SRC)
       .then(() => {
@@ -372,20 +448,25 @@ export function playIntroVideo(opts: {
   overlay = document.createElement("div");
   overlay.id = "mp-intro";
   overlay.setAttribute("role", "dialog");
-  overlay.setAttribute("aria-label", "METROPHAGE intro");
+  overlay.setAttribute("aria-label", "METROPHAGE trailer");
 
   video = document.createElement("video");
   video.id = "mp-intro-player";
   video.playsInline = true;
   video.autoplay = true;
-  forceMuted(video);
+  applyMuted(video, false);
   video.preload = "auto";
   video.controls = false;
   video.disablePictureInPicture = true;
   video.setAttribute("disablepictureinpicture", "");
   video.setAttribute("controlslist", "nodownload nofullscreen noremoteplayback");
+  // Keep audio track; browsers may still force mute until a gesture.
+  try {
+    (video as HTMLVideoElement & { disableRemotePlayback?: boolean }).disableRemotePlayback = true;
+  } catch {
+    /* ignore */
+  }
   video.style.pointerEvents = "none";
-  // Hint browser we want progressive MP4 first (widest autoplay support).
   video.setAttribute("type", "video/mp4");
   wireVideoEvents(video);
 
@@ -399,16 +480,37 @@ export function playIntroVideo(opts: {
     void dismiss();
   });
 
-  const hint = document.createElement("div");
+  soundBtn = document.createElement("button");
+  soundBtn.type = "button";
+  soundBtn.className = "mp-intro-sound";
+  soundBtn.textContent = "♪ TAP FOR SOUND";
+  soundBtn.hidden = true;
+  soundBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    enableSound();
+  });
+
+  hint = document.createElement("div");
   hint.className = "mp-intro-hint";
-  hint.textContent = "Click to skip";
+  hint.textContent = "ESC / SKIP · loading…";
 
   overlay.appendChild(video);
   overlay.appendChild(skipBtn);
+  overlay.appendChild(soundBtn);
   overlay.appendChild(hint);
 
   overlay.addEventListener("pointerdown", (e) => {
-    if (e.target === skipBtn || skipBtn.contains(e.target as Node)) return;
+    const t = e.target as Node;
+    if (t === skipBtn || skipBtn.contains(t)) return;
+    if (soundBtn && (t === soundBtn || soundBtn.contains(t))) return;
+
+    // First interaction: prefer unmuting if still silent, then allow skip on second click.
+    if (!soundOn && didPlay && video && video.muted) {
+      e.preventDefault();
+      enableSound();
+      return;
+    }
     if (!didPlay && video) {
       e.preventDefault();
       tryPlayVideo();
@@ -431,7 +533,7 @@ export function playIntroVideo(opts: {
     });
   });
 
-  // Primary path: same-origin progressive MP4 (from Desktop trailer, compressed).
+  // Primary path: same-origin progressive MP4 (trailer with soundtrack when present).
   video.src = INTRO_MP4_URL;
   tryPlayVideo();
 

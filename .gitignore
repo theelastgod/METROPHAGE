@@ -15,3 +15,7 @@ asset-drop/
 
 # generated audio: ship the small .m4a (afconvert); ignore the big raw .wav
 src/assets/music/*.wav
+
+# local auto-redeploy control + logs
+.metro-auto-redeploy.stop
+logs/

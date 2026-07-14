@@ -57,5 +57,19 @@ export function installUiCamera(scene: Phaser.Scene, designZoom = 1): Phaser.Cam
     scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdate),
   );
   partition(); // initial pass for everything created before this call
+
+  // Mobile landscape can re-size the game buffer to match the phone aspect —
+  // keep both cameras covering the full backing surface.
+  const onResize = (gameSize: Phaser.Structs.Size) => {
+    const w = gameSize.width;
+    const h = gameSize.height;
+    main.setSize(w, h);
+    ui.setSize(w, h);
+  };
+  scene.scale.on("resize", onResize);
+  scene.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+    scene.scale.off("resize", onResize);
+  });
+
   return ui;
 }

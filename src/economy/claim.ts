@@ -1,16 +1,9 @@
 // METROPHAGE — claim submission for bridge withdrawals.
 //
-// EVM: claimTx is a fully signed raw tx (treasury pays gas). Broadcast via
-// eth_sendRawTransaction — no wallet signature needed.
-// Solana: claimTx is base64 partial-signed; wallet signs + sends (player pays fee).
+// Solana (primary): claimTx is base64 partial-signed; Phantom signs + sends (player pays fee).
+// EVM (legacy): claimTx is a fully signed raw tx (treasury pays gas) via eth_sendRawTransaction.
 
-import { getInjectedProvider, connectedChain } from "./wallet";
-
-interface SigningProvider {
-  signAndSendTransaction?(tx: unknown): Promise<{ signature: string }>;
-  signTransaction?(tx: unknown): Promise<{ serialize(): Uint8Array }>;
-  request?(args: { method: string; params?: unknown[] }): Promise<unknown>;
-}
+import { getSolanaProvider, getEvmProvider, connectedChain } from "./wallet";
 
 export interface ClaimSubmitResult {
   ok: boolean;
@@ -38,7 +31,7 @@ async function broadcastEvmRaw(rawTx: string, rpc: string): Promise<ClaimSubmitR
   ].filter((u, i, a) => u && a.indexOf(u) === i);
 
   try {
-    const p = getInjectedProvider() as SigningProvider | null;
+    const p = getEvmProvider();
     if (p?.request && connectedChain() === "evm") {
       try {
         const hash = (await p.request({ method: "eth_sendRawTransaction", params: [rawTx] })) as string;
@@ -68,20 +61,32 @@ async function broadcastEvmRaw(rawTx: string, rpc: string): Promise<ClaimSubmitR
 }
 
 async function submitSolanaClaim(claimTxB64: string, rpc: string): Promise<ClaimSubmitResult> {
-  const p = getInjectedProvider() as SigningProvider | null;
-  if (!p) return { ok: false, reason: "no wallet to sign with" };
+  // CRITICAL: use Solana injector only — getInjectedProvider() can return MetaMask when both are installed.
+  const p = getSolanaProvider();
+  if (!p) return { ok: false, reason: "no Solana wallet — connect Phantom to sign the cash-out claim" };
   try {
     const { Transaction, Connection } = await import("@solana/web3.js");
     const bytes = Uint8Array.from(atob(claimTxB64), (c) => c.charCodeAt(0));
     const tx = Transaction.from(bytes);
     if (p.signAndSendTransaction) {
       const { signature } = await p.signAndSendTransaction(tx);
+      if (!signature) return { ok: false, reason: "wallet returned empty signature" };
       return { ok: true, sig: signature };
     }
     if (p.signTransaction) {
       const signed = await p.signTransaction(tx);
       const conn = new Connection(rpc, "confirmed");
-      const sig = await conn.sendRawTransaction(signed.serialize());
+      const sig = await conn.sendRawTransaction(signed.serialize(), {
+        skipPreflight: false,
+        preflightCommitment: "confirmed",
+      });
+      // Wait for confirmation so /metro/withdraw/confirm can see the tx.
+      try {
+        const latest = await conn.getLatestBlockhash("confirmed");
+        await conn.confirmTransaction({ signature: sig, ...latest }, "confirmed");
+      } catch {
+        /* confirm endpoint retries if RPC is lagging */
+      }
       return { ok: true, sig };
     }
     return { ok: false, reason: "wallet cannot sign transactions" };

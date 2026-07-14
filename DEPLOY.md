@@ -4,6 +4,39 @@ The online game is a Cloudflare Worker + Durable Objects (`WorldDO`, one per zon
 Everything runs locally today (`127.0.0.1:8787`); going live is config + your Cloudflare
 account, not feature work. Both production builds are verified to bundle (see below).
 
+## Progress survives redeploys (hard rule)
+
+Player progression lives in **remote D1** (`metrophage`, id fixed in `server/wrangler.toml`).
+`wrangler deploy` replaces Worker **code only** — it does **not** recreate D1 or wipe rows.
+
+| Store | Survives `wrangler deploy`? | Notes |
+| --- | --- | --- |
+| D1 `players` + ledger | **Yes** | Source of truth for XP, credits, inventory, campaign, bridge |
+| DO SQLite (zone metadata) | **Yes** if DO migration tag stays `v1` | Never add `deleted_classes` / new class renames lightly |
+| In-memory zone state | No | ≤~1.2s dirty buffer; clients reconnect and reload from D1 |
+
+**Always deploy with the progress guard:**
+
+```sh
+npm run deploy:safe          # server + client, fingerprint before/after
+npm run deploy:safe:check    # dry-run fingerprint only
+npm run migrations:safe      # scan SQL for DROP/DELETE wipe patterns
+```
+
+Never: `d1 create` a second prod db, `d1 delete`, `DELETE FROM players` on remote,
+or point `database_id` at a new empty database.
+
+### Auto-redeploy every 3h (after $METRO is live)
+
+GitHub Actions schedule (`deploy.yml`) + local helper:
+
+```sh
+npm run deploy:auto   # no-ops until /metro/status reports live mint+settlement
+```
+
+Stop auto-redeploy: create `.metro-auto-redeploy.stop` in the repo root, or set
+`METRO_AUTO_REDEPLOY=0`, or disable the workflow schedule.
+
 ## Fastest: ship single-player, no backend (others can play in ~2 min)
 
 The single-player game (THE CITY hub + class runs + dives + customization) is **100%

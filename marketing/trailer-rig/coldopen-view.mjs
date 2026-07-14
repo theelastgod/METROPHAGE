@@ -9,6 +9,7 @@ fs.mkdirSync(OUT, { recursive: true });
 const { browser, page } = await launch();
 await page.addInitScript(() => {
   try {
+    localStorage.removeItem("metrophage_skip_coldopen");
     localStorage.removeItem("metrophage_coldopen_v2");
     localStorage.removeItem("metrophage_coldopen_v1");
   } catch {}

@@ -49,7 +49,7 @@ type MenuPhase = "wallet" | "returning" | "create" | "guest_returning";
 /**
  * Title screen — full-bleed layout.
  * Guest multiplayer: callsign + device secret → full server save, no wallet.
- * Wallet: optional permanent identity (MetaMask); returning players skip customize.
+ * Wallet: optional permanent identity (Phantom / Solana); returning players skip customize.
  */
 export default class SelectScene extends Phaser.Scene {
   private hover = -1;
@@ -150,6 +150,19 @@ export default class SelectScene extends Phaser.Scene {
       )
       .setOrigin(0.5);
 
+    // Bottom-right: quiet support affordance, mirrors OPTIONS type style.
+    const reportBtn = this.add
+      .text(VIEW_W - MENU_PAD, VIEW_H - uiDim(18), "REPORT BUGS", bodyFont(10, { color: "#5a6578" }))
+      .setOrigin(1, 0.5)
+      .setDepth(40)
+      .setScrollFactor(0)
+      .setInteractive({ useHandCursor: true });
+    reportBtn.on("pointerover", () => reportBtn.setColor("#00e5ff"));
+    reportBtn.on("pointerout", () => reportBtn.setColor("#5a6578"));
+    reportBtn.on("pointerdown", () => {
+      window.open("https://t.me/m/ralJIkw_OWMx", "_blank", "noopener,noreferrer");
+    });
+
     this.addSocialLinks();
 
     this.input.keyboard?.on("keydown", (e: KeyboardEvent) => {
@@ -170,7 +183,7 @@ export default class SelectScene extends Phaser.Scene {
     pinMenuUiLayer(this);
   }
 
-  /** Restore MetaMask silently if present, else guest multiplayer continue / create. */
+  /** Restore Phantom/Solana silently if present, else guest multiplayer continue / create. */
   private async bootWalletGate() {
     // Bounced back because the server rejected the guest login (callsign bound to
     // another device / missing device key / reserved) — recovery menu, not a loop.
@@ -216,7 +229,7 @@ export default class SelectScene extends Phaser.Scene {
         reason +
         (/[.!?]$/.test(reason.trim()) ? " " : ". ") +
         (hasWallet
-          ? "Retry CONTINUE if this is your device, start a new runner, or link MetaMask for a permanent identity."
+          ? "Retry CONTINUE if this is your device, start a new runner, or link Phantom for a permanent identity."
           : "Retry CONTINUE if this is your device, or start a new runner."),
       wallet: null,
       actions: this.walletActions([
@@ -319,18 +332,18 @@ export default class SelectScene extends Phaser.Scene {
     this.walletPanel.show({
       step: "connect",
       status: hasWallet ? "ready" : "offline",
-      statusText: hasWallet ? "MetaMask · Robinhood Chain · free sign-in" : "install MetaMask · or play free",
+      statusText: hasWallet ? "Phantom · Solana · free sign-in" : "install Phantom · or play free",
       headline: "Connect your wallet",
       body: hasWallet
-        ? "Sign up with MetaMask on Robinhood Chain — free message, no gas. Your runner is permanently bound to your address across devices. Prefer no wallet? Play free with a device-locked multiplayer save."
-        : "MetaMask is the permanent multiplayer identity for METROPHAGE. Install it to create a wallet-bound runner, or play free with a save locked to this device.",
+        ? "Sign up with Phantom on Solana — free message, no gas. Your runner is permanently bound to your address across devices. Prefer no wallet? Play free with a device-locked multiplayer save."
+        : "Phantom is the permanent multiplayer identity for METROPHAGE. Install it to create a wallet-bound runner, or play free with a save locked to this device.",
       wallet: null,
       actions: this.walletActions([
         ...(hasWallet
           ? [
               {
-                label: "◈ SIGN UP WITH METAMASK",
-                sub: "recommended · Robinhood Chain · free message · permanent id",
+                label: "◈ SIGN UP WITH PHANTOM",
+                sub: "recommended · Solana · free message · permanent id",
                 color: COLORS.neonGreen,
                 primary: true as const,
                 fn: () => void this.onMetaMaskSignUp(),
@@ -345,15 +358,15 @@ export default class SelectScene extends Phaser.Scene {
             ]
           : [
               {
-                label: "◈ GET METAMASK",
-                sub: "recommended · metamask.io · then return to sign up",
+                label: "◈ GET PHANTOM",
+                sub: "recommended · phantom.app · then return to sign up",
                 color: COLORS.neonGreen,
                 primary: true as const,
-                fn: () => window.open("https://metamask.io/download/", "_blank", "noopener"),
+                fn: () => window.open("https://phantom.app/download", "_blank", "noopener"),
               },
               {
                 label: "◢ PLAY FREE · NO WALLET",
-                sub: "multiplayer save on this device · link MetaMask later",
+                sub: "multiplayer save on this device · link Phantom later",
                 color: COLORS.neonCyan,
                 primary: false as const,
                 fn: () => this.enterGuestPlay(),
@@ -363,14 +376,14 @@ export default class SelectScene extends Phaser.Scene {
     });
   }
 
-  /** One-click MetaMask + Robinhood Chain connect + sign-in. */
+  /** One-click Phantom (Solana) connect + sign-in. */
   private async onMetaMaskSignUp() {
     this.walletPanel.show({
       step: "connect",
       status: "busy",
-      statusText: "awaiting MetaMask · Robinhood Chain",
-      headline: "Check MetaMask",
-      body: "Approve connecting MetaMask. We'll switch you to Robinhood Chain (ETH L2) if needed, then you sign a free login message — no gas for sign-up.",
+      statusText: "awaiting Phantom · Solana",
+      headline: "Check Phantom",
+      body: "Approve connecting Phantom. Then sign a free login message — no gas for sign-up. Your runner is permanently bound to this Solana address.",
       wallet: connectedWallet(),
       actions: [],
       showDisconnect: true,
@@ -409,7 +422,7 @@ export default class SelectScene extends Phaser.Scene {
   }
 
   /**
-   * Resume a guest multiplayer runner (no MetaMask).
+   * Resume a guest multiplayer runner (no wallet).
    * Server reloads credits/inventory/campaign via callsign + device secret.
    */
   private enterGuestReturning() {
@@ -478,7 +491,7 @@ export default class SelectScene extends Phaser.Scene {
       status: "ready",
       statusText: "guest multiplayer · link wallet recommended",
       headline: `Welcome back, ${cust.callsign}`,
-      body: "Your multiplayer save is on the server and locked to this device. CONTINUE loads it. Link MetaMask to bind this runner to your wallet permanently (portable across devices).",
+      body: "Your multiplayer save is on the server and locked to this device. CONTINUE loads it. Link Phantom to bind this runner to your wallet permanently (portable across devices).",
       wallet: null,
       offsetY: 36,
       actions: this.walletActions([
@@ -577,11 +590,11 @@ export default class SelectScene extends Phaser.Scene {
   private async verifyAndAdvance(addr: string) {
     this.showConnectedPending(
       addr,
-      "Approve the login message in MetaMask. This is a free signature — not a transaction. No gas, no $METRO.",
+      "Approve the login message in Phantom. This is a free signature — not a transaction. No gas, no $METRO.",
       [],
       {
         status: "busy",
-        statusText: "awaiting MetaMask signature",
+        statusText: "awaiting Phantom signature",
         headline: "Sign to create / resume",
       },
     );
@@ -589,11 +602,11 @@ export default class SelectScene extends Phaser.Scene {
     if (!proof) {
       this.showConnectedPending(
         addr,
-        "Signature cancelled or MetaMask could not sign. Retry, or play multiplayer without a wallet.",
+        "Signature cancelled or wallet could not sign. Retry, or play multiplayer without a wallet.",
         [
           {
             label: "◈ RETRY SIGN UP",
-            sub: "open MetaMask again",
+            sub: "open Phantom again",
             color: COLORS.neonGreen,
             fn: () => void this.verifyAndAdvance(addr),
           },
@@ -617,7 +630,7 @@ export default class SelectScene extends Phaser.Scene {
     this.registry.set("walletAddress", proof.wallet);
     walletSessionSecret(proof.wallet);
 
-    this.showConnectedPending(addr, "Verifying MetaMask identity with the game server…", [], {
+    this.showConnectedPending(addr, "Verifying wallet identity with the game server…", [], {
       status: "busy",
       statusText: "verifying identity",
       headline: "One moment",
@@ -630,7 +643,7 @@ export default class SelectScene extends Phaser.Scene {
         this.enterReturning();
         return;
       }
-      // New MetaMask account — class + customize, then durable save on first online login.
+      // New wallet account — class + customize, then durable save on first online login.
       this.enterCreate();
       return;
     }
@@ -638,7 +651,7 @@ export default class SelectScene extends Phaser.Scene {
     if (result.error === "auth_failed") {
       this.showConnectedPending(
         addr,
-        "Server rejected the signature. Use MetaMask on the same address, or update the client/server if you're on an old build.",
+        "Server rejected the signature. Use Phantom on the same address, or update the client/server if you're on an old build.",
         [
           {
             label: "◈ RETRY SIGN UP",
@@ -663,7 +676,7 @@ export default class SelectScene extends Phaser.Scene {
 
     const serverHint =
       result.error === "server_unreachable"
-        ? "Game server unreachable. Retry MetaMask, or play multiplayer as a guest (saves when the server is up)."
+        ? "Game server unreachable. Retry Phantom, or play multiplayer as a guest (saves when the server is up)."
         : (result.detail ?? "Could not reach the identity service.");
     this.showConnectedPending(
       addr,
@@ -671,7 +684,7 @@ export default class SelectScene extends Phaser.Scene {
       [
         {
           label: "◈ RETRY",
-          sub: "attempt MetaMask identity check again",
+          sub: "attempt wallet identity check again",
           color: COLORS.neonGreen,
           fn: () => void this.verifyAndAdvance(addr),
         },

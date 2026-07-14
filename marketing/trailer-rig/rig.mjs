@@ -66,7 +66,9 @@ export async function launch({ recordDir = null, slowMoWindow = "40,40" } = {}) 
       cur.rsControls = false;
       localStorage.setItem(KEY, JSON.stringify(cur));
       // rig sessions are returning players — skip the first-boot cold open
-      // (coldopen-view.mjs clears this to audit the intro itself)
+      // Skip trailer on every reload so captures hit the menu/game immediately.
+      // (coldopen-view.mjs clears these to audit the intro itself)
+      localStorage.setItem("metrophage_skip_coldopen", "1");
       localStorage.setItem("metrophage_coldopen_v2", "1");
       localStorage.setItem("metrophage_coldopen_v1", "1");
     } catch {}

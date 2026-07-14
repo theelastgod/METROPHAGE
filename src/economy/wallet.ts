@@ -1,25 +1,35 @@
 // METROPHAGE — wallet connector.
-// Prefers MetaMask on **Robinhood Chain** (ETH L2) for sign-up + $METRO.
-// Falls back to other EVM injectors; Solana providers remain for legacy SPL mints.
+// **Solana-first** (Phantom / Solflare / Backpack) for identity + $METRO SPL bridge.
+// MetaMask / Robinhood Chain remains available for legacy ERC-20 mints (0x…).
 
 import {
   type RobinhoodCluster,
   robinhoodNetwork,
   walletAddEthereumChainParams,
 } from "./robinhoodChain";
-import { metroRobinhoodCluster, METRO_CLUSTER, METRO_MAINNET_ARMED } from "./metro";
+import {
+  metroRobinhoodCluster,
+  METRO_CLUSTER,
+  METRO_MAINNET_ARMED,
+  metroIsSolana,
+  metroIsEvm,
+  settlementForce,
+  METRO_MINT,
+} from "./metro";
 
 interface EvmProvider {
   request(args: { method: string; params?: unknown[] }): Promise<unknown>;
   isMetaMask?: boolean;
 }
 
-interface SolanaProvider {
+export interface SolanaProvider {
   publicKey?: { toString(): string } | null;
   isConnected?: boolean;
   connect(opts?: { onlyIfTrusted?: boolean }): Promise<{ publicKey: { toString(): string } }>;
   disconnect(): Promise<void>;
   signMessage?(message: Uint8Array, encoding?: string): Promise<{ signature: Uint8Array }>;
+  signAndSendTransaction?(tx: unknown): Promise<{ signature: string }>;
+  signTransaction?(tx: unknown): Promise<{ serialize(): Uint8Array }>;
 }
 
 const ADDR_KEY = "mp_wallet_addr_v1";
@@ -52,19 +62,32 @@ function persistConnection(addr: string | null, chain: "evm" | "solana" | null) 
   }
 }
 
-/** Wallet device sessions expire after 7 days — forces a fresh MetaMask sign-in. */
+/** Wallet device sessions expire after 7 days — forces a fresh wallet sign-in. */
 const WALLET_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
+ * Stable localStorage key for a wallet.
+ * EVM: case-insensitive. Solana base58 is case-sensitive — never fold case.
+ */
+function sessionKeyFor(wallet: string): string | null {
+  const w = (wallet || "").trim();
+  if (!w || w.length < 8) return null;
+  if (/^0x[a-fA-F0-9]{40}$/i.test(w)) {
+    return "mp_wsession_" + w.toLowerCase();
+  }
+  // Solana / other base58 — preserve case, strip only whitespace.
+  return "mp_wsession_" + w.replace(/\s+/g, "");
+}
+
+/**
  * Device-bound wallet session secret — bound server-side after the first successful
- * MetaMask signature. Zone travel reuses this so you don't re-sign every district.
+ * wallet signature. Zone travel reuses this so you don't re-sign every district.
  * Stored as `secret|issuedAtMs`; expired secrets are rotated (next login needs a re-sign).
  */
 export function walletSessionSecret(wallet: string): string | undefined {
   try {
-    const addr = (wallet || "").toLowerCase().replace(/[^a-z0-9x]/g, "");
-    if (addr.length < 8) return undefined;
-    const key = "mp_wsession_" + addr;
+    const key = sessionKeyFor(wallet);
+    if (!key) return undefined;
     const now = Date.now();
     const raw = localStorage.getItem(key);
     if (raw) {
@@ -87,24 +110,35 @@ export function walletSessionSecret(wallet: string): string | undefined {
 export function clearWalletSessionSecret(wallet?: string) {
   try {
     if (wallet) {
-      localStorage.removeItem("mp_wsession_" + wallet.toLowerCase().replace(/[^a-z0-9x]/g, ""));
+      const key = sessionKeyFor(wallet);
+      if (key) localStorage.removeItem(key);
     }
   } catch {
     /* ignore */
   }
 }
 
-/** Mint a fresh session secret and stamp issued-at (call after a successful personal_sign). */
+/** Mint a fresh session secret and stamp issued-at (call after a successful sign). */
 export function rotateWalletSessionSecret(wallet: string): string | undefined {
   try {
-    const addr = (wallet || "").toLowerCase().replace(/[^a-z0-9x]/g, "");
-    if (addr.length < 8) return undefined;
+    const key = sessionKeyFor(wallet);
+    if (!key) return undefined;
     const s = crypto.randomUUID();
-    localStorage.setItem("mp_wsession_" + addr, `${s}|${Date.now()}`);
+    localStorage.setItem(key, `${s}|${Date.now()}`);
     return s;
   } catch {
     return undefined;
   }
+}
+
+/** Prefer Solana when mint is SPL / forced, or when no mint yet (Solana-first launch). */
+export function preferSolanaWallet(): boolean {
+  if (settlementForce() === "solana") return true;
+  if (settlementForce() === "robinhood") return false;
+  if (metroIsSolana) return true;
+  if (metroIsEvm) return false;
+  // No CA yet — Solana is the active launch path.
+  return !METRO_MINT || !/^0x/i.test(METRO_MINT);
 }
 
 function getEvm(): EvmProvider | null {
@@ -134,8 +168,28 @@ export function walletAvailable(): boolean {
   return !!(getEvm() || getSolana());
 }
 
+export function solanaWalletAvailable(): boolean {
+  return !!getSolana();
+}
+
+export function evmWalletAvailable(): boolean {
+  return !!getEvm();
+}
+
+/** Prefer the chain that matches the active $METRO mint family. */
 export function getInjectedProvider(): unknown {
+  if (preferSolanaWallet()) return getSolana() ?? getEvm();
   return getEvm() ?? getSolana();
+}
+
+/** Always the Solana injector (Phantom etc.) — never MetaMask. */
+export function getSolanaProvider(): SolanaProvider | null {
+  return getSolana();
+}
+
+/** Always the EVM injector (MetaMask etc.). */
+export function getEvmProvider(): EvmProvider | null {
+  return getEvm();
 }
 
 export function connectedWallet(): string | null {
@@ -148,12 +202,28 @@ export function connectedChain(): "evm" | "solana" | null {
 }
 
 /**
- * Silently restore a previously-approved MetaMask account (no popup).
+ * Silently restore a previously-approved wallet (no popup).
+ * Solana-first: onlyIfTrusted Phantom connect, then MetaMask eth_accounts.
  * Call once at boot / title screen so zone travel keeps the address.
  */
 export async function restoreWalletSession(): Promise<string | null> {
+  if (preferSolanaWallet() || lastChain === "solana") {
+    const sol = getSolana();
+    if (sol) {
+      try {
+        const res = await sol.connect({ onlyIfTrusted: true });
+        const addr = res?.publicKey?.toString() ?? sol.publicKey?.toString() ?? null;
+        if (addr) {
+          persistConnection(addr, "solana");
+          return addr;
+        }
+      } catch {
+        /* not trusted yet */
+      }
+    }
+  }
   const eth = getEvm();
-  if (eth) {
+  if (eth && (lastChain === "evm" || !preferSolanaWallet())) {
     try {
       const accounts = (await eth.request({ method: "eth_accounts" })) as string[];
       const addr = accounts?.[0] ?? null;
@@ -222,26 +292,7 @@ export async function ensureRobinhoodNetwork(
   }
 }
 
-export async function connectWallet(): Promise<string | null> {
-  const eth = getEvm();
-  if (eth) {
-    try {
-      // Put MetaMask on Robinhood Chain before accounts (sign-up + $METRO live there).
-      await ensureRobinhoodNetwork();
-      // Prefer already-authorized accounts (no extra permission popup).
-      let accounts = (await eth.request({ method: "eth_accounts" })) as string[];
-      if (!accounts?.length) {
-        accounts = (await eth.request({ method: "eth_requestAccounts" })) as string[];
-      }
-      const addr = accounts?.[0] ?? null;
-      if (addr) {
-        persistConnection(addr, "evm");
-        return addr;
-      }
-    } catch {
-      /* user rejected — try Solana */
-    }
-  }
+async function connectSolana(): Promise<string | null> {
   const sol = getSolana();
   if (!sol) return null;
   try {
@@ -252,6 +303,45 @@ export async function connectWallet(): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+async function connectEvm(): Promise<string | null> {
+  const eth = getEvm();
+  if (!eth) return null;
+  try {
+    // Only switch to Robinhood when the mint is actually EVM/RH.
+    if (metroIsEvm || settlementForce() === "robinhood") {
+      await ensureRobinhoodNetwork();
+    }
+    let accounts = (await eth.request({ method: "eth_accounts" })) as string[];
+    if (!accounts?.length) {
+      accounts = (await eth.request({ method: "eth_requestAccounts" })) as string[];
+    }
+    const addr = accounts?.[0] ?? null;
+    if (addr) {
+      persistConnection(addr, "evm");
+      return addr;
+    }
+  } catch {
+    /* user rejected */
+  }
+  return null;
+}
+
+/**
+ * Connect a wallet. Solana-first by default (Phantom).
+ * Pass prefer: "evm" for MetaMask / Robinhood ERC-20 path.
+ */
+export async function connectWallet(prefer?: "evm" | "solana"): Promise<string | null> {
+  const wantSol = prefer === "solana" || (prefer !== "evm" && preferSolanaWallet());
+  if (wantSol) {
+    const sol = await connectSolana();
+    if (sol) return sol;
+    return connectEvm();
+  }
+  const eth = await connectEvm();
+  if (eth) return eth;
+  return connectSolana();
 }
 
 export async function disconnectWallet(): Promise<void> {
@@ -288,17 +378,43 @@ function base58Encode(bytes: Uint8Array): string {
 
 /**
  * Sign the online-login / bridge-auth message.
- * EVM → personal_sign on Robinhood Chain. Solana → ed25519 base58.
+ * Solana → ed25519 base58. EVM → personal_sign (Robinhood only when mint is EVM).
  */
 export async function signWalletLogin(
   message: string,
   address?: string,
 ): Promise<{ address: string; signature: string } | null> {
-  const eth = getEvm();
   const addr = address ?? lastConnectedAddress;
-  if (eth && addr && /^0x/i.test(addr)) {
+  const isEvmAddr = !!(addr && /^0x/i.test(addr));
+
+  // Solana path first when address is base58 or we prefer Solana and address is not 0x.
+  if (!isEvmAddr) {
+    const p = getSolana();
+    const solAddr = addr ?? p?.publicKey?.toString() ?? lastConnectedAddress;
+    if (p?.signMessage && solAddr && !/^0x/i.test(solAddr)) {
+      const bytes = new TextEncoder().encode(message);
+      try {
+        let signature: Uint8Array;
+        try {
+          const res = await p.signMessage(bytes, "utf8");
+          signature = res.signature;
+        } catch {
+          const res = await p.signMessage(bytes);
+          signature = res.signature;
+        }
+        return { address: solAddr, signature: base58Encode(signature) };
+      } catch {
+        return null;
+      }
+    }
+  }
+
+  const eth = getEvm();
+  if (eth && addr && isEvmAddr) {
     try {
-      await ensureRobinhoodNetwork();
+      if (metroIsEvm || settlementForce() === "robinhood") {
+        await ensureRobinhoodNetwork();
+      }
       const sig = (await eth.request({
         method: "personal_sign",
         params: [message, addr],
@@ -308,23 +424,7 @@ export async function signWalletLogin(
       return null;
     }
   }
-  const p = getSolana();
-  const solAddr = address ?? p?.publicKey?.toString() ?? lastConnectedAddress;
-  if (!p?.signMessage || !solAddr) return null;
-  const bytes = new TextEncoder().encode(message);
-  try {
-    let signature: Uint8Array;
-    try {
-      const res = await p.signMessage(bytes, "utf8");
-      signature = res.signature;
-    } catch {
-      const res = await p.signMessage(bytes);
-      signature = res.signature;
-    }
-    return { address: solAddr, signature: base58Encode(signature) };
-  } catch {
-    return null;
-  }
+  return null;
 }
 
 export async function signOwnership(nonce: string): Promise<{ address: string; signature: string } | null> {

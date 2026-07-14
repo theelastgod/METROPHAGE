@@ -11,7 +11,10 @@ export interface LaunchFlags {
   districtWar: boolean;
   /** Soft max concurrent players in hub ("safe") before redirect to d0. */
   hubCap: number;
-  /** Max credits a player can earn from emits (kill/event/daily/ach/floor) per UTC day. */
+  /**
+   * Legacy env knob. **0 = unlimited** (default). Earn from play is uncapped;
+   * only the cash-out pool limits convertibility.
+   */
   dailyEmitCap: number;
 }
 
@@ -20,7 +23,8 @@ export const DEFAULT_LAUNCH_FLAGS: LaunchFlags = {
   claimGoal: true,
   districtWar: true,
   hubCap: 48,
-  dailyEmitCap: 2500,
+  // Unlimited earn from play (0). Env METRO_DAILY_EMIT_CAP can still set a ceiling if needed.
+  dailyEmitCap: 0,
 };
 
 /** `METRO_DISABLE_X=1` (or true/on/yes/off) turns that feature OFF. */
@@ -49,7 +53,8 @@ export function launchFlagsFromEnv(env: {
     claimGoal: !isFeatureDisabled(env.METRO_DISABLE_CLAIM_GOAL),
     districtWar: !isFeatureDisabled(env.METRO_DISABLE_DISTRICT_WAR),
     hubCap: parseIntEnv(env.METRO_HUB_CAP, DEFAULT_LAUNCH_FLAGS.hubCap, 8, 200),
-    dailyEmitCap: parseIntEnv(env.METRO_DAILY_EMIT_CAP, DEFAULT_LAUNCH_FLAGS.dailyEmitCap, 200, 100_000),
+    // 0 = unlimited; if set, allow 0–1e9 for ops emergencies only.
+    dailyEmitCap: parseIntEnv(env.METRO_DAILY_EMIT_CAP, DEFAULT_LAUNCH_FLAGS.dailyEmitCap, 0, 1_000_000_000),
   };
 }
 

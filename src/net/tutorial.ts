@@ -230,7 +230,7 @@ const METRO_BRIDGE: TutorialStepDef = {
   id: "metro",
   title: "$METRO BRIDGE",
   teach:
-    "The ◈ $METRO bridge is a player-funded cash-out rail on Robinhood Chain. Deposits add to the pool; withdrawals only pay while the pool and treasury gas can cover them.",
+    "The ◈ $METRO bridge is a player-funded cash-out rail on Solana. Deposits add to the pool; withdrawals only pay while the pool can cover them — otherwise: Check back later.",
   hint: "Talk to BRIDGE BROKER (E) · or SPACE",
   kind: "metro",
   count: 1,

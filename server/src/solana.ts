@@ -59,8 +59,23 @@ export function makeSolanaSettlement(cfg: SolanaConfig): Settlement {
         const owner = new PublicKey(wallet);
         const d = await decimals();
         const amount = BigInt(Math.round(metro * 10 ** d));
+        if (amount <= 0n) return { ok: false, reason: "amount rounds to zero on-chain" };
         const from = await getAssociatedTokenAddress(mint, treasury.publicKey);
         const to = await getAssociatedTokenAddress(mint, owner);
+
+        // Hard gate: on-chain treasury ATA must cover the claim. Ledger pool can lag
+        // (or a pending claim drained the ATA). Never hand the player a doomed tx.
+        try {
+          const bal = await conn.getTokenAccountBalance(from, "confirmed");
+          const have = BigInt(bal.value.amount);
+          if (have < amount) {
+            return { ok: false, reason: "Check back later." };
+          }
+        } catch {
+          // Missing ATA / empty account → nothing to pay out.
+          return { ok: false, reason: "Check back later." };
+        }
+
         const { blockhash } = await conn.getLatestBlockhash("confirmed");
         const tx = new Transaction({ feePayer: owner, recentBlockhash: blockhash });
         // the player pays the rent for their own token account (no-op if it exists)

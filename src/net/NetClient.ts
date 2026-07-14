@@ -5,6 +5,7 @@ import type { ClientMsg, ServerMsg, InputCmd, PlayerLook, Item, EstateFurniture 
 import { PROTOCOL_VERSION } from "./protocol";
 import { tutorialReadyForPortal, tutorialStepAt } from "./tutorial";
 import { walletSessionSecret } from "../economy/wallet";
+import { setOnlinePlayer } from "../economy/session";
 import { isGodAccount } from "./godAccounts";
 import { furnitureHomeBuffs } from "../world/estates";
 
@@ -471,6 +472,7 @@ export default class NetClient {
     ws.onclose = (ev) => {
       if (this.ws !== ws && this.ws !== undefined) return; // a newer socket owns the client
       this.connected = false;
+      setOnlinePlayer(null); // a fresh welcome re-publishes it on reconnect
       // 4001 = wallet auth rejected — ask the host to re-sign once (no reconnect loop).
       if (ev.code === 4001 && this.auth?.wallet && !this.authRetryUsed) {
         this.authRetryUsed = true;
@@ -799,6 +801,9 @@ export default class NetClient {
         return;
       }
       this.id = msg.id;
+      // Publish the authoritative player id so the (DOM) $METRO panel can talk to the
+      // server bridge. Without this the bridge never learns who is logged in.
+      setOnlinePlayer(msg.id);
       this.faction = msg.faction;
       this.connected = true;
       this.reconnectAttempts = 0;
