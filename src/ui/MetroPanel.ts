@@ -138,7 +138,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
         </div>
         <button class="x" id="m-x" aria-label="Close">×</button>
       </div>
-      <div class="sub">${st.networkName}${st.chainId ? ` · id ${st.chainId}` : ""} · player-funded pool · mainnet ${st.mainnetLive ? "LIVE" : "OFF until counsel"}</div>
+      <div class="sub">${st.networkName}${st.chainId ? ` · id ${st.chainId}` : ""} · player-funded pool · testnet ready without mainnet · mainnet ${st.mainnetLive ? "LIVE" : "counsel-gated"}</div>
     </div>
     <div class="body">
       <div class="pool-band">

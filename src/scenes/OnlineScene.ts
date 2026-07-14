@@ -339,6 +339,9 @@ export default class OnlineScene extends Phaser.Scene {
   private questLog!: RsQuestLog;
   private rsActionBar?: RsActionBar;
   private rsGameMessage!: RsGameMessage;
+  /** Double-ESC quit arm (avoids accidental title dumps). */
+  private quitConfirmArmed = false;
+  private quitConfirmUntil = 0;
   private readonly attackRange = 200;
   // zone interactables — service operatives (open a system), authored citizens (flavour),
   // and doors (travel into a building interior)
@@ -1821,8 +1824,17 @@ export default class OnlineScene extends Phaser.Scene {
           return;
         }
         if (this.closeTopPanel()) return;
-        this.net.disconnect();
-        this.scene.start("Select");
+        // Accidental ESC is common — confirm before dumping to title.
+        if (this.quitConfirmArmed && performance.now() < this.quitConfirmUntil) {
+          this.quitConfirmArmed = false;
+          this.net.disconnect();
+          this.scene.start("Select");
+          return;
+        }
+        this.quitConfirmArmed = true;
+        this.quitConfirmUntil = performance.now() + 2500;
+        this.showBubble(this.me.x, this.me.y, "Press ESC again to quit to title");
+        this.rsGameMessage?.show("ESC again to quit to title", { ttlMs: 2500, color: "#f7ff3c" });
       } else {
         const k = parseInt(e.key, 10);
         if (k >= 1 && k <= DISTRICTS.length) {
@@ -2035,9 +2047,9 @@ export default class OnlineScene extends Phaser.Scene {
     return z.toUpperCase();
   }
 
-  private openChat() {
+  private openChat(prefill = "") {
     this.chatOpen = true;
-    this.chatBuffer = "";
+    this.chatBuffer = prefill;
     this.chatPanel.setComposing(true, this.chatBuffer);
     // Mobile soft keyboard: Phaser keyboard often doesn't receive text on iOS/Android.
     if (this.mobileUx()) this.mountMobileChatInput();
@@ -6815,6 +6827,7 @@ export default class OnlineScene extends Phaser.Scene {
     const wp = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
     const enemyId = this.pickEnemyAt(wp.x, wp.y);
     const npc = this.pickNpcAt(wp.x, wp.y);
+    const remote = this.pickRemoteAt(wp.x, wp.y);
     const pos = this.playerPos();
     const actions: Array<{ label: string; color?: string; onPick: () => void }> = [];
     const walk = () => {
@@ -6832,7 +6845,61 @@ export default class OnlineScene extends Phaser.Scene {
         },
       });
       actions.push({ label: "Walk here", onPick: walk });
-    } else if (npc) {
+      this.contextMenu.show(pointer.x, pointer.y, "HSS Unit", actions);
+      return;
+    }
+    if (remote) {
+      // Prefer player id for server resolve (wallet ids); short label for the menu.
+      const id = remote.id;
+      const label =
+        id.startsWith("w:") && id.length > 12 ? `${id.slice(0, 6)}…${id.slice(-4)}` : id;
+      actions.push({
+        label: `Walk-to ${label}`,
+        onPick: () => {
+          this.attackTargetId = null;
+          this.pendingInteract = null;
+          this.clickMove.setDestination(remote.x, remote.y, this.zoneGrid, pos.x, pos.y);
+        },
+      });
+      if (this.net.connected) {
+        actions.push({
+          label: `Whisper ${label}`,
+          color: "#9fe8ff",
+          onPick: () => {
+            this.openChat(`/w ${id} `);
+            this.rsGameMessage?.show(`Whisper ${label} — type message + Enter`, { ttlMs: 2800, color: "#9fe8ff" });
+          },
+        });
+        actions.push({
+          label: `Invite to party`,
+          color: "#39ff88",
+          onPick: () => {
+            this.net.sendParty("invite", id);
+            this.rsGameMessage?.show(`Invited ${label}`, { ttlMs: 2200, color: "#39ff88" });
+          },
+        });
+        actions.push({
+          label: `Trade with ${label}`,
+          color: "#f7ff3c",
+          onPick: () => {
+            this.net.tradeRequest(id);
+            this.rsGameMessage?.show(`Trade request → ${label}`, { ttlMs: 2200, color: "#f7ff3c" });
+          },
+        });
+        actions.push({
+          label: `Mute ${label}`,
+          color: "#ff7a9a",
+          onPick: () => {
+            this.net.sendMute(id);
+            this.rsGameMessage?.show(`Muted ${label}`, { ttlMs: 2000, color: "#ff7a9a" });
+          },
+        });
+      }
+      actions.push({ label: "Walk here", onPick: walk });
+      this.contextMenu.show(pointer.x, pointer.y, label, actions);
+      return;
+    }
+    if (npc) {
       const label = npc.name ?? "NPC";
       actions.push({
         label: `Talk-to ${label}`,
@@ -6848,15 +6915,31 @@ export default class OnlineScene extends Phaser.Scene {
         });
       }
       actions.push({ label: "Walk here", onPick: walk });
-    } else {
-      actions.push({ label: "Walk here", onPick: walk });
-      actions.push({
-        label: "Examine ground",
-        color: "#c8c8c8",
-        onPick: () => this.rsExamine("Wet neon asphalt. The city breathes beneath your boots."),
-      });
+      this.contextMenu.show(pointer.x, pointer.y, npc.name ?? "NPC", actions);
+      return;
     }
-    this.contextMenu.show(pointer.x, pointer.y, enemyId !== null ? "HSS Unit" : npc?.name ?? "Metro City", actions);
+    actions.push({ label: "Walk here", onPick: walk });
+    actions.push({
+      label: "Examine ground",
+      color: "#c8c8c8",
+      onPick: () => this.rsExamine("Wet neon asphalt. The city breathes beneath your boots."),
+    });
+    this.contextMenu.show(pointer.x, pointer.y, "Metro City", actions);
+  }
+
+  /** Nearest remote player under the cursor (for social context menu). */
+  private pickRemoteAt(wx: number, wy: number): { id: string; x: number; y: number } | null {
+    let best: { id: string; x: number; y: number } | null = null;
+    let bestD = 40 * 40;
+    for (const [id, r] of this.net.remotes) {
+      if (r.dead) continue;
+      const d = (r.x - wx) ** 2 + (r.y - wy) ** 2;
+      if (d < bestD) {
+        bestD = d;
+        best = { id, x: r.x, y: r.y };
+      }
+    }
+    return best;
   }
 
   private tickRsMovement() {

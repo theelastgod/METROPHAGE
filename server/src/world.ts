@@ -1805,38 +1805,86 @@ export class WorldDO {
     }
   }
 
+  /** Short-lived cache of guild → remote zones (cuts D1 on chat spam). */
+  private guildZoneCache = new Map<number, { zones: string[]; at: number }>();
+
+  /** Batch-refresh session_zone for everyone online in this DO (guild relay accuracy). */
+  private async touchOnlineSessions(): Promise<void> {
+    const ids = [...this.players.keys()];
+    if (ids.length === 0) return;
+    const now = Date.now();
+    const zone = this.zoneName;
+    try {
+      // Chunk to avoid huge batches on crowded hubs.
+      for (let i = 0; i < ids.length; i += 25) {
+        const slice = ids.slice(i, i + 25);
+        await Promise.all(
+          slice.map((id) =>
+            this.env.DB.prepare("UPDATE players SET session_zone = ?, session_at = ? WHERE id = ?")
+              .bind(zone, now, id)
+              .run()
+              .catch(() => {}),
+          ),
+        );
+      }
+    } catch {
+      /* pre-migration */
+    }
+  }
+
   /**
    * Fan Cell chat to guildmates in OTHER zones via their session_zone DO.
-   * Paid Workers budget covers a few stub.fetch hops per message; we de-dupe by zone.
+   * Paid Workers budget covers a few stub.fetch hops; de-dupe by zone; retry once.
    */
   private async guildRelayCrossZone(gid: number, msg: unknown, fromId: string): Promise<void> {
     try {
-      const { results } = await this.env.DB.prepare(
-        `SELECT DISTINCT p.session_zone AS zone
-         FROM guild_members m
-         JOIN players p ON p.id = m.player
-         WHERE m.guild_id = ?
-           AND p.session_zone IS NOT NULL AND p.session_zone != ''
-           AND p.session_zone != ?`,
-      )
-        .bind(gid, this.zoneName)
-        .all<{ zone: string }>();
-      const zones = (results ?? []).map((r) => r.zone).filter(Boolean);
+      // Keep sender's session_zone hot so other zones can reach us next message.
+      void this.env.DB.prepare("UPDATE players SET session_zone = ?, session_at = ? WHERE id = ?")
+        .bind(this.zoneName, Date.now(), fromId)
+        .run()
+        .catch(() => {});
+
+      let zones: string[] = [];
+      const cached = this.guildZoneCache.get(gid);
+      if (cached && Date.now() - cached.at < 2500) {
+        zones = cached.zones;
+      } else {
+        const { results } = await this.env.DB.prepare(
+          `SELECT DISTINCT p.session_zone AS zone
+           FROM guild_members m
+           JOIN players p ON p.id = m.player
+           WHERE m.guild_id = ?
+             AND p.session_zone IS NOT NULL AND p.session_zone != ''
+             AND p.session_zone != ?`,
+        )
+          .bind(gid, this.zoneName)
+          .all<{ zone: string }>();
+        zones = (results ?? []).map((r) => r.zone).filter(Boolean);
+        this.guildZoneCache.set(gid, { zones, at: Date.now() });
+      }
       if (zones.length === 0) return;
       const payload = JSON.stringify({ guildId: gid, fromId, msg });
       await Promise.all(
         zones.map(async (zone) => {
-          try {
+          const hop = async () => {
             const stub = this.env.WORLD.get(this.env.WORLD.idFromName(zone));
-            await stub.fetch(
+            const res = await stub.fetch(
               new Request(`https://world/guild-relay?zone=${encodeURIComponent(zone)}`, {
                 method: "POST",
                 headers: { "content-type": "application/json" },
                 body: payload,
               }),
             );
+            if (!res.ok) throw new Error(`relay ${res.status}`);
+          };
+          try {
+            await hop();
           } catch {
-            /* remote zone DO cold / gone — drop that hop */
+            try {
+              await hop(); // one retry after DO cold start
+            } catch {
+              /* drop hop */
+            }
           }
         }),
       );
@@ -5822,6 +5870,12 @@ export class WorldDO {
     if (this.tick % PERSIST_EVERY_TICKS === 0) {
       void this.persistDirty();
       void this.flushEconomy();
+      // Keep session_zone warm for cross-zone Cell chat (cheap batch).
+      void this.touchOnlineSessions();
+    }
+    // Cross-zone mail a bit more often on Paid (auction pays land while online).
+    if (this.tick % 60 === 0) {
+      for (const p of this.players.values()) void this.drainMail(p);
     }
     // ops metrics: EMA smoothing keeps this O(1) per tick with no storage writes
     const stepMs = Date.now() - stepT0;
