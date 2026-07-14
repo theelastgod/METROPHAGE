@@ -78,8 +78,24 @@ export function dismissSecondHour() {
   save();
 }
 
+/** Test-only: clear second-hour progress. */
+export function __resetSecondHourForTests() {
+  state = { ...DEFAULT };
+  try {
+    localStorage.removeItem(KEY);
+  } catch {
+    /* */
+  }
+}
+
 function allDone(): boolean {
-  return state.buyCache && state.forgeOnce && state.finishBounty && state.captureNode;
+  return (
+    state.buyCache &&
+    state.forgeOnce &&
+    state.finishBounty &&
+    state.captureNode &&
+    state.touchBoss
+  );
 }
 
 /** One-line coach after first-session is done. */
@@ -88,7 +104,7 @@ export function secondHourLine(firstSessionDone: boolean): string | null {
   if (!state.finishBounty) return "▶ 2ND HOUR · Accept an NPC Job (E → Job) and finish it";
   if (!state.buyCache) return "▶ 2ND HOUR · Buy a SALVAGE CACHE at a vendor (B / stall)";
   if (!state.forgeOnce) return "▶ 2ND HOUR · Open FORGE (G) — upgrade or salvage once";
-  if (!state.captureNode) return "▶ 2ND HOUR · Stand on a territory NODE until it flips";
+  if (!state.captureNode) return "▶ 2ND HOUR · Stand on a territory NODE until it flips (stand in the ring)";
   if (!state.touchBoss) return "▶ 2ND HOUR · Hunt a world boss (gold banner) — even a touch counts";
   return null;
 }

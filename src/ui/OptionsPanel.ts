@@ -37,7 +37,7 @@ export default class OptionsPanel {
   private rows: Row[] = [];
   private open = false;
 
-  private readonly frame = modalRect(440, 520);
+  private readonly frame = modalRect(440, 560);
   private readonly x = this.frame.x;
   private readonly y = this.frame.y;
   private readonly w = this.frame.w;
@@ -82,6 +82,8 @@ export default class OptionsPanel {
     this.addCycleRow("uiDensity", "HUD DENSITY", ["new", "full"] as unknown as GraphicsQuality[], ry, D, "#39ff88");
     ry += this.rowH;
     this.addRow("firstSessionCoach", "FIRST-SESSION COACH", true, ry, D, "#b06bff");
+    ry += this.rowH;
+    this.addRow("shareCards", "SHARE CARDS ON BOSS KILL", true, ry, D, "#f7ff3c");
     ry += this.rowH;
     this.addRow("reduceFlashing", "REDUCE FLASHING", true, ry, D, "#ff3b6b");
     ry += this.rowH;

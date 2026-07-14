@@ -24,9 +24,13 @@ Shipped without mint / CA work.
 
 ## Social / economy UX
 - Market filters: ALL / ₵ / ◈ / WEP / ARM / RARE
-- Cell weekly goal banner
+- Cell weekly goals: D1 tallies, 50%/complete toasts, claim pays **all** members (live + mailbox)
+- Share cards: Options → opt-in; fires only on your boss kill credit
+- Home furniture buffs (regen / HEAT / shield / move) while owner is home
 - Contacts (`/c`), pin, dossier (L)
-- Build stamp toast on welcome; reconnect/offline banners
+- Build stamp toast on welcome; reconnect/offline banners + guild re-hydrate
+- City chatter + ambient runners when solo
+- Systems hint after 2nd hour (N / U / K / L / J / O)
 
 ## Keys
 | Key | Panel |

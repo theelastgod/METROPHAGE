@@ -122,6 +122,7 @@ import {
 } from "../game/firstSession";
 import {
   secondHourLine,
+  getSecondHour,
   noteSecondBuyCache,
   noteSecondForge,
   noteSecondBountyDone,
@@ -129,6 +130,7 @@ import {
   noteSecondCapture,
 } from "../game/secondHour";
 import { downloadShareCard } from "../ui/ShareCard";
+import { systemsHintLine, dismissSystemsHint, cityChatterLine } from "../game/systemsHint";
 import { noteNpcTalk, noteNpcBountyDone, npcMemoryLine } from "../game/npcMemory";
 import { buildStamp } from "../buildInfo";
 import { raidScriptFor } from "../game/raid";
@@ -291,6 +293,14 @@ export default class OnlineScene extends Phaser.Scene {
   private bossIntroShown = ""; // boss name whose title card already played this visit
   /** Last-seen node owners — detect captures for second-hour coach. */
   private prevNodeOwners = new Map<number, number>();
+  /** Progress snapshot while we channel — only credit captures we helped flip. */
+  private prevNodeProgress = new Map<number, number>();
+  /** Last death-tax line for the reboot card. */
+  private lastDeathTaxLine = "";
+  /** City chatter ticker (solo presence). */
+  private cityChatterAt = 0;
+  private cityChatterLine = "";
+  private systemsHintTimerArmed = false;
   private atmosphere?: Atmosphere; // rich ambient layer, shared with the SP city
   private connectStartedAt = 0; // when this connection attempt began (for the offline timeout)
   /** Bumped on connect / shutdown so async wallet auth cannot open a zombie socket. */
@@ -1119,12 +1129,20 @@ export default class OnlineScene extends Phaser.Scene {
 
     this.net.onConnectionState = (state) => {
       this.connectionState = state;
-      if (state === "connected") this.connectStartedAt = Date.now();
+      if (state === "connected") {
+        this.connectStartedAt = Date.now();
+        // After a reconnect, re-hydrate cell goal progress (mail may have landed).
+        try {
+          this.net.guildAction("info");
+        } catch {
+          /* not yet logged in */
+        }
+      }
       if (state === "reconnecting") {
         this.rsGameMessage?.show("Reconnecting to the grid…", { ttlMs: 2800, color: "#f7ff3c" });
       }
       if (state === "offline") {
-        this.rsGameMessage?.show("Link lost — solo preview until rejoin", { ttlMs: 3500, color: "#ff7a9a" });
+        this.rsGameMessage?.show("Link lost — solo preview until rejoin · R retry", { ttlMs: 4000, color: "#ff7a9a" });
       }
       this.hudRefreshAcc = OnlineScene.HUD_REFRESH_MS;
       this.minimapRefreshAcc = OnlineScene.MINIMAP_REFRESH_MS;
@@ -1136,6 +1154,9 @@ export default class OnlineScene extends Phaser.Scene {
       this.cameras.main.startFollow(this.me, true, 0.18, 0.18);
       setOnlinePlayer(this.net.id);
       this.journal?.setOwned(this.net.fragments);
+      // Clear stale node-capture tracking across reconnects / zone hops.
+      this.prevNodeOwners.clear();
+      this.prevNodeProgress.clear();
       if (!this.buildBannerShown) {
         this.buildBannerShown = true;
         this.time.delayedCall(400, () => {
@@ -1206,6 +1227,7 @@ export default class OnlineScene extends Phaser.Scene {
       else this.net.guildAction(action, { credits: c, cores: k });
     };
     this.net.onGuildUpdate = () => this.guildPanel.setGuild(this.net.guild, this.net.id);
+    this.net.onSysMessage = (text) => this.handleSysMessage(text);
     this.market = new OnlineMarket(this);
     this.market.onBuy = (id) => {
       this.net.marketBuy(id);
@@ -1384,6 +1406,7 @@ export default class OnlineScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(1001)
       .setVisible(false);
+    this.deathSub.setWordWrapWidth(Math.min(this.scale.width - uiDim(48), uiDim(420)));
 
     this.pvpHud = new PvpCrucibleHud(this);
     this.clickMove = new ClickToMove(this);
@@ -4788,17 +4811,7 @@ export default class OnlineScene extends Phaser.Scene {
           juiceFlash(this, 260, 40, 120, 60);
           juiceHitStop(this, 88);
           juiceZoomPunch(this, 0.05, 200);
-          // Share card for social posts (no external API; local PNG download).
-          try {
-            downloadShareCard({
-              title: "BOSS DOWN",
-              subtitle: this.net.boss?.name ? `${this.net.boss.name} fell` : "HSS commander purged",
-              detail: `${this.callsign || this.net.id || "runner"} · ${this.zoneLabelFor(this.zone)} · ₵${this.net.credits}`,
-              accent: "#f7ff3c",
-            });
-          } catch {
-            /* canvas / download blocked */
-          }
+          // Share cards are opt-in and only fire on SHARE_KILL credit (handleSysMessage).
         } else {
           juiceZoomPunch(this, 0.025 + Math.min(0.02, this.killStreak * 0.004), 105);
           // every kill lands a beat of stop — streaks stack more on top
@@ -5418,16 +5431,25 @@ export default class OnlineScene extends Phaser.Scene {
         }
       }
 
-    // boss AoE telegraphs (raid mechanics) — a ring that fills as it nears detonation
+    // boss AoE telegraphs (raid mechanics) — thicker, pulsing rings for mobile readability
     this.hazardG.clear();
+    const pulse = 0.5 + 0.5 * Math.sin(this.time.now / 140);
     for (const hz of this.net.hazards) {
       const danger = hz.frac;
       // friendly = a called airstrike (hits the HSS): magenta, not threat-red
       const col = hz.friendly ? 0xff2bd6 : danger > 0.72 ? 0xff2b2b : 0xff7a3c;
-      this.hazardG.fillStyle(col, 0.1 + 0.32 * danger);
+      const fillA = 0.14 + 0.38 * danger + (danger > 0.65 ? 0.08 * pulse : 0);
+      this.hazardG.fillStyle(col, fillA);
       this.hazardG.fillCircle(hz.x, hz.y, hz.r * (0.22 + 0.78 * danger)); // inner fill rushes outward
-      this.hazardG.lineStyle(3, col, 0.85);
+      // Outer warning ring + dashed-feel double stroke so phones can read the AoE.
+      this.hazardG.lineStyle(danger > 0.7 ? 5 : 3.5, col, 0.55 + 0.4 * danger);
       this.hazardG.strokeCircle(hz.x, hz.y, hz.r);
+      this.hazardG.lineStyle(1.5, 0xffffff, 0.25 + 0.35 * danger);
+      this.hazardG.strokeCircle(hz.x, hz.y, hz.r * 0.92);
+      if (danger > 0.55 && !hz.friendly) {
+        this.hazardG.lineStyle(2, col, 0.5 + 0.4 * pulse);
+        this.hazardG.strokeCircle(hz.x, hz.y, hz.r * (1.04 + 0.03 * pulse));
+      }
     }
 
     // projectiles (server-simulated)
@@ -5659,18 +5681,25 @@ export default class OnlineScene extends Phaser.Scene {
     const others = this.net.roster.filter((r) => r.id !== this.net.id);
     // Friends-lite: remember runners we share a zone with.
     for (const r of others.slice(0, 12)) noteRecentPlayer(r.id, r.id);
+    // City chatter ticker — rotates every ~12s so solo never feels dead-air.
+    if (this.time.now - this.cityChatterAt > 12000) {
+      this.cityChatterAt = this.time.now;
+      this.cityChatterLine = cityChatterLine(Math.floor(this.time.now / 12000) + this.phantomOnline);
+    }
     const simple = getSettings().uiDensity === "new";
     if (simple && others.length === 0) {
-      // Simple HUD: one whisper line, not a column.
+      // Simple HUD: ambient count + rotating chatter whisper.
       this.rosterText
         .setVisible(true)
-        .setText(`◢ ${Math.max(1, this.phantomOnline)} runners in metro (ambient)`);
+        .setText(
+          `◢ ~${Math.max(1, this.phantomOnline)} runners · ${this.cityChatterLine.replace(/^metro chatter · /, "")}`,
+        );
     } else if (others.length === 0) {
       const phantoms = ["VEX", "RIN", "HALO", "DOC", "NYX", "KITE", "ZERO", "ASH"].slice(0, Math.min(5, this.phantomOnline));
       this.rosterText.setVisible(true).setText([
         `◢ ONLINE (~${this.phantomOnline + 1})`,
         ...phantoms.map((n) => `· ${n}  L${3 + (n.charCodeAt(0) % 12)}`),
-        "  (ambient runners)",
+        this.cityChatterLine || "  (ambient runners)",
       ]);
     } else {
       this.rosterText.setVisible(true).setText([
@@ -6046,9 +6075,18 @@ export default class OnlineScene extends Phaser.Scene {
     const coach = firstSessionLine();
     const fs = getFirstSession();
     const hour2 = secondHourLine(fs.step === "done" || fs.kills >= 3);
+    const sh = getSecondHour();
+    const secondDone =
+      sh.buyCache && sh.forgeOnce && sh.finishBounty && sh.captureNode && sh.touchBoss;
+    const systems = systemsHintLine((fs.step === "done" || fs.kills >= 3) && secondDone);
+    if (systems && !this.systemsHintTimerArmed) {
+      this.systemsHintTimerArmed = true;
+      // Auto-dismiss after first display so it doesn't stick forever.
+      this.time.delayedCall(14000, () => dismissSystemsHint());
+    }
     const simple = getSettings().uiDensity === "new";
-    // New players: coach only. Then second-hour beats. Full mode: core loop.
-    const line = coach ?? hour2 ?? (simple ? null : coreLoopLine());
+    // New players: coach → 2nd hour → systems map → core loop (full HUD only).
+    const line = coach ?? hour2 ?? systems ?? (simple ? null : coreLoopLine());
     if (!line) {
       this.coachText.setVisible(false);
       return;
@@ -6056,7 +6094,7 @@ export default class OnlineScene extends Phaser.Scene {
     this.coachText
       .setVisible(true)
       .setText(line)
-      .setColor(coach ? "#39ff88" : hour2 ? "#f7ff3c" : "#6b7184");
+      .setColor(coach ? "#39ff88" : hour2 ? "#f7ff3c" : systems ? "#29e7ff" : "#6b7184");
   }
 
   private pushKillFeed(line: string) {
@@ -6100,21 +6138,64 @@ export default class OnlineScene extends Phaser.Scene {
     this.pushKillFeed("HEAT · R ultimate ready");
   }
 
-  /** Detect territory flips for the second-hour capture coach. */
+  /** Detect territory flips we helped channel (second-hour capture coach). */
   private trackNodeCaptures() {
     if (!this.net.connected || this.isTutorial) return;
     const myFac = this.net.faction;
     for (const [id, n] of this.net.nodes) {
-      const prev = this.prevNodeOwners.get(id);
-      // NEUTRAL is -1; any non-neutral flip to our faction counts as a capture.
-      if (prev !== undefined && prev !== n.owner && n.owner === myFac && myFac >= 0) {
+      const prevOwner = this.prevNodeOwners.get(id);
+      const prevProg = this.prevNodeProgress.get(id) ?? 0;
+      // Only credit if we were channelling (by === us) and progress was rising, then flip.
+      const weHelped = n.by === myFac && myFac >= 0 && (n.progress > prevProg || prevProg > 0.4);
+      if (
+        prevOwner !== undefined &&
+        prevOwner !== n.owner &&
+        n.owner === myFac &&
+        myFac >= 0 &&
+        weHelped
+      ) {
         noteSecondCapture();
         this.pushKillFeed("NODE SECURED");
       }
       this.prevNodeOwners.set(id, n.owner);
+      this.prevNodeProgress.set(id, n.progress);
     }
     for (const id of [...this.prevNodeOwners.keys()]) {
-      if (!this.net.nodes.has(id)) this.prevNodeOwners.delete(id);
+      if (!this.net.nodes.has(id)) {
+        this.prevNodeOwners.delete(id);
+        this.prevNodeProgress.delete(id);
+      }
+    }
+  }
+
+  /** Sys-line hooks: death card, cell goal refresh, opt-in boss share cards. */
+  private handleSysMessage(text: string) {
+    if (!text) return;
+    if (text.startsWith("DEATH ·")) {
+      this.lastDeathTaxLine = text;
+      return;
+    }
+    if (text.includes("CELL GOAL") || text.includes("cell goal")) {
+      // Refresh Cell panel data so progress/claim state stays live.
+      if (this.net.connected) this.net.guildAction("info");
+      if (text.includes("COMPLETE") || text.includes("50%")) this.pushKillFeed(text.slice(0, 48));
+      return;
+    }
+    if (text.startsWith("SHARE_KILL ·") && getSettings().shareCards) {
+      const parts = text.split(" · ");
+      const bossName = parts[2] || "COMMANDER";
+      const reward = parts[3] || "";
+      try {
+        downloadShareCard({
+          title: "BOSS DOWN",
+          subtitle: `${bossName} fell`,
+          detail: `${this.callsign || this.net.id || "runner"} · ${this.zoneLabelFor(this.zone)} · ${reward} · ₵${this.net.credits}`,
+          accent: "#f7ff3c",
+        });
+        this.pushKillFeed("SHARE CARD SAVED");
+      } catch {
+        /* canvas / download blocked */
+      }
     }
   }
 
@@ -6605,13 +6686,17 @@ export default class OnlineScene extends Phaser.Scene {
       juiceFlash(this, 260, 220, 240, 255);
       juiceZoomPunch(this, 0.04, 180);
       this.pops?.popHeal(this.me.x, this.me.y - 28, "REPRINT COMPLETE");
+      this.lastDeathTaxLine = "";
     }
     if (dead) {
       const left = Math.max(0, RESPAWN_MS - (performance.now() - this.deathStartedAt));
+      const taxBit = this.lastDeathTaxLine
+        ? this.lastDeathTaxLine.replace(/^DEATH ·\s*/, "").split(" · ")[0]
+        : "ledger check";
       this.deathSub.setText(
         left > 0
-          ? `reprinting body in ${(left / 1000).toFixed(1)}s — billed to your ledger`
-          : "printing…",
+          ? `reprint ${(left / 1000).toFixed(1)}s · ${taxBit}\nrespawn at zone spawn · bag kept · open Map (M) for a path`
+          : "printing… · hold position",
       );
     }
     this.wasDead = dead;

@@ -6,6 +6,7 @@ import { PROTOCOL_VERSION } from "./protocol";
 import { tutorialReadyForPortal, tutorialStepAt } from "./tutorial";
 import { walletSessionSecret } from "../economy/wallet";
 import { isGodAccount } from "./godAccounts";
+import { furnitureHomeBuffs } from "../world/estates";
 
 /** True when the page is on a public host but the WS URL still points at loopback —
  *  the classic "forgot VITE_SERVER_URL" Pages footgun. */
@@ -271,6 +272,8 @@ export default class NetClient {
     };
   } = null;
   onGuildUpdate?: () => void;
+  /** Fired for every server sys line (death tax, cell goals, boss share hooks). */
+  onSysMessage?: (text: string) => void;
   marketListings: Array<{ id: number; seller: string; sellerName: string; item: Item; price: number; currency: string }> = [];
   onMarket?: () => void;
   contracts: Array<{ id: string; name: string; desc: string; objective: string; count: number; progress: number; done: boolean; rewardCredits: number; rewardRep: number }> = [];
@@ -653,6 +656,15 @@ export default class NetClient {
     }
   }
 
+  /** Walk speed including own-home furniture buffs (matches server step). */
+  private walkSpeed(): number {
+    if (this.estate?.mine && this.estate.furniture?.length) {
+      const b = furnitureHomeBuffs(this.estate.furniture);
+      return PLAYER.speed * (1 + (b.movePct || 0));
+    }
+    return PLAYER.speed;
+  }
+
   private netTick() {
     this.seq++;
     const dashing = performance.now() < this.predDashUntil;
@@ -664,7 +676,7 @@ export default class NetClient {
     };
     // predict immediately — mid-dash the burst vector overrides intent, like the server
     if (dashing) stepMove(this.pred, { mx: this.predDashX, my: this.predDashY }, this.grid, NET_TICK_MS, PLAYER.dashSpeed);
-    else stepMove(this.pred, cmd, this.grid, NET_TICK_MS);
+    else stepMove(this.pred, cmd, this.grid, NET_TICK_MS, this.walkSpeed());
     this.pending.push(cmd);
     if (this.pending.length > NetClient.PENDING_CAP) {
       this.pending.splice(0, this.pending.length - NetClient.PENDING_CAP);
@@ -942,6 +954,11 @@ export default class NetClient {
     } else if (msg.t === "sys") {
       this.lastSysText = msg.text; // a 4001 close right after carries this as its reason
       this.pushChat({ from: "", ch: "sys", text: msg.text, faction: -1, sys: true });
+      try {
+        this.onSysMessage?.(msg.text);
+      } catch {
+        /* UI hooks must never break the net loop */
+      }
     } else if (msg.t === "kit_ack") {
       // Roll back optimistic CDs when the server rejected the cast.
       if (!msg.ok) {
@@ -1277,10 +1294,11 @@ export default class NetClient {
     const prevY = this.pred.y;
     this.pred.x = sx;
     this.pred.y = sy;
+    const walk = this.walkSpeed();
     for (const c of this.pending) {
       // replay dashes at dash speed — otherwise the burst reads as prediction error
       if (c.dashX !== undefined) stepMove(this.pred, { mx: c.dashX, my: c.dashY ?? 0 }, this.grid, NET_TICK_MS, PLAYER.dashSpeed);
-      else stepMove(this.pred, c, this.grid, NET_TICK_MS);
+      else stepMove(this.pred, c, this.grid, NET_TICK_MS, walk);
     }
     this.lastError = Math.hypot(this.pred.x - prevX, this.pred.y - prevY);
     if (this.lastError > 0.01) this.reconciles++;

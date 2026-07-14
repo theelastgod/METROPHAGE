@@ -1989,22 +1989,51 @@ export class WorldDO {
     });
   }
 
-  /** Increment weekly cell goal progress (best-effort). */
+  /** Increment weekly cell goal progress (best-effort, integrity-capped). */
   private async bumpGuildGoal(gid: number, stat: "kills" | "bosses" | "captures" | "deposits", amount: number) {
     if (!gid || amount <= 0) return;
     const goal = weeklyGuildGoal();
     if (goal.stat !== stat) return;
+    // Integrity caps — a single action cannot dump unbounded progress.
+    const capped =
+      stat === "deposits" ? Math.min(amount, 5_000) : stat === "kills" ? Math.min(amount, 3) : Math.min(amount, 1);
+    if (capped <= 0) return;
     const week = currentGuildWeek();
     try {
+      // Soft-cap stored progress just past target so the bar reads complete without farming forever.
+      const hardCap = goal.target * 2;
       await this.env.DB.prepare(
         `INSERT INTO guild_goal_progress (guild_id, week, goal_id, progress, claimed)
          VALUES (?, ?, ?, ?, 0)
          ON CONFLICT(guild_id, week) DO UPDATE SET
-           progress = MIN(999999, guild_goal_progress.progress + excluded.progress),
-           goal_id = excluded.goal_id`,
+           progress = MIN(?, guild_goal_progress.progress + excluded.progress),
+           goal_id = excluded.goal_id
+         WHERE guild_goal_progress.claimed = 0`,
       )
-        .bind(gid, week, goal.id, amount)
+        .bind(gid, week, goal.id, Math.min(capped, hardCap), hardCap)
         .run();
+      // Milestone toasts for online members in this zone (50% / complete).
+      const row = await this.env.DB.prepare(
+        "SELECT progress, claimed FROM guild_goal_progress WHERE guild_id = ? AND week = ?",
+      )
+        .bind(gid, week)
+        .first<{ progress: number; claimed: number }>();
+      if (!row || row.claimed) return;
+      const prog = row.progress | 0;
+      const half = Math.ceil(goal.target * 0.5);
+      // Fire when this bump crossed a threshold (prog - capped was below, prog is at/above).
+      const prev = prog - capped;
+      let note: string | null = null;
+      if (prev < goal.target && prog >= goal.target) {
+        note = `⬡ CELL GOAL COMPLETE — ${goal.name} (${prog}/${goal.target}) · claim in Cell (U)`;
+      } else if (prev < half && prog >= half) {
+        note = `⬡ CELL GOAL 50% — ${goal.name} (${prog}/${goal.target})`;
+      }
+      if (note) {
+        for (const pl of this.players.values()) {
+          if (pl.guildId === gid) this.sendTo(pl.id, { t: "sys", text: note });
+        }
+      }
     } catch {
       /* pre-migration */
     }
@@ -2215,19 +2244,50 @@ export class WorldDO {
             .bind(p.guildId, week, goal.target)
             .run();
           if (r.meta.changes === 0) return sys("cell goal claim raced — try /ginfo");
-          // Payout every online member of this cell in this zone; mail offline later via bank.
+          // Pay ALL members: live (this zone) + mailbox + D1 rep for everyone else.
+          const ms = await DB.prepare("SELECT player FROM guild_members WHERE guild_id = ? LIMIT 80")
+            .bind(p.guildId)
+            .all<{ player: string }>();
+          const members = ms.results ?? [];
+          const paidLive = new Set<string>();
+          const reason = `cell goal ${goal.name}`;
           for (const pl of this.players.values()) {
             if (pl.guildId !== p.guildId) continue;
             pl.credits += goal.rewardCredits;
             if (goal.rewardRep > 0) this.bumpStat(pl, "rep", goal.rewardRep);
             pl.dirty = true;
             this.eco("emit", "guild_goal", goal.rewardCredits);
+            paidLive.add(pl.id);
             this.sendTo(pl.id, {
               t: "sys",
               text: `⬡ CELL GOAL — ${goal.name} complete · +₵${goal.rewardCredits}${goal.rewardRep ? ` · +${goal.rewardRep} rep` : ""}`,
             });
           }
-          sys(`claimed cell goal ${goal.name}`);
+          // Offline / other-zone members: mailbox credits + durable rep in player_stats.
+          for (const m of members) {
+            if (paidLive.has(m.player)) continue;
+            try {
+              await DB.prepare("INSERT INTO mailbox (player, credits, reason, created_at) VALUES (?,?,?,?)")
+                .bind(m.player, goal.rewardCredits, reason, Date.now())
+                .run();
+              this.eco("emit", "guild_goal", goal.rewardCredits);
+              if (goal.rewardRep > 0) {
+                await DB.prepare(
+                  "INSERT INTO player_stats (player, stat, v) VALUES (?,?,?) ON CONFLICT(player,stat) DO UPDATE SET v = v + excluded.v",
+                )
+                  .bind(m.player, "rep", goal.rewardRep)
+                  .run();
+              }
+            } catch {
+              /* best-effort mail */
+            }
+          }
+          const mailed = Math.max(0, members.length - paidLive.size);
+          sys(
+            mailed > 0
+              ? `claimed cell goal ${goal.name} · ${paidLive.size} online, ${mailed} mailed`
+              : `claimed cell goal ${goal.name}`,
+          );
           await this.sendGuild(ws, p);
         } catch {
           return sys("cell goal claim failed (migrate D1?)");
@@ -2569,7 +2629,12 @@ export class WorldDO {
         if (dc) parts.push(`₵${dc}`);
         if (dk) parts.push(`${dk}◈ cores`);
         if (dm) parts.push(`◈${dm} $METRO`);
-        this.sendTo(p.id, { t: "sys", text: `✉ received ${parts.join(" · ")} from the market` });
+        const why = results.some((r) => (r.reason || "").startsWith("cell goal"))
+          ? "cell goal"
+          : results.some((r) => (r.reason || "").includes("estate"))
+            ? "estate"
+            : "market / mail";
+        this.sendTo(p.id, { t: "sys", text: `✉ received ${parts.join(" · ")} (${why})` });
       }
       if (items.length) this.sendTo(p.id, { t: "inv", items: p.inventory });
       return true;
@@ -4321,14 +4386,22 @@ export class WorldDO {
       p.dirty = true;
       // Death tax — burns a slice of pocket credits (sink). Never leaves veterans at 0.
       const pocket = Math.max(0, Math.floor(p.credits));
+      let tax = 0;
       if (pocket > 40) {
-        const tax = Math.min(pocket - 20, Math.max(8, Math.round(pocket * 0.06)));
+        tax = Math.min(pocket - 20, Math.max(8, Math.round(pocket * 0.06)));
         if (tax > 0) {
           p.credits -= tax;
           this.eco("burn", "death_tax", tax);
-          this.sendTo(p.id, { t: "sys", text: `respawn levy −₵${tax} (insurance to the grid)` });
         }
       }
+      // Clear death card: tax amount + where reprint happens.
+      this.sendTo(p.id, {
+        t: "sys",
+        text:
+          tax > 0
+            ? `DEATH · levy −₵${tax} · reprint at zone spawn · bag kept (stash was safe)`
+            : `DEATH · no levy · reprint at zone spawn · bag kept (stash was safe)`,
+      });
     }
     return true;
   }
@@ -5490,6 +5563,11 @@ export class WorldDO {
           });
         }
         this.broadcast({ t: "sys", text: `▲ ${killer.name} slew ${e.name} — it will reform soon` });
+        // Killer-only share-card hook (client may opt-in download).
+        this.sendTo(killer.id, {
+          t: "sys",
+          text: `SHARE_KILL · boss · ${e.name ?? "COMMANDER"} · ₵${gained}`,
+        });
       }
     } else {
       this.eliteDeath(e);

@@ -19,6 +19,8 @@ export interface SettingsData {
   uiDensity: UiDensity;
   /** Show first-session coach strip (local). */
   firstSessionCoach: boolean;
+  /** Auto-download neon share PNGs on boss kill credit (opt-in). */
+  shareCards: boolean;
   /** ⚠ Photosensitivity safety: caps flashing/glitch, softens the meltdown. */
   reduceFlashing: boolean;
   /** Low-FX / device tier: thins particles + skips the costly bloom (low-end/mobile). */
@@ -47,6 +49,7 @@ const DEFAULTS: SettingsData = {
   tutorialMode: "quick",
   uiDensity: "new",
   firstSessionCoach: true,
+  shareCards: false,
   reduceFlashing: false,
   lowFx: false,
   graphicsQuality: "auto",
