@@ -19,3 +19,9 @@ src/assets/music/*.wav
 # local auto-redeploy control + logs
 .metro-auto-redeploy.stop
 logs/
+
+# generated docs build artifacts — regenerate from gitbook/ (source of truth)
+/wiki-dist/
+/metrophage-manual.html
+/metrophage-gitbook-import/
+/metrophage-gitbook-import.zip

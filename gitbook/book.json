@@ -1,0 +1,10 @@
+{
+  "title": "METROPHAGE — Field Manual",
+  "description": "Player field manual for METROPHAGE, a neon-noir cyberpunk action-MMO in the browser.",
+  "language": "en",
+  "structure": {
+    "readme": "README.md",
+    "summary": "SUMMARY.md"
+  },
+  "plugins": ["theme-default"]
+}
