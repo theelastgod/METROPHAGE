@@ -2,14 +2,15 @@
 // METROPHAGE — slice the Higgsfield top-down building sheet into shippable
 // landmark building props (drop-in objects, keyed off pure black).
 //
-// Input (art-source/higgsfield/, gitignored staging):
-//   sheet_building_facade.png   2×2 grid of top-down neon buildings on black
+// Inputs (art-source/higgsfield/, gitignored staging):
+//   sheet_building_facade.png    2×2 grid of top-down neon buildings on black
 //     [0,0] bar (magenta)      [1,0] clinic (green)
 //     [0,1] subway (cyan)      [1,1] shop (amber)
+//   sheet_building_facade_2.png  3×2 grid on black
+//     [0,0] guild (cyan)   [1,0] hotel (blue)   [2,0] stadium (red)
+//     [0,1] citycenter (yellow) [1,1] home (orange) [2,1] den (purple)
 //
-// Outputs under public/assets/objects/:
-//   hf_building_bar.png / hf_building_clinic.png
-//   hf_building_subway.png / hf_building_shop.png
+// Outputs under public/assets/objects/: hf_building_<kind>.png
 //
 // Same keyBlack → trim → resize flow as higgsfield-hud-build.mjs.
 
@@ -19,7 +20,6 @@ import path from "node:path";
 
 const SRC = "art-source/higgsfield";
 const OUT_OBJ = "public/assets/objects";
-const SHEET = "sheet_building_facade.png";
 // Landmark props are bigger than street clutter (hf_prop_* ~50×64). Cap the
 // long side so a 7×5-tile footprint (~224×160px) reads without dominating.
 const MAX_SIDE = 224;
@@ -35,13 +35,13 @@ async function keyBlack(buf, tol = 20) {
 }
 
 /** Extract one grid cell, key black, trim transparent padding, downscale to game scale. */
-async function cell(cols, rows, c, r, { inset = 0.02, maxSide = MAX_SIDE } = {}) {
-  const meta = await sharp(path.join(SRC, SHEET)).metadata();
+async function cell(sheet, cols, rows, c, r, { inset = 0.02, maxSide = MAX_SIDE } = {}) {
+  const meta = await sharp(path.join(SRC, sheet)).metadata();
   const cw = meta.width / cols;
   const ch = meta.height / rows;
   const ix = cw * inset;
   const iy = ch * inset;
-  let buf = await sharp(path.join(SRC, SHEET))
+  let buf = await sharp(path.join(SRC, sheet))
     .extract({
       left: Math.round(c * cw + ix),
       top: Math.round(r * ch + iy),
@@ -71,15 +71,28 @@ async function write(buf, name) {
   console.log("→", out, `${m.width}×${m.height}`);
 }
 
+// [sheet, cols, rows, col, row, kind]
+const CELLS = [
+  ["sheet_building_facade.png", 2, 2, 0, 0, "bar"],
+  ["sheet_building_facade.png", 2, 2, 1, 0, "clinic"],
+  ["sheet_building_facade.png", 2, 2, 0, 1, "subway"],
+  ["sheet_building_facade.png", 2, 2, 1, 1, "shop"],
+  ["sheet_building_facade_2.png", 3, 2, 0, 0, "guild"],
+  ["sheet_building_facade_2.png", 3, 2, 1, 0, "hotel"],
+  ["sheet_building_facade_2.png", 3, 2, 2, 0, "stadium"],
+  ["sheet_building_facade_2.png", 3, 2, 0, 1, "citycenter"],
+  ["sheet_building_facade_2.png", 3, 2, 1, 1, "home"],
+  ["sheet_building_facade_2.png", 3, 2, 2, 1, "den"],
+];
+
 async function main() {
-  if (!fs.existsSync(path.join(SRC, SHEET))) {
-    console.error("missing", path.join(SRC, SHEET));
-    process.exit(1);
+  for (const [sheet, cols, rows, c, r, kind] of CELLS) {
+    if (!fs.existsSync(path.join(SRC, sheet))) {
+      console.error("missing", path.join(SRC, sheet));
+      process.exit(1);
+    }
+    await write(await cell(sheet, cols, rows, c, r), `hf_building_${kind}.png`);
   }
-  await write(await cell(2, 2, 0, 0), "hf_building_bar.png");
-  await write(await cell(2, 2, 1, 0), "hf_building_clinic.png");
-  await write(await cell(2, 2, 0, 1), "hf_building_subway.png");
-  await write(await cell(2, 2, 1, 1), "hf_building_shop.png");
 }
 
 main();

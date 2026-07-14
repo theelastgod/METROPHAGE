@@ -143,6 +143,12 @@ const BUILDING_SPRITE: Partial<Record<BuildingKind, string>> = {
   hospital: "hf_building_clinic",
   subway: "hf_building_subway",
   shop: "hf_building_shop",
+  guild: "hf_building_guild",
+  hotel: "hf_building_hotel",
+  stadium: "hf_building_stadium",
+  citycenter: "hf_building_citycenter",
+  home: "hf_building_home",
+  den: "hf_building_den",
 };
 
 /** Distinct exteriors for city-hub buildings (kind + landmark aware). */

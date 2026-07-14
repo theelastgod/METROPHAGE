@@ -112,7 +112,10 @@ export const VO_MELTDOWN_KEY = "vo_meltdown";
 /** Higgsfield top-down prop pack (12 cells, tools/higgsfield-hud-build.mjs). */
 export const HF_PROP_KEYS = Array.from({ length: 12 }, (_, i) => "hf_prop_" + String(i + 1).padStart(2, "0"));
 /** Higgsfield top-down landmark building props (tools/higgsfield-building-build.mjs). */
-export const HF_BUILDING_SLUGS = ["bar", "clinic", "subway", "shop"] as const;
+export const HF_BUILDING_SLUGS = [
+  "bar", "clinic", "subway", "shop",
+  "guild", "hotel", "stadium", "citycenter", "home", "den",
+] as const;
 export const hfBuildingKey = (slug: string) => "hf_building_" + slug;
 export const HF_BUILDING_KEYS = HF_BUILDING_SLUGS.map(hfBuildingKey);
 
