@@ -38,6 +38,6 @@ The client never decides anything that matters. Movement is intent-only, and eve
 * **Economy** — off-chain `credits` (₵) bridged to a tradeable **$METRO** (◈) ERC-20 token on Robinhood Chain
 * **Endgame** — world bosses, elites, the PvP Crucible, guilds, the weekly vault, and a save-wide **seasonal meltdown**
 
-> **Play:** [metrophagev1.pages.dev](https://metrophagev1.pages.dev)
+> **Play:** [metrophage.fun](https://metrophage.fun)
 
 _This manual documents live systems. Numbers (cooldowns, rates, caps) are pulled from the game's own definitions and may be tuned between seasons._
