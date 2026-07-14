@@ -40,6 +40,13 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: npx wrangler deploy
 
+      - name: Prod smoke after server deploy
+        if: ${{ inputs.target == 'server' || inputs.target == 'both' }}
+        env:
+          WS_URL: wss://metrophage-server.wendellphillips.workers.dev/ws
+          PROD_SMOKE_MODES: launch,move,combat,abuse,reconnect
+        run: node server/scripts/prod-smoke.mjs
+
       - name: Build client (prod server URL baked)
         if: ${{ inputs.target == 'client' || inputs.target == 'both' }}
         env:

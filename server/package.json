@@ -12,6 +12,8 @@
     "deploy": "wrangler deploy",
     "smoke": "node scripts/smoke.mjs",
     "smoke:load": "node scripts/smoke.mjs load",
+    "smoke:prod": "node scripts/prod-smoke.mjs",
+    "smoke:launch": "node scripts/smoke.mjs launch && node scripts/smoke.mjs death && node scripts/smoke.mjs reconnect && node scripts/smoke.mjs stash",
     "smoke:pvp-escrow": "node scripts/pvp-escrow-smoke.mjs",
     "typecheck": "tsc --noEmit"
   },

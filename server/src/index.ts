@@ -505,16 +505,52 @@ export default {
     }
 
     if (url.pathname === "/health") {
+      // Sample a few hot zones so ops can see load without hammering every DO.
+      const sampleZones = ["safe", "d0", "d1", "d2"];
+      const zones: Array<Record<string, unknown>> = [];
+      let errTotal = 0;
+      let playersTotal = 0;
+      for (const z of sampleZones) {
+        try {
+          const stub = env.WORLD.get(env.WORLD.idFromName(z));
+          const res = await stub.fetch(new Request(`https://world/stats?zone=${z}`));
+          if (res.ok) {
+            const s = (await res.json()) as Record<string, unknown>;
+            zones.push({
+              zone: s.zone,
+              players: s.players,
+              tickMsAvg: s.tickMsAvg,
+              hubFull: s.hubFull,
+              floodKills: s.floodKills,
+              errCount: s.errCount,
+            });
+            errTotal += Number(s.errCount) || 0;
+            playersTotal += Number(s.players) || 0;
+          }
+        } catch {
+          zones.push({ zone: z, error: true });
+          errTotal++;
+        }
+      }
+      const { launchFlagsFromEnv } = await import("../../src/game/featureFlags");
+      const flags = launchFlagsFromEnv(env);
       return new Response(
         JSON.stringify({
           ok: true,
           ts: Date.now(),
+          build: env.METRO_BUILD || "unset",
           paidTier: env.METRO_PAID_TIER === "1",
           plan: env.METRO_PAID_TIER === "1" ? "workers-paid" : "workers-free",
+          flags,
+          sample: { playersTotal, errTotal, zones },
         }),
         {
           status: 200,
-          headers: { "content-type": "application/json", "access-control-allow-origin": "*" },
+          headers: {
+            "content-type": "application/json",
+            "access-control-allow-origin": "*",
+            "cache-control": "no-store",
+          },
         },
       );
     }

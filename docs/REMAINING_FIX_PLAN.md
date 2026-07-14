@@ -24,17 +24,22 @@
 | Dormant $METRO | Offline chip explains CA not armed |
 | Mainnet | **Out of scope** (counsel) |
 
+## Launch hardening (shipped)
+
+See **`docs/LAUNCH_HARDENING.md`**: kill switches, hub soft-cap, daily emit cap, enriched `/health`, prod smoke CI, rollback.
+
 ## Ops still external
 
 1. Set testnet mint when ready (`docs/METRO_CHAIN_CHOICE.md`) — leave `METRO_MAINNET_ARMED` off.
 2. Real-device mobile QA checklist: `docs/MOBILE-QA.md` (physical devices only).
 3. Mainnet arm only with counsel + CA.
 4. After traffic: rebalance via `/economy` report.
+5. Watch scheduled GitHub **Prod smoke** workflow.
 
 ## Verify
 
 ```sh
 npm run verify:ship
-cd server && npx wrangler deploy
+cd server && npx wrangler deploy && npm run smoke:prod
 npm run deploy:client
 ```

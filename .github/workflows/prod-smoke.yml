@@ -1,0 +1,32 @@
+name: Prod smoke
+
+# Live gate against production WSS. Manual + scheduled.
+# Optional secret: none required (public health + guest login smokes).
+on:
+  workflow_dispatch:
+  schedule:
+    # Every 6 hours UTC
+    - cron: "17 */6 * * *"
+
+jobs:
+  prod-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Health probe
+        run: |
+          curl -sfS https://metrophage-server.wendellphillips.workers.dev/health | tee /tmp/health.json
+          node -e "const h=require('/tmp/health.json'); if(!h.ok) process.exit(1); console.log('build', h.build, 'players', h.sample?.playersTotal);"
+
+      - name: Prod smoke suite
+        env:
+          WS_URL: wss://metrophage-server.wendellphillips.workers.dev/ws
+          # Lighter set for schedule; dispatch can override via vars later
+          PROD_SMOKE_MODES: launch,move,combat,abuse,reconnect,stash
+        run: node server/scripts/prod-smoke.mjs

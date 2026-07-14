@@ -124,6 +124,7 @@ import { rollBossSignature, bossLootBlurb } from "../../src/game/bossLoot";
 import { maybeNamedLoot } from "../../src/game/namedLoot";
 import { weeklyGuildGoal, currentGuildWeek } from "../../src/game/guildGoals";
 import { currentDistrictWar, warMetaKey } from "../../src/game/districtWar";
+import { launchFlagsFromEnv, emitDayKey, type LaunchFlags } from "../../src/game/featureFlags";
 import {
   BLESS_IFRAME_TICKS,
   CLIENT_OPEN_SERVICES,
@@ -318,6 +319,16 @@ export interface Env {
   METRO_SETTLEMENT?: string;
   /** "1" when Workers Paid is provisioned — ops /health only (tuning is compile-time). */
   METRO_PAID_TIER?: string;
+  /** Launch kill switches — set to "1" to disable (ops incident response). */
+  METRO_DISABLE_MARKET?: string;
+  METRO_DISABLE_CLAIM_GOAL?: string;
+  METRO_DISABLE_DISTRICT_WAR?: string;
+  /** Soft concurrent cap for hub zone "safe" (default 48). */
+  METRO_HUB_CAP?: string;
+  /** Per-player daily emit cap in credits (default 2500). */
+  METRO_DAILY_EMIT_CAP?: string;
+  /** Optional build/version stamp for /health (set in wrangler vars on deploy). */
+  METRO_BUILD?: string;
 }
 
 interface PlayerState {
@@ -631,6 +642,10 @@ export class WorldDO {
   private tickMsAvg = 0; // EMA (α=0.05) of step() wall time
   private tickMsMax = 0; // worst tick since boot/recycle
   private snapBytesAvg = 0; // EMA of total snapshot bytes broadcast per tick
+  private errCount = 0; // soft errors (D1 fail, login reject paths that recover)
+  private floodKills = 0;
+  private loginCount = 0;
+  private flags: LaunchFlags = launchFlagsFromEnv({});
   // ── economy ledger: credits created/destroyed since the last flush, keyed
   // "flow:kind" — flushed to D1 economy_daily on the persist cadence. Powers
   // /economy (emissions vs sinks vs the $METRO pool). Transfers not recorded.
@@ -680,6 +695,7 @@ export class WorldDO {
     // The real zone (district) is bound on the first connection from ?zone=.
     this.grid = buildGrid(DISTRICTS[0]);
     this.spawn = spawnPoint(this.grid, DISTRICTS[0]);
+    this.flags = launchFlagsFromEnv(env);
     // Hibernation wake / isolate restart: before processing ANY event, rebind the
     // zone and rehydrate any WebSockets the runtime kept open while we were evicted.
     // Durable state (pos/credits/xp/cores/quest) reloads from D1; transient combat
@@ -1537,6 +1553,7 @@ export class WorldDO {
     r.n++;
     if (r.n > MSG_KILL_PER_WINDOW) {
       console.warn(`[${this.zoneName}] flood from ${this.sessions.get(ws) ?? "?"} (${r.n}/window) — closing`);
+      this.floodKills++;
       try {
         ws.close(1008, "rate limit");
       } catch {
@@ -2233,6 +2250,7 @@ export class WorldDO {
       } else if (msg.action === "info") {
         await this.sendGuild(ws, p);
       } else if (msg.action === "claim_goal") {
+        if (!this.flags.claimGoal) return sys("cell goal claims are temporarily offline (ops)");
         if (!p.guildId) return sys("not in a cell");
         const goal = weeklyGuildGoal();
         const week = currentGuildWeek();
@@ -2261,14 +2279,12 @@ export class WorldDO {
           const reason = `cell goal ${goal.name}`;
           for (const pl of this.players.values()) {
             if (pl.guildId !== p.guildId) continue;
-            pl.credits += goal.rewardCredits;
+            const got = this.grantEmit(pl, "guild_goal", goal.rewardCredits);
             if (goal.rewardRep > 0) this.bumpStat(pl, "rep", goal.rewardRep);
-            pl.dirty = true;
-            this.eco("emit", "guild_goal", goal.rewardCredits);
             paidLive.add(pl.id);
             this.sendTo(pl.id, {
               t: "sys",
-              text: `⬡ CELL GOAL — ${goal.name} complete · +₵${goal.rewardCredits}${goal.rewardRep ? ` · +${goal.rewardRep} rep` : ""}`,
+              text: `⬡ CELL GOAL — ${goal.name} complete · +₵${got}${goal.rewardRep ? ` · +${goal.rewardRep} rep` : ""}`,
             });
           }
           // Offline / other-zone members: mailbox credits + durable rep in player_stats.
@@ -2445,6 +2461,7 @@ export class WorldDO {
     if (!p) return;
     const DB = this.env.DB;
     const sys = (text: string) => this.send(ws, { t: "sys", text });
+    if (!this.flags.market) return sys("market is temporarily offline (ops) — try later");
     try {
       if (msg.action === "browse") {
         await this.drainMail(p); // a good moment to collect any sale proceeds
@@ -3067,6 +3084,24 @@ export class WorldDO {
       }
     }
     p.faction = fac;
+    // Hub soft-cap: if METRO CITY is full, route newcomers to d0 (existing session may stay).
+    if (
+      this.zoneName === "safe" &&
+      this.sessions.size >= this.flags.hubCap &&
+      !this.players.has(id)
+    ) {
+      this.send(ws, {
+        t: "sys",
+        text: `HUB AT CAPACITY (${this.flags.hubCap}) — routing you to downtown (d0). Deploy from there.`,
+      });
+      this.send(ws, { t: "redirect", zone: "d0", text: "hub full" });
+      try {
+        ws.close(1000, "hub_cap");
+      } catch {
+        /* noop */
+      }
+      return;
+    }
     // Claim this zone as the sole active session writer for this player. Older zone
     // DOs lose the right to absolute-overwrite inventory/balances on their next persist.
     p.sessionAt = Date.now();
@@ -3153,6 +3188,7 @@ export class WorldDO {
     }
     this.players.set(id, p);
     this.sessions.set(ws, id);
+    this.loginCount++;
     this.ownerSocket.set(id, ws);
     if (this.diveIndex >= 0) this.coopScaleDive(); // the vault hardens as runners stack up
     // Persist identity + look on the socket so a hibernation wake can re-attach it (above).
@@ -3708,10 +3744,8 @@ export class WorldDO {
   private grantCampaignReward(p: PlayerState, reward: QuestReward) {
     p.xp += reward.xp;
     p.level = levelForXp(p.xp);
-    p.credits += reward.currency;
-    this.eco("emit", "quest", reward.currency);
-    p.dirty = true;
-    this.sendTo(p.id, { t: "sys", text: `◈ quest complete — +${reward.xp} XP  ₵${reward.currency}` });
+    const paid = this.grantEmit(p, "quest", reward.currency);
+    this.sendTo(p.id, { t: "sys", text: `◈ quest complete — +${reward.xp} XP  ₵${paid}` });
   }
 
   /** Advance the personal campaign when a stage completes. */
@@ -4139,6 +4173,35 @@ export class WorldDO {
     this.ecoLedger.set(k, (this.ecoLedger.get(k) ?? 0) + Math.round(credits));
   }
 
+  /**
+   * Grant emit-side credits under the daily anti-farm cap.
+   * Returns the amount actually granted (may be 0 when capped).
+   * Kinds: kill, daily, event, achievement, floor, pickup, fragment, district_war, guild_goal, …
+   */
+  private grantEmit(p: PlayerState, kind: string, amount: number): number {
+    const want = Math.max(0, Math.round(amount));
+    if (want <= 0) return 0;
+    const dayKey = emitDayKey();
+    const used = p.stats[dayKey] ?? 0;
+    const room = Math.max(0, this.flags.dailyEmitCap - used);
+    const give = Math.min(want, room);
+    if (give <= 0) {
+      if (used >= this.flags.dailyEmitCap && Math.random() < 0.08) {
+        this.sendTo(p.id, {
+          t: "sys",
+          text: `◈ daily emit cap (₵${this.flags.dailyEmitCap}) — sinks still work; spend or wait for UTC reset`,
+        });
+      }
+      return 0;
+    }
+    p.credits += give;
+    p.stats[dayKey] = used + give;
+    p.statDelta[dayKey] = (p.statDelta[dayKey] ?? 0) + give;
+    this.eco("emit", kind, give);
+    p.dirty = true;
+    return give;
+  }
+
   /** Flush the in-memory ledger to D1 (idempotent upsert; day is UTC). */
   private async flushEconomy() {
     if (this.ecoLedger.size === 0) return;
@@ -4173,9 +4236,7 @@ export class WorldDO {
       if (v >= a.threshold && !p.achv.has(a.id)) {
         p.achv.add(a.id);
         p.achvNew.push(a.id);
-        p.credits += a.reward; // server-authoritative reward (rides the next snapshot)
-        this.eco("emit", "achievement", a.reward);
-        p.dirty = true;
+        this.grantEmit(p, "achievement", a.reward); // daily-capped
         this.sendTo(p.id, { t: "ach", id: a.id, name: a.name, reward: a.reward });
       }
     }
@@ -4219,12 +4280,10 @@ export class WorldDO {
       changed = true;
       if (d.progress >= c.count) {
         d.done = true;
-        p.credits += c.rewardCredits; // server-authoritative reward
-        this.eco("emit", "daily", c.rewardCredits);
-        this.bumpStat(p, "credits", c.rewardCredits);
+        const paid = this.grantEmit(p, "daily", c.rewardCredits);
+        if (paid > 0) this.bumpStat(p, "credits", paid);
         this.bumpStat(p, "rep", c.rewardRep); // reputation track (cross-zone, persisted)
-        p.dirty = true;
-        this.sendTo(p.id, { t: "sys", text: `✔ CONTRACT — ${c.name} (+₵${c.rewardCredits} +${c.rewardRep} rep)` });
+        this.sendTo(p.id, { t: "sys", text: `✔ CONTRACT — ${c.name} (+₵${paid} +${c.rewardRep} rep)` });
       }
     }
     if (changed) {
@@ -4652,12 +4711,10 @@ export class WorldDO {
     p.bounty.progress += n;
     p.bountyDirty = true;
     if (p.bounty.progress >= b.count) {
-      p.credits += b.rewardCredits; // server-authoritative reward
-      this.eco("emit", "bounty", b.rewardCredits);
-      this.bumpStat(p, "credits", b.rewardCredits);
+      const paid = this.grantEmit(p, "bounty", b.rewardCredits);
+      if (paid > 0) this.bumpStat(p, "credits", paid);
       this.bumpStat(p, "rep", b.rewardRep);
-      p.dirty = true;
-      this.sendTo(p.id, { t: "sys", text: `✔ BOUNTY — ${b.name} (+₵${b.rewardCredits} +${b.rewardRep} rep)` });
+      this.sendTo(p.id, { t: "sys", text: `✔ BOUNTY — ${b.name} (+₵${paid} +${b.rewardRep} rep)` });
       p.bounty = null;
     } else {
       // Completion waits for persistDirty/onClose so its reward saves before the
@@ -5535,8 +5592,7 @@ export class WorldDO {
       const mult = isBoss ? 12 : wasHvt ? HVT_BOUNTY_MULT : (e.elite?.xpMult ?? 1);
       const dmod = /^d\d+$/.test(this.zoneName) ? dailyDistrictMod(this.districtIndex) : null;
       const gained = Math.round(CREDITS_PER_KILL * mult * (dmod?.creditMult ?? 1) * (1 + (killer.guildBonus || 0)));
-      killer.credits += gained;
-      this.eco("emit", "kill", gained);
+      const paid = this.grantEmit(killer, "kill", gained);
       killer.xp += Math.round(XP_PER_KILL * mult);
       killer.level = levelForXp(killer.xp);
       killer.dirty = true;
@@ -5550,7 +5606,7 @@ export class WorldDO {
         void this.bumpGuildGoal(killer.guildId, "kills", 1);
         if (isBoss) void this.bumpGuildGoal(killer.guildId, "bosses", 1);
       }
-      this.bumpStat(killer, "credits", gained);
+      if (paid > 0) this.bumpStat(killer, "credits", paid);
       this.contractEvent(killer, "kill", 1);
       this.bountyEvent(killer, "kill", 1);
       if (isBoss) {
@@ -5694,6 +5750,17 @@ export class WorldDO {
       tickBudgetMs: NET_TICK_MS,
       snapBytesPerTick: Math.round(this.snapBytesAvg),
       snapBytesPerPlayer: Math.round(this.snapBytesAvg / n),
+      errCount: this.errCount,
+      floodKills: this.floodKills,
+      loginCount: this.loginCount,
+      flags: {
+        market: this.flags.market,
+        claimGoal: this.flags.claimGoal,
+        districtWar: this.flags.districtWar,
+        hubCap: this.flags.hubCap,
+        dailyEmitCap: this.flags.dailyEmitCap,
+      },
+      hubFull: this.zoneName === "safe" && this.sessions.size >= this.flags.hubCap,
     };
   }
 
@@ -6045,8 +6112,7 @@ export class WorldDO {
             p.level = levelForXp(p.xp);
             this.bountyEvent(p, "collect", 1);
           } else {
-            p.credits += 4;
-            this.eco("emit", "pickup", 4);
+            this.grantEmit(p, "pickup", 4);
           }
           if (!this.inTutorial()) p.dirty = true;
           this.pickups.delete(pid);
@@ -6107,23 +6173,23 @@ export class WorldDO {
                 this.contractEvent(pl, "capture", 1);
                 if (pl.guildId) void this.bumpGuildGoal(pl.guildId, "captures", 1);
                 // District War weekly bonus (focus district only, once per war week).
-                const war = currentDistrictWar();
-                if (this.districtIndex === war.focusDistrict && /^d\d+$/.test(this.zoneName)) {
-                  const wkey = `war_cap_${war.week}`;
-                  if (!pl.stats[wkey]) {
-                    pl.stats[wkey] = 1;
-                    pl.statDelta[wkey] = (pl.statDelta[wkey] ?? 0) + 1;
-                    pl.credits += war.captureBonus;
-                    this.eco("emit", "district_war", war.captureBonus);
-                    this.bumpMeta(warMetaKey(war.week, pl.faction), 2);
-                    this.bumpMeta("f" + pl.faction, FACTION_CAPTURE_SCORE); // double-score focus
-                    pl.dirty = true;
-                    this.sendTo(pl.id, {
-                      t: "sys",
-                      text: `⚔ DISTRICT WAR · ${war.name} · +₵${war.captureBonus} focus capture`,
-                    });
-                  } else {
-                    this.bumpMeta(warMetaKey(war.week, pl.faction), 1);
+                if (this.flags.districtWar) {
+                  const war = currentDistrictWar();
+                  if (this.districtIndex === war.focusDistrict && /^d\d+$/.test(this.zoneName)) {
+                    const wkey = `war_cap_${war.week}`;
+                    if (!pl.stats[wkey]) {
+                      pl.stats[wkey] = 1;
+                      pl.statDelta[wkey] = (pl.statDelta[wkey] ?? 0) + 1;
+                      const got = this.grantEmit(pl, "district_war", war.captureBonus);
+                      this.bumpMeta(warMetaKey(war.week, pl.faction), 2);
+                      this.bumpMeta("f" + pl.faction, FACTION_CAPTURE_SCORE); // double-score focus
+                      this.sendTo(pl.id, {
+                        t: "sys",
+                        text: `⚔ DISTRICT WAR · ${war.name} · +₵${got} focus capture`,
+                      });
+                    } else {
+                      this.bumpMeta(warMetaKey(war.week, pl.faction), 1);
+                    }
                   }
                 }
               }
