@@ -260,6 +260,15 @@ export default class NetClient {
     bankCores: number;
     rank: string;
     members: Array<{ id: string; rank: string }>;
+    goal?: {
+      id: string;
+      name: string;
+      desc: string;
+      target: number;
+      progress: number;
+      claimed: boolean;
+      rewardCredits: number;
+    };
   } = null;
   onGuildUpdate?: () => void;
   marketListings: Array<{ id: number; seller: string; sellerName: string; item: Item; price: number; currency: string }> = [];
@@ -1214,7 +1223,18 @@ export default class NetClient {
   }
   /** Guild ("Cell") action — server validates rank/balance + owns the shared bank (D1). */
   guildAction(
-    action: "create" | "invite" | "accept" | "leave" | "promote" | "demote" | "kick" | "deposit" | "withdraw" | "info",
+    action:
+      | "create"
+      | "invite"
+      | "accept"
+      | "leave"
+      | "promote"
+      | "demote"
+      | "kick"
+      | "deposit"
+      | "withdraw"
+      | "info"
+      | "claim_goal",
     extra: { name?: string; tag?: string; to?: string; credits?: number; cores?: number } = {},
   ) {
     this.sendMsg({ t: "guild", action, ...extra });

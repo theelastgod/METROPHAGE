@@ -146,13 +146,16 @@ export default class MobileControls {
     // hotbar/action menu. Mid-screen taps stay tap-to-walk.
     this.region = mobileStickSafeRegion(W, H);
 
-    this.root.add(
-      this.scene.add
-        .text(this.homeCx, this.homeCy + this.stickR + uiDim(10), "MOVE · touch anywhere left", bodyFont(9, { color: "#5a6172" }))
-        .setOrigin(0.5, 0)
-        .setScrollFactor(0)
-        .setDepth(1301),
-    );
+    // Skip the instructional caption on very short viewports so it doesn't collide with HUD.
+    if (H >= uiDim(420)) {
+      this.root.add(
+        this.scene.add
+          .text(this.homeCx, this.homeCy + this.stickR + uiDim(10), "MOVE · left thumb", bodyFont(9, { color: "#5a6172" }))
+          .setOrigin(0.5, 0)
+          .setScrollFactor(0)
+          .setDepth(1301),
+      );
+    }
     this.drawStick(0, 0);
 
     const regionZone = this.scene.add

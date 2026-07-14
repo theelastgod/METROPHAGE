@@ -5,6 +5,16 @@ import { weeklyGuildGoal } from "../game/guildGoals";
 import Modal from "./Modal";
 import { closeHint, dimBackdrop, modalRect, uiDim, uiFont } from "./uiLayout";
 
+interface GuildGoalState {
+  id: string;
+  name: string;
+  desc: string;
+  target: number;
+  progress: number;
+  claimed: boolean;
+  rewardCredits: number;
+}
+
 interface GuildState {
   id: number;
   name: string;
@@ -15,10 +25,15 @@ interface GuildState {
   bankCores: number;
   rank: string;
   members: Array<{ id: string; rank: string }>;
+  goal?: GuildGoalState;
 }
 
 export default class OnlineGuild extends Modal {
-  onAction?: (action: "deposit" | "withdraw" | "leave" | "info", credits?: number, cores?: number) => void;
+  onAction?: (
+    action: "deposit" | "withdraw" | "leave" | "info" | "claim_goal",
+    credits?: number,
+    cores?: number,
+  ) => void;
   private guild: GuildState | null = null;
   private selfId = "";
 
@@ -41,7 +56,7 @@ export default class OnlineGuild extends Modal {
       return o;
     };
     const D = 1700;
-    const { x, y, w, h } = modalRect(660, 540);
+    const { x, y, w, h } = modalRect(660, 560);
     const btnH = uiDim(28);
     const rosterH = uiDim(24);
 
@@ -75,21 +90,53 @@ export default class OnlineGuild extends Modal {
 
     tx("⬡ CELL", x + uiDim(20), y + uiDim(14), 17, "#39ff88", true);
     tx(closeHint("U / ESC close"), x + w - uiDim(20), y + uiDim(16), 12, "#9aa3b2", false, 1);
-    const goal = weeklyGuildGoal();
-    tx(`WEEKLY · ${goal.name}: ${goal.desc}`, x + uiDim(20), y + uiDim(36), 10, "#d4c45a");
-    tx(`Reward ₵${goal.rewardCredits} + ${goal.rewardRep} rep (server tallies cell activity)`, x + uiDim(20), y + uiDim(50), 9, "#7a8190");
+
+    // Weekly goal — prefer server-tallied state when in a cell, else static seed.
+    const seed = weeklyGuildGoal();
+    const sg = this.guild?.goal;
+    const goalName = sg?.name ?? seed.name;
+    const goalDesc = sg?.desc ?? seed.desc;
+    const goalTarget = sg?.target ?? seed.target;
+    const goalProg = Math.max(0, sg?.progress ?? 0);
+    const goalClaimed = !!sg?.claimed;
+    const goalReward = sg?.rewardCredits ?? seed.rewardCredits;
+    const goalFrac = goalTarget > 0 ? Math.max(0, Math.min(1, goalProg / goalTarget)) : 0;
+    const goalDone = goalProg >= goalTarget;
+
+    tx(`WEEKLY · ${goalName}: ${goalDesc}`, x + uiDim(20), y + uiDim(36), 10, "#d4c45a");
+    const gBarX = x + uiDim(20);
+    const gBarY = y + uiDim(52);
+    const gBarW = w - uiDim(40) - (this.guild && goalDone && !goalClaimed ? uiDim(110) : 0);
+    const gBarH = uiDim(14);
+    g.fillStyle(0x12102a, 1).fillRect(gBarX, gBarY, gBarW, gBarH);
+    g.fillStyle(goalDone ? 0xf7ff3c : 0x29e7ff, 0.9).fillRect(gBarX, gBarY, gBarW * goalFrac, gBarH);
+    g.lineStyle(uiDim(1), 0x29e7ff, 0.7).strokeRect(gBarX, gBarY, gBarW, gBarH);
+    tx(
+      goalClaimed
+        ? `CLAIMED · ₵${goalReward}`
+        : `${goalProg}/${goalTarget} · reward ₵${goalReward}${seed.rewardRep ? ` + ${seed.rewardRep} rep` : ""}`,
+      gBarX + gBarW / 2,
+      gBarY + uiDim(1),
+      9,
+      goalClaimed ? "#39ff88" : "#eafdff",
+      true,
+      0.5,
+    );
+    if (this.guild && goalDone && !goalClaimed) {
+      btn(x + w - uiDim(120), gBarY - uiDim(6), uiDim(100), "CLAIM", COLORS.neonYellow, () => this.onAction?.("claim_goal"));
+    }
 
     if (!this.guild) {
-      tx("You're not in a Cell.", x + uiDim(26), y + uiDim(72), 14, "#cfe8ff", true);
-      tx("A Cell is a player-run resistance group — a shared bank, a level, and a", x + uiDim(26), y + uiDim(102), 12, "#9aa3b2");
-      tx("credit-find perk for every member. Found one or accept an invite:", x + uiDim(26), y + uiDim(120), 12, "#9aa3b2");
+      tx("You're not in a Cell.", x + uiDim(26), y + uiDim(82), 14, "#cfe8ff", true);
+      tx("A Cell is a player-run resistance group — a shared bank, a level, and a", x + uiDim(26), y + uiDim(112), 12, "#9aa3b2");
+      tx("credit-find perk for every member. Found one or accept an invite:", x + uiDim(26), y + uiDim(130), 12, "#9aa3b2");
       const cmds = [
         [`/gcreate <TAG> <name>`, `found a Cell (costs ₵${GUILD_CREATE_COST})`],
         ["/gjoin", "accept your latest invite"],
         ["/ginvite <id>", "invite a player (leader/officer)"],
         ["/g <message>", "Cell chat"],
       ];
-      let cy = y + uiDim(154);
+      let cy = y + uiDim(164);
       for (const [c, d] of cmds) {
         tx(c, x + uiDim(32), cy, 13, "#f7ff3c", true);
         tx(d, x + uiDim(260), cy, 12, "#9aa3b2");
@@ -100,7 +147,7 @@ export default class OnlineGuild extends Modal {
 
     const gd = this.guild;
     tx(`[${gd.tag}] ${gd.name}`, x + uiDim(96), y + uiDim(18), 16, "#39ff88", true);
-    const lvY = y + uiDim(54);
+    const lvY = y + uiDim(78);
     tx(`CELL LEVEL ${gd.level}`, x + uiDim(26), lvY, 13, "#f7ff3c", true);
     const barX = x + uiDim(180);
     const barW = w - uiDim(180) - uiDim(26);
@@ -113,7 +160,7 @@ export default class OnlineGuild extends Modal {
     g.lineStyle(uiDim(1), 0x39ff88, 0.7).strokeRect(barX, lvY, barW, barH);
     tx(`${gd.xp} XP`, barX + barW, lvY + uiDim(18), 10, "#6b7184", false, 1);
 
-    const bkY = y + uiDim(98);
+    const bkY = y + uiDim(112);
     const bankH = uiDim(44);
     g.fillStyle(0x12102a, 0.9).fillRect(x + uiDim(26), bkY, w - uiDim(52), bankH);
     g.lineStyle(uiDim(1.2), COLORS.neonYellow, 0.7).strokeRect(x + uiDim(26), bkY, w - uiDim(52), bankH);
@@ -123,7 +170,7 @@ export default class OnlineGuild extends Modal {
 
     const officer = gd.rank === "leader" || gd.rank === "officer";
     let bx = x + uiDim(26);
-    const by = y + uiDim(152);
+    const by = y + uiDim(168);
     btn(bx, by, uiDim(126), "DEPOSIT ₵100", COLORS.neonGreen, () => this.onAction?.("deposit", 100, 0));
     bx += uiDim(134);
     btn(bx, by, uiDim(126), "DEPOSIT ₵500", COLORS.neonGreen, () => this.onAction?.("deposit", 500, 0));
@@ -135,9 +182,9 @@ export default class OnlineGuild extends Modal {
     btn(bx, by, uiDim(106), "LEAVE", COLORS.neonMagenta, () => this.onAction?.("leave"));
     tx("more: /gdep <c> [k] · /gwd <c> [k] · /gpromote <id> · /gkick <id> · /g <msg>", x + uiDim(26), by + uiDim(36), 11, "#6b7184");
 
-    tx(`ROSTER (${gd.members.length})`, x + uiDim(26), y + uiDim(206), 13, "#f7ff3c", true);
-    let ry = y + uiDim(228);
-    for (const m of gd.members.slice(0, 12)) {
+    tx(`ROSTER (${gd.members.length})`, x + uiDim(26), y + uiDim(224), 13, "#f7ff3c", true);
+    let ry = y + uiDim(246);
+    for (const m of gd.members.slice(0, 11)) {
       const me = m.id === this.selfId;
       g.fillStyle(me ? 0x231a3a : 0x12102a, 0.9).fillRect(x + uiDim(26), ry, w - uiDim(52), rosterH);
       const rankColor = m.rank === "leader" ? "#f7ff3c" : m.rank === "officer" ? "#29e7ff" : "#9aa3b2";

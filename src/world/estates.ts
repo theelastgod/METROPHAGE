@@ -112,7 +112,19 @@ export const parseEstateInterior = (z: string | null): number | null => {
 };
 
 // ── furniture ────────────────────────────────────────────────────────────────
-/** A furniture catalogue entry the owner can place. Purely cosmetic; non-colliding. */
+/** Passive home buffs while the owner stands in their furnished estate. */
+export interface FurnitureBuff {
+  /** HP regenerated per second while at home (capped). */
+  regenPerSec?: number;
+  /** HEAT decay bonus fraction while at home. */
+  heatDecayPct?: number;
+  /** Flat shield while at home (display + temporary max). */
+  shieldHome?: number;
+  /** Move speed bonus while at home only. */
+  movePct?: number;
+}
+
+/** A furniture catalogue entry the owner can place. Non-colliding; some grant home buffs. */
 export interface FurnitureKind {
   id: string;
   name: string;
@@ -121,35 +133,54 @@ export interface FurnitureKind {
   w: number; // footprint in tiles (for the editor palette + render size)
   h: number;
   price: number; // credits to place (a light sink)
+  buff?: FurnitureBuff;
 }
 
 export const FURNITURE: FurnitureKind[] = [
   // ids are persisted in saved layouts — never rename, only append
-  { id: "bed", name: "Bed", glyph: "BD", color: 0x4d8cff, w: 2, h: 1, price: 40 },
-  { id: "sofa", name: "Sofa", glyph: "SF", color: 0xff79c6, w: 2, h: 1, price: 60 },
+  { id: "bed", name: "Bed", glyph: "BD", color: 0x4d8cff, w: 2, h: 1, price: 40, buff: { regenPerSec: 2.5 } },
+  { id: "sofa", name: "Sofa", glyph: "SF", color: 0xff79c6, w: 2, h: 1, price: 60, buff: { regenPerSec: 1.2 } },
   { id: "table", name: "Table", glyph: "TB", color: 0xffb13c, w: 1, h: 1, price: 30 },
   { id: "chair", name: "Chair", glyph: "CH", color: 0xf7ff3c, w: 1, h: 1, price: 15 },
   { id: "rug", name: "Rug", glyph: "RG", color: 0xb06bff, w: 2, h: 2, price: 35 },
-  { id: "plant", name: "Plant", glyph: "PL", color: 0x39ff88, w: 1, h: 1, price: 20 },
+  { id: "plant", name: "Plant", glyph: "PL", color: 0x39ff88, w: 1, h: 1, price: 20, buff: { heatDecayPct: 0.05 } },
   { id: "lamp", name: "Lamp", glyph: "LP", color: 0xffe08a, w: 1, h: 1, price: 25 },
   { id: "shelf", name: "Shelf", glyph: "SH", color: 0x9dff3c, w: 1, h: 1, price: 30 },
-  { id: "locker", name: "Locker", glyph: "LK", color: 0x8dfff0, w: 1, h: 1, price: 45 },
-  { id: "terminal", name: "Terminal", glyph: "TM", color: 0x00e5ff, w: 1, h: 1, price: 70 },
+  { id: "locker", name: "Locker", glyph: "LK", color: 0x8dfff0, w: 1, h: 1, price: 45, buff: { shieldHome: 8 } },
+  { id: "terminal", name: "Terminal", glyph: "TM", color: 0x00e5ff, w: 1, h: 1, price: 70, buff: { heatDecayPct: 0.08 } },
   { id: "poster", name: "Poster", glyph: "PS", color: 0xff3b6b, w: 1, h: 1, price: 18 },
   { id: "crate", name: "Crate", glyph: "CR", color: 0x9aa3b2, w: 1, h: 1, price: 12 },
   { id: "holo_tv", name: "Holo-TV", glyph: "TV", color: 0x29e7ff, w: 2, h: 1, price: 90 },
-  { id: "bar_counter", name: "Bar counter", glyph: "BA", color: 0x9dff3c, w: 2, h: 1, price: 80 },
+  { id: "bar_counter", name: "Bar counter", glyph: "BA", color: 0x9dff3c, w: 2, h: 1, price: 80, buff: { regenPerSec: 0.8 } },
   { id: "bookcase", name: "Bookcase", glyph: "BK", color: 0xd9a066, w: 1, h: 1, price: 45 },
   { id: "desk", name: "Desk", glyph: "DK", color: 0x8fb8ff, w: 2, h: 1, price: 55 },
-  { id: "aquarium", name: "Aquarium", glyph: "AQ", color: 0x66e0ff, w: 2, h: 1, price: 110 },
+  { id: "aquarium", name: "Aquarium", glyph: "AQ", color: 0x66e0ff, w: 2, h: 1, price: 110, buff: { heatDecayPct: 0.1 } },
   { id: "neon_sign", name: "Neon sign", glyph: "NS", color: 0xff2bd6, w: 1, h: 1, price: 65 },
   { id: "arcade", name: "Arcade cab", glyph: "AR", color: 0xf7ff3c, w: 1, h: 1, price: 95 },
   { id: "jukebox", name: "Jukebox", glyph: "JB", color: 0xff79c6, w: 1, h: 1, price: 85 },
-  { id: "vending", name: "Vending unit", glyph: "VN", color: 0x39ff88, w: 1, h: 1, price: 60 },
-  { id: "weapon_rack", name: "Weapon rack", glyph: "WR", color: 0xff3b6b, w: 1, h: 1, price: 75 },
-  { id: "trophy", name: "Trophy case", glyph: "TR", color: 0xffd24a, w: 1, h: 1, price: 120 },
-  { id: "server_rack", name: "Server rack", glyph: "SV", color: 0x00e5ff, w: 1, h: 1, price: 100 },
+  { id: "vending", name: "Vending unit", glyph: "VN", color: 0x39ff88, w: 1, h: 1, price: 60, buff: { regenPerSec: 0.6 } },
+  { id: "weapon_rack", name: "Weapon rack", glyph: "WR", color: 0xff3b6b, w: 1, h: 1, price: 75, buff: { movePct: 0.03 } },
+  { id: "trophy", name: "Trophy case", glyph: "TR", color: 0xffd24a, w: 1, h: 1, price: 120, buff: { shieldHome: 12 } },
+  { id: "server_rack", name: "Server rack", glyph: "SV", color: 0x00e5ff, w: 1, h: 1, price: 100, buff: { heatDecayPct: 0.12, shieldHome: 6 } },
 ];
+
+/** Sum home buffs from a furniture layout (stack soft-capped). */
+export function furnitureHomeBuffs(pieces: FurniturePiece[]): Required<FurnitureBuff> {
+  const out = { regenPerSec: 0, heatDecayPct: 0, shieldHome: 0, movePct: 0 };
+  for (const p of pieces) {
+    const b = furnitureKind(p.k)?.buff;
+    if (!b) continue;
+    out.regenPerSec += b.regenPerSec ?? 0;
+    out.heatDecayPct += b.heatDecayPct ?? 0;
+    out.shieldHome += b.shieldHome ?? 0;
+    out.movePct += b.movePct ?? 0;
+  }
+  out.regenPerSec = Math.min(6, out.regenPerSec);
+  out.heatDecayPct = Math.min(0.35, out.heatDecayPct);
+  out.shieldHome = Math.min(40, out.shieldHome);
+  out.movePct = Math.min(0.12, out.movePct);
+  return out;
+}
 
 export const furnitureKind = (id: string): FurnitureKind | undefined => FURNITURE.find((f) => f.id === id);
 

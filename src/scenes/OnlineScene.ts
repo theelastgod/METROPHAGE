@@ -126,7 +126,9 @@ import {
   noteSecondForge,
   noteSecondBountyDone,
   noteSecondBossTouch,
+  noteSecondCapture,
 } from "../game/secondHour";
+import { downloadShareCard } from "../ui/ShareCard";
 import { noteNpcTalk, noteNpcBountyDone, npcMemoryLine } from "../game/npcMemory";
 import { buildStamp } from "../buildInfo";
 import { raidScriptFor } from "../game/raid";
@@ -160,7 +162,7 @@ import { scatterWorldProps } from "../render/propScatter";
 import OnlineMinimap from "../ui/OnlineMinimap";
 import RsQuestLog from "../ui/RsQuestLog";
 import { CITY_HUB_SPAWN, ENV_IDENTITY, envAt, ONLINE_CITY } from "../world/city";
-import { ESTATES, ESTATES_ZONE, buildHomeRoom, parseEstateInterior, FURNITURE, furnitureKind, furnitureFits, occupiedTiles, pieceAt, type FurniturePiece } from "../world/estates";
+import { ESTATES, ESTATES_ZONE, buildHomeRoom, parseEstateInterior, FURNITURE, furnitureKind, furnitureFits, furnitureHomeBuffs, occupiedTiles, pieceAt, type FurniturePiece } from "../world/estates";
 import { drawFurniture } from "../render/furnitureArt";
 import { paintCityEnvWash, paintCityStorefrontReflections } from "../render/cityTerrainPolish";
 import { paintCityBuildingFacades, buildingExteriorAccent } from "../render/buildingFacades";
@@ -287,6 +289,8 @@ export default class OnlineScene extends Phaser.Scene {
   private killFeedText?: Phaser.GameObjects.Text;
   private phantomOnline = 0; // ambient population illusion when solo
   private bossIntroShown = ""; // boss name whose title card already played this visit
+  /** Last-seen node owners — detect captures for second-hour coach. */
+  private prevNodeOwners = new Map<number, number>();
   private atmosphere?: Atmosphere; // rich ambient layer, shared with the SP city
   private connectStartedAt = 0; // when this connection attempt began (for the offline timeout)
   /** Bumped on connect / shutdown so async wallet auth cannot open a zombie socket. */
@@ -1198,6 +1202,7 @@ export default class OnlineScene extends Phaser.Scene {
     this.guildPanel.onAction = (action, c, k) => {
       if (action === "leave") this.net.guildAction("leave");
       else if (action === "info") this.net.guildAction("info");
+      else if (action === "claim_goal") this.net.guildAction("claim_goal");
       else this.net.guildAction(action, { credits: c, cores: k });
     };
     this.net.onGuildUpdate = () => this.guildPanel.setGuild(this.net.guild, this.net.id);
@@ -4192,7 +4197,14 @@ export default class OnlineScene extends Phaser.Scene {
 
       const sel = furnitureKind(this.homeSelKind ?? "");
       push(this.add.text(paletteX + 2, headY, "FURNISH YOUR HOME", displayFont(mobile ? 12 : 14, { color: "#ffcf8a", fontStyle: "bold" })).setScrollFactor(0).setDepth(1200));
-      const selLine = sel ? `▸ ${sel.name}  ·  ${sel.w}×${sel.h}  ·  +₵${sel.price} value` : "pick an item below";
+      const buffBits: string[] = [];
+      if (sel?.buff?.regenPerSec) buffBits.push(`+${sel.buff.regenPerSec} HP/s`);
+      if (sel?.buff?.heatDecayPct) buffBits.push(`HEAT −${Math.round(sel.buff.heatDecayPct * 100)}%`);
+      if (sel?.buff?.shieldHome) buffBits.push(`+${sel.buff.shieldHome} shield`);
+      if (sel?.buff?.movePct) buffBits.push(`+${Math.round(sel.buff.movePct * 100)}% move`);
+      const selLine = sel
+        ? `▸ ${sel.name}  ·  ${sel.w}×${sel.h}  ·  ₵${sel.price}${buffBits.length ? `  ·  ${buffBits.join(" ")}` : ""}`
+        : "pick an item below — some pieces grant home buffs";
       push(this.add.text(paletteX + 2, headY + (mobile ? 18 : 20), selLine, bodyFont(mobile ? 10 : 11, { color: "#eafdff" })).setScrollFactor(0).setDepth(1200));
       push(
         this.add
@@ -4245,6 +4257,20 @@ export default class OnlineScene extends Phaser.Scene {
     const status = e.mine ? "YOUR HOME" : e.owner ? `Owned by ${e.ownerName ?? "someone"}` : "UNCLAIMED HOME";
     push(this.add.text(16, H - 60, status, displayFont(13, { color: "#ffcf8a", fontStyle: "bold" })).setScrollFactor(0).setDepth(1200));
     if (e.mine) {
+      const buffs = furnitureHomeBuffs(e.furniture ?? []);
+      const bits: string[] = [];
+      if (buffs.regenPerSec > 0) bits.push(`+${buffs.regenPerSec.toFixed(1)} HP/s`);
+      if (buffs.heatDecayPct > 0) bits.push(`HEAT −${Math.round(buffs.heatDecayPct * 100)}%`);
+      if (buffs.shieldHome > 0) bits.push(`+${buffs.shieldHome} shield`);
+      if (buffs.movePct > 0) bits.push(`+${Math.round(buffs.movePct * 100)}% move`);
+      if (bits.length) {
+        push(
+          this.add
+            .text(16, H - 78, `HOME BUFFS · ${bits.join(" · ")}`, bodyFont(10, { color: "#39ff88" }))
+            .setScrollFactor(0)
+            .setDepth(1200),
+        );
+      }
       btn(16, H - 38, "FURNISH (F)", 0xffb13c, () => this.startFurnishing());
       btn(140, H - 38, "LOCKBOX", 0x8dfff0, () => this.openService("stash"));
       if (e.forSale) {
@@ -4762,6 +4788,17 @@ export default class OnlineScene extends Phaser.Scene {
           juiceFlash(this, 260, 40, 120, 60);
           juiceHitStop(this, 88);
           juiceZoomPunch(this, 0.05, 200);
+          // Share card for social posts (no external API; local PNG download).
+          try {
+            downloadShareCard({
+              title: "BOSS DOWN",
+              subtitle: this.net.boss?.name ? `${this.net.boss.name} fell` : "HSS commander purged",
+              detail: `${this.callsign || this.net.id || "runner"} · ${this.zoneLabelFor(this.zone)} · ₵${this.net.credits}`,
+              accent: "#f7ff3c",
+            });
+          } catch {
+            /* canvas / download blocked */
+          }
         } else {
           juiceZoomPunch(this, 0.025 + Math.min(0.02, this.killStreak * 0.004), 105);
           // every kill lands a beat of stop — streaks stack more on top
@@ -4907,10 +4944,22 @@ export default class OnlineScene extends Phaser.Scene {
     this.processEmotes();
     this.processChatBubbles();
     if (this.net.connected) {
-      const combat = Math.min(1, this.net.enemies.size / 12);
+      // Adaptive combat layer: enemy density + nearby boss + recent damage heat.
+      let combat = Math.min(1, this.net.enemies.size / 12);
+      if (this.net.boss?.alive) {
+        const bdx = this.net.boss.x - this.me.x;
+        const bdy = this.net.boss.y - this.me.y;
+        const bd = Math.hypot(bdx, bdy);
+        if (bd < 480) combat = Math.min(1, combat + 0.35 * (1 - bd / 480));
+        else combat = Math.min(1, combat + 0.12);
+      }
+      if (this.net.heat > 0) combat = Math.min(1, combat + (this.net.heat / 100) * 0.25);
       if (this.synth) this.synth.setIntensity(combat);
+      this.synth?.setCombatLayer?.(combat);
       MusicDirector.for(this)?.setCombatIntensity(combat, this);
     }
+    // Capture coach — flip a node (owner change while we were channelling).
+    this.trackNodeCaptures();
     if (this.neon && this.net.connected) {
       const combat = Math.min(1, this.net.enemies.size / 14);
       // the city glow answers both the district (enemy density) and the runner's HEAT
@@ -6049,6 +6098,24 @@ export default class OnlineScene extends Phaser.Scene {
     noteHeatCoached();
     this.showBubble(this.me.x, this.me.y, "HEAT ARMED — press R for your class ultimate");
     this.pushKillFeed("HEAT · R ultimate ready");
+  }
+
+  /** Detect territory flips for the second-hour capture coach. */
+  private trackNodeCaptures() {
+    if (!this.net.connected || this.isTutorial) return;
+    const myFac = this.net.faction;
+    for (const [id, n] of this.net.nodes) {
+      const prev = this.prevNodeOwners.get(id);
+      // NEUTRAL is -1; any non-neutral flip to our faction counts as a capture.
+      if (prev !== undefined && prev !== n.owner && n.owner === myFac && myFac >= 0) {
+        noteSecondCapture();
+        this.pushKillFeed("NODE SECURED");
+      }
+      this.prevNodeOwners.set(id, n.owner);
+    }
+    for (const id of [...this.prevNodeOwners.keys()]) {
+      if (!this.net.nodes.has(id)) this.prevNodeOwners.delete(id);
+    }
   }
 
   /** Campaign objective locator — bobbing marker when the target is on-screen, a

@@ -100,7 +100,7 @@ export type ClientMsg =
   // guilds ("Cells") — server validates rank/balance + owns the shared bank (cross-zone, D1)
   | {
       t: "guild";
-      action: "create" | "invite" | "accept" | "leave" | "promote" | "demote" | "kick" | "deposit" | "withdraw" | "info";
+      action: "create" | "invite" | "accept" | "leave" | "promote" | "demote" | "kick" | "deposit" | "withdraw" | "info" | "claim_goal";
       name?: string;
       tag?: string;
       to?: string;
@@ -360,6 +360,16 @@ export type ServerMsg =
         bankCores: number;
         rank: string;
         members: Array<{ id: string; rank: string }>;
+        /** Weekly cell goal progress (server-tallied). */
+        goal?: {
+          id: string;
+          name: string;
+          desc: string;
+          target: number;
+          progress: number;
+          claimed: boolean;
+          rewardCredits: number;
+        };
       };
     }
   | {

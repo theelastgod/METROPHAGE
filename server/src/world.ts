@@ -122,7 +122,7 @@ import { getCosmetic, applyCosmetic } from "../../src/game/cosmetics";
 import { bountyById, bountyForNpc, type BountyObjective } from "../../src/game/bounties";
 import { rollBossSignature, bossLootBlurb } from "../../src/game/bossLoot";
 import { maybeNamedLoot } from "../../src/game/namedLoot";
-import { weeklyGuildGoal, currentGuildWeek, guildGoalProgressKey } from "../../src/game/guildGoals";
+import { weeklyGuildGoal, currentGuildWeek } from "../../src/game/guildGoals";
 import {
   BLESS_IFRAME_TICKS,
   CLIENT_OPEN_SERVICES,
@@ -257,6 +257,7 @@ import {
   parseEstateInterior,
   sanitizeFurniture,
   sanitizeGuestbook,
+  furnitureHomeBuffs,
   GUEST_STAMPS,
   ESTATE_BASE_PRICE,
   type FurniturePiece,
@@ -1945,6 +1946,23 @@ export class WorldDO {
     const ms = await this.env.DB.prepare("SELECT player, rank FROM guild_members WHERE guild_id = ? ORDER BY joined_at ASC LIMIT 50")
       .bind(p.guildId)
       .all<{ player: string; rank: string }>();
+    const goal = weeklyGuildGoal();
+    const week = currentGuildWeek();
+    let progress = 0;
+    let claimed = false;
+    try {
+      const row = await this.env.DB.prepare(
+        "SELECT progress, claimed FROM guild_goal_progress WHERE guild_id = ? AND week = ?",
+      )
+        .bind(p.guildId, week)
+        .first<{ progress: number; claimed: number }>();
+      if (row) {
+        progress = row.progress | 0;
+        claimed = !!row.claimed;
+      }
+    } catch {
+      /* pre-migration */
+    }
     this.send(ws, {
       t: "guild",
       state: "info",
@@ -1958,8 +1976,38 @@ export class WorldDO {
         bankCores: g.bank_cores,
         rank: p.guildRank,
         members: (ms.results ?? []).map((m) => ({ id: m.player, rank: m.rank })),
+        goal: {
+          id: goal.id,
+          name: goal.name,
+          desc: goal.desc,
+          target: goal.target,
+          progress,
+          claimed,
+          rewardCredits: goal.rewardCredits,
+        },
       },
     });
+  }
+
+  /** Increment weekly cell goal progress (best-effort). */
+  private async bumpGuildGoal(gid: number, stat: "kills" | "bosses" | "captures" | "deposits", amount: number) {
+    if (!gid || amount <= 0) return;
+    const goal = weeklyGuildGoal();
+    if (goal.stat !== stat) return;
+    const week = currentGuildWeek();
+    try {
+      await this.env.DB.prepare(
+        `INSERT INTO guild_goal_progress (guild_id, week, goal_id, progress, claimed)
+         VALUES (?, ?, ?, ?, 0)
+         ON CONFLICT(guild_id, week) DO UPDATE SET
+           progress = MIN(999999, guild_goal_progress.progress + excluded.progress),
+           goal_id = excluded.goal_id`,
+      )
+        .bind(gid, week, goal.id, amount)
+        .run();
+    } catch {
+      /* pre-migration */
+    }
   }
 
   /** Refresh the cached cell perk for every connected member after the cell's XP changes. */
@@ -2091,6 +2139,7 @@ export class WorldDO {
           return sys("cell bank unavailable — deposit refunded");
         }
         await this.refreshGuildBonus(p.guildId); // deposits raise XP → maybe a new level + perk
+        if (c > 0) void this.bumpGuildGoal(p.guildId, "deposits", c);
         sys(`deposited ₵${c} ${k}◈ to the cell bank`);
         await this.sendGuild(ws, p);
       } else if (msg.action === "withdraw") {
@@ -2146,6 +2195,43 @@ export class WorldDO {
         await this.sendGuild(ws, p);
       } else if (msg.action === "info") {
         await this.sendGuild(ws, p);
+      } else if (msg.action === "claim_goal") {
+        if (!p.guildId) return sys("not in a cell");
+        const goal = weeklyGuildGoal();
+        const week = currentGuildWeek();
+        try {
+          const row = await DB.prepare(
+            "SELECT progress, claimed FROM guild_goal_progress WHERE guild_id = ? AND week = ?",
+          )
+            .bind(p.guildId, week)
+            .first<{ progress: number; claimed: number }>();
+          if (!row || (row.progress | 0) < goal.target) {
+            return sys(`cell goal incomplete — ${row?.progress ?? 0}/${goal.target}`);
+          }
+          if (row.claimed) return sys("cell goal already claimed this week");
+          const r = await DB.prepare(
+            "UPDATE guild_goal_progress SET claimed = 1 WHERE guild_id = ? AND week = ? AND claimed = 0 AND progress >= ?",
+          )
+            .bind(p.guildId, week, goal.target)
+            .run();
+          if (r.meta.changes === 0) return sys("cell goal claim raced — try /ginfo");
+          // Payout every online member of this cell in this zone; mail offline later via bank.
+          for (const pl of this.players.values()) {
+            if (pl.guildId !== p.guildId) continue;
+            pl.credits += goal.rewardCredits;
+            if (goal.rewardRep > 0) this.bumpStat(pl, "rep", goal.rewardRep);
+            pl.dirty = true;
+            this.eco("emit", "guild_goal", goal.rewardCredits);
+            this.sendTo(pl.id, {
+              t: "sys",
+              text: `⬡ CELL GOAL — ${goal.name} complete · +₵${goal.rewardCredits}${goal.rewardRep ? ` · +${goal.rewardRep} rep` : ""}`,
+            });
+          }
+          sys(`claimed cell goal ${goal.name}`);
+          await this.sendGuild(ws, p);
+        } catch {
+          return sys("cell goal claim failed (migrate D1?)");
+        }
       }
     } catch {
       sys("cell action failed");
@@ -4542,10 +4628,13 @@ export class WorldDO {
   // ── THE ESTATES — player-owned, furnishable homes (est{K}). Ownership + furniture live in
   //    D1 so any estate DO + a resale by another player share one source of truth. ────────
   private estate: { owner: string | null; ownerName: string | null; price: number; forSale: boolean; furniture: FurniturePiece[]; guests: GuestEntry[] } | null = null;
+  /** Cached sum of furniture home buffs for this zone's estate layout. */
+  private estateBuffs = furnitureHomeBuffs([]);
 
   private async loadEstate(): Promise<void> {
     if (parseEstateInterior(this.zoneName) === null) {
       this.estate = null;
+      this.estateBuffs = furnitureHomeBuffs([]);
       return;
     }
     const row = await this.env.DB.prepare("SELECT owner, owner_name, price, for_sale, furniture, guestbook FROM estates WHERE id = ?")
@@ -4568,6 +4657,7 @@ export class WorldDO {
           guests: sanitizeGuestbook(parse(row.guestbook)),
         }
       : { owner: null, ownerName: null, price: ESTATE_BASE_PRICE, forSale: true, furniture: [], guests: [] };
+    this.estateBuffs = furnitureHomeBuffs(this.estate.furniture);
   }
 
   private estateMsg(p: PlayerState) {
@@ -4719,6 +4809,7 @@ export class WorldDO {
     } else if (msg.action === "furnish") {
       if (e.owner !== p.id) return sys("only the owner can decorate this home");
       e.furniture = sanitizeFurniture(msg.furniture ?? []);
+      this.estateBuffs = furnitureHomeBuffs(e.furniture);
       await this.persistEstate();
       this.broadcastEstate();
     } else if (msg.action === "sign") {
@@ -5356,6 +5447,10 @@ export class WorldDO {
       this.addHeat(killer, HEAT.perKill);
       this.bumpStat(killer, "kills", 1);
       if (isBoss) this.bumpStat(killer, "bosses", 1);
+      if (killer.guildId) {
+        void this.bumpGuildGoal(killer.guildId, "kills", 1);
+        if (isBoss) void this.bumpGuildGoal(killer.guildId, "bosses", 1);
+      }
       this.bumpStat(killer, "credits", gained);
       this.contractEvent(killer, "kill", 1);
       this.bountyEvent(killer, "kill", 1);
@@ -5530,12 +5625,17 @@ export class WorldDO {
         p.mx = 0;
         p.my = 0;
       }
+      // Own-home furniture buffs (regen / heat / move) — only while standing in your est{K}.
+      const atOwnHome =
+        !!this.estate && this.estate.owner === p.id && parseEstateInterior(this.zoneName) !== null;
+      const homeBuff = atOwnHome ? this.estateBuffs : null;
+      const walkSpeed = PLAYER.speed * (1 + (homeBuff?.movePct ?? 0));
       if (this.tick < p.dashUntilTick) {
         // mid-dash: the burst vector overrides walk intent at dash speed
         stepMove(p, { mx: p.dashDx, my: p.dashDy }, this.grid, NET_TICK_MS, PLAYER.dashSpeed);
         p.dirty = true;
       } else if (p.mx !== 0 || p.my !== 0) {
-        stepMove(p, { mx: p.mx, my: p.my }, this.grid, NET_TICK_MS);
+        stepMove(p, { mx: p.mx, my: p.my }, this.grid, NET_TICK_MS, walkSpeed);
         p.dirty = true;
       }
       // Tutorial move + portal checks run every tick (not only while intent is held) so a
@@ -5551,9 +5651,18 @@ export class WorldDO {
           void this.graduateTutorial(p, this.socketForPlayer(p.id), false);
         }
       }
+      // Passive home regen + soft shield band (shieldHome raises effective HP cap while home).
+      if (homeBuff && (homeBuff.regenPerSec > 0 || homeBuff.shieldHome > 0)) {
+        const cap = p.maxHp + Math.round(homeBuff.shieldHome);
+        if (p.hp < cap && homeBuff.regenPerSec > 0) {
+          p.hp = Math.min(cap, p.hp + homeBuff.regenPerSec * dt);
+          p.dirty = true;
+        }
+      }
       // HEAT decay — the meter bleeds once you've been cold past the grace window
       if (p.heat > 0 && (this.tick - p.heatGainTick) * NET_TICK_MS > HEAT.decayDelayMs) {
-        p.heat = Math.max(0, p.heat - HEAT.decayPerSec * (NET_TICK_MS / 1000));
+        const base = HEAT.decayPerSec * (1 + (homeBuff?.heatDecayPct ?? 0));
+        p.heat = Math.max(0, p.heat - base * (NET_TICK_MS / 1000));
       }
       // timed companion (WINTERMUTE drones / SWARM pack): auto-engage the nearest
       // unit — shots ride the normal pipeline, so payouts and crits stay honest
@@ -5892,6 +6001,7 @@ export class WorldDO {
                 this.campaignSecureCheck(pl);
                 this.bumpStat(pl, "captures", 1);
                 this.contractEvent(pl, "capture", 1);
+                if (pl.guildId) void this.bumpGuildGoal(pl.guildId, "captures", 1);
               }
             }
           }
