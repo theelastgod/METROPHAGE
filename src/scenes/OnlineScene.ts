@@ -959,7 +959,8 @@ export default class OnlineScene extends Phaser.Scene {
       } else if (parseEstateInterior(this.zone) !== null) {
         const estIdx = parseEstateInterior(this.zone)!;
         // Plate only — the owner's saved FURNITURE layout dresses this room.
-        dressRoomPlate(this, "estate", VENUE_ROOM_W, VENUE_ROOM_H, estIdx * 7 + 3);
+        // est{K} homes are pinned to VENUE_LAYOUTS[0] (STUDIO) — same floor plan, same plate.
+        dressRoomPlate(this, "studio", VENUE_ROOM_W, VENUE_ROOM_H, estIdx * 7 + 3);
         this.buildHomeInterior(estIdx);
       } else if (parseWildernessShack(this.zone)) {
         this.buildWildernessShackInterior(parseWildernessShack(this.zone)!);
@@ -1051,10 +1052,12 @@ export default class OnlineScene extends Phaser.Scene {
           const VL = venueLayoutFor(this.zone);
           let vh = 5381;
           for (let i = 0; i < this.zone.length; i++) vh = ((vh << 5) + vh + this.zone.charCodeAt(i)) >>> 0;
-          dressInteriorWishlistArt(this, String(kind), VL.w, VL.h, VL.seats, vh);
+          // Floor follows the zone's actual plan; furniture follows the venue kind.
+          dressInteriorWishlistArt(this, String(kind), VL.w, VL.h, VL.seats, vh, undefined, VL.tag);
         } else {
           this.dressServiceRoom(kind, accent);
-          // Named service interiors (clinic/bar/…) use safehouse-sized grid
+          // Named service interiors (clinic/bar/…) use the safehouse-sized grid — they
+          // carry no VenueLayout, so the plate is inferred from the room's aspect.
           dressInteriorWishlistArt(this, String(kind), 20, 13, seats as Array<[number, number]>, 3);
         }
       }

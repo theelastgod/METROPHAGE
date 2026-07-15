@@ -6,15 +6,16 @@ import { TILE } from "../config";
 import {
   HF_LANDMARK_KEYS,
   HF_FURN_KEYS,
-  HF_INT_ROOM_KEYS,
   HF_WILD_PROP_KEYS,
   HF_DUNGEON_PROP_KEYS,
   GLOW_KEY,
   pickHfVariant,
+  layoutPlateKey,
 } from "../assets/manifest";
 import type { SubwayStation } from "../world/subway";
 import { subwayStationTier } from "../world/subway";
 import type { BuildingKind } from "../world/city";
+import { layoutTagForRoom, type VenueLayoutTag } from "../world/district";
 
 function place(
   scene: Phaser.Scene,
@@ -199,22 +200,6 @@ export function dressSubwayWishlistArt(scene: Phaser.Scene, stations: SubwayStat
   }
 }
 
-/** Kind → interior room plate + furniture set. */
-const INT_ROOM: Partial<Record<string, string>> = {
-  bar: "hf_int_bar_room",
-  clinic: "hf_int_clinic_room",
-  hospital: "hf_int_clinic_room",
-  shop: "hf_int_shop_room",
-  guild: "hf_int_guild_room",
-  den: "hf_int_den_room",
-  home: "hf_int_home_room",
-  hotel: "hf_int_home_room",
-  subway: "hf_int_subway_room",
-  stadium: "hf_int_stadium_room",
-  citycenter: "hf_int_citycenter_room",
-  estate: "hf_int_estate_room",
-};
-
 const FURN_BY_KIND: Record<string, string[]> = {
   bar: ["hf_furn_bar_counter", "hf_furn_neon_lamp", "hf_furn_plant", "hf_furn_sofa"],
   clinic: ["hf_furn_clinic_bed", "hf_furn_locker", "hf_furn_plant", "hf_furn_terminal"],
@@ -263,29 +248,33 @@ export function dressEstateFacades(
  * estates home (player-placed FURNITURE), safehouse, tutorial — want the plate without
  * this module dropping props on top of them.
  */
+/**
+ * The room's floor, keyed by LAYOUT — not by venue kind.
+ *
+ * venueLayoutFor() hash-picks one of 5 VENUE_LAYOUTS per zone (aspect 1.27..2.45)
+ * independent of what kind of venue it is, so a per-kind plate could never match the
+ * room it landed in: the old plates were square and covered ~30% of the floor's width.
+ * The floor is the layout; the KIND is carried by FURN_BY_KIND furniture on the seats,
+ * which is what VenueLayout.tag ("flavor tag for the client dresser") always implied.
+ *
+ * Sized to the room rect, so the art IS the floor rather than a decal floating in it.
+ */
 export function dressRoomPlate(
   scene: Phaser.Scene,
-  kind: string,
+  layout: VenueLayoutTag,
   roomW: number,
   roomH: number,
-  salt = 0,
+  _salt = 0,
   depth = 4.8,
 ) {
-  const roomKey = INT_ROOM[kind];
-  if (!roomKey) return;
-  const plate = kind === "home" || kind === "hotel" ? variant(scene, "hf_int_home_room", salt, 2) : roomKey;
-  place(
-    scene,
-    plate,
-    (roomW * TILE) / 2,
-    (roomH * TILE) / 2,
-    depth - 0.2,
-    Math.min(roomW, roomH) * 0.085,
-    0.55,
-    false,
-    0xffffff,
-    0.5,
-  );
+  const key = layoutPlateKey(layout);
+  if (!exists(scene, key)) return;
+  scene.add
+    .image((roomW * TILE) / 2, (roomH * TILE) / 2, key)
+    .setDisplaySize(roomW * TILE, roomH * TILE)
+    .setOrigin(0.5)
+    .setDepth(depth - 0.2)
+    .setAlpha(0.55);
 }
 
 export function dressInteriorWishlistArt(
@@ -296,8 +285,12 @@ export function dressInteriorWishlistArt(
   seats: Array<[number, number]>,
   salt = 0,
   depth = 4.8,
+  /** The room's floor plan. Omitted → inferred from the room's aspect. */
+  layout?: VenueLayoutTag,
 ) {
-  dressRoomPlate(scene, kind, roomW, roomH, salt, depth);
+  // Floor = layout, furniture = kind. The two are independent: venueLayoutFor() picks the
+  // plan by zone hash, not by what kind of venue it is.
+  dressRoomPlate(scene, layout ?? layoutTagForRoom(roomW, roomH), roomW, roomH, salt, depth);
 
   const pack = FURN_BY_KIND[kind] ?? [...HF_FURN_KEYS].slice(0, 6);
   const spots: Array<{ x: number; y: number }> = seats.map(([tx, ty]) => ({
@@ -408,7 +401,6 @@ export function dressDungeonWishlistArt(
   place(scene, "hf_dungeon_guardian_nest", cx + TILE * 3, cy + TILE * 5, depth + 0.08, 0.9, 0.9, true, 0xb06bff);
   place(scene, "hf_dungeon_cable_curtain", cx, cy - TILE * 5, depth + 0.02, 0.9, 0.75);
   void HF_DUNGEON_PROP_KEYS;
-  void HF_INT_ROOM_KEYS;
 }
 
 /** Map BuildingKind-like strings for room dressers. */

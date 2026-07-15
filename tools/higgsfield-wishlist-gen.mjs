@@ -1615,6 +1615,62 @@ const JOBS = [
     resolution: "1k",
     prompt: `${STYLE_BUST} TRANSIT WARDEN, a fixture of the METROPHAGE undercity: a metro transit warden, deep brown skin, buzzed black hair under a peaked transit cap, grey stubble, a long coat, cyan #29e7ff platform light, weary authority. Single character, shoulders-up, facing camera, plain dark background, no frame, no border, no UI panel, no text.`,
   },
+  // ── Venue floor plates, keyed by LAYOUT (not kind) ───────────────────
+  // venueLayoutFor() hash-picks one of 5 VENUE_LAYOUTS per zone, 1.27-2.45 aspect,
+  // independent of the venue kind — so one plate per kind could never fit the room.
+  // The floor is the LAYOUT; the kind is carried by FURN_BY_KIND furniture, which is
+  // what VenueLayout.tag ('flavor tag for the client dresser') already implies.
+  // Each is generated at its plan's aspect so covering the room needs no stretch.
+  {
+    id: "hf_int_layout_studio",
+    tag: "layouts",
+    out: "objects/hf_int_layout_studio.png",
+    kind: "plate",
+    maxSide: 240,
+    quality: "medium",
+    aspect: "4:3",
+    prompt: `${STYLE} Venue interior FLOOR PLATE seen straight down, a small square one-counter room: a single service counter run along the NORTH wall with a pass-through gap at its centre, otherwise open floor, a few stools and crates at the edges. Dark wet-concrete and metal decking floor, cyan/magenta neon underglow along the wall runs, grime and scuffs. The room fills the whole frame edge to edge — no border, no margin, no background around it. TOP-DOWN 90-degree orthographic floor plan of a lived-in neon-noir room, no people, no text.`,
+  },
+  {
+    id: "hf_int_layout_loft",
+    tag: "layouts",
+    out: "objects/hf_int_layout_loft.png",
+    kind: "plate",
+    maxSide: 240,
+    quality: "medium",
+    aspect: "3:2",
+    prompt: `${STYLE} Venue interior FLOOR PLATE seen straight down, a wide loft: a service counter run along the NORTH-WEST wall with a central gap, and TWO free-standing square pillar blocks out on the open east floor splitting a lounge area off the counter run. Dark wet-concrete and metal decking floor, cyan/magenta neon underglow along the wall runs, grime and scuffs. The room fills the whole frame edge to edge — no border, no margin, no background around it. TOP-DOWN 90-degree orthographic floor plan of a lived-in neon-noir room, no people, no text.`,
+  },
+  {
+    id: "hf_int_layout_hall",
+    tag: "layouts",
+    out: "objects/hf_int_layout_hall.png",
+    kind: "plate",
+    maxSide: 240,
+    quality: "medium",
+    aspect: "16:9",
+    prompt: `${STYLE} Venue interior FLOOR PLATE seen straight down, a very long narrow hall, far wider than deep: one continuous bar counter running the FULL length of the north wall with a pass-through gap at its centre, and two booth-divider stubs jutting from the south side making alcoves. Dark wet-concrete and metal decking floor, cyan/magenta neon underglow along the wall runs, grime and scuffs. The room fills the whole frame edge to edge — no border, no margin, no background around it. TOP-DOWN 90-degree orthographic floor plan of a lived-in neon-noir room, no people, no text.`,
+  },
+  {
+    id: "hf_int_layout_backroom",
+    tag: "layouts",
+    out: "objects/hf_int_layout_backroom.png",
+    kind: "plate",
+    maxSide: 240,
+    quality: "medium",
+    aspect: "4:3",
+    prompt: `${STYLE} Venue interior FLOOR PLATE seen straight down, a deep two-part room: a partition wall running across the middle with a single doorway gap, front-of-house floor to the south with a service counter run, and a cramped stockroom of shelving behind the partition to the north. Dark wet-concrete and metal decking floor, cyan/magenta neon underglow along the wall runs, grime and scuffs. The room fills the whole frame edge to edge — no border, no margin, no background around it. TOP-DOWN 90-degree orthographic floor plan of a lived-in neon-noir room, no people, no text.`,
+  },
+  {
+    id: "hf_int_layout_atrium",
+    tag: "layouts",
+    out: "objects/hf_int_layout_atrium.png",
+    kind: "plate",
+    maxSide: 240,
+    quality: "medium",
+    aspect: "4:3",
+    prompt: `${STYLE} Venue interior FLOOR PLATE seen straight down, a big open atrium floor: a service counter run in the NORTH-EAST corner, a large rectangular planter island in the centre of the floor, and two small square planter blocks near the south corners. Dark wet-concrete and metal decking floor, cyan/magenta neon underglow along the wall runs, grime and scuffs. The room fills the whole frame edge to edge — no border, no margin, no background around it. TOP-DOWN 90-degree orthographic floor plan of a lived-in neon-noir room, no people, no text.`,
+  },
 ];
 
 const args = process.argv.slice(2);

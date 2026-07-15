@@ -305,6 +305,13 @@ export const HF_FURN_KEYS = [
   "hf_furn_bed", "hf_furn_bed_b",
   "hf_furn_crate_stack",
 ] as const;
+/** Venue floor plates keyed by LAYOUT (VENUE_LAYOUTS tag), generated at each plan's
+ *  aspect. The room's shape is hash-picked per zone independent of venue kind, so the
+ *  floor follows the layout and the kind is carried by furniture. */
+export const HF_LAYOUT_PLATE_TAGS = ["studio", "loft", "hall", "backroom", "atrium"] as const;
+export const layoutPlateKey = (tag: string) => "hf_int_layout_" + tag;
+export const HF_LAYOUT_PLATE_KEYS = HF_LAYOUT_PLATE_TAGS.map(layoutPlateKey);
+
 /** Interior room floor plates (structure matched to venue kind). */
 export const HF_INT_ROOM_KEYS = [
   "hf_int_bar_room", "hf_int_clinic_room", "hf_int_shop_room", "hf_int_guild_room",
@@ -533,6 +540,7 @@ export const ASSETS: Record<string, AssetEntry[]> = {
     ...HF_WILD_PROP_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
     ...HF_DUNGEON_PROP_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
     ...HF_INT_ROOM_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
+    ...HF_LAYOUT_PLATE_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
     // Holistic tier — env-identity kits, estates, per-biome wilderness plates.
     ...HF_ENV_KIT_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
     ...HF_ESTATE_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),

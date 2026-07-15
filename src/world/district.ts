@@ -449,6 +449,9 @@ export const VENUE_SPAWN = {
   y: (VENUE_MAT_TILE[1] - 1) * TILE + TILE / 2,
 };
 
+/** Floor plans a venue zone can take. The plate art is keyed to these. */
+export type VenueLayoutTag = "studio" | "loft" | "hall" | "backroom" | "atrium";
+
 export interface VenueLayout {
   w: number;
   h: number;
@@ -460,8 +463,8 @@ export interface VenueLayout {
   counter: { x0: number; x1: number; y: number; gap: number };
   /** Extra interior wall blocks (inclusive tile rects): pillars, partitions, islands. */
   blocks?: Array<[number, number, number, number]>;
-  /** Flavor tag for the client dresser. */
-  tag: "studio" | "loft" | "hall" | "backroom" | "atrium";
+  /** Flavor tag for the client dresser — also selects the floor plate. */
+  tag: VenueLayoutTag;
 }
 
 /** Index 0 MUST stay byte-identical to the original 15×11 room (est homes use it). */
@@ -501,6 +504,20 @@ export const VENUE_LAYOUTS: VenueLayout[] = [
     seats: [[17, 2], [5, 4], [3, 8], [19, 14], [11, 11]],
   },
 ];
+
+/**
+ * Closest layout plan for an ad-hoc room. Some interiors (the safehouse-sized service
+ * rooms) carry no VenueLayout, but still need a floor plate — pick the plan whose shape
+ * they most resemble. Derived from VENUE_LAYOUTS so it can never drift from them.
+ */
+export function layoutTagForRoom(roomW: number, roomH: number): VenueLayoutTag {
+  const a = roomW / roomH;
+  let best = VENUE_LAYOUTS[0];
+  for (const l of VENUE_LAYOUTS) {
+    if (Math.abs(l.w / l.h - a) < Math.abs(best.w / best.h - a)) best = l;
+  }
+  return best.tag;
+}
 
 /** djb2 — tiny, stable, identical on client + server (no Math.random anywhere). */
 function venueHash(zone: string): number {
