@@ -1755,8 +1755,10 @@ async function generate(job) {
     "gpt_image_2",
     "--prompt",
     job.prompt,
+    // Room/section plates must be generated at the ASPECT OF THE GEOMETRY they cover,
+    // or the art gets letterboxed inside its room (or stretched to fit). Props stay 1:1.
     "--aspect_ratio",
-    "1:1",
+    job.aspect || "1:1",
     "--resolution",
     resolution,
     "--quality",
