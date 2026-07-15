@@ -200,6 +200,23 @@ export const HF_INTERACT_PORTRAIT_SLUGS = [
   "keep_den",
   "keep_citycenter",
 ] as const;
+/**
+ * Resident portrait singles. The residents sheet holds 12 painted faces but there are 32
+ * residents, and the sheet fallback matches on `sex` ALONE — skin, hair, build and beard
+ * are ignored — so a bust could contradict the paper-doll sprite you're talking to. These
+ * are authored per NPC from their own look() params. Files: portraits/interact/<slug>.jpg.
+ */
+export const HF_RESIDENT_PORTRAIT_SLUGS = [
+  "res_ash", "res_borne", "res_brick", "res_coil", "res_dash",
+  "res_ferro", "res_glass", "res_grist", "res_hollow", "res_juniper",
+  "res_lace", "res_lumen", "res_mercy", "res_odd", "res_pip",
+  "res_plume", "res_rook", "res_salt", "res_sparrow", "res_tin",
+] as const;
+/** Every NPC bust that ships as its own image (not a sheet cell). */
+export const HF_NPC_PORTRAIT_SLUGS = [
+  ...HF_INTERACT_PORTRAIT_SLUGS,
+  ...HF_RESIDENT_PORTRAIT_SLUGS,
+] as const;
 export const portraitBossKey = (slug: string) => "portrait_boss_" + slug;
 export const portraitInteractKey = (slug: string) => "portrait_npc_" + slug;
 // Painted menu backdrop + per-class select-card art (same Higgsfield build).

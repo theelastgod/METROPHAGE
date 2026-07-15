@@ -15,6 +15,7 @@ import {
   portraitInteractKey,
   HF_BOSS_PORTRAIT_SLUGS,
   HF_INTERACT_PORTRAIT_SLUGS,
+  HF_RESIDENT_PORTRAIT_SLUGS,
 } from "../assets/manifest";
 
 export interface PortraitRef {
@@ -176,6 +177,11 @@ export function portraitSheetFallback(ref: PortraitRef): PortraitRef | undefined
   if (ref.key.startsWith("portrait_npc_")) {
     const id = ref.key.slice("portrait_npc_".length);
     if (INTERACT[id] !== undefined) return { key: PORTRAIT_INTERACT_KEY, frame: INTERACT[id] };
+    // Resident singles degrade to the shared sheet cell they used before, so a missing
+    // JPG loses the likeness — not the portrait.
+    if ((HF_RESIDENT_PORTRAIT_SLUGS as readonly string[]).includes(id)) {
+      return { key: PORTRAIT_RESIDENTS_KEY, frame: hash(id) % 12 };
+    }
   }
   if (ref.key.startsWith("portrait_boss_")) {
     const slug = ref.key.slice("portrait_boss_".length);
@@ -203,6 +209,11 @@ export function portraitFor(id: string, sex?: string): PortraitRef {
   }
   if (id.startsWith("amb_") || id.startsWith("res_")) {
     if (INTERACT[id] !== undefined) return preferInteractSingle(id, INTERACT[id]);
+    // An authored single beats the shared sheet: the fallback below matches on `sex`
+    // alone, so a residents-sheet cell can contradict the sprite's skin/hair/beard.
+    if ((HF_RESIDENT_PORTRAIT_SLUGS as readonly string[]).includes(id)) {
+      return { key: portraitInteractKey(id), frame: 0 };
+    }
   }
   const svc = SERVICE_FACES[id.toLowerCase()];
   if (svc) return svc;

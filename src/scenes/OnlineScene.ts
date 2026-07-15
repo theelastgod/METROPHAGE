@@ -38,6 +38,8 @@ import {
   WRAITH_FLOAT_FRAMES,
   ENEMY_BODY_BY_ARCH,
   enemyBodyKey,
+  HF_NPC_PORTRAIT_SLUGS,
+  portraitInteractKey,
   PORTRAIT_CAST_KEY,
   PORTRAIT_KEEPERS_KEY,
   PORTRAIT_RESIDENTS_KEY,
@@ -524,11 +526,10 @@ export default class OnlineScene extends Phaser.Scene {
       const key = "portrait_boss_" + slug;
       if (!this.textures.exists(key)) this.load.image(key, `assets/portraits/bosses/${slug}.jpg`);
     }
-    for (const slug of [
-      "porter", "tunnel_rat", "scrap_boss", "hawker", "preacher", "street_kid",
-      "amb_tech", "amb_vendor", "subway_warden", "amb_courier", "keep_den", "keep_citycenter",
-    ]) {
-      const key = "portrait_npc_" + slug;
+    // Driven off the manifest (not a second hardcoded list) so a slug added there can't
+    // silently never load — portraitFor would hand back a key with no texture.
+    for (const slug of HF_NPC_PORTRAIT_SLUGS) {
+      const key = portraitInteractKey(slug);
       if (!this.textures.exists(key)) this.load.image(key, `assets/portraits/interact/${slug}.jpg`);
     }
   }
