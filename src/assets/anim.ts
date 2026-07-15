@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import { CHAR, WALK_STEPS, drawCharacter, drawAgent, type CharSpec } from "./charart";
+import { drawEnemyBody, type EnemyBody } from "./enemyart";
 import { bakeDrawnFrames } from "./pixelart";
 import { faceFrame } from "./manifest";
 
@@ -28,6 +29,14 @@ const AGENT_FPS = 6;
 export function bakeWalkSheet(scene: Phaser.Scene, key: string, spec: CharSpec) {
   bakeDrawnFrames(scene, key, CHAR_FRAMES, CHAR, CHAR, (ctx, f) =>
     drawCharacter(ctx, Math.floor(f / WALK_STEPS), spec, f % WALK_STEPS),
+  );
+}
+
+/** Bake a non-humanoid enemy sheet (4 facings × WALK_STEPS). Same layout as
+ *  bakeWalkSheet, so driveChar animates these exactly like a character. */
+export function bakeEnemyBodySheet(scene: Phaser.Scene, key: string, body: EnemyBody) {
+  bakeDrawnFrames(scene, key, CHAR_FRAMES, CHAR, CHAR, (ctx, f) =>
+    drawEnemyBody(ctx, Math.floor(f / WALK_STEPS), body, f % WALK_STEPS),
   );
 }
 

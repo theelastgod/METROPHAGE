@@ -36,6 +36,8 @@ import {
   BULLET_ENEMY_KEY,
   GUARDIAN_WRAITH_KEY,
   WRAITH_FLOAT_FRAMES,
+  ENEMY_BODY_BY_ARCH,
+  enemyBodyKey,
   PORTRAIT_CAST_KEY,
   PORTRAIT_KEEPERS_KEY,
   PORTRAIT_RESIDENTS_KEY,
@@ -537,6 +539,12 @@ export default class OnlineScene extends Phaser.Scene {
     this.callsign = (rawCust?.callsign || "runner").toLowerCase();
     this.color = cust.color;
     this.emoteWheelOpen = false; // reset transient UI across scene.restart (travel)
+    // Release the handoff guard: it exists to stop a server redirect and the
+    // client failsafe from both deploying us during the SAME handoff. It lives on
+    // the global registry (survives scene.restart), so if we don't clear it once
+    // the new scene is up it latches forever and silently drops every later
+    // redirect — meltdown → CITY START, instance rebalance, graduate.
+    this.registry.remove("tutorialDeploying");
     this.wheelObjs = [];
     this.lastEmoteShownAt = 0;
     this.bossOverlays.clear(); // GO destroyed on shutdown; drop stale refs before re-create
@@ -6177,7 +6185,17 @@ export default class OnlineScene extends Phaser.Scene {
         // ICE-dive guardians render as the floating wraith (Resources pack) — a frozen-mind
         // spectre, not an HSS trooper. Non-boss dive enemies only; falls back to COP_KEY.
         const wraith = this.isDive && !e.boss && this.textures.exists(GUARDIAN_WRAITH_KEY);
-        s = this.add.sprite(e.x, e.y, wraith ? GUARDIAN_WRAITH_KEY : COP_KEY, 0).setDepth(8).setAlpha(0).setScale(wraith ? 0.95 : 1.15);
+        // Elsewhere, non-humanoid archetypes get their own body sheet so threat reads from
+        // SILHOUETTE, not just tint — a 24hp WASP must not look like a 170hp ENFORCER.
+        // Bosses keep the trooper frame (they're scaled + auraed to read as bosses).
+        const body = !wraith && !e.boss ? ENEMY_BODY_BY_ARCH[e.kind] ?? null : null;
+        const bodyKey = body ? enemyBodyKey(body) : null;
+        const key = wraith
+          ? GUARDIAN_WRAITH_KEY
+          : bodyKey && this.textures.exists(bodyKey)
+            ? bodyKey
+            : COP_KEY;
+        s = this.add.sprite(e.x, e.y, key, 0).setDepth(8).setAlpha(0).setScale(wraith ? 0.95 : 1.15);
         if (wraith) s.setData("wraith", WRAITH_FLOAT_FRAMES);
         this.tweens.add({ targets: s, alpha: 1, duration: 260 }); // AOI arrivals fade in
         s.setData("shadow", this.groundShadow(e.x, e.y, 0.48));

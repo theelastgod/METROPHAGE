@@ -1,5 +1,6 @@
 import { COSMETICS } from "../game/cosmetics";
 import { MUSIC_TRACKS } from "../audio/musicTracks";
+import type { EnemyBody } from "./enemyart";
 
 // METROPHAGE — logical asset registry.
 //
@@ -44,6 +45,25 @@ export const PICKUP_COIN_KEY = "pickup_coin";
 export const PICKUP_CORE_KEY = "pickup_core";
 export const BULLET_PLAYER_KEY = "bullet_player";
 export const BULLET_ENEMY_KEY = "bullet_enemy";
+/**
+ * Non-humanoid enemy sheets, baked from enemyart.ts. Indexed by the server's enemy
+ * `kind` — an index into ENEMY_ARCHES (server/src/world.ts):
+ *
+ *   0 PATROL · 2 LANCER · 4 ENFORCER · 5 SNIPER  → humanoid HSS troopers (COP_KEY)
+ *   1 WASP    → drone    (24hp fast harrier)
+ *   3 HOUND   → beast    (speed-200 rusher)
+ *   6 WRAITH  → spectre  (speed-220 elite skirmisher)
+ *
+ * null = keep the cop sheet. Every arch used to render as the same tinted cop, so a
+ * 24hp WASP and a 170hp ENFORCER were the same silhouette and threat read as hue only.
+ */
+export const ENEMY_BODY_BY_ARCH: ReadonlyArray<EnemyBody | null> = [
+  null, "drone", null, "beast", null, null, "spectre",
+];
+export const enemyBodyKey = (body: EnemyBody) => "enemy_body_" + body;
+/** Distinct bodies to bake (deduped, order-independent). */
+export const ENEMY_BODIES: readonly EnemyBody[] = ["drone", "beast", "spectre"];
+
 export const GUARDIAN_WRAITH_KEY = "guardian_wraith";
 /** Wraith sheet is 16×(32×32): 0-7 float loop, 8-14 attack pose, 15 empty. Idle cycles
  *  the float loop only — `frameTotal` can't be used (Phaser counts its __BASE frame, and
