@@ -66,3 +66,34 @@ describe("npc portrait slug lists", () => {
     expect(new Set(HF_NPC_PORTRAIT_SLUGS).size).toBe(HF_NPC_PORTRAIT_SLUGS.length);
   });
 });
+
+describe("interact singles replace the unsliceable sheet", () => {
+  it("resolves every canonical interact NPC to its own bust", () => {
+    for (const slug of HF_INTERACT_PORTRAIT_SLUGS) {
+      const ref = portraitFor(slug);
+      expect(ref.key, `${slug} fell back to interact_sheet`).toBe(portraitInteractKey(slug));
+      expect(ref.frame).toBe(0);
+    }
+  });
+
+  it("routes frame aliases to that frame's bust, not a sheet cell", () => {
+    // interact_sheet.jpg is irregular bezel panels — no frameWidth slices it, so every
+    // cell is a bad crop. Aliases must land on the real character's single instead.
+    for (const [alias, expected] of [
+      ["arc_tech", "amb_tech"],
+      ["amb_drifter", "street_kid"],
+      ["amb_dockhand", "porter"],
+      ["amb_arc_clerk", "amb_tech"],
+    ] as const) {
+      const ref = portraitFor(alias);
+      expect(ref.key, `${alias} landed on a sheet cell`).toBe(portraitInteractKey(expected));
+    }
+  });
+
+  it("keeps the slug list in interact-frame order (aliases resolve by index)", () => {
+    expect([...HF_INTERACT_PORTRAIT_SLUGS]).toEqual([
+      "porter", "tunnel_rat", "scrap_boss", "hawker", "preacher", "street_kid",
+      "amb_tech", "amb_vendor", "subway_warden", "amb_courier", "keep_den", "keep_citycenter",
+    ]);
+  });
+});

@@ -169,6 +169,11 @@ function preferInteractSingle(id: string, sheetFrame: number): PortraitRef {
   if ((HF_INTERACT_PORTRAIT_SLUGS as readonly string[]).includes(id)) {
     return { key: portraitInteractKey(id), frame: 0 };
   }
+  // Aliases (arc_tech, amb_drifter, …) point at a frame, not a slug. The slug list is in
+  // frame order, so resolve to that frame's OWN single — interact_sheet.jpg is built from
+  // irregular bezel panels, so no frameWidth slices it and every cell is a bad crop.
+  const canonical = HF_INTERACT_PORTRAIT_SLUGS[sheetFrame];
+  if (canonical) return { key: portraitInteractKey(canonical), frame: 0 };
   return { key: PORTRAIT_INTERACT_KEY, frame: sheetFrame };
 }
 
