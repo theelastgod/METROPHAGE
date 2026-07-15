@@ -31,6 +31,8 @@ export interface TerrainLayerOpts {
   infected?: boolean;
   /** Large city hub: thinner wet-street pass (skips per-tile puddles). */
   lightweight?: boolean;
+  /** Force wet streets on/off (district theme). Undefined = profile default. */
+  forceWetStreets?: boolean;
 }
 
 const DEFAULTS: Record<TerrainProfile, Pick<TerrainLayerOpts, "wetStreets" | "ambientFloors" | "wallShade" | "floorDetail">> = {
@@ -47,6 +49,12 @@ const DEFAULTS: Record<TerrainProfile, Pick<TerrainLayerOpts, "wetStreets" | "am
   wilderness: { wetStreets: false, ambientFloors: true, wallShade: true },
 };
 
+export interface TerrainLayerResult {
+  layer: Phaser.Tilemaps.TilemapLayer;
+  /** World-tile rects fully covered by Higgsfield building art (skip roof caps). */
+  hfBuildingRects: Rect[];
+}
+
 /**
  * Build a tilemap layer and run the full terrain polish stack used across METROPHAGE:
  * variant scatter → floor detail → wall shade → outdoor wet streets OR indoor ambient pools.
@@ -55,7 +63,7 @@ export function createTerrainLayer(
   scene: Phaser.Scene,
   grid: TileGrid,
   opts: TerrainLayerOpts = {},
-): Phaser.Tilemaps.TilemapLayer {
+): TerrainLayerResult {
   const profile = opts.profile ?? "district";
   const d = DEFAULTS[profile];
   const accent = opts.accent ?? 0x29e7ff;
@@ -69,14 +77,16 @@ export function createTerrainLayer(
   jitterTileTint(layer); // per-tile brightness variation — breaks the repeating-grid look
   if ((opts.floorDetail ?? d.floorDetail) !== false) paintFloorDetail(scene, grid, 1.8, { realArt: REAL_ART_TILES });
   if (opts.wallShade ?? d.wallShade) shadeWalls(scene, grid, accent, 2.5, REAL_ART_TILES);
-  if (opts.wetStreets ?? d.wetStreets) paintWetStreets(scene, grid, accentAt, 2, { lightweight: opts.lightweight });
+  const wantWet = opts.forceWetStreets ?? opts.wetStreets ?? d.wetStreets;
+  if (wantWet) paintWetStreets(scene, grid, accentAt, 2, { lightweight: opts.lightweight });
   if (opts.ambientFloors ?? d.ambientFloors) paintAmbientFloors(scene, grid, accent);
+  let hfBuildingRects: Rect[] = [];
   if (opts.buildings?.length) {
-    paintDistrictBuildingFacades(scene, opts.buildings, accent, 3.2, {
+    hfBuildingRects = paintDistrictBuildingFacades(scene, opts.buildings, accent, 3.2, {
       districtId: opts.districtId,
       infected: opts.infected,
     });
   }
 
-  return layer;
+  return { layer, hfBuildingRects };
 }

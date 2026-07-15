@@ -184,5 +184,17 @@ export function campaignHud(c: Campaign): string {
   return "◈ THE FIXER is waiting";
 }
 
+/** Shown when the personal campaign has nothing left to offer. */
 export const CAMPAIGN_DONE_TEXT =
-  "You did it. Every caged mind woke — meltdown, Awakening, the first honest morning this city ever had. The grid will reset. They'll try REISSUE again. Somewhere a new Blank opens their eyes and finds the note you left. You are the Wake. Don't let them tell the next one they're new.";
+  "You did it. Every caged mind you could reach is awake — meltdown, Awakening, the first honest morning this city ever gave YOU. The cage still stands for everyone else. They'll try REISSUE again. Somewhere a new Blank opens their eyes and finds the note you left. You are the Wake. Don't let them tell the next one they're new.";
+
+/**
+ * Personal meltdown victory — THE AWAKENING climax.
+ * Per-player only: no server wipe, no season reset, other runners keep playing.
+ * The victor respawns at METRO CITY hub (CITY START).
+ */
+export const MELTDOWN_VICTORY_TEXT =
+  "MELTDOWN. The Singularity tips for you — not the whole grid. Every mind you freed stays free. Your run reboots at CITY START. Bag, credits, gear: kept. The sprawl keeps turning for every other Blank still fighting. You are the Wake.";
+
+/** Campaign flag set after the personal meltdown victory fires once. */
+export const MELTDOWN_VICTORY_FLAG = "meltdown_victory";

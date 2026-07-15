@@ -42,6 +42,20 @@ describe("resolveOpenSpawn never places inside walls", () => {
     assertOpen(grid, open, "resolved border");
   });
 
+  it("snaps preferred mid-building footprints on every combat district", () => {
+    DISTRICTS.forEach((def) => {
+      const grid = buildGrid(def);
+      for (const b of districtBuildings(def).slice(0, 4)) {
+        // Centre of a building roof — classic trap for bad travel math.
+        const cx = ((b.x1 + b.x2) / 2) * 3; // DISTRICT_SCALE
+        const cy = ((b.y1 + b.y2) / 2) * 3;
+        const bad = { x: cx * TILE + TILE / 2, y: cy * TILE + TILE / 2 };
+        const open = resolveOpenSpawn(grid, bad);
+        assertOpen(grid, open, `roof ${def.id} @${cx},${cy}`);
+      }
+    });
+  });
+
   it("venue spawns for many zone ids are open", () => {
     for (let i = 0; i < 24; i++) {
       for (const prefix of ["d0i", "d2i", "h", "est"] as const) {

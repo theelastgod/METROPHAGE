@@ -8,9 +8,9 @@ import { itemValue } from "./items";
 
 export type Currency = "credits" | "metro";
 
-/** Non-refundable listing fee (the sink): 12% of the ask, min ₵25. */
+/** Non-refundable listing fee (the sink): 15% of the ask, min ₵30. */
 export function listingFee(price: number): number {
-  return Math.max(25, Math.round(price * 0.12));
+  return Math.max(30, Math.round(price * 0.15));
 }
 
 /** A sensible default ask the client pre-fills for quick-listing (2× base value). */

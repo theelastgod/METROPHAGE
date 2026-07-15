@@ -67,7 +67,7 @@ export interface DistrictDef {
   copPosts: Array<[number, number, "patrol" | "enforcer"]>;
   /** Boss archetype guarding the node (added in later steps; undefined = none yet). */
   bossId?: string;
-  /** The HSS core — clearing it ends the cycle (meltdown victory). */
+  /** The HSS core — narrative finale district (campaign meltdown is per-player, not a world wipe). */
   isFinal?: boolean;
   /** Ambient weather (default "rain"). Sets the Atmosphere mood per district. */
   weather?: Weather;

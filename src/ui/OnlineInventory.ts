@@ -3,7 +3,7 @@ import { COLORS } from "../config";
 import { Item, Slot, SLOTS, RARITIES, SLOT_NAMES, itemStatLines } from "../game/items";
 import { getWeapon } from "../game/weapons";
 import { iconKey, ensureItemIcons } from "../assets/itemIcons";
-import { UI_FRAME_KEY, UI_GUN_KEY } from "../assets/manifest";
+import { UI_FRAME_KEY, UI_GUN_KEY, hfGunKeyForKlass } from "../assets/manifest";
 import { dimBackdrop, onlineHudStack, overlayRect, uiDim, uiFont } from "./uiLayout";
 import ContextMenu from "./ContextMenu";
 import { getSettings } from "../systems/Settings";
@@ -17,9 +17,14 @@ const SLOT_ICON: Record<Slot, string> = {
   chip: "CHIP",
 };
 
-function itemIcon(it: Item): { key: string; tint: number } {
+function itemIcon(it: Item, scene?: Phaser.Scene): { key: string; tint: number } {
   const w = it.weaponId ? getWeapon(it.weaponId) : undefined;
-  if (w) return { key: iconKey(w.klass), tint: w.tint };
+  if (w) {
+    // Prefer Higgsfield weapon silhouettes (gun_hf_01..06) when loaded.
+    const hf = hfGunKeyForKlass(w.klass);
+    if (!scene || scene.textures.exists(hf)) return { key: hf, tint: 0xffffff };
+    return { key: iconKey(w.klass), tint: w.tint };
+  }
   return { key: iconKey(SLOT_ICON[it.slot]), tint: RARITIES[it.rarity].color };
 }
 
@@ -220,11 +225,16 @@ export default class OnlineInventory {
       }
       const icon = this.barIcons[i];
       if (it) {
-        const ic = itemIcon(it);
+        const ic = itemIcon(it, this.scene);
         icon.setVisible(true).setTexture(ic.key).setTint(ic.tint);
       } else if (weaponSlot) {
-        // Prefer painted gun art; fall back to blade silhouette.
-        if (this.scene.textures.exists(UI_GUN_KEY)) {
+        // Prefer equipped-klass HF gun, then generic gun_hf_01, then blade silhouette.
+        const wpn = eq.weapon;
+        const wdef = wpn?.weaponId ? getWeapon(wpn.weaponId) : undefined;
+        const hf = wdef ? hfGunKeyForKlass(wdef.klass) : UI_GUN_KEY;
+        if (this.scene.textures.exists(hf)) {
+          icon.setVisible(true).setTexture(hf).setTint(0xffffff);
+        } else if (this.scene.textures.exists(UI_GUN_KEY)) {
           icon.setVisible(true).setTexture(UI_GUN_KEY).setTint(0xffffff);
         } else {
           icon.setVisible(true).setTexture(iconKey("BLADE")).setTint(0x3a3350);
@@ -343,7 +353,7 @@ export default class OnlineInventory {
     };
     const icon = (it: Item | undefined, ix: number, iy: number, size: number, fallback = "CHIP", tint = 0x3a3350) => {
       if (it) {
-        const ic = itemIcon(it);
+        const ic = itemIcon(it, scene);
         add(scene.add.image(ix, iy, ic.key).setDisplaySize(size, size).setTint(ic.tint).setScrollFactor(0).setDepth(D + 2));
       } else {
         add(scene.add.image(ix, iy, iconKey(fallback)).setDisplaySize(size, size).setTint(tint).setScrollFactor(0).setDepth(D + 2).setAlpha(0.45));

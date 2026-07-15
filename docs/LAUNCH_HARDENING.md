@@ -2,6 +2,8 @@
 
 How we keep METROPHAGE live under stress and recover when something breaks.
 
+**Scale / speed / reliability on Cloudflare:** see [`CLOUDFLARE_SCALE.md`](./CLOUDFLARE_SCALE.md) (pinned).
+
 ## Kill switches (no code change)
 
 Set Cloudflare Worker vars (wrangler.toml `[vars]` or dashboard) and **redeploy**:

@@ -10,6 +10,7 @@ import {
   PROP_BIN_KEY,
   PROP_HYDRANT_KEY,
   PROP_PLANTER_KEY,
+  HF_WILD_PROP_KEYS,
 } from "../assets/manifest";
 import { isWall, TILE_DIRT, TILE_GRASS, TILE_WATER, TILE_NEON, TILE_LANE, type TileGrid } from "../world/district";
 
@@ -114,7 +115,12 @@ export function scatterWildernessProps(
       const y = ty * TILE + TILE / 2;
 
       if (profile.salvage > 0 && h % profile.salvage === 0) {
-        const decoKey = DECO_KEYS[(h >>> 4) % DECO_KEYS.length];
+        // Prefer HF wilderness props when baked; fall back to deco pack.
+        const wild = HF_WILD_PROP_KEYS.filter((k) => scene.textures.exists(k));
+        const decoKey =
+          wild.length > 0
+            ? wild[(h >>> 4) % wild.length]
+            : DECO_KEYS[(h >>> 4) % DECO_KEYS.length];
         const scale = 0.68 + ((h >>> 8) % 20) / 100;
         scene.add
           .image(x, y - 4, GLOW_KEY)

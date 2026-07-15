@@ -90,6 +90,14 @@ export type ClientMsg =
   | { t: "stash"; action: "deposit" | "withdraw"; itemId: string } // TENEMENT lockbox — move an item bag↔stash
   /** Graceful leave — server flushes durable state then replies `bye` (zone travel). */
   | { t: "leave" }
+  /**
+   * Death choice while dead:
+   *  - local: reprint at last standing position (default auto-timer still does this;
+   *    PvP deaths use nearest safe point outside the arena)
+   *  - start: respawn at world start (METRO CITY hub — same pad new runners use)
+   *  - extract: alias of start (legacy death-loop evacuate to hub)
+   */
+  | { t: "respawn"; mode: "local" | "start" | "extract" }
   | { t: "input"; seq: number; mx: number; my: number }
   | { t: "fire"; seq: number; aim: number } // aim in radians; server validates rate
   | { t: "dash"; seq: number; dx: number; dy: number } // burst move; server validates cooldown + grants i-frames
@@ -246,11 +254,17 @@ export type ServerMsg =
       faction: number;
       /** Server protocol version — client compares to PROTOCOL_VERSION. */
       protocol?: number;
+      /** Worker build stamp (METRO_BUILD) — diagnostics / update UX. */
+      build?: string;
       look?: PlayerLook;
       lookLocked?: boolean;
       fragments?: string[]; // memory fragments this player has recovered (dive rewards)
       /** Operator account — invulnerable, full map, unrestricted access. */
       god?: boolean;
+      /** Horizontal zone shard index (0 = primary / legacy DO name). Sticky on reconnect. */
+      inst?: number;
+      /** Logical zone id this DO is simulating (may match client zone query). */
+      zone?: string;
     }
   | {
       t: "state";
@@ -284,6 +298,8 @@ export type ServerMsg =
       journal: string;
       objective: string;
       done: boolean;
+      /** Personal campaign meltdown victory — client plays VFX; server already queued city-center redirect. */
+      meltdown?: boolean;
     }
   /** Full campaign journal for the quest log (main + completed). */
   | {
@@ -395,5 +411,35 @@ export type ServerMsg =
       count: number;
       portalOpen: boolean;
     }
-  | { t: "redirect"; zone: string; text: string }
+  | {
+      t: "redirect";
+      zone: string;
+      text: string;
+      /** Preferred instance after handoff (omit = Worker load-picks). */
+      inst?: number;
+      /** Drop sticky inst and re-enter the same zone so the Worker rebalances. */
+      rebalance?: boolean;
+    }
+  /**
+   * Death / respawn affordances. Sent when the player dies so the client can offer
+   * REPRINT (last position) vs RESPAWN AT CITY START (world hub pad).
+   */
+  | {
+      t: "death";
+      /** Consecutive deaths before a long clean stretch. */
+      streak: number;
+      /**
+       * True when evacuate-to-hub / world-start is available (not tutorial).
+       * Always offered on death outside the drill yard — no streak gate.
+       */
+      extract: boolean;
+      /** Destination zone id for world-start / extract (usually "safe"). */
+      extractZone?: string;
+      /** Short label for UI. */
+      extractLabel?: string;
+      /** Hint: death near a living boss. */
+      nearBoss?: boolean;
+      /** True when world-start respawn is offered (same as extract outside tutorial). */
+      worldStart?: boolean;
+    }
   | { t: "error"; message: string };

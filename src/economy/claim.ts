@@ -1,7 +1,10 @@
 // METROPHAGE — claim submission for bridge withdrawals.
 //
-// Solana (primary): claimTx is base64 partial-signed; Phantom signs + sends (player pays fee).
-// EVM (legacy): claimTx is a fully signed raw tx (treasury pays gas) via eth_sendRawTransaction.
+// Solana (primary):
+//   - `solana-sent:<sig>` — Worker already broadcast a treasury-paid payout (no player SOL)
+//   - fully signed base64 tx (treasury fee-payer) — client just sends raw
+//   - partially signed base64 (player fee-payer fallback) — Phantom signs + sends
+// EVM (legacy): claimTx is a fully signed raw tx via eth_sendRawTransaction.
 
 import { getSolanaProvider, getEvmProvider, connectedChain } from "./wallet";
 
@@ -13,10 +16,17 @@ export interface ClaimSubmitResult {
 
 /** Sign + submit (Solana) or broadcast (EVM raw) a claim. */
 export async function submitClaim(claimTx: string, rpc: string): Promise<ClaimSubmitResult> {
-  // EVM signed raw txs start with 0x; sim claims are tagged.
+  // Sim harness.
   if (claimTx.startsWith("devnet-sim-claim:")) {
     return { ok: true, sig: `sim:${Date.now()}` };
   }
+  // Server already broadcast treasury-paid Solana cash-out.
+  if (claimTx.startsWith("solana-sent:")) {
+    const sig = claimTx.slice("solana-sent:".length).trim();
+    if (!sig) return { ok: false, reason: "empty treasury payout signature" };
+    return { ok: true, sig };
+  }
+  // EVM signed raw txs start with 0x.
   if (claimTx.startsWith("0x") && claimTx.length > 100) {
     return broadcastEvmRaw(claimTx, rpc);
   }
@@ -61,13 +71,36 @@ async function broadcastEvmRaw(rawTx: string, rpc: string): Promise<ClaimSubmitR
 }
 
 async function submitSolanaClaim(claimTxB64: string, rpc: string): Promise<ClaimSubmitResult> {
-  // CRITICAL: use Solana injector only — getInjectedProvider() can return MetaMask when both are installed.
-  const p = getSolanaProvider();
-  if (!p) return { ok: false, reason: "no Solana wallet — connect Phantom to sign the cash-out claim" };
   try {
     const { Transaction, Connection } = await import("@solana/web3.js");
     const bytes = Uint8Array.from(atob(claimTxB64), (c) => c.charCodeAt(0));
     const tx = Transaction.from(bytes);
+    const conn = new Connection(rpc, "confirmed");
+
+    // Fully signed treasury-paid cash-out — broadcast only (player needs no SOL / no sign).
+    const sigs = tx.signatures ?? [];
+    const allPresent = sigs.length > 0 && sigs.every((s) => s.signature != null);
+    if (allPresent) {
+      try {
+        const sig = await conn.sendRawTransaction(tx.serialize(), {
+          skipPreflight: false,
+          preflightCommitment: "confirmed",
+        });
+        try {
+          const latest = await conn.getLatestBlockhash("confirmed");
+          await conn.confirmTransaction({ signature: sig, ...latest }, "confirmed");
+        } catch {
+          /* confirm endpoint retries */
+        }
+        return { ok: true, sig };
+      } catch (e) {
+        return { ok: false, reason: String((e as Error)?.message ?? e).slice(0, 160) };
+      }
+    }
+
+    // Partial-signed (player fee-payer fallback) — needs Phantom.
+    const p = getSolanaProvider();
+    if (!p) return { ok: false, reason: "no Solana wallet — connect Phantom (treasury will pay fees when funded)" };
     if (p.signAndSendTransaction) {
       const { signature } = await p.signAndSendTransaction(tx);
       if (!signature) return { ok: false, reason: "wallet returned empty signature" };
@@ -75,12 +108,10 @@ async function submitSolanaClaim(claimTxB64: string, rpc: string): Promise<Claim
     }
     if (p.signTransaction) {
       const signed = await p.signTransaction(tx);
-      const conn = new Connection(rpc, "confirmed");
       const sig = await conn.sendRawTransaction(signed.serialize(), {
         skipPreflight: false,
         preflightCommitment: "confirmed",
       });
-      // Wait for confirmation so /metro/withdraw/confirm can see the tx.
       try {
         const latest = await conn.getLatestBlockhash("confirmed");
         await conn.confirmTransaction({ signature: sig, ...latest }, "confirmed");

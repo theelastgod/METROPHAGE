@@ -4,6 +4,7 @@ import { NET_TICK_MS, PROTOCOL_VERSION, type ClientMsg, type PlayerLook } from "
 import {
   stepMove,
   tileIsWall,
+  collides,
   resolveOpenSpawn,
   dist2,
   segPointDist2,
@@ -55,6 +56,7 @@ import {
   VENUE_SPAWN,
   buildSubway,
   SUBWAY_SPAWN,
+
   buildDive,
   DIVE_SPAWN,
   DIVE_CORE_TILE,
@@ -66,10 +68,17 @@ import {
   TUTORIAL_COP_TILE,
   TUTORIAL_NODE_TILE,
   tutorialPortalPos,
-  isVenueSizedZone,
-  isSafehouseSizedInterior,
   type TileGrid,
 } from "../../src/world/district";
+import {
+  subwaySpawnForEntry,
+  subwayEnemyPosts,
+  subwayBossTile,
+  subwayThreatTier,
+  subwayScaleFromThreat,
+  SUBWAY_TIER_KINDS,
+  resolveSubwayOpen,
+} from "../../src/world/subway";
 import {
   BRIDGE_ZONE_IDS,
   parseBridgeZone,
@@ -88,6 +97,10 @@ import {
   type TutorialMode,
 } from "../../src/net/tutorial";
 import { DISTRICTS } from "../../src/game/districts";
+import {
+  progressionForDistrict,
+  progressionForBridge,
+} from "../../src/game/progression";
 import { DISTRICT_SCALE, PLAYER, HEAT } from "../../src/config";
 import { ONLINE_CITY, CITY_HUB_SPAWN } from "../../src/world/city";
 import {
@@ -114,10 +127,11 @@ import {
   type Cost,
 } from "../../src/game/crafting";
 import { addMods, ZERO_MODS, type ModBag } from "../../src/game/stats";
+import { levelMods } from "../../src/game/levelCurve";
 import { achievementsForStat, type StatKey } from "../../src/game/achievements";
 import { GUILD_CREATE_COST, guildLevel, guildPerkPct, validateGuild } from "../../src/game/guilds";
 import { listingFee, metroListingFee, MIN_PRICE, MIN_METRO_PRICE, MAX_PRICE } from "../../src/game/market";
-import { PVP_BUY_IN_METRO } from "../../src/game/pvp";
+import { PVP_BUY_IN_METRO, PVP_CREDIT_DROP_PCT, PVP_CREDIT_DROP_NOTICE } from "../../src/game/pvp";
 import { fmtMetro } from "../../src/economy/metro";
 import { dailyContracts, getDaily, currentDay, repTier, type DailyObjective } from "../../src/game/dailies";
 import { phaseForHp, raidHpScale, raidScriptFor } from "../../src/game/raid";
@@ -128,6 +142,7 @@ import { maybeNamedLoot } from "../../src/game/namedLoot";
 import { weeklyGuildGoal, currentGuildWeek } from "../../src/game/guildGoals";
 import { currentDistrictWar, warMetaKey } from "../../src/game/districtWar";
 import { launchFlagsFromEnv, emitDayKey, type LaunchFlags } from "../../src/game/featureFlags";
+import { doName, hardCapFor, parseInstParam } from "./zoneRouting";
 
 import {
   BLESS_IFRAME_TICKS,
@@ -146,7 +161,7 @@ import {
 import { verifyWalletLogin, walletPlayerId } from "./auth";
 import { allDiscoverableZones, isGodPlayerId } from "./godMode";
 import { COSMETICS } from "../../src/game/cosmetics";
-import { shouldBroadcastSnapshot } from "./snapshotPolicy";
+import { shouldBroadcastSnapshot, shouldIncludeRoster } from "./snapshotPolicy";
 import { remotePlayerView, type RemotePlayerView } from "./playerSnapshot";
 import { buildWorldSnapshot } from "./worldSnapshot";
 import {
@@ -174,9 +189,15 @@ function parseInventory(raw: string | null | undefined): Item[] {
   }
 }
 
-/** Aggregate the EFFECTIVE (forge-upgraded) mods of every equipped item into one ModBag. */
-function deriveMods(equipped: Partial<Record<Slot, Item>>): ModBag {
-  let bag = ZERO_MODS;
+/**
+ * Aggregate a character's power into one ModBag: the EFFECTIVE (forge-upgraded)
+ * mods of every equipped item, plus what the level itself is worth.
+ *
+ * Folding levels in here means every existing `p.mods.*` read — damage, maxHp,
+ * crit, lifesteal — picks up level growth with no separate code path.
+ */
+function deriveMods(equipped: Partial<Record<Slot, Item>>, level: number): ModBag {
+  let bag = addMods(ZERO_MODS, levelMods(level));
   for (const it of Object.values(equipped)) if (it) bag = addMods(bag, effectiveMods(it));
   return bag;
 }
@@ -208,25 +229,19 @@ import {
   parseCampaign,
   serializeCampaign,
   CAMPAIGN_DONE_TEXT,
+  MELTDOWN_VICTORY_TEXT,
+  MELTDOWN_VICTORY_FLAG,
 } from "../../src/net/campaign";
 import type { QuestTriggerType, QuestReward } from "../../src/game/quests";
 import { rollElite, type EliteModifier } from "../../src/game/elites";
 
-// Server-only tuning (Workers Paid $5 headroom — was free-tier conservative).
-const PERSIST_EVERY_TICKS = 24; // ~1.2s durable flush (was 2s) — less loss on DO recycle
+// Server-only tuning — reliability first, then speed (Workers Paid).
+const PERSIST_EVERY_TICKS = 20; // ~1.0s durable flush — less progress loss on DO recycle
 const INTENT_EXPIRE_TICKS = 3;
-// Step 7 (ops): a durable "supervisor" alarm. It is NOT the game tick — a 20Hz
-// real-time loop runs hot as an in-memory interval (cheaper + more precise than
-// 20 alarms/s). The alarm is the lifecycle backstop: it resumes the sim if the
-// isolate was recycled mid-session (alarms survive eviction; setInterval does
-// not) and heartbeat-persists, so the loop is supervised + durable, not
-// fire-and-forget.
-const SUPERVISOR_ALARM_MS = 5_000; // was 10s — faster resume after eviction on Paid
-// Step 7 (anti-cheat): per-socket wall-clock flood guard. Legit play is ~1 input
-// per render frame plus the odd fire/chat, so even a 144fps client stays below it.
-// Movement is already flood-immune (intent is integrated once per server tick, not
-// per message) and fire is already server-rate-limited — this only stops a socket
-// from exhausting CPU/bandwidth with raw message volume.
+// Durable supervisor: NOT the game tick (20 Hz is setInterval). Alarm resumes sim
+// after isolate eviction and heartbeat-persists. Tighter interval = faster recovery.
+const SUPERVISOR_ALARM_MS = 3_000;
+// Anti-cheat: per-socket wall-clock flood guard.
 const MAX_MSG_BYTES = 4096; // reject oversized payloads outright
 const MSG_SOFT_PER_WINDOW = 520; // Paid: room for high-FPS clients + kit spam
 const MSG_KILL_PER_WINDOW = 780; // close only a genuine per-socket flood
@@ -282,16 +297,26 @@ export const NAMED_ZONES = new Set([
   ...DIVE_ZONE_IDS,
 ]);
 
-/** Per-building district interior — zone id "d{district}i{buildingIndex}". Each is its own
- *  no-combat DO reusing the safehouse room; H returns to the parent district. Bounded so a
- *  bogus id can't spin up an unbounded zone. */
+/** Per-building district interior — zone id "d{district}i{buildingIndex}".
+ *  Only the unique venue indices (one of each kind: shop/home/guild/den/bar). */
 export const parseBuildingInterior = (z: string | null): { district: number; index: number } | null => {
   const m = z ? /^d(\d+)i(\d+)$/.exec(z) : null;
   if (!m) return null;
   const district = parseInt(m[1], 10);
   const index = parseInt(m[2], 10);
-  if (district < 0 || district >= DISTRICTS.length || index < 0 || index > 63) return null;
+  // Must match DISTRICT_VENUE_COUNT (5) on the client.
+  if (district < 0 || district >= DISTRICTS.length || index < 0 || index >= 5) return null;
   return { district, index };
+};
+
+/** Wilderness trail shack — zone id "w{bridge}s{shackIndex}". Talk-only interior. */
+export const parseWildernessShack = (z: string | null): { bridge: number; index: number } | null => {
+  const m = z ? /^w(\d+)s(\d+)$/.exec(z) : null;
+  if (!m) return null;
+  const bridge = parseInt(m[1], 10);
+  const index = parseInt(m[2], 10);
+  if (bridge < 0 || bridge >= BRIDGE_ZONE_IDS.length || index < 0 || index > 7) return null;
+  return { bridge, index };
 };
 
 /** Hub building interior — zone id "h{buildingIndex}". Every building on the shared city
@@ -306,7 +331,12 @@ export const parseHubInterior = (z: string | null): number | null => {
 
 /** Zones the Worker routes by exact name or pattern (named zones + building interiors). */
 export const isNamedZone = (z: string | null): boolean =>
-  !!z && (NAMED_ZONES.has(z) || parseBuildingInterior(z) !== null || parseHubInterior(z) !== null || parseEstateInterior(z) !== null);
+  !!z &&
+  (NAMED_ZONES.has(z) ||
+    parseBuildingInterior(z) !== null ||
+    parseHubInterior(z) !== null ||
+    parseEstateInterior(z) !== null ||
+    parseWildernessShack(z) !== null);
 
 export interface Env {
   WORLD: DurableObjectNamespace;
@@ -320,8 +350,12 @@ export interface Env {
   /** Legacy alias — still accepted if METRO_MINT is unset. */
   METRO_DEVNET_MINT?: string;
   METRO_RPC?: string;
-  /** Optional EIP-155 chain id for EVM (46630 RH testnet, 4663 RH mainnet). */
+  /** Optional EIP-155 chain id for EVM (4663 RH mainnet default, 46630 RH testnet). */
   METRO_CHAIN_ID?: string;
+  /** Network label: robinhood (mainnet) | robinhood-testnet. */
+  METRO_CLUSTER?: string;
+  /** Manual $METRO USD price override (ops / pre-listing). Bridge rates scale from this. */
+  METRO_USD_PRICE?: string;
   // "1" arms real-value mainnet (counsel) — also gates NFT-tier cosmetics.
   // Required when METRO_RPC points at mainnet, else settlement stays sim.
   METRO_MAINNET_ARMED?: string;
@@ -337,6 +371,10 @@ export interface Env {
   METRO_DISABLE_DISTRICT_WAR?: string;
   /** Soft concurrent cap for hub zone "safe" (default 48). */
   METRO_HUB_CAP?: string;
+  /** Soft concurrent cap per combat/subway instance (default 40). */
+  METRO_INSTANCE_CAP?: string;
+  /** Max horizontal instances per shardable zone (default 4, max 16). */
+  METRO_MAX_INSTANCES?: string;
   /** Per-player daily emit ceiling in credits (policy may tighten under pool stress). */
   METRO_DAILY_EMIT_CAP?: string;
   /** Optional build/version stamp for /health (set in wrangler vars on deploy). */
@@ -359,6 +397,12 @@ interface PlayerState {
   hp: number;
   dead: boolean;
   respawnTick: number;
+  /** Consecutive deaths (resets after a clean alive stretch). Used for EXTRACT offer. */
+  deathStreak: number;
+  /** Tick when deathStreak last incremented — decay after ~25s alive. */
+  deathStreakTick: number;
+  /** Next respawn uses nearest safe point outside the PvP arena. */
+  pvpDeath: boolean;
   pvpSafeUntil: number; // tick until which the player is immune to PvP (spawn protection)
   /** True when the player has paid the $METRO buy-in and is contesting in an arena. */
   pvpInArena: boolean;
@@ -461,6 +505,8 @@ interface Pickup {
   x: number;
   y: number;
   kind: number; // PICKUP_CREDIT | PICKUP_CORE
+  /** Credits granted on collect (PvP floor piles); default grantEmit amount if omitted. */
+  amount?: number;
   dieTick: number;
   bornTick: number; // collection grace — the drop must visibly pop first
 }
@@ -505,6 +551,7 @@ interface Enemy {
   elite?: EliteModifier; // rolled-on-spawn affix: hp/speed/status-resist/volatile + payout mult
   hvt?: boolean; // today's HIGH-VALUE TARGET — named bounty elite, huge payout, once per day
   speedMult?: number; // district daily-condition speed factor (GHOST GRID etc.)
+  dmgMult?: number; // per-enemy shot damage factor — subway posts scale by tunnel threat (unset = 1)
   altFire?: boolean; // volley alternator (SNIPER/HVT swap shot ↔ targeting hazard)
   hvtRepositionTick?: number; // last evasive-burst tick (HVT bounty protocol)
   hvtCalled?: boolean; // HVT called its one-time reinforcements (below half HP)
@@ -606,19 +653,20 @@ interface ShopItem {
   cores?: number;
   creditsGrant?: number;
 }
-// Prices vs kill emit (CREDITS_PER_KILL=10) — vendor is the primary sink (~2× prior).
+// Prices vs kill emit (CREDITS_PER_KILL=10) — vendor is the primary sink.
+// Tuned up so credit accumulation doesn't outrun sinks forever (~2% historical).
 const SHOP: Record<string, ShopItem> = {
-  heal: { price: 95, label: "FIELD PATCH", heal: true },
-  cache_standard: { price: 180, label: "SALVAGE CACHE", rarity: "standard" },
-  cache_tuned: { price: 420, label: "TUNED CACHE", rarity: "tuned" },
-  cache_blackice: { price: 1180, label: "BLACK-ICE CACHE", rarity: "blackice", repReq: 1 },
-  cache_singular: { price: 2800, label: "SINGULAR CACHE", rarity: "singular", repReq: 2 },
-  core_bundle: { price: 240, label: "CORE BUNDLE", cores: 3 },
-  core_crate: { price: 620, label: "CORE CRATE", cores: 8, repReq: 1 },
+  heal: { price: 120, label: "FIELD PATCH", heal: true },
+  cache_standard: { price: 220, label: "SALVAGE CACHE", rarity: "standard" },
+  cache_tuned: { price: 480, label: "TUNED CACHE", rarity: "tuned" },
+  cache_blackice: { price: 1320, label: "BLACK-ICE CACHE", rarity: "blackice", repReq: 1 },
+  cache_singular: { price: 3200, label: "SINGULAR CACHE", rarity: "singular", repReq: 2 },
+  core_bundle: { price: 280, label: "CORE BUNDLE", cores: 3 },
+  core_crate: { price: 720, label: "CORE CRATE", cores: 8, repReq: 1 },
   // Pure sink kit (no credit refund) — cores only.
-  supply_kit: { price: 140, label: "SUPPLY KIT", cores: 2 },
+  supply_kit: { price: 165, label: "SUPPLY KIT", cores: 2 },
   // Mid-game sink: insurance reprint chip (no heal — pure burn for QoL buff later sessions).
-  reprint_chip: { price: 220, label: "REPRINT CHIP", creditsGrant: 0 },
+  reprint_chip: { price: 260, label: "REPRINT CHIP", creditsGrant: 0 },
 };
 
 interface Shot {
@@ -657,6 +705,8 @@ export class WorldDO {
   private errCount = 0; // soft errors (D1 fail, login reject paths that recover)
   private floodKills = 0;
   private loginCount = 0;
+  /** Prevent stacked persistDirty from alarm + tick (D1 contention / double-write). */
+  private persistInFlight = false;
   private flags: LaunchFlags = launchFlagsFromEnv({});
   // ── economy ledger: credits created/destroyed since the last flush, keyed
   // "flow:kind" — flushed to D1 economy_daily on the persist cadence. Powers
@@ -687,7 +737,11 @@ export class WorldDO {
   private pvpTail: Promise<void> = Promise.resolve();
 
   private zoneName = "d0";
+  /** Horizontal shard index within zoneName (0 = legacy DO name = zoneName). */
+  private instanceId = 0;
   private districtIndex = 0;
+  /** Zone-wide enemy damage mult (campaign progression). Applied on fire. */
+  private zoneEnemyDmgMult = 1;
   private bridgeIndex = -1;
   private diveIndex = -1; // ≥0 when this DO runs an ICE VAULT dive instance (v0–v6)
   private provingVault = false; // THE PROVING — the weekly-affixed group vault
@@ -714,8 +768,10 @@ export class WorldDO {
     // state (in-flight shots, live HP) resets — acceptable on a rare eviction.
     state.blockConcurrencyWhile(async () => {
       const z = await state.storage.get<string | number>("zone");
-      if (typeof z === "string") this.initZone(z); // "safe" or "dN"
-      else if (typeof z === "number") this.initZone("d" + z); // legacy numeric
+      const instRaw = await state.storage.get<number>("inst");
+      const inst = typeof instRaw === "number" && Number.isFinite(instRaw) ? instRaw : 0;
+      if (typeof z === "string") this.initZone(z, inst); // "safe" or "dN" (+ optional shard)
+      else if (typeof z === "number") this.initZone("d" + z, inst); // legacy numeric
       for (const ws of state.getWebSockets()) {
         const att = ws.deserializeAttachment() as SessionAttach | null;
         if (att) await this.resumeSession(ws, att);
@@ -752,15 +808,22 @@ export class WorldDO {
     return resolveOpenSpawn(this.grid, base);
   }
 
+  /** Durable Object name for guild relay + session ownership (`d0` or `d0#2`). */
+  private doKey(): string {
+    return doName(this.zoneName, this.instanceId);
+  }
+
   /** Clamp zone entrance spawn so it never sits inside walls (player radius). */
   private finalizeZoneSpawn() {
     this.spawn = resolveOpenSpawn(this.grid, this.spawn);
   }
 
   /** A DO instance handles exactly one zone — bind it to its district on first hit. */
-  private initZone(zone: string | null) {
+  private initZone(zone: string | null, inst: number | null | undefined = 0) {
     if (this.zoneReady) return;
     this.zoneReady = true;
+    this.instanceId = Math.max(0, Math.floor(Number(inst) || 0));
+    void this.state.storage.put("inst", this.instanceId);
     // THE UNDERLINE — the subway dungeon: an indoor COMBAT zone (no PvP/weather via the
     // interior flag, but it DOES populate a tough HSS garrison + a boss).
     if (isTutorialZone(zone)) {
@@ -780,6 +843,7 @@ export class WorldDO {
       this.zoneName = "subway";
       this.districtIndex = 0;
       this.grid = buildSubway();
+      // Default hub station; travel handoff / login `from` relocates to entry station.
       this.spawn = SUBWAY_SPAWN;
       this.nodes = [];
       this.spawnSubway();
@@ -869,15 +933,27 @@ export class WorldDO {
       this.finalizeZoneSpawn();
       return;
     }
-    // Per-building district interiors ("d{N}i{K}") — walk into any district building. Each is
-    // an FRLG-scale one-screen room; districtIndex is retained so exiting returns to the
-    // parent district's doorstep.
+    // Per-building district interiors ("d{N}i{K}") — one of each venue kind only.
+    // FRLG-scale room; districtIndex retained so exit returns to parent doorstep.
     const bldg = parseBuildingInterior(zone);
     if (bldg) {
       this.interior = true;
       this.zoneName = zone!;
       this.districtIndex = bldg.district;
       this.grid = buildVenueRoom(zone!); // zone-hashed floor plan — must match the client's
+      this.spawn = venueSpawnFor(zone, this.grid);
+      this.nodes = [];
+      void this.state.storage.put("zone", zone);
+      this.finalizeZoneSpawn();
+      return;
+    }
+    // Wilderness trail shack ("w{N}s{K}") — tiny talk-only room off a corridor.
+    const wsh = parseWildernessShack(zone);
+    if (wsh) {
+      this.interior = true;
+      this.zoneName = zone!;
+      this.districtIndex = Math.min(wsh.bridge, DISTRICTS.length - 1);
+      this.grid = buildVenueRoom(zone!);
       this.spawn = venueSpawnFor(zone, this.grid);
       this.nodes = [];
       void this.state.storage.put("zone", zone);
@@ -982,9 +1058,11 @@ export class WorldDO {
     });
   }
 
-  /** Wilderness corridor — patrols + ambient salvage, no boss or territory nodes. */
+  /** Wilderness corridor — threat blended between flanking districts (campaign spine). */
   private spawnBridge(def: BridgeDef) {
-    const pattern = [0, 0, 1, 0, 2, 4, 0, 1];
+    const prog = progressionForBridge(def.fromDistrict);
+    this.zoneEnemyDmgMult = prog.enemyDmgMult;
+    const pattern = prog.kindPattern;
     let i = 0;
     for (const [tx, ty, tier] of def.copPosts) {
       const stx = tx * DISTRICT_SCALE;
@@ -994,8 +1072,11 @@ export class WorldDO {
       const y = sty * TILE + TILE / 2;
       const id = this.nextEnemyId++;
       const kind = tier === "enforcer" ? 4 : pattern[i++ % pattern.length];
-      const e: Enemy = { id, x, y, ox: x, oy: y, hp: ENEMY_ARCHES[kind].hp, maxHp: ENEMY_ARCHES[kind].hp, respawnTick: 0, lastFireTick: 0, kind };
-      this.maybeElite(e, 0.06);
+      const arch = ENEMY_ARCHES[kind] ?? ENEMY_ARCHES[0];
+      // Bridges sit between districts — slightly softer than the hard end
+      const hp = Math.round(arch.hp * prog.enemyHpMult * 0.92);
+      const e: Enemy = { id, x, y, ox: x, oy: y, hp, maxHp: hp, respawnTick: 0, lastFireTick: 0, kind };
+      this.maybeElite(e, prog.eliteChance * 0.85);
       this.enemies.set(id, e);
     }
     for (const [tx, ty] of def.lootPosts) {
@@ -1015,22 +1096,11 @@ export class WorldDO {
     }
   }
 
-  /** Seed a handful of cops at the district's cop-posts (walkable tiles only). The
-   *  archetype is rotated across posts (and biased by district threat) so every zone
-   *  fields a varied garrison: patrol/wasp/lancer/hound. */
+  /** Seed garrison at cop-posts — kinds + power from campaign progression table. */
   private spawnEnemies(def: (typeof DISTRICTS)[number]) {
-    // District identity patterns — each depth feels like a different security doctrine.
-    // 0: street watch + one enforcer; 1: sniper lanes; 2-3: hound packs; 4+: wraith deep.
-    const pattern =
-      this.districtIndex <= 0
-        ? [0, 0, 1, 4, 0, 2] // early: patrol density + one ENFORCER
-        : this.districtIndex === 1
-          ? [0, 1, 5, 5, 2, 4, 1] // midtown: SNIPER lanes + enforcer
-          : this.districtIndex === 2
-            ? [1, 2, 3, 3, 2, 0, 4] // stacks: HOUND packs
-            : this.districtIndex === 3
-              ? [2, 4, 5, 3, 1, 2, 5] // spire: mixed heavy
-              : [2, 3, 4, 5, 6, 6, 2, 0]; // deep core: WRAITH + full bestiary
+    const prog = progressionForDistrict(this.districtIndex);
+    this.zoneEnemyDmgMult = prog.enemyDmgMult;
+    const pattern = prog.kindPattern;
     let i = 0;
     for (const [tx, ty] of def.copPosts) {
       const stx = tx * DISTRICT_SCALE;
@@ -1040,8 +1110,10 @@ export class WorldDO {
       const y = sty * TILE + TILE / 2;
       const id = this.nextEnemyId++;
       const kind = pattern[i++ % pattern.length];
-      const e: Enemy = { id, x, y, ox: x, oy: y, hp: ENEMY_ARCHES[kind].hp, maxHp: ENEMY_ARCHES[kind].hp, respawnTick: 0, lastFireTick: 0, kind };
-      this.maybeElite(e, 0.05 + this.districtIndex * 0.02); // deeper districts field more elites
+      const arch = ENEMY_ARCHES[kind] ?? ENEMY_ARCHES[0];
+      const hp = Math.round(arch.hp * prog.enemyHpMult);
+      const e: Enemy = { id, x, y, ox: x, oy: y, hp, maxHp: hp, respawnTick: 0, lastFireTick: 0, kind };
+      this.maybeElite(e, prog.eliteChance);
       this.enemies.set(id, e);
     }
     // THE CRUCIBLE keeps two sparring drones on staff — a solo runner who walks into the
@@ -1074,8 +1146,8 @@ export class WorldDO {
         }
       }
     }
-    // World boss — a named HSS commander at the post farthest from the player spawn, so it
-    // reads as a destination. It reforms on its own timer after a kill (see the kill handler).
+    // World boss — campaign-scaled commander at the farthest post.
+    const progBoss = progressionForDistrict(this.districtIndex);
     const boss = BOSS_ROSTER[this.districtIndex % BOSS_ROSTER.length];
     const { worldW, worldH } = gridDims(this.grid);
     let lair = { x: worldW - this.spawn.x, y: worldH - this.spawn.y };
@@ -1093,21 +1165,22 @@ export class WorldDO {
       }
     }
     const bid = this.nextEnemyId++;
+    const bossHp = Math.round(boss.hp * progBoss.bossHpMult);
     this.enemies.set(bid, {
       id: bid,
       x: lair.x,
       y: lair.y,
       ox: lair.x,
       oy: lair.y,
-      hp: boss.hp,
-      maxHp: boss.hp,
+      hp: bossHp,
+      maxHp: bossHp,
       respawnTick: 0,
       lastFireTick: 0,
       kind: BOSS_KIND,
       boss: true,
       name: boss.name,
       tint: boss.tint,
-      baseMaxHp: boss.hp,
+      baseMaxHp: bossHp,
       phaseIdx: 0,
       engagedTick: 0,
       lastAoeTick: 0,
@@ -1115,48 +1188,79 @@ export class WorldDO {
     });
   }
 
-  /** Seed THE UNDERLINE: a tough HSS garrison along the platforms + a named subway boss. */
+  /**
+   * Seed THE UNDERLINE — multi-direction tunnels.
+   * `post.depth` is campaign threat (0..7+): soft near hub / plaza, lethal on
+   * lines toward high campaign districts (wastes / kernel).
+   */
   private spawnSubway() {
-    const posts: [number, number][] = [
-      [14, 7],
-      [26, 8],
-      [14, 15],
-      [26, 16],
-      [14, 23],
-      [26, 24],
-      [34, 15],
-    ];
-    const pattern = [4, 5, 6, 2, 3, 6, 4]; // ENFORCER/SNIPER/WRAITH/LANCER/HOUND — deep-tier
+    // Tunnels have no single district dmg mult: threat varies per post along the
+    // line, so each enemy carries its own (e.dmgMult) instead of one zone value.
+    this.zoneEnemyDmgMult = 1;
+    const posts = subwayEnemyPosts();
     let i = 0;
-    for (const [tx, ty] of posts) {
-      if (isWall(this.grid[ty]?.[tx])) continue;
-      const x = tx * TILE + TILE / 2;
-      const y = ty * TILE + TILE / 2;
-      const kind = pattern[i++ % pattern.length];
+    let maxThreat = 0;
+    for (const post of posts) {
+      if (isWall(this.grid[post.ty]?.[post.tx])) continue;
+      const x = post.tx * TILE + TILE / 2;
+      const y = post.ty * TILE + TILE / 2;
+      // post.depth = campaign threat rung
+      const threat = post.depth;
+      maxThreat = Math.max(maxThreat, threat);
+      const tier = subwayThreatTier(threat);
+      const kinds = SUBWAY_TIER_KINDS[tier];
+      const kind = kinds[i++ % kinds.length];
       const id = this.nextEnemyId++;
-      const e: Enemy = { id, x, y, ox: x, oy: y, hp: ENEMY_ARCHES[kind].hp, maxHp: ENEMY_ARCHES[kind].hp, respawnTick: 0, lastFireTick: 0, kind };
-      this.maybeElite(e, 0.12); // THE UNDERLINE runs hot
+      const arch = ENEMY_ARCHES[kind] ?? ENEMY_ARCHES[0];
+      const scale = subwayScaleFromThreat(threat);
+      const hp = Math.round(arch.hp * scale.hpMult);
+      const e: Enemy = {
+        id,
+        x,
+        y,
+        ox: x,
+        oy: y,
+        hp,
+        maxHp: hp,
+        respawnTick: 0,
+        lastFireTick: 0,
+        kind,
+        dmgMult: scale.dmgMult,
+      };
+      // Elites only on mid+ lines — hub boarding stays clean
+      if (scale.eliteChance > 0) this.maybeElite(e, scale.eliteChance);
       this.enemies.set(id, e);
     }
-    const boss = BOSS_ROSTER[1];
-    const bx = 34 * TILE + TILE / 2;
-    const by = 23 * TILE + TILE / 2;
+    // Deep-line boss scales with max campaign threat on the map (~kernel)
+    const deepProg = progressionForDistrict(Math.min(7, Math.floor(maxThreat)));
+    const boss = BOSS_ROSTER[Math.min(BOSS_ROSTER.length - 1, 1 + Math.floor(maxThreat / 2))];
+    const bt = subwayBossTile();
+    // Never plant the boss in solid rock if the spur layout shifts.
+    let bx = bt.tx * TILE + TILE / 2;
+    let by = bt.ty * TILE + TILE / 2;
+    if (isWall(this.grid[bt.ty]?.[bt.tx])) {
+      const open = resolveSubwayOpen(this.grid, bx, by);
+      bx = open.x;
+      by = open.y;
+    }
     const bid = this.nextEnemyId++;
+    // Deep-line boss — campaign-scaled so rookies don't free-farm the Kernel spur.
+    const bossHp = Math.round(boss.hp * Math.max(1.6, deepProg.bossHpMult * 1.35));
     this.enemies.set(bid, {
       id: bid,
       x: bx,
       y: by,
       ox: bx,
       oy: by,
-      hp: boss.hp,
-      maxHp: boss.hp,
+      hp: bossHp,
+      maxHp: bossHp,
       respawnTick: 0,
       lastFireTick: 0,
       kind: BOSS_KIND,
       boss: true,
       name: "UNDERLINE WARDEN",
       tint: boss.tint,
-      baseMaxHp: boss.hp,
+      baseMaxHp: bossHp,
       phaseIdx: 0,
       engagedTick: 0,
       lastAoeTick: 0,
@@ -1487,11 +1591,15 @@ export class WorldDO {
 
   async fetch(req: Request): Promise<Response> {
     const url = new URL(req.url);
-    this.initZone(url.searchParams.get("zone"));
+    this.initZone(url.searchParams.get("zone"), parseInstParam(url.searchParams.get("inst")));
     // Ops: a lightweight per-zone metrics probe (no upgrade) for monitoring.
     if (url.pathname === "/stats") {
       return new Response(JSON.stringify(this.getStats()), {
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          "access-control-allow-origin": "*",
+          "cache-control": "no-store",
+        },
       });
     }
     // Cross-zone Cell chat relay — internal DO→DO only (same Worker script).
@@ -1628,6 +1736,7 @@ export class WorldDO {
       return;
     }
     if (msg.t === "leave") return this.onLeave(ws);
+    if (msg.t === "respawn") return void this.onRespawnChoice(ws, msg);
     if (msg.t === "input") return this.onInput(ws, msg);
     if (msg.t === "fire") return this.onFire(ws, msg);
     if (msg.t === "dash") return this.onDash(ws, msg);
@@ -1880,22 +1989,17 @@ export class WorldDO {
     const ids = [...this.players.keys()];
     if (ids.length === 0) return;
     const now = Date.now();
-    const zone = this.zoneName;
+    // session_zone stores DO key (zone or zone#N) so Cell chat can reach the right shard.
+    const zone = this.doKey();
     try {
-      // Chunk to avoid huge batches on crowded hubs.
-      for (let i = 0; i < ids.length; i += 25) {
-        const slice = ids.slice(i, i + 25);
-        await Promise.all(
-          slice.map((id) =>
-            this.env.DB.prepare("UPDATE players SET session_zone = ?, session_at = ? WHERE id = ?")
-              .bind(zone, now, id)
-              .run()
-              .catch(() => {}),
-          ),
-        );
+      // D1 batch is one round-trip per chunk — far cheaper than N parallel HTTP-style prepares.
+      const stmt = this.env.DB.prepare("UPDATE players SET session_zone = ?, session_at = ? WHERE id = ?");
+      for (let i = 0; i < ids.length; i += 40) {
+        const slice = ids.slice(i, i + 40);
+        await this.env.DB.batch(slice.map((id) => stmt.bind(zone, now, id)));
       }
     } catch {
-      /* pre-migration */
+      /* pre-migration or batch unsupported edge */
     }
   }
 
@@ -1906,8 +2010,10 @@ export class WorldDO {
   private async guildRelayCrossZone(gid: number, msg: unknown, fromId: string): Promise<void> {
     try {
       // Keep sender's session_zone hot so other zones can reach us next message.
+      // Value is DO key (zone or zone#N) — not only the logical map zone.
+      const selfKey = this.doKey();
       void this.env.DB.prepare("UPDATE players SET session_zone = ?, session_at = ? WHERE id = ?")
-        .bind(this.zoneName, Date.now(), fromId)
+        .bind(selfKey, Date.now(), fromId)
         .run()
         .catch(() => {});
 
@@ -1924,7 +2030,7 @@ export class WorldDO {
              AND p.session_zone IS NOT NULL AND p.session_zone != ''
              AND p.session_zone != ?`,
         )
-          .bind(gid, this.zoneName)
+          .bind(gid, selfKey)
           .all<{ zone: string }>();
         zones = (results ?? []).map((r) => r.zone).filter(Boolean);
         this.guildZoneCache.set(gid, { zones, at: Date.now() });
@@ -1932,15 +2038,22 @@ export class WorldDO {
       if (zones.length === 0) return;
       const payload = JSON.stringify({ guildId: gid, fromId, msg });
       await Promise.all(
-        zones.map(async (zone) => {
+        zones.map(async (doKey) => {
           const hop = async () => {
-            const stub = this.env.WORLD.get(this.env.WORLD.idFromName(zone));
+            // session_zone is the DO name; logical zone for init is without #inst.
+            const hash = doKey.lastIndexOf("#");
+            const logical = hash > 0 ? doKey.slice(0, hash) : doKey;
+            const instQ = hash > 0 ? doKey.slice(hash + 1) : "0";
+            const stub = this.env.WORLD.get(this.env.WORLD.idFromName(doKey));
             const res = await stub.fetch(
-              new Request(`https://world/guild-relay?zone=${encodeURIComponent(zone)}`, {
-                method: "POST",
-                headers: { "content-type": "application/json" },
-                body: payload,
-              }),
+              new Request(
+                `https://world/guild-relay?zone=${encodeURIComponent(logical)}&inst=${encodeURIComponent(instQ)}`,
+                {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: payload,
+                },
+              ),
             );
             if (!res.ok) throw new Error(`relay ${res.status}`);
           };
@@ -2973,6 +3086,8 @@ export class WorldDO {
     let id: string;
     let walletSignedIn = false;
     if (proof?.wallet || proof?.sig) {
+      // Prefer a valid signature when present; if it fails (stale clock / near-expiry),
+      // fall through to the device session so zone travel never hard-requires a re-sign.
       const verified =
         proof.wallet && proof.sig && Number.isFinite(proof.ts)
           ? verifyWalletLogin({ wallet: proof.wallet, sig: proof.sig, ts: proof.ts! })
@@ -2981,7 +3096,7 @@ export class WorldDO {
         id = verified;
         walletSignedIn = true;
       } else if (proof.wallet && proof.session) {
-        // Session resume (zone travel) — no MetaMask popup.
+        // Session resume (zone travel) — no wallet popup.
         const wid = walletPlayerId(proof.wallet);
         if (!wid) {
           this.send(ws, { t: "sys", text: "wallet sign-in failed — bad wallet address" });
@@ -2994,6 +3109,18 @@ export class WorldDO {
         }
         id = wid;
         // secret match checked after loadPlayer below
+      } else if (proof.wallet && !proof.session) {
+        // Signature missing/stale and no device session — ask client to present session.
+        this.send(ws, {
+          t: "sys",
+          text: "wallet session missing — reconnect once from the title screen (zone travel should not require this)",
+        });
+        try {
+          ws.close(4001, "auth");
+        } catch {
+          /* already closing */
+        }
+        return;
       } else {
         this.send(ws, { t: "sys", text: "wallet sign-in failed — bad signature or stale request" });
         try {
@@ -3021,42 +3148,43 @@ export class WorldDO {
       if (!presented) {
         return reject("guest save requires a device key — enable storage / cookies for this site, then retry");
       }
-      // Harness leftovers: smoke.mjs binds `smk-<name>`. Those are not real device keys —
-      // allow a real client UUID to reclaim the callsign (was locking players out of common names).
+      // Harness leftovers: smoke.mjs binds `smk-<name>` — not real device keys; allow reclaim.
       const harnessSecret = !!p.secret && (p.secret.startsWith("smk-") || p.secret.length < 16);
       const mismatch = !!p.secret && p.secret !== presented && !harnessSecret;
       if (mismatch) {
-        // The device-secret lock exists ONLY to stop someone hijacking an established
-        // guest's assets (house / credits / loot). A fresh or barely-started save has
-        // nothing to steal, so a mismatch there is almost always the SAME player after a
-        // storage wipe — new browser, cleared cookies, incognito, or the embedded webview
-        // that doesn't persist localStorage. Bricking a no-wallet newcomer at the tutorial
-        // door is pure downside, so only keep the hard lock when the save is worth
-        // protecting; otherwise let the new device rebind and take over.
-        if (await this.guestSaveHasAssets(p)) {
-          return reject("that callsign is already saved on another device — pick a new callsign, or link a wallet to move it");
-        }
+        // PERMANENT guest memory: never rebind over an existing device secret.
+        // The only way to remove this runner is NEW RUNNER → /player/retire (with secret).
+        // Link a Solana wallet for a portable identity that is never deleted.
+        return reject(
+          "that callsign is already saved on another device — CONTINUE on the original device, pick a new callsign (NEW RUNNER), or link a Solana wallet for permanent progress",
+        );
       }
-      if (!p.secret || harnessSecret || mismatch) {
-        // Bind on first claim, rebind a harness row, or rebind an empty save onto the
-        // presenting device (the returning-after-wipe case cleared above).
+      if (!p.secret || harnessSecret) {
+        // First claim or reclaim smoke harness — bind this device.
         p.secret = presented;
         await this.env.DB.prepare("UPDATE players SET secret = ? WHERE id = ?").bind(presented, id).run();
       }
     } else {
       const session = (proof?.session ?? "").slice(0, 64) || null;
       if (walletSignedIn) {
-        // Fresh MetaMask signature: bind/refresh device session so later zones skip re-sign.
+        // Fresh wallet signature: bind/refresh device session so later zones skip re-sign.
         if (session) {
           p.secret = session;
-          await this.env.DB.prepare("UPDATE players SET secret = ? WHERE id = ?").bind(session, id).run();
+          try {
+            await this.env.DB.prepare("UPDATE players SET secret = ? WHERE id = ?").bind(session, id).run();
+          } catch {
+            /* pre-migration / transient — in-memory secret still gates this process */
+          }
         }
       } else {
-        // Session-only resume: must match the secret bound on a prior signed login.
+        // Session-only resume (zone travel / reconnect): must match the secret bound
+        // on a prior signed login. Never open a wallet UI from the server side.
         if (!session || !p.secret || p.secret !== session) {
           this.send(ws, {
             t: "sys",
-            text: "wallet session expired — sign in once with MetaMask from the title screen",
+            text: !p.secret
+              ? "wallet session not bound yet — sign in once from the title screen, then zone travel stays silent"
+              : "wallet session mismatch — sign in once from the title screen (device storage may have been cleared)",
           });
           try {
             ws.close(4001, "auth");
@@ -3066,63 +3194,40 @@ export class WorldDO {
           return;
         }
       }
-      // Wallet login: if this device has a guest secret for the same callsign, merge
-      // guest progress (credits / look / campaign) into the wallet account once.
-      // Lets offline players claim their runner when they link a wallet.
-      const presented = (proof?.secret ?? "").slice(0, 64) || null;
-      if (presented) {
-        const guestId = name.toLowerCase().replace(/[^a-z0-9_-]/g, "") || "";
-        if (guestId && !guestId.startsWith("__") && guestId !== id) {
-          try {
-            const guest = await this.loadPlayer(guestId, name, fac);
-            if (guest.secret && guest.secret === presented) {
-              // only merge into a fresh wallet shell (no look / low credits)
-              const walletFresh = !p.look && (p.credits ?? 0) < 50;
-              if (walletFresh && (guest.look || (guest.credits ?? 0) > (p.credits ?? 0))) {
-                if (guest.look) p.look = guest.look;
-                if ((guest.credits ?? 0) > (p.credits ?? 0)) p.credits = guest.credits;
-                if ((guest.cores ?? 0) > (p.cores ?? 0)) p.cores = guest.cores;
-                if (guest.campaign) p.campaign = guest.campaign;
-                if (guest.classId) p.classId = guest.classId;
-                p.dirty = true;
-                this.send(ws, {
-                  t: "sys",
-                  text: "◈ offline runner claimed onto this wallet — progress merged",
-                });
-              }
-            }
-          } catch {
-            /* guest load failed — ignore */
-          }
-        }
-      }
+      // Guest→wallet binding is explicit via POST /player/link-wallet (title screen).
+      // Do not silently merge here — that could attach the wrong callsign mid-session.
     }
     p.faction = fac;
-    // Hub soft-cap: if METRO CITY is full, route newcomers to d0 (existing session may stay).
-    if (
-      this.zoneName === "safe" &&
-      this.sessions.size >= this.flags.hubCap &&
-      !this.players.has(id)
-    ) {
-      this.send(ws, {
-        t: "sys",
-        text: `HUB AT CAPACITY (${this.flags.hubCap}) — routing you to downtown (d0). Deploy from there.`,
-      });
-      this.send(ws, { t: "redirect", zone: "d0", text: "hub full" });
-      try {
-        ws.close(1000, "hub_cap");
-      } catch {
-        /* noop */
+    // Instance hard-cap (race with Worker balancer): rebalance within the same zone
+    // so the front door can pick a less-loaded shard. Existing residents stay put.
+    {
+      const hard = hardCapFor(this.zoneName, this.env, this.flags);
+      if (this.sessions.size >= hard && !this.players.has(id)) {
+        this.send(ws, {
+          t: "sys",
+          text: `${this.zoneName.toUpperCase()} instance full (${hard}) — finding another slice…`,
+        });
+        this.send(ws, {
+          t: "redirect",
+          zone: this.zoneName,
+          rebalance: true,
+          text: "instance full",
+        });
+        try {
+          ws.close(1000, "instance_full");
+        } catch {
+          /* noop */
+        }
+        return;
       }
-      return;
     }
-    // Claim this zone as the sole active session writer for this player. Older zone
+    // Claim this DO as the sole active session writer for this player. Older zone
     // DOs lose the right to absolute-overwrite inventory/balances on their next persist.
     p.sessionAt = Date.now();
     p.sessionValid = true;
     try {
       await this.env.DB.prepare("UPDATE players SET session_zone = ?, session_at = ? WHERE id = ?")
-        .bind(this.zoneName, p.sessionAt, id)
+        .bind(this.doKey(), p.sessionAt, id)
         .run();
     } catch {
       /* pre-migration: session columns absent — degrade to same-zone kick only */
@@ -3142,50 +3247,67 @@ export class WorldDO {
     this.ownerSocket.set(id, ws);
     // Pull any bridge deposits/withdrawals that hit D1 while this row was cold / offline.
     await this.pullExternalBalances(p);
-    // warm-path spawn sanitation: an in-memory player can be wall-locked too
-    // (loadPlayer's check only covers cold loads)
-    if (
-      tileIsWall(p.x, p.y, this.grid) ||
-      (tileIsWall(p.x + TILE, p.y, this.grid) &&
-        tileIsWall(p.x - TILE, p.y, this.grid) &&
-        tileIsWall(p.x, p.y + TILE, this.grid) &&
-        tileIsWall(p.x, p.y - TILE, this.grid))
-    ) {
-      p.x = this.spawn.x;
-      p.y = this.spawn.y;
-      p.dirty = true;
-    }
     // class selects the signature ability (validated against the known roster)
     if (proof?.classId && CLASS_IDS.has(proof.classId)) {
       p.classId = proof.classId;
       p.dirty = true;
     }
-    // Zone handoff: always place at the correct entry spawn for this room.
-    // (Venue-sized interiors used to inherit district/safehouse coords via a weak
-    // spawnPointForTravel match and park the runner outside the walls.)
-    if (proof?.from || isVenueSizedZone(this.zoneName) || isSafehouseSizedInterior(this.zoneName)) {
+    // POSITION RULES
+    //  • Intentional zone travel: client sends `from` → place at the trail/door entry.
+    //  • Subway: `from` selects the station matching the surface zone you dropped in from.
+    //  • Same-zone reconnect / hibernation resume: NEVER relocate — keep in-memory or D1 x,y.
+    //  • Cold login without `from`: loadPlayer already restored D1 coords when zone matches.
+    //  • Death default reprint stays at last standing pos; CITY START is an explicit choice.
+    // Was broken: client defaulted `from` to "d0" on every OnlineScene create, so reconnect
+    // always looked like a trail handoff and forced door-mat spawn.
+    const isTravelHandoff = !!(proof?.from && String(proof.from).trim());
+    if (isTravelHandoff && this.zoneName === "subway") {
+      const raw = subwaySpawnForEntry(proof?.from);
+      const s = resolveSubwayOpen(this.grid, raw.x, raw.y);
+      p.x = s.x;
+      p.y = s.y;
+      p.dirty = true;
+      // Do NOT mutate zone-global this.spawn — last traveler would poison
+      // cold/resume defaults for everyone else on this DO.
+    } else if (isTravelHandoff) {
       const def = this.bridgeIndex >= 0 ? undefined : DISTRICTS[this.districtIndex];
       const s = spawnPointForTravel(this.grid, this.zoneName, proof?.from, def, this.spawn);
       p.x = s.x;
       p.y = s.y;
       p.dirty = true;
-    } else if (
-      tileIsWall(p.x, p.y, this.grid) ||
-      p.x < 0 ||
-      p.y < 0 ||
-      p.x >= gridDims(this.grid).worldW ||
-      p.y >= gridDims(this.grid).worldH
-    ) {
-      p.x = this.spawn.x;
-      p.y = this.spawn.y;
-      p.dirty = true;
+    } else {
+      // Resume path: only fix invalid geometry (wall / OOB / radius collision),
+      // never reset to zone origin when already free.
+      const dims = gridDims(this.grid);
+      const oob = p.x < 0 || p.y < 0 || p.x >= dims.worldW || p.y >= dims.worldH;
+      // collides() = player-radius box; tileIsWall alone missed half-in-wall roof seats.
+      const stuck = oob || collides(p.x, p.y, this.grid);
+      if (stuck) {
+        const open = resolveOpenSpawn(this.grid, { x: p.x, y: p.y });
+        if (collides(open.x, open.y, this.grid)) {
+          p.x = this.spawn.x;
+          p.y = this.spawn.y;
+        } else {
+          p.x = open.x;
+          p.y = open.y;
+        }
+        p.dirty = true;
+      }
     }
     // Hard guarantee: final position never collides with walls (player radius).
+    // Covers travel handoffs, subway station pads, and D1 resume points.
     {
       const open = resolveOpenSpawn(this.grid, { x: p.x, y: p.y });
-      if (open.x !== p.x || open.y !== p.y) {
+      if (open.x !== p.x || open.y !== p.y || collides(p.x, p.y, this.grid)) {
         p.x = open.x;
         p.y = open.y;
+        p.dirty = true;
+      }
+      // Still colliding after resolve (degenerate grid) → zone spawn, then resolve again.
+      if (collides(p.x, p.y, this.grid)) {
+        const fallback = resolveOpenSpawn(this.grid, this.spawn);
+        p.x = fallback.x;
+        p.y = fallback.y;
         p.dirty = true;
       }
     }
@@ -3226,11 +3348,15 @@ export class WorldDO {
       tickMs: NET_TICK_MS,
       world: { w: gridDims(this.grid).worldW, h: gridDims(this.grid).worldH },
       protocol: PROTOCOL_VERSION,
+      build: this.env.METRO_BUILD || undefined,
       look: p.look,
       lookLocked: lookLocked || !!p.look,
       fragments: p.fragments,
       // Always send boolean so clients can distinguish missing field vs false.
       god: !!p.godMode,
+      // Sticky instance for reconnect / party affinity (Worker load-aware /ws).
+      inst: this.instanceId,
+      zone: this.zoneName,
     });
     if (p.godMode) {
       // Sync and non-blocking — must not delay the rest of login / first snapshots.
@@ -3284,8 +3410,10 @@ export class WorldDO {
       this.sendTutorialState(p);
     } else {
       this.ensureStarterKit(p);
+      // Journal only on zone entry — do NOT re-push the full story/uplink popup.
+      // That was firing on every door/district hop and felt like spam. Story beats
+      // still send when a stage advances, the FIXER is engaged, or meltdown fires.
       this.sendCampaignJournal(ws, p);
-      this.sendCampaignBeat(ws, p);
       if (this.zoneName === "safe") {
         const nearHub =
           Math.hypot(p.x - CITY_HUB_SPAWN.x, p.y - CITY_HUB_SPAWN.y) < 96 ||
@@ -3341,45 +3469,6 @@ export class WorldDO {
     await this.markDiscovered(ws, id, organic);
     this.ensureTick();
     await this.ensureSupervisor();
-  }
-
-  /**
-   * True when a guest save holds real, hijackable value worth keeping the device lock on.
-   * Fresh or barely-started saves return false so a returning device can rebind the callsign
-   * after a storage wipe (new browser / cleared cookies / non-persistent webview) instead of
-   * being locked out forever — the exact wall a no-wallet newcomer hits at the tutorial door.
-   *
-   * Signals are progression state, NOT the starter grant: every new guest is handed
-   * ~100₵, a few cores, and two starter items, and may reach the city before storage
-   * is durable. A callsign should only hard-lock once there is actual progress/value
-   * to protect: quest state, levels, banked credits, fragments, weekly flags, stash,
-   * or property. Only consulted on a secret mismatch, so the D1 lookups are off the
-   * hot path.
-   */
-  private async guestSaveHasAssets(p: PlayerState): Promise<boolean> {
-    if ((p.level ?? 1) >= 2) return true; // real grind, not a first-kill fluke
-    if ((p.credits ?? 0) >= 1000) return true; // banked wealth well beyond the ~100₵ starter grant
-    if ((p.metro ?? 0) >= 10) return true; // token balance is real value
-    if ((p.cores ?? 0) >= 40) return true; // substantial forge material
-    if (p.stash.length > 0) return true; // anything moved to a lockbox is intentional value
-    if (p.inventory.length > 4) return true; // more than starter kit
-    if (Object.keys(p.equipped).length > 2) return true; // geared beyond starters
-    if (p.fragments.length > 0) return true; // recovered story memory / dive reward
-    if (p.campaign.activeId || p.campaign.completed.length > 0 || p.campaign.flags.size > 0) return true;
-    if (p.cosmeticsOwned.size > 0) return true;
-    try {
-      const est = await this.env.DB.prepare("SELECT 1 FROM estates WHERE owner = ? LIMIT 1").bind(p.id).first();
-      if (est) return true; // owns a home — the exact thing the lock protects
-    } catch {
-      /* estates table absent in some test DBs — treat as no property */
-    }
-    try {
-      const listing = await this.env.DB.prepare("SELECT 1 FROM auctions WHERE seller = ? AND status='open' LIMIT 1").bind(p.id).first();
-      if (listing) return true;
-    } catch {
-      /* market table absent */
-    }
-    return false;
   }
 
   /** Build a player's runtime state, loading durable fields (pos/credits/xp/cores/
@@ -3471,25 +3560,23 @@ export class WorldDO {
       tutorialStep = row.tutorial_step ?? 0;
       tutorialMode = row.tutorial_mode === "full" ? "full" : "quick";
       if (this.inTutorial() && tutorialDone) {
+        // Finished drill but still connecting to tutorial DO → hub coords fallback
+        // (client usually redirects out of the yard).
         x = CITY_HUB_SPAWN.x;
         y = CITY_HUB_SPAWN.y;
       } else if (row.zone === this.zoneName) {
+        // Exact resume: same zone → last standing position (reconnect / page reload).
         x = row.x;
         y = row.y;
-        // sanitize: a save can land in (or be sealed inside) geometry — if the spot
-        // itself is wall, or every one-tile step out of it is wall, respawn at the
-        // zone spawn instead of trapping the player forever
-        const stuck =
-          tileIsWall(x, y, this.grid) ||
-          (tileIsWall(x + TILE, y, this.grid) &&
-            tileIsWall(x - TILE, y, this.grid) &&
-            tileIsWall(x, y + TILE, this.grid) &&
-            tileIsWall(x, y - TILE, this.grid));
-        if (stuck) {
-          x = this.spawn.x;
-          y = this.spawn.y;
+        // Player-radius collision — not just the centre tile (half-in-wall seats).
+        if (collides(x, y, this.grid)) {
+          const open = resolveOpenSpawn(this.grid, { x, y });
+          x = open.x;
+          y = open.y;
         }
       }
+      // Different zone without travel `from` → zone default spawn (map deploy / intentional
+      // zone pick). Client resume always targets row.zone so this path is rare.
     } else {
       await this.insertNewPlayer(id, name, x, y);
     }
@@ -3579,7 +3666,7 @@ export class WorldDO {
     } catch {
       /* table may not exist before migration */
     }
-    const mods = deriveMods(equipped);
+    const mods = deriveMods(equipped, levelForXp(xp));
     const maxHp = PLAYER_HP + Math.round(mods.hpAdd);
     return {
       id,
@@ -3595,6 +3682,9 @@ export class WorldDO {
       hp: maxHp,
       dead: false,
       respawnTick: 0,
+      deathStreak: 0,
+      deathStreakTick: 0,
+      pvpDeath: false,
       pvpSafeUntil: 0,
       pvpInArena: false,
       pvpEscrow: 0,
@@ -3704,6 +3794,9 @@ export class WorldDO {
     });
   }
 
+  /** Last story-popup fingerprint per player (throttle re-brief spam). */
+  private lastStoryBeatKey = new Map<string, { key: string; at: number }>();
+
   /** Push the current campaign beat (stage journal + uplink line) to one client. */
   private sendCampaignBeat(ws: WebSocket, p: PlayerState) {
     this.sendCampaignJournal(ws, p);
@@ -3716,6 +3809,14 @@ export class WorldDO {
         (s.on.type === "talk"
           ? `THE FIXER: ${s.journal}`
           : `THE FIXER: ${s.objective}. ${s.journal}`);
+      // Throttle identical re-briefs (talk/engage spam) to once per 45s per stage.
+      const beatKey = `${q.id}:${s.id}:${p.campaign.progress}`;
+      const prev = this.lastStoryBeatKey.get(p.id);
+      const now = Date.now();
+      if (prev && prev.key === beatKey && now - prev.at < 45_000) {
+        return; // journal already updated; skip popup
+      }
+      this.lastStoryBeatKey.set(p.id, { key: beatKey, at: now });
       this.send(ws, {
         t: "story",
         quest: q.name,
@@ -3743,29 +3844,129 @@ export class WorldDO {
       });
       return;
     }
+    const melted = p.campaign.hasFlag(MELTDOWN_VICTORY_FLAG);
     this.send(ws, {
       t: "story",
       quest: "THE AWAKENING",
-      stage: "done",
-      title: "Recurrence",
-      text: CAMPAIGN_DONE_TEXT,
-      journal: CAMPAIGN_DONE_TEXT,
-      objective: "—",
+      stage: melted ? "meltdown" : "done",
+      title: melted ? "MELTDOWN" : "Recurrence",
+      text: melted ? MELTDOWN_VICTORY_TEXT : CAMPAIGN_DONE_TEXT,
+      journal: melted ? MELTDOWN_VICTORY_TEXT : CAMPAIGN_DONE_TEXT,
+      objective: melted ? "CITY START · bag kept · keep running" : "—",
       done: true,
+      meltdown: melted,
     });
   }
 
   private grantCampaignReward(p: PlayerState, reward: QuestReward) {
-    p.xp += reward.xp;
-    p.level = levelForXp(p.xp);
+    this.grantXp(p, reward.xp);
     const paid = this.grantEmit(p, "quest", reward.currency);
     this.sendTo(p.id, { t: "sys", text: `◈ quest complete — +${reward.xp} XP  ₵${paid}` });
+  }
+
+  /**
+   * Personal meltdown victory — campaign climax for ONE player.
+   * Does NOT wipe D1, other players, seasons, or the shared world.
+   * Heals the runner and redirects them to METRO CITY hub (CITY START).
+   */
+  private async personalMeltdownVictory(p: PlayerState) {
+    if (p.campaign.hasFlag(MELTDOWN_VICTORY_FLAG)) return;
+    p.campaign.flags.add(MELTDOWN_VICTORY_FLAG);
+    p.dead = false;
+    p.hp = p.maxHp;
+    p.respawnTick = this.tick;
+    p.pvpDeath = false;
+    p.deathStreak = 0;
+    p.deathStreakTick = 0;
+    p.pvpInArena = false;
+    p.pvpSafeUntil = this.tick + ticks(4000);
+    p.iframeUntilTick = this.tick + ticks(2000);
+    // Park on hub pad so the next zone's loadPlayer lands at CITY START.
+    const hub = this.zoneName === "safe" ? this.spreadSpawn(CITY_HUB_SPAWN, p.id) : CITY_HUB_SPAWN;
+    p.x = hub.x;
+    p.y = hub.y;
+    p.dirty = true;
+
+    this.sendTo(p.id, {
+      t: "story",
+      quest: "THE AWAKENING",
+      stage: "meltdown",
+      title: "MELTDOWN",
+      text: MELTDOWN_VICTORY_TEXT,
+      journal: MELTDOWN_VICTORY_TEXT,
+      objective: "Respawning at CITY START · progress kept",
+      done: true,
+      meltdown: true,
+    });
+    this.sendTo(p.id, {
+      t: "sys",
+      text: "◈ MELTDOWN — personal victory · YOU reboot at CITY START · other runners are untouched",
+    });
+    for (const [sock, id] of this.sessions) {
+      if (id === p.id) this.sendCampaignJournal(sock, p);
+    }
+
+    // Already in hub: snap in-place, no zone handoff.
+    if (this.zoneName === "safe") {
+      p.dirty = true;
+      return;
+    }
+
+    try {
+      if (p.pvpEscrow > 0) await this.refundPvpEscrow(p, "meltdown victory");
+    } catch {
+      /* best effort */
+    }
+    try {
+      await this.upsertPlayer(p, { zoneOverride: "safe" });
+    } catch {
+      /* best effort */
+    }
+
+    // Kick only this player's sockets to safe — never broadcast, never wipe others.
+    const sockets: WebSocket[] = [];
+    for (const [sock, id] of this.sessions) if (id === p.id) sockets.push(sock);
+    for (const sock of sockets) {
+      try {
+        this.send(sock, {
+          t: "redirect",
+          zone: "safe",
+          text: "◈ MELTDOWN → CITY START · bag kept · the sprawl continues for everyone else",
+        });
+      } catch {
+        /* ignore */
+      }
+      try {
+        this.send(sock, { t: "bye" });
+      } catch {
+        /* ignore */
+      }
+      this.sessions.delete(sock);
+      if (this.ownerSocket.get(p.id) === sock) this.ownerSocket.delete(p.id);
+      try {
+        sock.close(1000, "meltdown_victory");
+      } catch {
+        /* ignore */
+      }
+    }
+    this.players.delete(p.id);
   }
 
   /** Advance the personal campaign when a stage completes. */
   private campaignBeat(p: PlayerState) {
     const finished = p.campaign.tickAfterAdvance();
-    if (finished) this.grantCampaignReward(p, finished.reward);
+    if (finished) {
+      this.grantCampaignReward(p, finished.reward);
+      // THE AWAKENING (continue_q) or full campaign clear → personal meltdown victory.
+      // Per-player only — never wipes the server or other runners.
+      const shouldMelt =
+        finished.id === "continue_q" || (p.campaign.done && !p.campaign.hasFlag(MELTDOWN_VICTORY_FLAG));
+      if (shouldMelt) {
+        p.dirty = true;
+        void this.personalMeltdownVictory(p);
+        return;
+      }
+    }
     p.dirty = true;
     for (const [sock, id] of this.sessions) if (id === p.id) this.sendCampaignBeat(sock, p);
   }
@@ -3856,8 +4057,7 @@ export class WorldDO {
         // payout — everyone alive in the district rides the event out together
         for (const p of this.players.values()) {
           if (p.dead) continue;
-          p.xp += ev.def.reward.xp;
-          p.level = levelForXp(p.xp);
+          this.grantXp(p, ev.def.reward.xp);
           const paid = this.grantEmit(p, "event", ev.def.reward.currency);
           this.campaignEvent(p, "event"); // SKYLINK BREAK's storm beat — survived together
           this.sendTo(p.id, { t: "sys", text: `◈ ${ev.def.name} weathered — +${ev.def.reward.xp} XP  ₵${paid}` });
@@ -3935,8 +4135,7 @@ export class WorldDO {
     if (isNew) {
       p.fragments.push(fid);
       this.grantEmit(p, "fragment", 150);
-      p.xp += 60;
-      p.level = levelForXp(p.xp);
+      this.grantXp(p, 60);
       p.dirty = true;
       this.bumpStat(p, "dives", 1);
       // the vault's cache — a guaranteed roll whose rarity floor rises with depth
@@ -3960,8 +4159,7 @@ export class WorldDO {
       if (!p.campaign.hasFlag(flag)) {
         p.campaign.flags.add(flag);
         this.grantEmit(p, "quest", 750);
-        p.xp += 220;
-        p.level = levelForXp(p.xp);
+        this.grantXp(p, 220);
         p.dirty = true;
         this.bumpStat(p, `wk${wk % 100}`, 1);
         if (p.inventory.length < INVENTORY_CAP) {
@@ -4097,8 +4295,18 @@ export class WorldDO {
     p.y = hub.y;
     this.ensureStarterKit(p);
     p.dirty = true;
-    // Redirect + close FIRST so a slow/failed D1 upsert never leaves the client
-    // stuck in the drill yard after SKIP (was: await upsert → no redirect on throw).
+    // Persist tutorial_done BEFORE redirect/close. Session-gated upsert after the
+    // client claims `safe` used to apply 0 rows → drill comes back / starter kit lost.
+    try {
+      await this.env.DB.prepare(
+        "UPDATE players SET tutorial_done = 1, tutorial_step = ?, tutorial_mode = ?, zone = 'safe', x = ?, y = ? WHERE id = ?",
+      )
+        .bind(p.tutorialStep, mode, p.x, p.y, p.id)
+        .run();
+    } catch (e) {
+      console.error("graduateTutorial early persist failed", e);
+    }
+    // Redirect + close so a slow full upsert never leaves the client stuck in the yard.
     const sock = ws ?? this.socketForPlayer(p.id);
     if (sock) {
       this.send(sock, {
@@ -4345,11 +4553,23 @@ export class WorldDO {
       return;
     }
     try {
+      const now = Date.now();
       await this.env.DB.prepare("INSERT OR IGNORE INTO player_discovered (player, zone, at, organic) VALUES (?,?,?,?)")
-        .bind(id, this.zoneName, Date.now(), organic ? 1 : 0)
+        .bind(id, this.zoneName, now, organic ? 1 : 0)
         .run();
       if (organic) {
         await this.env.DB.prepare("UPDATE player_discovered SET organic = 1 WHERE player = ? AND zone = ?").bind(id, this.zoneName).run();
+        // Touching Metro City also unlocks free hub services + subway station for map TRAVEL
+        // so runners aren't stuck "walk via deploy gate" for clinic/shop/underline.
+        if (this.zoneName === "safe") {
+          const free = ["subway", "clinic", "shop", "bar", "den"] as const;
+          for (const z of free) {
+            await this.env.DB.prepare("INSERT OR IGNORE INTO player_discovered (player, zone, at, organic) VALUES (?,?,?,?)")
+              .bind(id, z, now, 1)
+              .run();
+            await this.env.DB.prepare("UPDATE player_discovered SET organic = 1 WHERE player = ? AND zone = ?").bind(id, z).run();
+          }
+        }
       }
       const { results } = await this.env.DB.prepare("SELECT zone, organic FROM player_discovered WHERE player = ?")
         .bind(id)
@@ -4359,6 +4579,15 @@ export class WorldDO {
       this.send(ws, { t: "discovered", zones, unlocked });
     } catch {
       const fallback = organic ? [this.zoneName] : [];
+      // Client still gets free hub routes if D1 is mid-migration.
+      if (organic && this.zoneName === "safe") {
+        this.send(ws, {
+          t: "discovered",
+          zones: ["safe", "subway", "clinic", "shop", "bar", "den"],
+          unlocked: ["safe", "subway", "clinic", "shop", "bar", "den"],
+        });
+        return;
+      }
       this.send(ws, { t: "discovered", zones: [this.zoneName], unlocked: fallback });
     }
   }
@@ -4436,8 +4665,12 @@ export class WorldDO {
       });
   }
 
-  /** Apply damage to a player. God accounts ignore all damage sources. */
-  private hurtPlayer(p: PlayerState, dmg: number): boolean {
+  /**
+   * Apply damage to a player. God accounts ignore all damage.
+   * Credits are NEVER taken on PvE death. PvP deaths (opts.pvpKiller) drop 10% of
+   * pocket credits on the floor and flag safe-point respawn outside the arena.
+   */
+  private hurtPlayer(p: PlayerState, dmg: number, opts?: { pvpKiller?: PlayerState }): boolean {
     if (!p || p.dead || dmg <= 0) return false;
     if (p.godMode || isGodPlayerId(p.id)) {
       p.godMode = true;
@@ -4451,26 +4684,197 @@ export class WorldDO {
       p.dead = true;
       p.respawnTick = this.tick + ticks(RESPAWN_MS);
       p.dirty = true;
-      // Death tax — primary risk sink (~10% pocket, floor 12). Never leaves veterans at 0.
-      const pocket = Math.max(0, Math.floor(p.credits));
-      let tax = 0;
-      if (pocket > 30) {
-        tax = Math.min(pocket - 15, Math.max(12, Math.round(pocket * 0.1)));
-        if (tax > 0) {
-          p.credits -= tax;
-          this.eco("burn", "death_tax", tax);
+      const pvpKill = !!(opts?.pvpKiller && opts.pvpKiller.id !== p.id);
+      p.pvpDeath = pvpKill || !!p.pvpInArena;
+
+      // PvP only: 10% of credits drop on the floor at the death site (anyone can loot).
+      let drop = 0;
+      if (pvpKill) {
+        const pocket = Math.max(0, Math.floor(p.credits));
+        drop = Math.floor(pocket * PVP_CREDIT_DROP_PCT);
+        if (drop > 0) {
+          p.credits -= drop;
+          this.spawnCreditPile(p.x, p.y, drop);
         }
       }
-      // Clear death card: tax amount + where reprint happens + re-engage hint.
+
+      // World-start / hub evacuate is always available on death outside the drill yard.
+      // Default reprint keeps last standing position (PvP → outside arena).
+      const nearBoss = !pvpKill && this.nearLivingBoss(p.x, p.y, 420);
+      p.deathStreak = (p.deathStreak || 0) + 1;
+      p.deathStreakTick = this.tick;
+      const worldStartZone = this.worldStartZoneForCurrent();
+      const canWorldStart = !!worldStartZone;
+      const worldStartHint = canWorldStart
+        ? ` · CITY START available (H / tap) → METRO CITY hub`
+        : "";
+      const deathLine = pvpKill
+        ? drop > 0
+          ? `DEATH · PvP · ₵${drop} dropped on the floor (10%) · reprint outside arena · bag kept${worldStartHint}`
+          : `DEATH · PvP · no credit drop · reprint outside arena · bag kept${worldStartHint}`
+        : `DEATH · no credit loss · reprint at last position · bag kept${worldStartHint}`;
+      this.sendTo(p.id, { t: "sys", text: deathLine });
       this.sendTo(p.id, {
-        t: "sys",
-        text:
-          tax > 0
-            ? `DEATH · levy −₵${tax} · reprint at zone spawn · bag kept · re-engage objective`
-            : `DEATH · no levy · reprint at zone spawn · bag kept · re-engage objective`,
+        t: "death",
+        streak: p.deathStreak,
+        extract: canWorldStart,
+        extractZone: canWorldStart ? worldStartZone! : undefined,
+        extractLabel: canWorldStart ? "RESPAWN AT CITY START" : undefined,
+        nearBoss,
+        worldStart: canWorldStart,
       });
     }
     return true;
+  }
+
+  /** Spawn a looted credit pile (PvP death drop). amount is exact ₵ granted on walkover. */
+  private spawnCreditPile(x: number, y: number, amount: number) {
+    if (amount <= 0) return;
+    const pid = this.nextPickupId++;
+    // Scatter slightly so multi-kills don't stack invisibly.
+    const jx = x + (Math.random() - 0.5) * 28;
+    const jy = y + (Math.random() - 0.5) * 28;
+    this.pickups.set(pid, {
+      id: pid,
+      x: jx,
+      y: jy,
+      kind: PICKUP_CREDIT,
+      amount: Math.floor(amount),
+      dieTick: this.tick + ticks(Math.max(PICKUP_TTL_MS, 22_000)),
+      bornTick: this.tick,
+    });
+  }
+
+  /** Living boss within `range` px of a world point (spawn-camp detection). */
+  private nearLivingBoss(x: number, y: number, range: number): boolean {
+    const r2 = range * range;
+    for (const e of this.enemies.values()) {
+      if (!e.boss || e.hp <= 0) continue;
+      if (dist2(e.x, e.y, x, y) <= r2) return true;
+    }
+    return false;
+  }
+
+  /**
+   * World-start destination (new-player pad in METRO CITY).
+   * Null only in the drill yard — nowhere else to evacuate to.
+   * Already-in-safe still returns "safe" so death can snap to CITY_HUB_SPAWN in-place.
+   */
+  private worldStartZoneForCurrent(): string | null {
+    if (this.inTutorial()) return null;
+    return "safe";
+  }
+
+  /**
+   * Instant local reprint at last standing position (cancels remaining death timer).
+   * PvP deaths still bounce to nearest safe point outside the arena.
+   */
+  private respawnLocal(p: PlayerState) {
+    const wasPvp = !!p.pvpDeath;
+    const target = wasPvp
+      ? this.nearestSafeRespawn(p)
+      : resolveOpenSpawn(this.grid, { x: p.x, y: p.y });
+    p.x = target.x;
+    p.y = target.y;
+    p.hp = p.maxHp;
+    p.dead = false;
+    p.respawnTick = this.tick;
+    p.pvpDeath = false;
+    p.pvpSafeUntil = this.tick + ticks(3500); // longer grace after manual reprint
+    p.iframeUntilTick = this.tick + ticks(1500);
+    p.dirty = true;
+  }
+
+  /**
+   * Death-screen choice:
+   *  - local: reprint at last standing position (PvP → outside arena)
+   *  - start / extract: respawn at world start (METRO CITY hub pad) — always allowed
+   *    outside tutorial so runners can bail without a death-streak gate
+   */
+  private async onRespawnChoice(ws: WebSocket, msg: Extract<ClientMsg, { t: "respawn" }>) {
+    const p = this.playerFor(ws);
+    if (!p || !p.dead) return;
+    const raw = msg.mode;
+    const mode = raw === "start" || raw === "extract" ? "start" : "local";
+    if (mode === "local") {
+      const wasPvp = !!p.pvpDeath;
+      this.respawnLocal(p);
+      this.sendTo(p.id, {
+        t: "sys",
+        text: wasPvp
+          ? "◈ reprint complete — outside arena · brief immunity"
+          : "◈ reprint complete — last position · brief immunity",
+      });
+      return;
+    }
+    // WORLD START / EXTRACT → METRO CITY hub pad (new-player spawn).
+    const dest = this.worldStartZoneForCurrent();
+    if (!dest) {
+      this.sendTo(p.id, {
+        t: "sys",
+        text: "city start locked in the drill yard — finish the tutorial or wait for local reprint",
+      });
+      return;
+    }
+    // Already in hub: snap to the new-runner pad in-place (no zone handoff).
+    if (this.zoneName === "safe") {
+      const open = resolveOpenSpawn(this.grid, CITY_HUB_SPAWN);
+      p.x = open.x;
+      p.y = open.y;
+      p.hp = p.maxHp;
+      p.dead = false;
+      p.respawnTick = this.tick;
+      p.pvpDeath = false;
+      p.deathStreak = 0;
+      p.deathStreakTick = 0;
+      p.pvpInArena = false;
+      p.pvpSafeUntil = this.tick + ticks(3500);
+      p.iframeUntilTick = this.tick + ticks(1500);
+      p.dirty = true;
+      this.sendTo(p.id, {
+        t: "sys",
+        text: "◈ reprint at CITY START — METRO CITY hub pad · brief immunity",
+      });
+      return;
+    }
+    // Other zone: revive, flush, redirect to safe (spawn lands on CITY_HUB_SPAWN via travel/login).
+    p.dead = false;
+    p.hp = p.maxHp;
+    p.respawnTick = this.tick;
+    p.deathStreak = 0;
+    p.deathStreakTick = 0;
+    p.pvpDeath = false;
+    p.pvpInArena = false;
+    // Park coords on the hub pad so the next zone's loadPlayer / travel lands correctly
+    // even if travel `from` is set (we force hub via zoneOverride + explicit x,y).
+    const hub = CITY_HUB_SPAWN;
+    p.x = hub.x;
+    p.y = hub.y;
+    if (p.pvpEscrow > 0) await this.refundPvpEscrow(p, "world-start from death");
+    p.dirty = true;
+    try {
+      await this.upsertPlayer(p, { zoneOverride: "safe" });
+    } catch {
+      /* best effort */
+    }
+    this.sendTo(p.id, {
+      t: "sys",
+      text: "◈ CITY START — evacuating to METRO CITY hub pad. Bag kept. Re-arm before you dive back.",
+    });
+    this.send(ws, { t: "redirect", zone: dest, text: "city start → METRO CITY" });
+    try {
+      this.send(ws, { t: "bye" });
+    } catch {
+      /* ignore */
+    }
+    this.sessions.delete(ws);
+    if (this.ownerSocket.get(p.id) === ws) this.ownerSocket.delete(p.id);
+    this.players.delete(p.id);
+    try {
+      ws.close(1000, "world_start");
+    } catch {
+      /* ignore */
+    }
   }
 
   /** Starter melee + resources for live-city players.
@@ -4646,8 +5050,7 @@ export class WorldDO {
         p.credits -= cost;
         this.eco("burn", "npc_rumor", cost);
         const xp = npcServiceXp("rumor", p.level);
-        p.xp += xp;
-        p.level = levelForXp(p.xp);
+        this.grantXp(p, xp);
         const tip = RUMOR_TIPS[Math.floor(Math.random() * RUMOR_TIPS.length)];
         line = `rumor (+${xp} XP): ${tip}`;
         break;
@@ -4656,8 +5059,7 @@ export class WorldDO {
         p.credits -= cost;
         this.eco("burn", "npc_intel", cost);
         const xp = npcServiceXp("intel", p.level);
-        p.xp += xp;
-        p.level = levelForXp(p.xp);
+        this.grantXp(p, xp);
         const tip = INTEL_TIPS[Math.floor(Math.random() * INTEL_TIPS.length)];
         line = `intel (+${xp} XP): ${tip}`;
         break;
@@ -4666,8 +5068,7 @@ export class WorldDO {
         p.credits -= cost;
         this.eco("burn", "npc_train", cost);
         const xp = npcServiceXp("train", p.level);
-        p.xp += xp;
-        p.level = levelForXp(p.xp);
+        this.grantXp(p, xp);
         line = `drill complete — +${xp} XP (₵${cost})`;
         break;
       }
@@ -4932,7 +5333,7 @@ export class WorldDO {
       e.forSale = false;
       // Keep furniture from prior owner; only refresh ownership columns.
       await this.persistEstate();
-      sys(`◈ home purchased for ₵${price} — press F to furnish it`);
+      sys(`◈ home purchased for ₵${price} — press U to furnish it`);
       this.broadcastEstate();
     } else if (msg.action === "list") {
       if (e.owner !== p.id) return sys("only the owner can list this home");
@@ -4990,9 +5391,30 @@ export class WorldDO {
   }
 
   private recomputeStats(p: PlayerState) {
-    p.mods = deriveMods(p.equipped);
+    p.mods = deriveMods(p.equipped, p.level);
     p.maxHp = PLAYER_HP + Math.round(p.mods.hpAdd);
     if (p.hp > p.maxHp) p.hp = p.maxHp;
+  }
+
+  /**
+   * The only way XP enters a character. A level is real power now (levelCurve),
+   * so stats must be re-derived on every grant — funnelling all XP through here
+   * is what stops p.mods/maxHp from silently going stale on level-up.
+   */
+  private grantXp(p: PlayerState, amount: number) {
+    const n = Math.round(amount);
+    if (!Number.isFinite(n) || n <= 0) return;
+    const before = p.level;
+    p.xp += n;
+    p.level = levelForXp(p.xp);
+    p.dirty = true;
+    if (p.level === before) return;
+    const prevMax = p.maxHp;
+    this.recomputeStats(p);
+    // Levelling must never read as a downgrade: bank the new headroom as healing
+    // instead of letting the HP bar drop to a smaller fraction of a bigger pool.
+    const gained = p.maxHp - prevMax;
+    if (gained > 0 && !p.dead) p.hp = Math.min(p.maxHp, p.hp + gained);
   }
 
   private sendLoadout(ws: WebSocket, p: PlayerState) {
@@ -5182,7 +5604,8 @@ export class WorldDO {
 
   private rollPlayerCritDamage(p: PlayerState, base: number): number {
     let dmg = base;
-    const critChance = Math.min(0.05 + p.level * 0.012, 0.3) + (p.mods.critPct || 0);
+    // Level's share of crit now arrives via p.mods (levelCurve); this is the floor.
+    const critChance = 0.05 + (p.mods.critPct || 0);
     if (Math.random() < critChance) dmg = Math.round(dmg * 1.85);
     return dmg;
   }
@@ -5511,6 +5934,8 @@ export class WorldDO {
         while (diff < -Math.PI) diff += 2 * Math.PI;
         if (Math.abs(diff) <= halfArc) this.applyPlayerHitToEnemy(e, p, dmg);
       }
+      // Melee can hit players only inside an active PvP arena (same rules as projectiles).
+      this.resolveMeleePvp(p, dmg, prim.range, halfArc);
       return;
     }
     if (prim.kind === "beam") {
@@ -5522,6 +5947,8 @@ export class WorldDO {
         if (e.hp <= 0) continue;
         if (segPointDist2(e.x, e.y, p.x, p.y, ex, ey) <= hw * hw) this.applyPlayerHitToEnemy(e, p, dmg);
       }
+      // Beams never damage players outside PvP arenas.
+      this.resolveBeamPvp(p, dmg, prim.range, hw);
       return;
     }
     const dmg = this.rollPlayerCritDamage(p, baseDmg);
@@ -5555,7 +5982,7 @@ export class WorldDO {
 
   private applyPlayerHitToEnemy(e: Enemy, killer: PlayerState, dmg: number) {
     this.addHeat(killer, dmg * HEAT.perDamage);
-    const lifesteal = Math.min(killer.level * 0.004, 0.08) + (killer.mods.lifestealPct || 0);
+    const lifesteal = killer.mods.lifestealPct || 0;
     if (lifesteal > 0 && !killer.dead && killer.hp > 0) {
       killer.hp = Math.min(killer.maxHp, killer.hp + dmg * lifesteal);
     }
@@ -5596,9 +6023,7 @@ export class WorldDO {
       const dmod = /^d\d+$/.test(this.zoneName) ? dailyDistrictMod(this.districtIndex) : null;
       const gained = Math.round(CREDITS_PER_KILL * mult * (dmod?.creditMult ?? 1) * (1 + (killer.guildBonus || 0)));
       const paid = this.grantEmit(killer, "kill", gained);
-      killer.xp += Math.round(XP_PER_KILL * mult);
-      killer.level = levelForXp(killer.xp);
-      killer.dirty = true;
+      this.grantXp(killer, XP_PER_KILL * mult);
       this.bumpMeta("f" + killer.faction, isBoss ? 10 : 1);
       this.campaignEvent(killer, "kill");
       this.sharedKillCredit(killer, e, isBoss);
@@ -5726,7 +6151,18 @@ export class WorldDO {
   async alarm() {
     if (this.sessions.size > 0) {
       this.ensureTick();
-      for (const p of this.players.values()) await this.drainMail(p); // cross-zone payouts land here
+      // Mail: fire-and-forget so a slow D1 drain cannot delay sim resume after eviction.
+      for (const p of this.players.values()) {
+        void this.drainMail(p).catch(() => {
+          this.errCount++;
+        });
+      }
+      // Heartbeat: force a durable snapshot of every online runner (position, bag,
+      // credits, campaign…). Survives Worker redeploys + DO isolate recycle so a
+      // mid-session ship never wipes the last few seconds of play.
+      for (const p of this.players.values()) {
+        if (p.sessionValid) p.dirty = true;
+      }
       await this.persistDirty();
       await this.state.storage.setAlarm(Date.now() + SUPERVISOR_ALARM_MS);
     }
@@ -5737,8 +6173,11 @@ export class WorldDO {
     let liveEnemies = 0;
     for (const e of this.enemies.values()) if (e.hp > 0) liveEnemies++;
     const n = Math.max(1, this.sessions.size);
+    const hard = hardCapFor(this.zoneName, this.env, this.flags);
     return {
       zone: this.zoneName,
+      inst: this.instanceId,
+      doName: this.doKey(),
       players: this.sessions.size,
       enemies: liveEnemies,
       shots: this.shots.length,
@@ -5763,7 +6202,9 @@ export class WorldDO {
         hubCap: this.flags.hubCap,
         dailyEmitCap: this.flags.dailyEmitCap,
       },
+      hardCap: hard,
       hubFull: this.zoneName === "safe" && this.sessions.size >= this.flags.hubCap,
+      instanceFull: this.sessions.size >= hard,
     };
   }
 
@@ -5785,15 +6226,33 @@ export class WorldDO {
       }
       if (p.dead) {
         if (this.tick >= p.respawnTick) {
-          const open = resolveOpenSpawn(this.grid, this.spawn);
-          p.x = open.x;
-          p.y = open.y;
+          // PvP deaths: nearest safe point outside the arena.
+          // PvE: last standing position (the space the runner existed in).
+          const wasPvp = !!p.pvpDeath;
+          const target = wasPvp
+            ? this.nearestSafeRespawn(p)
+            : resolveOpenSpawn(this.grid, { x: p.x, y: p.y });
+          p.x = target.x;
+          p.y = target.y;
           p.hp = p.maxHp; // respawn at full, including equipped +HP
           p.dead = false;
-          p.pvpSafeUntil = this.tick + ticks(2500); // brief immunity so arenas can't be spawn-camped
+          p.pvpDeath = false;
+          p.pvpSafeUntil = this.tick + ticks(wasPvp ? 3500 : 2500);
+          p.iframeUntilTick = Math.max(p.iframeUntilTick, this.tick + ticks(1200));
           p.dirty = true;
+          if (wasPvp) {
+            this.sendTo(p.id, {
+              t: "sys",
+              text: "◈ reprint outside THE CRUCIBLE — brief immunity · re-enter to contest again",
+            });
+          }
         }
         continue;
+      }
+      // Decay death-loop streak after ~25s clean so EXTRACT doesn't stick forever.
+      if ((p.deathStreak || 0) > 0 && (this.tick - (p.deathStreakTick || 0)) * NET_TICK_MS > 25_000) {
+        p.deathStreak = 0;
+        p.deathStreakTick = 0;
       }
       if (this.tick - p.lastInputTick > INTENT_EXPIRE_TICKS) {
         p.mx = 0;
@@ -5955,7 +6414,12 @@ export class WorldDO {
         e.lastFireTick = this.tick;
         const aim = Math.atan2(target.y - e.y, target.x - e.x);
         const projSpeed = arch.projSpeed * (this.provingVault ? WorldDO.weeklyAffix().shotSpeedMult : 1);
-        const dmg = e.boss ? Math.round(arch.dmg * BOSS_DMG_MULT) : arch.dmg;
+        // e.dmgMult carries per-enemy scaling (subway tunnel threat); zone mult is
+        // the district-wide factor. Unset dmgMult leaves district behaviour at 1×.
+        const zoneDmg = this.zoneEnemyDmgMult * (e.dmgMult ?? 1);
+        const dmg = e.boss
+          ? Math.round(arch.dmg * BOSS_DMG_MULT * zoneDmg)
+          : Math.round(arch.dmg * zoneDmg);
         const fire = (a: number, dmgOverride?: number) =>
           this.shots.push({
             id: this.nextShotId++,
@@ -6114,9 +6578,13 @@ export class WorldDO {
             this.tutorialEvent(p, "pickup");
           } else if (pu.kind === PICKUP_CORE) {
             p.cores += 1;
-            p.xp += 8;
-            p.level = levelForXp(p.xp);
+            this.grantXp(p, 8);
             this.bountyEvent(p, "collect", 1);
+          } else if (typeof pu.amount === "number" && pu.amount > 0) {
+            // PvP floor pile — exact looted credits (not a fresh emit sink/source).
+            p.credits += Math.floor(pu.amount);
+            this.bumpStat(p, "credits", Math.floor(pu.amount));
+            this.sendTo(p.id, { t: "sys", text: `◈ looted ₵${Math.floor(pu.amount)} from the arena floor` });
           } else {
             this.grantEmit(p, "pickup", 4);
           }
@@ -6219,7 +6687,10 @@ export class WorldDO {
     if (shouldBroadcastSnapshot(this.tick, this.sessions.size)) {
       const factions = Array.from({ length: FACTION_COUNT }, (_, i) => Math.round(this.meta["f" + i] ?? 0));
       const control = this.districtControl();
-      const roster = [...this.players.values()].map((p) => ({ id: p.id, faction: p.faction, level: p.level }));
+      // Roster is bulky and rarely needed every frame — ~1 Hz is enough for party UI.
+      const roster = shouldIncludeRoster(this.tick)
+        ? [...this.players.values()].map((p) => ({ id: p.id, faction: p.faction, level: p.level }))
+        : [];
       // Remote presentation is viewer-independent; compute it once per player/tick
       // instead of rebuilding/rounding the same object in the crowded-zone O(N²) loop.
       const playerViews = new Map<string, RemotePlayerView>();
@@ -6246,8 +6717,8 @@ export class WorldDO {
       // Keep session_zone warm for cross-zone Cell chat (cheap batch).
       void this.touchOnlineSessions();
     }
-    // Cross-zone mail a bit more often on Paid (auction pays land while online).
-    if (this.tick % 60 === 0) {
+    // Cross-zone mail every ~2s (was 3s) — auction pays land while online.
+    if (this.tick % 40 === 0) {
       for (const p of this.players.values()) void this.drainMail(p);
     }
     // ops metrics: EMA smoothing keeps this O(1) per tick with no storage writes
@@ -6379,7 +6850,7 @@ export class WorldDO {
         p.dirty = true;
         this.sendTo(p.id, {
           t: "sys",
-          text: `◈ ${fmtMetro(amount)} $METRO buy-in locked — claim eliminations, leave safely to withdraw`,
+          text: `◈ ${fmtMetro(amount)} $METRO buy-in locked · ${PVP_CREDIT_DROP_NOTICE}`,
         });
       } catch {
         // Fail closed: without a durable row the player never becomes a PvP target
@@ -6474,42 +6945,99 @@ export class WorldDO {
     });
   }
 
+  /** True only when both combatants are in an active PvP arena (never elsewhere). */
+  private pvpCombatAllowed(shooter: PlayerState, victim: PlayerState): boolean {
+    if (this.interior || shooter.dead || victim.dead || victim.id === shooter.id) return false;
+    if (this.tick < victim.pvpSafeUntil) return false;
+    if (this.tick < victim.dashUntilTick) return false;
+    if (shooter.party >= 0 && victim.party === shooter.party) return false;
+    if (victim.godMode || isGodPlayerId(victim.id)) return false;
+    if (!shooter.pvpInArena || !victim.pvpInArena) return false;
+    const { worldW, worldH } = gridDims(this.grid);
+    const pvp = pvpZonesFor(worldW, worldH, this.zoneName);
+    if (!inPvpZone(shooter.x, shooter.y, pvp) || !inPvpZone(victim.x, victim.y, pvp)) return false;
+    return true;
+  }
+
+  /** Apply PvP damage + arena kill rewards. Returns true if the victim died from this hit. */
+  private applyPvpDamage(shooter: PlayerState, victim: PlayerState, dmg: number): boolean {
+    const before = victim.hp;
+    // PvP death: 10% credits drop on the floor (hurtPlayer); escrow transfers to killer.
+    this.hurtPlayer(victim, dmg, { pvpKiller: shooter });
+    if (!(victim.dead && before > 0)) return false;
+    victim.pvpEscrow = 0;
+    victim.pvpInArena = false;
+    void this.transferPvpEscrow(victim, shooter);
+    // Small arena XP bounty only — credits come from the floor drop / pickups.
+    this.grantXp(shooter, XP_PER_KILL * 2);
+    this.bumpStat(shooter, "pvp", 1);
+    return true;
+  }
+
+  /**
+   * Nearest safe respawn after a PvP death — last position outside the arena, or
+   * zone spawn if that point is still inside / invalid.
+   */
+  private nearestSafeRespawn(p: PlayerState): { x: number; y: number } {
+    const { worldW, worldH } = gridDims(this.grid);
+    const zones = pvpZonesFor(worldW, worldH, this.zoneName);
+    let sx = Number.isFinite(p.pvpSafeX) ? p.pvpSafeX : this.spawn.x;
+    let sy = Number.isFinite(p.pvpSafeY) ? p.pvpSafeY : this.spawn.y;
+    // If we never recorded a safe pos, or it still sits in the arena, use zone spawn.
+    if (zones.length && inPvpZone(sx, sy, zones)) {
+      sx = this.spawn.x;
+      sy = this.spawn.y;
+    }
+    // Push zone spawn out of arena if the default spawn was authored inside (shouldn't be).
+    if (zones.length && inPvpZone(sx, sy, zones)) {
+      const z = zones[0];
+      sx = z.x - 48;
+      sy = z.y + z.h / 2;
+      if (sx < TILE * 2) sx = z.x + z.w + 48;
+    }
+    return resolveOpenSpawn(this.grid, { x: sx, y: sy });
+  }
+
   /** Player-vs-player damage, gated to the PvP arenas. The server owns HP/death/respawn
    *  and awards an arena bounty + the victim's $METRO escrow. Returns true on a hit. */
   private resolvePvpHit(s: Shot, ax: number, ay: number): boolean {
     const shooter = this.players.get(s.owner);
-    const { worldW, worldH } = gridDims(this.grid);
-    const pvp = pvpZonesFor(worldW, worldH, this.zoneName);
-    if (this.interior || !shooter || !shooter.pvpInArena || !inPvpZone(shooter.x, shooter.y, pvp)) return false;
+    if (!shooter) return false;
     const R2 = PROJ_HIT_RADIUS * PROJ_HIT_RADIUS;
     for (const v of this.players.values()) {
-      if (v.id === s.owner || v.dead) continue;
-      if (this.tick < v.pvpSafeUntil) continue; // spawn protection
-      // PvP honors i-frames only during the blink itself (150ms), not the full 260ms
-      // grace — 43% dodge uptime vs other players would smother the arena
-      if (this.tick < v.dashUntilTick) continue;
-      if (shooter.party >= 0 && v.party === shooter.party) continue; // no team-killing
-      if (!v.pvpInArena || !inPvpZone(v.x, v.y, pvp)) continue;
-      if (v.godMode || isGodPlayerId(v.id)) continue; // god never dies in the arena
+      if (!this.pvpCombatAllowed(shooter, v)) continue;
       if (segPointDist2(v.x, v.y, ax, ay, s.x, s.y) <= R2) {
-        const before = v.hp;
-        this.hurtPlayer(v, s.dmg);
-        if (v.dead && before > 0) {
-          v.pvpEscrow = 0;
-          v.pvpInArena = false;
-          void this.transferPvpEscrow(v, shooter);
-          shooter.credits += CREDITS_PER_KILL * 3; // an arena kill pays a bounty
-          this.eco("emit", "arena", CREDITS_PER_KILL * 3);
-          shooter.xp += XP_PER_KILL * 2;
-          shooter.level = levelForXp(shooter.xp);
-          shooter.dirty = true;
-          this.bumpStat(shooter, "pvp", 1);
-          this.bumpStat(shooter, "credits", CREDITS_PER_KILL * 3);
-        }
+        this.applyPvpDamage(shooter, v, s.dmg);
         return true;
       }
     }
     return false;
+  }
+
+  /** Melee swing vs other players — arena-only (non-PvP zones never apply player damage). */
+  private resolveMeleePvp(attacker: PlayerState, dmg: number, range: number, halfArc: number) {
+    for (const v of this.players.values()) {
+      if (!this.pvpCombatAllowed(attacker, v)) continue;
+      const dx = v.x - attacker.x;
+      const dy = v.y - attacker.y;
+      if (Math.hypot(dx, dy) > range) continue;
+      let diff = Math.atan2(dy, dx) - attacker.aim;
+      while (diff > Math.PI) diff -= 2 * Math.PI;
+      while (diff < -Math.PI) diff += 2 * Math.PI;
+      if (Math.abs(diff) <= halfArc) this.applyPvpDamage(attacker, v, dmg);
+    }
+  }
+
+  /** Beam vs other players — arena-only. */
+  private resolveBeamPvp(attacker: PlayerState, dmg: number, range: number, halfWidth: number) {
+    const ex = attacker.x + Math.cos(attacker.aim) * range;
+    const ey = attacker.y + Math.sin(attacker.aim) * range;
+    for (const v of this.players.values()) {
+      if (!this.pvpCombatAllowed(attacker, v)) continue;
+      if (segPointDist2(v.x, v.y, attacker.x, attacker.y, ex, ey) <= halfWidth * halfWidth) {
+        this.applyPvpDamage(attacker, v, dmg);
+      }
+    }
   }
 
   /** Broadcast a system line to everyone in this zone (kill feed, announcements). */
@@ -6553,72 +7081,75 @@ export class WorldDO {
   }
 
   private async persistDirty() {
-    for (const p of this.players.values()) {
-      let playerSaved = true;
-      // An escrow operation has already snapshotted (or is about to snapshot) the
-      // exact withdrawable balance it will atomically debit/refund. Do not race it
-      // with the ordinary two-second player upsert.
-      if (p.dirty && p.pvpPending === 0) {
-        p.dirty = false;
-        playerSaved = await this.upsertPlayer(p);
-        if (!playerSaved) p.dirty = true;
+    // Coalesce concurrent alarm + tick flushes — stacked persists thrash D1 and can
+    // reorder relative credit deltas under load.
+    if (this.persistInFlight) return;
+    this.persistInFlight = true;
+    try {
+      for (const p of this.players.values()) {
+        let playerSaved = true;
+        // Escrow owns its own atomic debit — skip racing the ordinary upsert.
+        if (p.dirty && p.pvpPending === 0) {
+          p.dirty = false;
+          playerSaved = await this.upsertPlayer(p);
+          if (!playerSaved) p.dirty = true;
+        }
+        await this.flushStats(p);
+        await this.flushDailies(p);
+        if (p.bounty || (playerSaved && !p.dirty)) await this.flushBounty(p);
       }
-      await this.flushStats(p); // lifetime counters / achievements may change without `dirty`
-      await this.flushDailies(p);
-      // An active tracker is independent of the core player row. Clearing a completed
-      // tracker waits until its coupled credit reward has saved successfully.
-      if (p.bounty || (playerSaved && !p.dirty)) await this.flushBounty(p);
+      await this.syncMeta();
+    } finally {
+      this.persistInFlight = false;
     }
-    await this.syncMeta();
   }
 
-  /** Persist a player's daily-contract progress for the current day. */
+  /** Persist a player's daily-contract progress for the current day (batched). */
   private async flushDailies(p: PlayerState) {
     if (!p.dailyDirty) return;
     p.dailyDirty = false;
     try {
-      for (const d of p.dailies) {
-        await this.env.DB.prepare(
-          "INSERT INTO player_dailies (player, day, contract_id, progress, done) VALUES (?,?,?,?,?) " +
-            "ON CONFLICT(player,day,contract_id) DO UPDATE SET progress=excluded.progress, done=excluded.done",
-        )
-          .bind(p.id, p.dailyDay, d.id, d.progress, d.done ? 1 : 0)
-          .run();
-      }
+      const stmt = this.env.DB.prepare(
+        "INSERT INTO player_dailies (player, day, contract_id, progress, done) VALUES (?,?,?,?,?) " +
+          "ON CONFLICT(player,day,contract_id) DO UPDATE SET progress=excluded.progress, done=excluded.done",
+      );
+      const batch = p.dailies.map((d) => stmt.bind(p.id, p.dailyDay, d.id, d.progress, d.done ? 1 : 0));
+      if (batch.length) await this.env.DB.batch(batch);
     } catch {
-      /* table may not exist before migration */
+      /* table may not exist before migration — re-dirty so next flush retries */
+      p.dailyDirty = true;
     }
   }
 
-  /** Flush a player's queued stat increments + deepest-district + new achievements to the
-   *  shared D1 store (so leaderboards aggregate across every zone). Counters are additive
-   *  UPSERTs; deepest is a MAX; achievements insert-once. */
+  /** Flush queued stat increments + deepest + achievements (batched per player). */
   private async flushStats(p: PlayerState) {
+    const batch: D1PreparedStatement[] = [];
     try {
+      const statStmt = this.env.DB.prepare(
+        "INSERT INTO player_stats (player, stat, v) VALUES (?,?,?) ON CONFLICT(player,stat) DO UPDATE SET v = v + excluded.v",
+      );
       for (const k of Object.keys(p.statDelta)) {
         const d = p.statDelta[k];
         delete p.statDelta[k];
         if (!d) continue;
-        await this.env.DB.prepare(
-          "INSERT INTO player_stats (player, stat, v) VALUES (?,?,?) ON CONFLICT(player,stat) DO UPDATE SET v = v + excluded.v",
-        )
-          .bind(p.id, k, d)
-          .run();
+        batch.push(statStmt.bind(p.id, k, d));
       }
       if (p.deepestDirty) {
         p.deepestDirty = false;
-        await this.env.DB.prepare(
-          "INSERT INTO player_stats (player, stat, v) VALUES (?,?,?) ON CONFLICT(player,stat) DO UPDATE SET v = MAX(v, excluded.v)",
-        )
-          .bind(p.id, "deepest", p.deepest)
-          .run();
+        batch.push(
+          this.env.DB.prepare(
+            "INSERT INTO player_stats (player, stat, v) VALUES (?,?,?) ON CONFLICT(player,stat) DO UPDATE SET v = MAX(v, excluded.v)",
+          ).bind(p.id, "deepest", p.deepest),
+        );
       }
       if (p.achvNew.length) {
         const now = Date.now();
+        const achStmt = this.env.DB.prepare("INSERT OR IGNORE INTO player_achv (player, ach, at) VALUES (?,?,?)");
         for (const a of p.achvNew.splice(0)) {
-          await this.env.DB.prepare("INSERT OR IGNORE INTO player_achv (player, ach, at) VALUES (?,?,?)").bind(p.id, a, now).run();
+          batch.push(achStmt.bind(p.id, a, now));
         }
       }
+      if (batch.length) await this.env.DB.batch(batch);
     } catch {
       /* tables may not exist before migration */
     }
@@ -6696,7 +7227,7 @@ export class WorldDO {
           null,
           "{}",
           Date.now(),
-          this.zoneName,
+          this.doKey(),
           Date.now(),
         )
         .run();
@@ -6785,7 +7316,7 @@ export class WorldDO {
               p.classId || "metrophage",
               Date.now(),
               p.id,
-              this.zoneName,
+              this.doKey(),
               p.sessionAt,
             )
             .run();
@@ -6816,7 +7347,7 @@ export class WorldDO {
               JSON.stringify(p.equipped),
               Date.now(),
               p.id,
-              this.zoneName,
+              this.doKey(),
               p.sessionAt,
             )
             .run();
@@ -6955,7 +7486,16 @@ export class WorldDO {
       if (sid === id && sock !== ws) return;
     }
     const p = this.players.get(id);
-    if (p) {
+    if (!p) return;
+    // Snapshot identity for the flush; re-check ownership after every await.
+    const stillSoleOwner = () => {
+      if (this.ownerSocket.has(id) && this.ownerSocket.get(id) !== ws) return false;
+      for (const [sock, sid] of this.sessions) {
+        if (sid === id && sock !== ws) return false;
+      }
+      return true;
+    };
+    try {
       const tr = this.tradeOf(p);
       if (tr) this.endTrade(tr, "cancelled", "trade partner left");
       this.leaveParty(p);
@@ -6964,13 +7504,21 @@ export class WorldDO {
       // A defeated player can close while their transfer is behind another zone
       // operation. Wait before the final upsert so no stale balance wins the race.
       if (p.pvpPending > 0) await this.pvpTail;
+      if (!stillSoleOwner()) return; // reconnected mid-flush — keep live state, don't delete
       // Hard disconnect path (tab close / network drop) — flush best-effort.
+      // Always write x/y/zone so a reconnect lands exactly where they left.
+      p.dirty = true;
       const playerSaved = await this.upsertPlayer(p);
       await this.flushStats(p);
       await this.flushDailies(p);
       if (p.bounty || playerSaved) await this.flushBounty(p);
       await this.syncMeta();
-      this.players.delete(id);
+    } catch {
+      /* best-effort flush */
     }
+    // Final race check: a new login may have claimed ownership while we flushed.
+    if (!stillSoleOwner()) return;
+    // Only drop the in-memory player if this close still owns it.
+    if (this.players.get(id) === p) this.players.delete(id);
   }
 }

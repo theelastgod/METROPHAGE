@@ -3,7 +3,7 @@ import { effectiveGraphicsQuality, getSettings, updateSettings, type GraphicsQua
 import { prefersMobileUx } from "../systems/Mobile";
 import { drawPanelFrame } from "./panelChrome";
 import { closeHint, dimBackdrop, modalRect, panelPad, uiDim, uiFont, uiGap } from "./uiLayout";
-import { COLORS } from "../config";
+import { COLORS, VIEW_W, VIEW_H } from "../config";
 import { fitTextToWidth, setFittedText } from "./typography";
 import { buildStamp } from "../buildInfo";
 
@@ -15,19 +15,20 @@ interface Row {
   trackX: number;
   trackW: number;
   valueW: number;
+  hitX: number;
+  hitW: number;
   valueText: Phaser.GameObjects.Text;
 }
 
 /**
- * Options / accessibility menu — reduce-flashing (⚠ photosensitivity safety),
- * screen-shake intensity, and master/music/SFX volume. Writes through to the
- * global Settings (persisted); the juice helpers, neon pipeline, and synth read
- * those live. Camera-fixed; reusable from the title screen and in-game. onChange
- * lets the host apply audio immediately.
+ * Options / accessibility menu.
+ * Desktop: compact centered card.
+ * Mobile: full-bleed sheet with large finger rows (~52px+).
  */
 export default class OptionsPanel {
   private scene: Phaser.Scene;
   private onChange?: () => void;
+  private readonly mobile = prefersMobileUx();
 
   private g: Phaser.GameObjects.Graphics;
   private panelArt: Phaser.GameObjects.NineSlice | Phaser.GameObjects.Image | null = null;
@@ -37,84 +38,117 @@ export default class OptionsPanel {
   private rows: Row[] = [];
   private open = false;
 
-  private readonly frame = modalRect(440, 560);
-  private readonly x = this.frame.x;
-  private readonly y = this.frame.y;
-  private readonly w = this.frame.w;
-  private readonly h = this.frame.h;
+  private readonly frame: { x: number; y: number; w: number; h: number };
+  private readonly x: number;
+  private readonly y: number;
+  private readonly w: number;
+  private readonly h: number;
   private readonly trackX: number;
   private readonly trackW: number;
-  private readonly rowH = uiDim(36);
-  private readonly zoneH = uiDim(24);
+  private readonly rowH: number;
+  private readonly zoneH: number;
+  private readonly pad: number;
 
   constructor(scene: Phaser.Scene, onChange?: () => void) {
     this.scene = scene;
     this.onChange = onChange;
-    this.trackX = this.x + uiDim(180);
-    this.trackW = this.w - uiDim(200);
-    // Tap-outside-to-close + click swallowing comes from dimBackdrop's internal
-    // catcher Zone. (Container-level setInteractive silently fails to hit-test
-    // under the dual-camera rig in OnlineScene — Zones are the reliable path.)
+    // Full-sheet on phones; clamped card on desktop (modalRect viewport-clamps).
+    this.frame = this.mobile
+      ? { x: uiDim(4), y: uiDim(4), w: VIEW_W - uiDim(8), h: VIEW_H - uiDim(8) }
+      : modalRect(440, 480);
+    this.x = this.frame.x;
+    this.y = this.frame.y;
+    this.w = this.frame.w;
+    this.h = this.frame.h;
+    this.pad = this.mobile ? uiDim(14) : panelPad();
+    this.rowH = uiDim(this.mobile ? 50 : 36);
+    this.zoneH = uiDim(this.mobile ? 46 : 24);
+    // Value column on the right; track fills remaining mid area.
+    this.trackX = this.mobile ? this.x + this.w * 0.48 : this.x + uiDim(180);
+    this.trackW = this.x + this.w - this.pad - this.trackX - uiDim(this.mobile ? 72 : 56);
+
     this.backdrop = dimBackdrop(scene, 1799, 0.62, () => this.close(), this.frame);
     this.g = scene.add.graphics().setScrollFactor(0).setDepth(1800);
     const D = 1801;
 
-    this.text(this.x + panelPad(), this.y + uiGap("lg"), "OPTIONS", "#eafdff", 15, D);
+    this.text(this.x + this.pad, this.y + uiGap("lg"), "OPTIONS", "#eafdff", this.mobile ? 18 : 15, D);
     this.text(
-      this.x + this.w - panelPad(),
+      this.x + this.w - this.pad,
       this.y + uiGap("lg") + uiDim(2),
       `build ${buildStamp()}`,
       "#5a6478",
-      9,
+      this.mobile ? 10 : 9,
       D,
     ).setOrigin(1, 0);
 
-    let ry = this.y + uiDim(58);
-    this.addRow(
-      "rsControls",
-      prefersMobileUx() ? "TAP-TO-WALK (locked on phone)" : "TAP-TO-WALK (opt-in)",
-      true,
-      ry,
-      D,
-      "#f7ff3c",
-    );
-    ry += this.rowH;
-    this.addCycleRow("uiDensity", "HUD DENSITY", ["new", "full"] as unknown as GraphicsQuality[], ry, D, "#39ff88");
-    ry += this.rowH;
-    this.addRow("firstSessionCoach", "FIRST-SESSION COACH", true, ry, D, "#b06bff");
-    ry += this.rowH;
-    this.addRow("shareCards", "SHARE CARDS ON BOSS KILL", true, ry, D, "#f7ff3c");
-    ry += this.rowH;
-    this.addRow("reduceFlashing", "REDUCE FLASHING", true, ry, D, "#ff3b6b");
-    ry += this.rowH;
-    this.addRow("lowFx", "LOW-FX MODE", true, ry, D, "#29e7ff");
-    ry += this.rowH;
-    this.addCycleRow("graphicsQuality", "GRAPHICS QUALITY", ["auto", "low", "medium", "high"], ry, D, "#b06bff");
-    ry += this.rowH;
-    this.addRow("highContrast", "HIGH CONTRAST HUD", true, ry, D, "#f7ff3c");
-    ry += this.rowH;
-    this.addRow("uiScale", "UI TEXT SIZE", false, ry, D);
-    ry += this.rowH;
-    this.addRow("gamepadEnabled", "GAMEPAD ENABLED", true, ry, D, "#39ff88");
-    ry += this.rowH + uiGap("xs");
-    this.addRow("shake", "SCREEN SHAKE", false, ry, D);
-    ry += this.rowH;
-    this.addRow("master", "MASTER VOLUME", false, ry, D);
-    ry += this.rowH;
-    this.addRow("music", "MUSIC VOLUME", false, ry, D);
-    ry += this.rowH;
-    this.addRow("sfx", "SFX VOLUME", false, ry, D);
+    // Large close hit target on phones.
+    if (this.mobile) {
+      const closeW = uiDim(56);
+      const closeH = uiDim(44);
+      const cx = this.x + this.w - this.pad - closeW;
+      const cy = this.y + uiDim(8);
+      this.text(cx + closeW / 2, cy + uiDim(10), "✕", "#ff8a9a", 16, D).setOrigin(0.5, 0);
+      const z = scene.add
+        .zone(cx, cy, closeW, closeH)
+        .setOrigin(0)
+        .setScrollFactor(0)
+        .setDepth(D + 2)
+        .setInteractive({ useHandCursor: true });
+      z.on("pointerdown", () => this.close());
+      this.zones.push(z);
+    }
+
+    let ry = this.y + uiDim(this.mobile ? 56 : 58);
+    const add = (
+      key: keyof SettingsData,
+      label: string,
+      toggle: boolean,
+      color?: string,
+      cycle?: GraphicsQuality[],
+    ) => {
+      if (cycle) this.addCycleRow(key, label, cycle, ry, D, color ?? "#eafdff");
+      else this.addRow(key, label, toggle, ry, D, color ?? "#eafdff");
+      ry += this.rowH;
+    };
+
+    add("rsControls", this.mobile ? "TAP-TO-WALK" : "TAP-TO-WALK (opt-in)", true, "#f7ff3c");
+    add("uiDensity", "HUD DENSITY", false, "#39ff88", ["new", "full"] as unknown as GraphicsQuality[]);
+    add("firstSessionCoach", "FIRST-SESSION COACH", true, "#b06bff");
+    add("shareCards", "SHARE CARDS ON BOSS KILL", true, "#f7ff3c");
+    add("reduceFlashing", "REDUCE FLASHING", true, "#ff3b6b");
+    add("lowFx", "LOW-FX MODE", true, "#29e7ff");
+    add("graphicsQuality", "GRAPHICS QUALITY", false, "#b06bff", ["auto", "low", "medium", "high"]);
+    add("highContrast", "HIGH CONTRAST HUD", true, "#f7ff3c");
+    add("uiScale", "UI TEXT SIZE", false);
+    add("gamepadEnabled", "GAMEPAD ENABLED", true, "#39ff88");
+    ry += uiGap("xs");
+    add("shake", "SCREEN SHAKE", false);
+    add("master", "MASTER VOLUME", false);
+    add("music", "MUSIC VOLUME", false);
+    add("sfx", "SFX VOLUME", false);
 
     this.text(
-      this.x + uiDim(20),
-      this.y + this.h - uiDim(30),
-      "Reduce Flashing = photosensitivity-safe. Graphics auto-detects your device tier.",
+      this.x + this.pad,
+      this.y + this.h - uiDim(this.mobile ? 36 : 30),
+      this.mobile
+        ? "Tap a row to toggle · drag sliders · Reduce Flashing = photosensitivity-safe"
+        : "Reduce Flashing = photosensitivity-safe. Graphics auto-detects your device tier.",
       "#9aa3b2",
-      10,
+      this.mobile ? 11 : 10,
       D,
-      this.w - uiDim(150),
+      this.w - this.pad * 2 - (this.mobile ? 0 : uiDim(100)),
     );
-    this.text(this.x + this.w - uiDim(100), this.y + this.h - uiDim(30), closeHint("O / ESC close"), "#9aa3b2", 10, D, uiDim(90));
+    if (!this.mobile) {
+      this.text(
+        this.x + this.w - uiDim(100),
+        this.y + this.h - uiDim(30),
+        closeHint("O / ESC close"),
+        "#9aa3b2",
+        10,
+        D,
+        uiDim(90),
+      );
+    }
     this.setVisible(false);
   }
 
@@ -126,19 +160,49 @@ export default class OptionsPanel {
     depth: number,
     labelColor = "#eafdff",
   ) {
-    this.text(this.x + uiDim(20), y, label, labelColor, 12, depth, this.trackX - this.x - uiDim(32));
-    const valueW = uiDim(48);
-    const valueText = this.text(this.x + this.w - uiDim(68), y, "", "#f7ff3c", 12, depth, valueW);
-    const row: Row = { key, toggle, y, trackX: this.trackX, trackW: this.trackW, valueW, valueText };
+    const labelMax = this.trackX - this.x - this.pad - uiDim(8);
+    this.text(this.x + this.pad, y + (this.mobile ? uiDim(12) : 0), label, labelColor, this.mobile ? 13 : 12, depth, labelMax);
+    const valueW = uiDim(this.mobile ? 56 : 48);
+    const valueText = this.text(
+      this.x + this.w - this.pad - valueW,
+      y + (this.mobile ? uiDim(12) : 0),
+      "",
+      "#f7ff3c",
+      this.mobile ? 13 : 12,
+      depth,
+      valueW,
+    );
+    const hitX = this.x + this.pad;
+    const hitW = this.w - this.pad * 2;
+    const row: Row = {
+      key,
+      toggle,
+      y,
+      trackX: this.trackX,
+      trackW: this.trackW,
+      valueW,
+      hitX,
+      hitW,
+      valueText,
+    };
     this.rows.push(row);
 
+    // Full-width row hit target on phones (easier than tiny toggle zone).
     const z = this.scene.add
-      .zone(this.trackX, y - uiDim(4), toggle ? uiDim(86) : this.trackW + uiDim(64), this.zoneH)
+      .zone(hitX, y - uiDim(2), hitW, this.zoneH)
       .setOrigin(0)
       .setScrollFactor(0)
       .setDepth(depth)
       .setInteractive({ useHandCursor: true });
-    z.on("pointerdown", (_p: Phaser.Input.Pointer, localX: number) => this.onRowClick(row, localX));
+    z.on("pointerdown", (_p: Phaser.Input.Pointer, localX: number) => {
+      // For sliders, map from full-row local X into the track segment.
+      if (!row.toggle && !row.cycle) {
+        const trackLocal = localX - (row.trackX - hitX);
+        this.onRowClick(row, trackLocal);
+      } else {
+        this.onRowClick(row, localX);
+      }
+    });
     this.zones.push(z);
   }
 
@@ -150,15 +214,14 @@ export default class OptionsPanel {
       const next = row.cycle[(i + 1 + row.cycle.length) % row.cycle.length];
       updateSettings({ [row.key]: next } as Partial<SettingsData>);
     } else if (row.toggle) {
-      // Phones need tap-to-walk — don't let it flip off and soft-lock movement.
       if (row.key === "rsControls" && prefersMobileUx() && getSettings().rsControls) return;
       updateSettings({ [row.key]: !getSettings()[row.key] } as Partial<SettingsData>);
     } else if (row.key === "uiScale") {
-      const v = Phaser.Math.Clamp(localX / row.trackW, 0, 1);
+      const v = Phaser.Math.Clamp(localX / Math.max(1, row.trackW), 0, 1);
       const scaled = 0.85 + v * 0.5;
       updateSettings({ uiScale: Math.round(scaled * 100) / 100 });
     } else {
-      const v = Phaser.Math.Clamp(localX / row.trackW, 0, 1);
+      const v = Phaser.Math.Clamp(localX / Math.max(1, row.trackW), 0, 1);
       updateSettings({ [row.key]: Math.round(v * 100) / 100 } as Partial<SettingsData>);
     }
     this.onChange?.();
@@ -173,13 +236,35 @@ export default class OptionsPanel {
     depth: number,
     labelColor = "#eafdff",
   ) {
-    this.text(this.x + uiDim(20), y, label, labelColor, 12, depth, this.trackX - this.x - uiDim(32));
-    const valueW = uiDim(88);
-    const valueText = this.text(this.x + this.w - uiDim(108), y, "", "#f7ff3c", 12, depth, valueW);
-    const row: Row = { key, toggle: false, cycle, y, trackX: this.trackX, trackW: this.trackW, valueW, valueText };
+    const labelMax = this.trackX - this.x - this.pad - uiDim(8);
+    this.text(this.x + this.pad, y + (this.mobile ? uiDim(12) : 0), label, labelColor, this.mobile ? 13 : 12, depth, labelMax);
+    const valueW = uiDim(this.mobile ? 100 : 88);
+    const valueText = this.text(
+      this.x + this.w - this.pad - valueW,
+      y + (this.mobile ? uiDim(12) : 0),
+      "",
+      "#f7ff3c",
+      this.mobile ? 13 : 12,
+      depth,
+      valueW,
+    );
+    const hitX = this.x + this.pad;
+    const hitW = this.w - this.pad * 2;
+    const row: Row = {
+      key,
+      toggle: false,
+      cycle,
+      y,
+      trackX: this.trackX,
+      trackW: this.trackW,
+      valueW,
+      hitX,
+      hitW,
+      valueText,
+    };
     this.rows.push(row);
     const z = this.scene.add
-      .zone(this.trackX, y - uiDim(4), uiDim(120), this.zoneH)
+      .zone(hitX, y - uiDim(2), hitW, this.zoneH)
       .setOrigin(0)
       .setScrollFactor(0)
       .setDepth(depth)
@@ -215,8 +300,13 @@ export default class OptionsPanel {
     this.panelArt = drawPanelFrame(g, this.x, this.y, this.w, this.h, COLORS.neonCyan, this.scene, this.panelArt);
     if (this.panelArt) this.panelArt.setVisible(this.open).setDepth(1799);
     const s = getSettings();
-    const trackH = uiDim(8);
+    const trackH = uiDim(this.mobile ? 14 : 8);
     for (const row of this.rows) {
+      // Subtle full-row background on mobile for affordance.
+      if (this.mobile) {
+        g.fillStyle(0x0e0c1c, 0.55).fillRect(row.hitX, row.y - uiDim(2), row.hitW, this.zoneH);
+        g.lineStyle(uiDim(1), 0x2a3450, 0.55).strokeRect(row.hitX, row.y - uiDim(2), row.hitW, this.zoneH);
+      }
       if (row.cycle) {
         const cur = String(s[row.key]);
         const eff =
@@ -235,16 +325,18 @@ export default class OptionsPanel {
         setFittedText(row.valueText, on ? "[ ON ]" : "[ OFF ]", row.valueW);
       } else if (row.key === "uiScale") {
         const v = (s.uiScale - 0.85) / 0.5;
-        g.fillStyle(0x140a1e, 0.95).fillRect(row.trackX, row.y + uiDim(2), row.trackW, trackH);
-        g.fillStyle(0x29e7ff, 1).fillRect(row.trackX + uiDim(1), row.y + uiDim(3), (row.trackW - uiDim(2)) * v, trackH - uiDim(2));
-        g.lineStyle(uiDim(1), 0x3a4a66, 0.8).strokeRect(row.trackX, row.y + uiDim(2), row.trackW, trackH);
+        const ty = row.y + uiDim(this.mobile ? 16 : 2);
+        g.fillStyle(0x140a1e, 0.95).fillRect(row.trackX, ty, row.trackW, trackH);
+        g.fillStyle(0x29e7ff, 1).fillRect(row.trackX + uiDim(1), ty + uiDim(1), (row.trackW - uiDim(2)) * v, trackH - uiDim(2));
+        g.lineStyle(uiDim(1), 0x3a4a66, 0.8).strokeRect(row.trackX, ty, row.trackW, trackH);
         row.valueText.setColor("#eafdff");
         setFittedText(row.valueText, `${Math.round(s.uiScale * 100)}%`, row.valueW);
       } else {
         const v = s[row.key] as number;
-        g.fillStyle(0x140a1e, 0.95).fillRect(row.trackX, row.y + uiDim(2), row.trackW, trackH);
-        g.fillStyle(0x29e7ff, 1).fillRect(row.trackX + uiDim(1), row.y + uiDim(3), (row.trackW - uiDim(2)) * v, trackH - uiDim(2));
-        g.lineStyle(uiDim(1), 0x3a4a66, 0.8).strokeRect(row.trackX, row.y + uiDim(2), row.trackW, trackH);
+        const ty = row.y + uiDim(this.mobile ? 16 : 2);
+        g.fillStyle(0x140a1e, 0.95).fillRect(row.trackX, ty, row.trackW, trackH);
+        g.fillStyle(0x29e7ff, 1).fillRect(row.trackX + uiDim(1), ty + uiDim(1), (row.trackW - uiDim(2)) * v, trackH - uiDim(2));
+        g.lineStyle(uiDim(1), 0x3a4a66, 0.8).strokeRect(row.trackX, ty, row.trackW, trackH);
         row.valueText.setColor("#eafdff");
         setFittedText(row.valueText, `${Math.round(v * 100)}%`, row.valueW);
       }
@@ -253,8 +345,6 @@ export default class OptionsPanel {
 
   private setVisible(v: boolean) {
     this.backdrop.setVisible(v);
-    // The tap-outside catcher is a Zone (renderless) — visibility alone may not
-    // gate its hit-testing, so switch its input off explicitly while hidden.
     for (const child of this.backdrop.list) {
       const z = child as Phaser.GameObjects.Zone;
       if (z.type === "Zone" && z.input) z.input.enabled = v;

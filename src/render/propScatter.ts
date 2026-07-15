@@ -15,9 +15,12 @@ import {
   PROP_PICKUP_KEY,
   PROP_VAN_KEY,
   HF_PROP_KEYS,
+  HF_DIST_PROP_KEYS,
+  HF_WORLD_PROP_KEYS,
   GLOW_KEY,
 } from "../assets/manifest";
 import { isWall, type TileGrid } from "../world/district";
+import type { PropBias } from "../game/districtEnv";
 
 const hash = (x: number, y: number) => ((x * 9283711) ^ (y * 6892871)) >>> 0;
 
@@ -58,11 +61,46 @@ const PROPS: PropSpec[] = [
   { key: HF_PROP_KEYS[5], originY: 0.88, scale: 0.64, yOff: 2, weight: 1 },
   { key: HF_PROP_KEYS[6], originY: 0.72, scale: 0.55, yOff: 0, weight: 1 },
   { key: HF_PROP_KEYS[7], originY: 0.72, scale: 0.55, yOff: 0, weight: 1 },
+  { key: HF_PROP_KEYS[8], originY: 0.8, scale: 0.58, yOff: 1, weight: 1 }, // AC / rooftop unit
   { key: HF_PROP_KEYS[9], originY: 0.82, scale: 0.55, yOff: 2, glow: true, weight: 1 },
   { key: HF_PROP_KEYS[10], originY: 0.85, scale: 0.58, yOff: 2, weight: 1 },
+  { key: HF_PROP_KEYS[11], originY: 0.88, scale: 0.56, yOff: 2, weight: 1 }, // pallet / cargo
+  // Wishlist world street props (skip silently if not yet generated).
+  ...HF_WORLD_PROP_KEYS.map((key) => ({
+    key,
+    originY: 0.85,
+    scale: key.includes("taxi") || key.includes("cart") ? 0.7 : 0.55,
+    yOff: 2,
+    weight: key.includes("puddle") || key.includes("manhole") ? 2 : 1,
+    glow: key.includes("holo") || key.includes("glow") || key.includes("fire") || key.includes("puddle"),
+  })),
+  // District signature clutter — full pool; districtEnv bias can prefer subsets later.
+  ...HF_DIST_PROP_KEYS.map((key) => ({
+    key,
+    originY: 0.86,
+    scale: 0.58,
+    yOff: 2,
+    weight: 1,
+    glow: key.includes("drone") || key.includes("core") || key.includes("grow"),
+  })),
 ];
 
 const POOL = PROPS.flatMap((p) => Array.from({ length: p.weight }, () => p));
+
+/** Map district PropBias tags → texture keys used in the scatter pool. */
+const BIAS_KEYS: Record<PropBias, string[]> = {
+  streetlight: [PROP_STREETLIGHT_KEY, HF_PROP_KEYS[0]],
+  vending: [PROP_VENDING_KEY, HF_PROP_KEYS[1]],
+  ac: [PROP_AC_KEY],
+  bin: [PROP_BIN_KEY],
+  hydrant: [PROP_HYDRANT_KEY],
+  planter: [PROP_PLANTER_KEY],
+  barrier: [PROP_BARRIER_KEY],
+  dumpster: [PROP_DUMPSTER_KEY],
+  car: [PROP_CAR_BLUE_KEY, PROP_CAR_RED_KEY, PROP_CAR_GREEN_KEY, PROP_PICKUP_KEY, PROP_VAN_KEY, HF_PROP_KEYS[6], HF_PROP_KEYS[7]],
+  industrial: [PROP_AC_KEY, PROP_DUMPSTER_KEY, PROP_BARRIER_KEY, HF_PROP_KEYS[2], HF_PROP_KEYS[3], HF_PROP_KEYS[8], HF_PROP_KEYS[11]],
+  neon: [PROP_STREETLIGHT_KEY, PROP_VENDING_KEY, HF_PROP_KEYS[0], HF_PROP_KEYS[1], HF_PROP_KEYS[9], HF_PROP_KEYS[10]],
+};
 
 function groundShadow(scene: Phaser.Scene, x: number, y: number, depth: number, rw: number, rh: number) {
   scene.add
@@ -73,17 +111,34 @@ function groundShadow(scene: Phaser.Scene, x: number, y: number, depth: number, 
     .setDepth(depth - 0.2);
 }
 
+function poolForBias(bias?: PropBias[]): PropSpec[] {
+  if (!bias || bias.length === 0) return POOL;
+  const wanted = new Set(bias.flatMap((b) => BIAS_KEYS[b] ?? []));
+  const filtered = PROPS.filter((p) => wanted.has(p.key));
+  if (filtered.length === 0) return POOL;
+  // Weight each bias entry equally so rare cars don't dominate industrial yards.
+  return filtered.flatMap((p) => Array.from({ length: Math.max(1, p.weight) }, () => p));
+}
+
 /**
  * Scatter world props for visual density — benches, vending, AC units, neon pools.
  * Deterministic per tile; only on walkable outdoor tiles away from walls.
+ * Pass `propBias` + `accent` so each district's streets match its theme.
  */
-export function scatterWorldProps(scene: Phaser.Scene, grid: TileGrid, depth = 5, density = 0.078) {
+export function scatterWorldProps(
+  scene: Phaser.Scene,
+  grid: TileGrid,
+  depth = 5,
+  density = 0.078,
+  opts?: { propBias?: PropBias[]; accent?: number },
+) {
   const H = grid.length;
   const W = grid[0]?.length ?? 0;
   const container = scene.add.container(0, 0).setDepth(depth);
   // Only scatter props whose textures actually loaded (missing HF props skip silently).
-  const livePool = POOL.filter((p) => scene.textures.exists(p.key));
+  const livePool = poolForBias(opts?.propBias).filter((p) => scene.textures.exists(p.key));
   if (livePool.length === 0) return;
+  const glowTint = opts?.accent ?? 0x29e7ff;
 
   for (let ty = 2; ty < H - 2; ty++) {
     const row = grid[ty];
@@ -118,10 +173,10 @@ export function scatterWorldProps(scene: Phaser.Scene, grid: TileGrid, depth = 5
         scene.add
           .image(x, y - 10, GLOW_KEY)
           .setBlendMode(Phaser.BlendModes.ADD)
-          .setTint(0x29e7ff)
+          .setTint(glowTint)
           .setAlpha(0.2)
-          .setScale(1.55)
-          .setDepth(depth - 0.1);
+          .setDepth(depth - 0.1)
+          .setScale(1.55);
         scene.add
           .image(x, y + 6, GLOW_KEY)
           .setBlendMode(Phaser.BlendModes.ADD)
@@ -134,4 +189,10 @@ export function scatterWorldProps(scene: Phaser.Scene, grid: TileGrid, depth = 5
     }
   }
   return container;
+}
+
+/** Resolve a fixture mix entry to a concrete prop texture key (for wall-adjacent décor). */
+export function fixtureKeyFor(bias: PropBias, salt: number): string {
+  const keys = BIAS_KEYS[bias] ?? [PROP_STREETLIGHT_KEY];
+  return keys[salt % keys.length] ?? PROP_STREETLIGHT_KEY;
 }

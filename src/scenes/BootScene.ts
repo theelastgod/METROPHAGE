@@ -26,6 +26,12 @@ export default class BootScene extends Phaser.Scene {
       if (barEl) barEl.style.width = `${Math.round(v * 100)}%`;
       if (tagEl) tagEl.textContent = `LOADING ASSETS ${Math.round(v * 100)}%`;
     });
+    // Wishlist / optional HF packs may 404 mid-gen — don't stall boot.
+    this.load.on("loaderror", (file: { key?: string }) => {
+      if (import.meta.env.DEV && file?.key) {
+        console.warn("[boot] optional asset missing:", file.key);
+      }
+    });
 
     for (const [category, list] of Object.entries(ASSETS)) {
       for (const a of list) {

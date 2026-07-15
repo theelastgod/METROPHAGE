@@ -39,10 +39,30 @@ if (!npmCli || !existsSync(npmCli)) {
   process.exit(2);
 }
 
+const wcProjectId = (process.env.VITE_WALLETCONNECT_PROJECT_ID || "").trim();
+// Robinhood mainnet is the production network. Mint stays empty until CA is set.
+const metroCluster = (process.env.VITE_METRO_CLUSTER || "robinhood").trim();
+const metroSettlement = (process.env.VITE_METRO_SETTLEMENT || "robinhood").trim();
+const metroMint = (process.env.VITE_METRO_MINT || "").trim();
 console.log(`Building production client for ${LIVE_SERVER_URL}`);
+console.log(`$METRO network: ${metroSettlement} · cluster=${metroCluster}${metroMint ? ` · mint=${metroMint.slice(0, 10)}…` : " · mint=awaiting CA"}`);
+if (wcProjectId) {
+  console.log(`WalletConnect project id: ${wcProjectId.slice(0, 8)}…`);
+} else {
+  console.warn(
+    "⚠ VITE_WALLETCONNECT_PROJECT_ID unset — mobile WalletConnect modal disabled (injected wallets + MetaMask deep-link only). Free id: https://dashboard.reown.com",
+  );
+}
 run(process.execPath, [npmCli, "run", "build"], {
   ...process.env,
   VITE_SERVER_URL: LIVE_SERVER_URL,
+  VITE_METRO_CLUSTER: metroCluster,
+  VITE_METRO_SETTLEMENT: metroSettlement,
+  // Only bake mint when explicitly provided — never invent a CA.
+  ...(metroMint ? { VITE_METRO_MINT: metroMint } : { VITE_METRO_MINT: "" }),
+  VITE_METRO_RPC: process.env.VITE_METRO_RPC || "https://rpc.mainnet.chain.robinhood.com",
+  VITE_METRO_CHAIN_ID: process.env.VITE_METRO_CHAIN_ID || "4663",
+  ...(wcProjectId ? { VITE_WALLETCONNECT_PROJECT_ID: wcProjectId } : {}),
 });
 
 const dist = join(root, "dist");

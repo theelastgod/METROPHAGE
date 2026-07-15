@@ -329,3 +329,129 @@ export const ALL_NPCS: CityNpcDef[] = [...KEY_NPCS, ...CITIZENS, ...REGIONAL_NPC
 export function npcDef(id: string): CityNpcDef | undefined {
   return ALL_NPCS.find((n) => n.id === id);
 }
+
+/** Human-readable place name for the player's current zone. */
+export function locationLabel(zone: string | null | undefined): string {
+  if (!zone || zone === "safe") return "METRO CITY";
+  if (zone === "subway") return "THE UNDERLINE";
+  if (zone === "tutorial" || zone === "tutorial_full") return "THE DRILL YARD";
+  if (zone === "estates") return "THE ESTATES";
+  if (zone === "clinic") return "THE CLINIC";
+  if (zone === "shop") return "THE MARKET";
+  if (zone === "bar") return "THE FERAL CAT";
+  if (zone === "den") return "THE DEN";
+  if (zone === "vault") return "THE VAULT";
+  if (zone === "hospital") return "THE HOSPITAL";
+  if (zone === "hotel") return "THE HOTEL";
+  // District streets (d0) and interiors (d0i3, d2i0…)
+  const dm = /^d(\d+)/.exec(zone);
+  if (dm) {
+    const i = Number(dm[1]);
+    const names = [
+      "PALANTIR PLAZA",
+      "THE STACKS",
+      "THE SPIRE",
+      "TIDAL DOCKS",
+      "THE UNDERCITY",
+      "RELAY GRID",
+      "THE WASTES",
+      "THE KERNEL",
+    ];
+    return names[i] ?? `DISTRICT ${i}`;
+  }
+  const wm = /^w(\d+)/.exec(zone);
+  if (wm) return `WILDERNESS ${wm[1]}`;
+  if (/^h\d+$/.test(zone) || /^est\d+$/.test(zone)) return "METRO CITY";
+  return zone.replace(/_/g, " ").toUpperCase();
+}
+
+/** Short flavor blurb per location for ambient / resident dialogue. */
+const LOCATION_FLAVOR: Record<string, string[]> = {
+  "METRO CITY": [
+    "Plaza never sleeps — neither do the warrants.",
+    "Hub's the only place the grid still pretends to care.",
+    "Watch the neon. It watches back.",
+  ],
+  "PALANTIR PLAZA": [
+    "Predictive policing painted this block pink.",
+    "Every camera here knows your name before you do.",
+  ],
+  "THE STACKS": [
+    "Factories don't close. They just change what they process.",
+    "Ash on the tongue means you're in the Stacks.",
+  ],
+  "THE SPIRE": [
+    "Altitude is the only real wealth up here.",
+    "They lease the sky and bill the ground.",
+  ],
+  "TIDAL DOCKS": [
+    "Tide's wrong tonight. Manifests always are.",
+    "Salt, rust, and unpaid freight — home sweet home.",
+  ],
+  "THE UNDERCITY": [
+    "Down here the lights are someone else's problem.",
+    "If the tunnel goes quiet, run.",
+  ],
+  "RELAY GRID": [
+    "Every packet through here has a price.",
+    "Uplink's loud. Secrets are louder.",
+  ],
+  "THE WASTES": [
+    "Nothing grows out here except grudges.",
+    "Scrap's currency. Flesh is optional.",
+  ],
+  "THE KERNEL": [
+    "This is where the city keeps its mind. Guarded.",
+    "You shouldn't be this deep without a death wish.",
+  ],
+  "THE UNDERLINE": [
+    "Mind the gap. And the things in it.",
+    "Trains don't run. Monsters do.",
+    "Stations still light up for ghosts.",
+  ],
+  "THE ESTATES": [
+    "Own a door and the city pretends you're someone.",
+    "Quiet blocks. Expensive quiet.",
+  ],
+  "THE CLINIC": [
+    "Bleed quiet. Docs charge for noise.",
+    "First patch is free. The second remembers you.",
+  ],
+  "THE MARKET": [
+    "Everything's for sale. Including the sellers.",
+    "Check the seals. Check them twice.",
+  ],
+  "THE FERAL CAT": [
+    "Drink until the grid looks honest.",
+    "Bar hears more truth than the FIXER.",
+  ],
+  "THE DEN": [
+    "No questions. That's the house rule.",
+    "Heat sinks here. Bring your own.",
+  ],
+};
+
+/**
+ * Pick a dialogue line that acknowledges where the player is.
+ * Mixes the NPC's own lines with location flavor so talk feels local.
+ */
+export function locationAwareLine(
+  baseLines: string[] | undefined,
+  zone: string | null | undefined,
+  lineIdx = 0,
+): string {
+  const place = locationLabel(zone);
+  const flavor = LOCATION_FLAVOR[place] ?? LOCATION_FLAVOR["METRO CITY"];
+  const base = baseLines && baseLines.length > 0 ? baseLines : ["…"];
+  // Every 3rd line leans into the location so personality still shows.
+  if (lineIdx % 3 === 2) {
+    const f = flavor[lineIdx % flavor.length];
+    return f;
+  }
+  const core = base[lineIdx % base.length];
+  // Occasionally prefix with a place tag for orientation (mobile bubbles are short).
+  if (lineIdx % 5 === 0 && place !== "METRO CITY") {
+    return `[${place}] ${core}`;
+  }
+  return core;
+}

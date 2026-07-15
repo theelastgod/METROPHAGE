@@ -4,6 +4,7 @@ import Modal from "./Modal";
 import { dimBackdrop, modalRect, uiDim } from "./uiLayout";
 import { bodyFont, displayFont } from "./typography";
 import { RS_SKILLS, xpProgress, type RsSkillXp } from "../game/rsSkills";
+import { levelPowerLabel, LEVEL_SOFT_CAP } from "../game/levelCurve";
 import { animatePanelIn } from "./studioChrome";
 
 /** RuneScape-style skill list — levels, XP bars, grind visibility. */
@@ -14,6 +15,12 @@ export default class RsSkillsPanel extends Modal {
     super(scene);
     this.skills = skills;
   }
+
+  /**
+   * Server-authoritative character level (net.level) — distinct from the skill
+   * levels below, which are local flavour. This is the one that grants power.
+   */
+  characterLevel = 1;
 
   setSkills(sk: RsSkillXp) {
     this.skills = sk;
@@ -50,8 +57,23 @@ export default class RsSkillsPanel extends Modal {
         .setDepth(D + 2),
     );
 
+    // What the character level is actually worth — the skills below are flavour,
+    // this line is the real power curve (levelCurve), so lead with it.
+    const capped = this.characterLevel >= LEVEL_SOFT_CAP;
+    add(
+      scene.add
+        .text(
+          x + uiDim(20),
+          y + uiDim(34),
+          `CHARACTER LV ${this.characterLevel}  ${levelPowerLabel(this.characterLevel)}${capped ? "  · MAX" : ""}`,
+          bodyFont(10, { color: capped ? "#39ff88" : "#9aa3b2" }),
+        )
+        .setScrollFactor(0)
+        .setDepth(D + 2),
+    );
+
     const rowH = uiDim(58);
-    let ry = y + uiDim(48);
+    let ry = y + uiDim(56);
     for (const sk of RS_SKILLS) {
       const prog = xpProgress(this.skills[sk.id]);
       g.fillStyle(0x12102a, 0.9).fillRoundedRect(x + uiDim(16), ry, w - uiDim(32), rowH - uiDim(6), 4);

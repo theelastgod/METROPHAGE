@@ -233,45 +233,87 @@ export function tileIsWall(x: number, y: number, grid: TileGrid): boolean {
 /**
  * Guaranteed open spawn: if `preferred` collides with walls (player radius), spiral-search
  * tile centres until a free spot is found. Used on every zone enter / building interior
- * so runners never load inside geometry.
+ * so runners never load inside geometry, on roofs, or in 1-tile pockets.
+ *
+ * Prefers tiles with a walkable neighbour (escape route) so we don't park the player
+ * in a sealed courtyard / furniture pocket that looks open but can't be left.
  */
 export function resolveOpenSpawn(
   grid: TileGrid,
   preferred: { x: number; y: number },
-  maxR = 28,
+  maxR?: number,
 ): { x: number; y: number } {
+  const { w: gw, h: gh } = gridDims(grid);
+  const searchR = maxR ?? Math.max(28, Math.min(96, Math.ceil(Math.max(gw, gh) / 3)));
   const px = Number.isFinite(preferred.x) ? preferred.x : TILE * 1.5;
   const py = Number.isFinite(preferred.y) ? preferred.y : TILE * 1.5;
-  if (!collides(px, py, grid)) return { x: px, y: py };
+
+  const openTile = (tx: number, ty: number) =>
+    tx > 0 && ty > 0 && tx < gw - 1 && ty < gh - 1 && grid[ty]?.[tx] !== undefined && !isWall(grid[ty][tx]);
+  const hasEscape = (tx: number, ty: number) =>
+    openTile(tx - 1, ty) || openTile(tx + 1, ty) || openTile(tx, ty - 1) || openTile(tx, ty + 1);
+  const tryAt = (tx: number, ty: number, needEscape: boolean): { x: number; y: number } | null => {
+    if (!openTile(tx, ty)) return null;
+    if (needEscape && !hasEscape(tx, ty)) return null;
+    const x = tx * TILE + TILE / 2;
+    const y = ty * TILE + TILE / 2;
+    if (collides(x, y, grid)) return null;
+    return { x, y };
+  };
+
+  // Preferred already free and escapable → keep it (resume mid-street).
+  {
+    const ptx = Math.floor(px / TILE);
+    const pty = Math.floor(py / TILE);
+    if (!collides(px, py, grid) && openTile(ptx, pty) && hasEscape(ptx, pty)) {
+      return { x: px, y: py };
+    }
+    if (!collides(px, py, grid) && openTile(ptx, pty)) {
+      // Free but pocketed — still try to find a better neighbour before accepting.
+      const better = tryAt(ptx, pty, true);
+      if (better) return better;
+    }
+  }
 
   const ptx = Math.floor(px / TILE);
   const pty = Math.floor(py / TILE);
-  const { w: gw, h: gh } = gridDims(grid);
 
-  for (let r = 0; r <= maxR; r++) {
+  // Pass 1: spiral for free + escapable tiles (player can actually walk out).
+  for (let r = 0; r <= searchR; r++) {
     for (let dy = -r; dy <= r; dy++) {
       for (let dx = -r; dx <= r; dx++) {
         if (r > 0 && Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
-        const tx = ptx + dx;
-        const ty = pty + dy;
-        if (tx <= 0 || ty <= 0 || tx >= gw - 1 || ty >= gh - 1) continue;
-        if (isWall(grid[ty]?.[tx])) continue;
-        const x = tx * TILE + TILE / 2;
-        const y = ty * TILE + TILE / 2;
-        if (!collides(x, y, grid)) return { x, y };
+        const hit = tryAt(ptx + dx, pty + dy, true);
+        if (hit) return hit;
       }
     }
   }
 
-  // Last resort: first non-colliding tile centre on the map.
-  for (let ty = 1; ty < gh - 1; ty++) {
-    for (let tx = 1; tx < gw - 1; tx++) {
-      if (isWall(grid[ty][tx])) continue;
-      const x = tx * TILE + TILE / 2;
-      const y = ty * TILE + TILE / 2;
-      if (!collides(x, y, grid)) return { x, y };
+  // Pass 2: any non-colliding tile centre near preferred.
+  for (let r = 0; r <= searchR; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (r > 0 && Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        const hit = tryAt(ptx + dx, pty + dy, false);
+        if (hit) return hit;
+      }
     }
   }
+
+  // Pass 3: first free escapable tile on the whole map.
+  for (let ty = 1; ty < gh - 1; ty++) {
+    for (let tx = 1; tx < gw - 1; tx++) {
+      const hit = tryAt(tx, ty, true);
+      if (hit) return hit;
+    }
+  }
+  for (let ty = 1; ty < gh - 1; ty++) {
+    for (let tx = 1; tx < gw - 1; tx++) {
+      const hit = tryAt(tx, ty, false);
+      if (hit) return hit;
+    }
+  }
+
   // Absolute fallback — still return preferred (better than NaN); caller may wall-lock.
   return { x: px, y: py };
 }

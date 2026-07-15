@@ -2,15 +2,16 @@
 //
 // The off-chain `credits` balance (server-authoritative, Phase 4) is the live in-game
 // currency. This bridge converts it to/from on-chain $METRO via a CUSTODIAL treasury:
-//   withdraw  credits -> $METRO  (debit credits, hand the player a CLAIM tx they pay
-//                                 the fee on; confirm finalizes once it lands on-chain)
+//   withdraw  credits -> $METRO  (debit credits; Solana treasury preferably pays SOL
+//                                 and broadcasts the payout; confirm finalizes on-chain)
 //   deposit   $METRO  -> credits (verify an on-chain transfer into the treasury, grant credits)
 //
 // AUTHORITY: the server owns every balance and authorizes every settlement. The client
 // never mints, never reports a balance, and cannot double-spend — withdrawals debit
 // atomically (a conditional UPDATE) and deposits are claim-once (tx_sig is a PRIMARY
-// KEY). Settlement is a pluggable seam: Solana SPL (primary), EVM ERC-20 (legacy),
+// KEY). Settlement is a pluggable seam: Robinhood ERC-20 (primary), Solana SPL (alt),
 // or devnet-sim for headless smoke tests.
+// Credits↔$METRO rates track EVM market USD (refreshed ~every 30m via metroPrice).
 //
 // Wallet proof required for live settlement (personal_sign / SIWS).
 
@@ -54,6 +55,21 @@ export type LiveBridge = {
   dailyCapCredits: number;
   claimTtlMs: number;
   policy: EconomyPolicy;
+  /** Market USD per 1 $METRO (EVM); reference 1.0 when unlisted. */
+  metroUsd: number;
+  priceMult: number;
+  priceSource: string;
+  priceStale: boolean;
+};
+
+/** Optional env for market-price-aware rates (Worker secrets / vars). */
+export type BridgePriceEnv = {
+  METRO_MINT?: string;
+  METRO_DEVNET_MINT?: string;
+  METRO_CHAIN_ID?: string;
+  METRO_RPC?: string;
+  METRO_USD_PRICE?: string;
+  METRO_MAINNET_ARMED?: string;
 };
 
 const DAY_MS = 86_400_000;
@@ -149,20 +165,40 @@ export async function registeredPlayerCount(db: D1Database): Promise<number> {
   }
 }
 
-/** Live rates + caps from pool health + live player population tier. */
-export async function resolveBridge(db: D1Database): Promise<LiveBridge> {
+/** Live rates + caps from pool health + population tier + market USD price. */
+export async function resolveBridge(db: D1Database, priceEnv?: BridgePriceEnv): Promise<LiveBridge> {
   const pool = await poolMetro(db);
   const seed = await seedMetro(db);
   const circ = await circulatingCredits(db);
   const players = await registeredPlayerCount(db);
   const dayStart = Date.now() - DAY_MS;
   const wdToday = await withdrawnTodayMetro(db, dayStart);
+
+  // Market USD (EVM) — 30m cache; reference $1 when unlisted / no mint.
+  let metroUsd = 1;
+  let priceSource = "reference";
+  let priceStale = false;
+  if (priceEnv) {
+    try {
+      const { getMetroUsdPrice } = await import("./metroPrice");
+      const q = await getMetroUsdPrice({ DB: db, ...priceEnv });
+      metroUsd = q.usd;
+      priceSource = q.source;
+      priceStale = q.stale;
+    } catch {
+      /* keep reference */
+    }
+  }
+
   const policy = resolveEconomyPolicy({
     poolMetro: pool,
     circulatingCredits: circ,
     activePlayers: players > 0 ? players : TARGET_PLAYERS,
     seedMetro: seed > 0 ? seed : METRO_DEV_SEED_METRO,
     withdrawnTodayMetro: wdToday,
+    metroUsd,
+    priceSource,
+    priceStale,
   });
   return {
     depositCreditsPerMetro: policy.depositCreditsPerMetro,
@@ -172,12 +208,16 @@ export async function resolveBridge(db: D1Database): Promise<LiveBridge> {
     dailyCapCredits: policy.dailyWithdrawCapCredits,
     claimTtlMs: BRIDGE.claimTtlMs,
     policy,
+    metroUsd: policy.metroUsd,
+    priceMult: policy.priceMult,
+    priceSource: policy.priceSource,
+    priceStale: policy.priceStale,
   };
 }
 
 /** Public pool status — the client renders launch-phase copy from this. */
-export async function poolInfo(db: D1Database): Promise<BridgeResponse> {
-  const live = await resolveBridge(db);
+export async function poolInfo(db: D1Database, priceEnv?: BridgePriceEnv): Promise<BridgeResponse> {
+  const live = await resolveBridge(db, priceEnv);
   const pool = live.policy.poolMetro;
   const minMetro = creditsToMetroAt(live.minWithdrawCredits, live.withdrawCreditsPerMetro);
   return {
@@ -201,6 +241,12 @@ export async function poolInfo(db: D1Database): Promise<BridgeResponse> {
     popTierLabel: live.policy.popTierLabel,
     nextPopThreshold: live.policy.nextPopThreshold,
     note: live.policy.note,
+    // Market price transparency for UI / HUD
+    metroUsd: live.metroUsd,
+    priceMult: live.priceMult,
+    priceSource: live.priceSource,
+    priceStale: live.priceStale,
+    metroUsdReference: 1,
   };
 }
 
@@ -234,16 +280,22 @@ export interface SettleResult {
   ref?: string; // on-chain reference (tx signature) when a real settlement happens
   reason?: string;
   metro?: number; // verified on-chain amount (deposit)
-  /** Partially-signed payout tx (base64) — the PLAYER signs as fee payer and submits. */
+  /**
+   * Payout payload for the client:
+   *  - Solana preferred: `solana-sent:<sig>` (Worker already broadcast; treasury paid SOL)
+   *  - Solana fallback: base64 fully- or partially-signed tx
+   *  - EVM: fully signed raw ERC-20 transfer hex
+   *  - sim: `devnet-sim-claim:…`
+   */
   claimTx?: string;
   /** EVM treasury nonce used for a pre-signed claim (burned on TTL reclaim). */
   nonce?: number;
 }
 
 export interface Settlement {
-  /** Build a payout claim the client can broadcast.
-   *  - EVM: fully signed raw ERC-20 transfer (treasury → wallet); client eth_sendRawTransaction
-   *  - Solana: partially signed transfer (player fee-payer); client wallet signs+sends */
+  /** Build a payout claim the client can broadcast (or that the server already sent).
+   *  - Solana: treasury-paid when SOL available; else player fee-payer partial sign
+   *  - EVM: fully signed raw ERC-20 transfer (treasury → wallet) */
   buildClaim(wallet: string, metro: number): Promise<SettleResult>;
   /** Verify a submitted claim landed on-chain: treasury paid exactly `metro` to `wallet`. */
   verifyClaim(txSig: string, wallet: string, metro: number): Promise<SettleResult>;
@@ -282,12 +334,17 @@ export interface BridgeResponse {
 // lookup for wallet players ("unknown player").
 const normId = (player: string): string => (player || "").replace(/[^A-Za-z0-9:_-]/g, "").slice(0, 64) || "blank";
 
-export async function getAccount(db: D1Database, player: string, settlement?: Settlement): Promise<BridgeResponse> {
+export async function getAccount(
+  db: D1Database,
+  player: string,
+  settlement?: Settlement,
+  priceEnv?: BridgePriceEnv,
+): Promise<BridgeResponse> {
   await reclaimExpired(db, settlement); // lazily return credits from abandoned claims
   const id = normId(player);
   const row = await db.prepare("SELECT credits, metro FROM players WHERE id = ?").bind(id).first<{ credits: number; metro: number }>();
   if (!row) return { ok: false, reason: "unknown player" };
-  const live = await resolveBridge(db);
+  const live = await resolveBridge(db, priceEnv);
   const agg = await db
     .prepare(
       "SELECT COALESCE(SUM(credits),0) AS used, COALESCE(MAX(created_at),0) AS last FROM metro_withdrawals WHERE player = ? AND status != 'failed' AND created_at >= ?",
@@ -297,14 +354,45 @@ export async function getAccount(db: D1Database, player: string, settlement?: Se
   const used = agg?.used ?? 0;
   const last = agg?.last ?? 0;
   const pool = live.policy.poolMetro;
+
+  // Exact treasury memory for this player (credits + $METRO + lifetime bridge).
+  let treasury: Record<string, unknown> | null = null;
+  try {
+    const { getPlayerTreasury } = await import("./playerTreasury");
+    const t = await getPlayerTreasury(db, id, live.withdrawCreditsPerMetro);
+    if (t) {
+      treasury = {
+        credits: t.credits,
+        metro: t.metro,
+        metroUnits: t.metroUnits,
+        depositedMetro: t.depositedMetro,
+        withdrawnMetro: t.withdrawnMetro,
+        depositedCredits: t.depositedCredits,
+        withdrawnCredits: t.withdrawnCredits,
+        pendingCredits: t.pendingCredits,
+        pendingMetro: t.pendingMetro,
+        netMetroInPool: t.netMetroInPool,
+        creditsAsMetro: t.creditsAsMetro,
+        updatedAt: t.updatedAt,
+      };
+    }
+  } catch {
+    /* pre-migration */
+  }
+
+  const credits = Math.max(0, Math.round(Number(row.credits) || 0));
+  const metro = Math.max(0, Math.round(Number(row.metro) || 0));
   return {
     ok: true,
     player: id,
-    credits: row.credits,
-    metro: row.metro ?? 0,
+    credits,
+    metro,
+    // Exact live balances (same as credits/metro; explicit for clients).
+    balances: { credits, metro },
+    treasury,
     depositCreditsPerMetro: live.depositCreditsPerMetro,
     withdrawCreditsPerMetro: live.withdrawCreditsPerMetro,
-    metroValue: creditsToMetroAt(row.credits, live.withdrawCreditsPerMetro),
+    metroValue: creditsToMetroAt(credits, live.withdrawCreditsPerMetro),
     poolMetro: pool,
     seedMetro: await seedMetro(db),
     phase: live.policy.phase === "bootstrap" || pool < creditsToMetroAt(live.minWithdrawCredits, live.withdrawCreditsPerMetro) ? "bootstrap" : "open",
@@ -323,10 +411,18 @@ export async function getAccount(db: D1Database, player: string, settlement?: Se
     popTierLabel: live.policy.popTierLabel,
     nextPopThreshold: live.policy.nextPopThreshold,
     note: live.policy.note,
+    metroUsd: live.metroUsd,
+    priceMult: live.priceMult,
+    priceSource: live.priceSource,
+    priceStale: live.priceStale,
   };
 }
 
-export function quote(credits: number, withdrawRate = BRIDGE.withdrawCreditsPerMetro, depositRate = BRIDGE.depositCreditsPerMetro): BridgeResponse {
+export function quote(
+  credits: number,
+  withdrawRate: number = BRIDGE.withdrawCreditsPerMetro,
+  depositRate: number = BRIDGE.depositCreditsPerMetro,
+): BridgeResponse {
   const c = Math.floor(credits);
   if (!Number.isFinite(c) || c <= 0) return { ok: false, reason: "bad amount" };
   return {
@@ -342,6 +438,7 @@ export async function withdraw(
   db: D1Database,
   settlement: Settlement,
   args: { player: string; wallet: string; credits: number },
+  priceEnv?: BridgePriceEnv,
 ): Promise<BridgeResponse> {
   const id = normId(args.player);
   const wallet = (args.wallet || "").trim();
@@ -349,7 +446,7 @@ export async function withdraw(
   if (!isValidWallet(wallet)) return { ok: false, reason: "invalid wallet address" };
   await reclaimExpired(db, settlement);
 
-  const live = await resolveBridge(db);
+  const live = await resolveBridge(db, priceEnv);
   if (!Number.isFinite(credits) || credits < live.minWithdrawCredits)
     return { ok: false, reason: `minimum withdraw is ${live.minWithdrawCredits} credits` };
 
@@ -438,6 +535,19 @@ export async function withdraw(
       /* pre-migration */
     }
   }
+  try {
+    const { recordTreasuryEvent } = await import("./playerTreasury");
+    await recordTreasuryEvent(db, {
+      player: id,
+      kind: "withdraw_pending",
+      credits,
+      metro,
+      rate: live.withdrawCreditsPerMetro,
+      ref: `wd:${wid}`,
+    });
+  } catch {
+    /* pre-migration */
+  }
   return {
     ok: true,
     status: "claim",
@@ -493,6 +603,18 @@ export async function confirmWithdraw(
     .bind(txSig, wid, txSig)
     .run();
   if (fin.meta.changes === 0) return { ok: false, reason: "already confirmed (or tx signature already used)" };
+  try {
+    const { recordTreasuryEvent } = await import("./playerTreasury");
+    await recordTreasuryEvent(db, {
+      player: id,
+      kind: "withdraw_done",
+      credits: row.credits,
+      metro: row.metro,
+      ref: txSig,
+    });
+  } catch {
+    /* pre-migration */
+  }
   return { ok: true, player: id, withdrawId: wid, metro: row.metro, credits: row.credits, txSig };
 }
 
@@ -533,6 +655,23 @@ export async function reclaimExpired(db: D1Database, settlement?: Settlement): P
       .run();
     if (flip.meta.changes === 0) continue;
     await db.prepare("UPDATE players SET credits = credits + ? WHERE id = ?").bind(r.credits, r.player).run();
+    try {
+      // Look up metro amount for the failed claim when present.
+      const meta = await db
+        .prepare("SELECT metro FROM metro_withdrawals WHERE id = ?")
+        .bind(r.id)
+        .first<{ metro: number }>();
+      const { recordTreasuryEvent } = await import("./playerTreasury");
+      await recordTreasuryEvent(db, {
+        player: r.player,
+        kind: "withdraw_failed",
+        credits: r.credits,
+        metro: Number(meta?.metro ?? 0),
+        ref: `wd:${r.id}`,
+      });
+    } catch {
+      /* pre-migration */
+    }
     reclaimed++;
   }
   return reclaimed;
@@ -542,6 +681,7 @@ export async function deposit(
   db: D1Database,
   settlement: Settlement,
   args: { player: string; wallet: string; txSig: string; metro: number },
+  priceEnv?: BridgePriceEnv,
 ): Promise<BridgeResponse> {
   const id = normId(args.player);
   const wallet = (args.wallet || "").trim();
@@ -556,7 +696,7 @@ export async function deposit(
   if (!v.ok) return { ok: false, reason: v.reason ?? "deposit not verified on-chain" };
   const metro = roundMetro(v.metro ?? args.metro);
   if (!(metro > 0) || !Number.isFinite(metro)) return { ok: false, reason: "bad deposit amount" };
-  const live = await resolveBridge(db);
+  const live = await resolveBridge(db, priceEnv);
   const credits = metroToCreditsAt(metro, live.depositCreditsPerMetro);
   // Reject dust that would grant 0 credits (don't inflate metro ledger with Math.max(1,…)).
   if (credits < 1) return { ok: false, reason: "deposit too small — need more $METRO for 1 credit at current rate" };
@@ -574,5 +714,18 @@ export async function deposit(
     .prepare("UPDATE players SET credits = credits + ?, metro = metro + ? WHERE id = ?")
     .bind(credits, metroUnits, id)
     .run();
+  try {
+    const { recordTreasuryEvent } = await import("./playerTreasury");
+    await recordTreasuryEvent(db, {
+      player: id,
+      kind: "deposit",
+      credits,
+      metro,
+      rate: live.depositCreditsPerMetro,
+      ref: txSig,
+    });
+  } catch {
+    /* pre-migration */
+  }
   return { ok: true, player: id, txSig, metro, metroGranted: metroUnits, credits };
 }

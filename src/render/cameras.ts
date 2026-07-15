@@ -1,5 +1,13 @@
 import Phaser from "phaser";
 import { RENDER_SCALE } from "../config";
+import { prefersMobileUx } from "../systems/Mobile";
+
+/**
+ * Extra world-camera zoom on phones so characters / props read larger on small
+ * screens. HUD stays on the separate zoom-1 UI camera (unchanged).
+ * Slight on purpose — too high crops combat FOV badly.
+ */
+export const MOBILE_WORLD_ZOOM = 1.18;
 
 /**
  * Supersampled rendering with an isolated UI layer.
@@ -17,15 +25,23 @@ import { RENDER_SCALE } from "../config";
  * ignore (`GameObject.willRender`), so clicks on UI hit-test through the UI camera.
  *
  * @param designZoom the scene's original (pre-supersample) world zoom — 1 for most
- *        scenes, 1.35 for the zoomed-in city interiors.
+ *        scenes, 2 for zoomed-in city interiors.
  */
 export function installUiCamera(scene: Phaser.Scene, designZoom = 1): Phaser.Cameras.Scene2D.Camera {
   const main = scene.cameras.main;
-  main.setZoom(designZoom * RENDER_SCALE);
+  // Phones: nudge the world camera in so the runner / NPCs / props aren't tiny.
+  // Interiors already use a higher designZoom — apply a slightly softer boost there.
+  const mobileBoost = prefersMobileUx()
+    ? designZoom > 1
+      ? 1 + (MOBILE_WORLD_ZOOM - 1) * 0.55 // interiors already close-up
+      : MOBILE_WORLD_ZOOM
+    : 1;
+  const worldZoom = designZoom * RENDER_SCALE * mobileBoost;
+  main.setZoom(worldZoom);
   // Authoritative resting zoom — juiceZoomPunch tweens the camera and MUST settle
   // back here. Reading cam.zoom live let overlapping punches capture each other's
   // punched-in value as "base" and ratchet the zoom in permanently.
-  (main as Phaser.Cameras.Scene2D.Camera & { __baseZoom?: number }).__baseZoom = designZoom * RENDER_SCALE;
+  (main as Phaser.Cameras.Scene2D.Camera & { __baseZoom?: number }).__baseZoom = worldZoom;
 
   const ui = scene.cameras.add(0, 0, scene.scale.width, scene.scale.height);
   ui.setName("ui");

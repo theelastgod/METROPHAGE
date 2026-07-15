@@ -7,6 +7,8 @@ import {
   type BuildingKind,
   type CityBuilding,
 } from "../world/city";
+import { districtBuildingKind } from "../game/districtVenues";
+import { selectBuildingSprite, type SpriteOpts } from "./buildingSprites";
 
 /** Per-kind exterior identity — roof accent, sign colour, and a simple façade glyph. */
 const KIND_STYLE: Record<
@@ -135,175 +137,198 @@ export function buildingExteriorAccent(kind: BuildingKind): number {
   return KIND_STYLE[kind].accent;
 }
 
-/** Higgsfield baked top-down building art, keyed by building kind. Kinds absent here
- *  fall back to the procedural façade. hospital reuses the clinic art (green cross). */
-const BUILDING_SPRITE: Partial<Record<BuildingKind, string>> = {
-  bar: "hf_building_bar",
-  clinic: "hf_building_clinic",
-  hospital: "hf_building_clinic",
-  subway: "hf_building_subway",
-  shop: "hf_building_shop",
-  guild: "hf_building_guild",
-  hotel: "hf_building_hotel",
-  stadium: "hf_building_stadium",
-  citycenter: "hf_building_citycenter",
-  home: "hf_building_home",
-  den: "hf_building_den",
-};
-
-/** Contagion-damaged variants (tools/higgsfield-expand-build.mjs). */
-const BUILDING_INFECTED: Partial<Record<BuildingKind, string>> = {
-  bar: "hf_building_inf_bar",
-  clinic: "hf_building_inf_clinic",
-  hospital: "hf_building_inf_clinic",
-  shop: "hf_building_inf_shop",
-  den: "hf_building_inf_den",
-  guild: "hf_building_inf_guild",
-  home: "hf_building_inf_home",
-};
-
-/** District exterior kit (NEON CORE / SPRAWL / UNDERCITY / …) by district id or Env name. */
-const DIST_KIT: Record<string, string> = {
-  core: "hf_building_dist_core",
-  downtown: "hf_building_dist_core",
-  corporate: "hf_building_dist_core",
-  arcology: "hf_building_dist_core",
-  stacks: "hf_building_dist_stacks",
-  industrial: "hf_building_dist_stacks",
-  relay: "hf_building_dist_stacks",
-  sprawl: "hf_building_dist_sprawl",
-  slum: "hf_building_dist_sprawl",
-  residential: "hf_building_dist_sprawl",
-  undercity: "hf_building_dist_undercity",
-  docks: "hf_building_dist_docks",
-  market: "hf_building_dist_docks",
-  helios: "hf_building_dist_helios",
-  wastes: "hf_building_dist_helios",
-  spire: "hf_building_dist_core",
-  park: "hf_building_dist_sprawl",
-};
-
+/**
+ * Choose the exterior sprite for a footprint. Tables + precedence live in
+ * buildingSprites.ts (Phaser-free, unit-tested); this only adapts the Phaser scene.
+ */
 function pickBuildingSprite(
   scene: Phaser.Scene,
   kind: BuildingKind,
-  opts?: { districtId?: string; infected?: boolean; preferDistrictKit?: boolean },
+  opts?: SpriteOpts,
 ): string | undefined {
-  if (opts?.infected) {
-    const inf = BUILDING_INFECTED[kind];
-    if (inf && scene.textures.exists(inf)) return inf;
-  }
-  // Combat districts: show the district kit as the primary exterior language.
-  if (opts?.preferDistrictKit && opts.districtId) {
-    const kit = DIST_KIT[opts.districtId];
-    if (kit && scene.textures.exists(kit)) return kit;
-  }
-  const base = BUILDING_SPRITE[kind];
-  if (base && scene.textures.exists(base)) return base;
-  // Hub fallback: env-zone kit when a kind has no dedicated landmark art.
-  if (opts?.districtId) {
-    const kit = DIST_KIT[opts.districtId];
-    if (kit && scene.textures.exists(kit)) return kit;
-  }
-  return undefined;
+  return selectBuildingSprite((k) => scene.textures.exists(k), kind, opts);
 }
 
-/** Distinct exteriors for city-hub buildings (kind + landmark aware). */
+/**
+ * Footprint large enough for a readable full HF sprite (not a 1-tile shed).
+ * Tile units (unscaled design tiles for districts; world tiles for city).
+ */
+function isPaintableBuilding(rect: Rect, scale = 1): boolean {
+  const tw = (rect.x2 - rect.x1 + 1) * scale;
+  const th = (rect.y2 - rect.y1 + 1) * scale;
+  // Compact hub blocks are often 4×3–6×5 — still show HF art (was ≥24 tile² gate
+  // which skipped most city-center landmarks after the hub shrink).
+  return tw >= 3 && th >= 3 && tw * th >= 12;
+}
+
+/** Opaque underlay + full-bleed HF sprite covering the entire footprint. */
+function placeFullBuildingArt(
+  scene: Phaser.Scene,
+  X1: number,
+  Y1: number,
+  w: number,
+  h: number,
+  spriteKey: string,
+  depth: number,
+  accent: number,
+): void {
+  // Solid pad so tilemap wall cells never peek through transparent PNG edges.
+  // Depth sits above tilemap (~0) and below actors (~9) — 4.x keeps roofs/walls covered.
+  const pad = scene.add.graphics().setDepth(depth);
+  pad.fillStyle(0x080a14, 1).fillRect(X1, Y1, w, h);
+  pad.fillStyle(accent, 0.14).fillRect(X1, Y1, w, 3);
+  const img = scene.add
+    .image(X1 + w / 2, Y1 + h / 2, spriteKey)
+    .setDisplaySize(w, h)
+    .setDepth(depth + 0.05)
+    .setAlpha(1);
+  // Painted top-down art should filter soft when stretched across large footprints.
+  try {
+    scene.textures.get(spriteKey).setFilter(Phaser.Textures.FilterMode.LINEAR);
+  } catch {
+    /* ignore */
+  }
+  void img;
+}
+
+/** Thin neon door frame so enterable HF buildings still read as venues. */
+function paintDoorFrameOnly(
+  scene: Phaser.Scene,
+  door: [number, number],
+  signCol: number,
+  depth: number,
+  landmark: boolean,
+): void {
+  const g = scene.add.graphics().setDepth(depth + 0.1);
+  const cx = door[0] * TILE + TILE / 2;
+  const cy = door[1] * TILE;
+  g.lineStyle(2, signCol, 0.8).lineBetween(cx - 10, cy - 2, cx - 10, cy + TILE - 2);
+  g.lineStyle(2, signCol, 0.8).lineBetween(cx + 10, cy - 2, cx + 10, cy + TILE - 2);
+  g.fillStyle(signCol, 0.55).fillRect(cx - 12, cy + TILE - 4, 24, 2);
+  glow(scene, cx, cy + TILE / 2, signCol, landmark ? 0.95 : 0.7, landmark ? 0.22 : 0.14, depth + 0.08);
+}
+
+/**
+ * Distinct exteriors for city-hub buildings (kind + landmark aware).
+ * Returns tile rects fully replaced by Higgsfield art (caller should skip roof
+ * parallax caps on these so dark slabs don't cover the painted buildings).
+ */
 export function paintCityBuildingFacades(
   scene: Phaser.Scene,
   buildings: CityBuilding[],
-  depth = 3.2,
+  depth = 4.0,
   opts?: { infected?: boolean },
-): void {
-  for (const b of buildings) {
+): Rect[] {
+  const hfRects: Rect[] = [];
+  for (let bi = 0; bi < buildings.length; bi++) {
+    const b = buildings[bi];
     const style = KIND_STYLE[b.kind];
-    paintFacade(scene, b.rect, b.door, style.accent, style.sign, style.glyph, depth, LANDMARK_KINDS.includes(b.kind));
-    // Overlay the baked building art when present; procedural façade stays as fallback.
+    const landmark = LANDMARK_KINDS.includes(b.kind);
     const spriteKey = pickBuildingSprite(scene, b.kind, {
       districtId: b.env,
       infected: opts?.infected,
+      // Hash footprint so two bars on the hub don't share the same multivariant.
+      variantSalt: bi * 17 + b.rect.x1 * 3 + b.rect.y1 * 5,
     });
+    const X1 = b.rect.x1 * TILE;
+    const Y1 = b.rect.y1 * TILE;
+    const w = (b.rect.x2 + 1) * TILE - X1;
+    const h = (b.rect.y2 + 1) * TILE - Y1;
+    // Any paintable footprint with HF art: full replacement (no dark roof slab over it).
+    const fullReplace = !!spriteKey && (landmark || isPaintableBuilding(b.rect));
+    if (fullReplace && spriteKey) {
+      placeFullBuildingArt(scene, X1, Y1, w, h, spriteKey, depth, style.accent);
+      if (b.door) paintDoorFrameOnly(scene, b.door, style.sign, depth, landmark);
+      if (landmark) glow(scene, X1 + w * 0.5, Y1 + 4, style.accent, 1.2, 0.28, depth + 0.12);
+      hfRects.push(b.rect);
+      continue;
+    }
+    paintFacade(scene, b.rect, b.door, style.accent, style.sign, style.glyph, depth, landmark);
+    // Tiny sheds: procedural + soft HF overlay when available.
     if (spriteKey) {
-      const X1 = b.rect.x1 * TILE;
-      const Y1 = b.rect.y1 * TILE;
-      const w = (b.rect.x2 + 1) * TILE - X1;
-      const h = (b.rect.y2 + 1) * TILE - Y1;
       scene.add
         .image(X1 + w / 2, Y1 + h / 2, spriteKey)
-        .setDisplaySize(w, h)
-        .setDepth(depth + 0.05);
+        .setDisplaySize(w * 0.96, h * 0.96)
+        .setDepth(depth + 0.05)
+        .setAlpha(0.95);
+      hfRects.push(b.rect);
     }
   }
+  return hfRects;
 }
 
-/** Kind cycle for district buildings — mirrors the venue-door cycle in OnlineScene so a
- *  building's roof colour matches the door you enter. Each kind is a distinct hue. */
-const DISTRICT_KIND_CYCLE: BuildingKind[] = ["shop", "home", "guild", "den", "bar"];
-
-/** Combat districts — a legible roof crown per building so blocks read as distinct,
- *  colour-coded structures instead of an undifferentiated maze. One shared Graphics.
+/**
+ * Combat districts — enterable venues use unique kind art; scenery blocks use only the
+ * district kit (no second shop/bar façade).
  *
- *  ⚠ `buildings` are 1/3-res DESIGN rects (buildGrid scales walls ×DISTRICT_SCALE); the
- *  crown/plaque must be scaled to match or they float off the building (the old bug).
- *  Doors are NOT drawn here — OnlineScene draws the enterable doorway at the scaled
- *  south face; drawing them here too would double up + land in the wrong place.
+ * ⚠ `buildings` are 1/3-res DESIGN rects (buildGrid scales walls ×DISTRICT_SCALE).
+ * Doors are NOT drawn here — OnlineScene draws the enterable doorway at the scaled
+ * south face.
  *
- *  When `districtId` is set and a district kit texture exists, landmark buildings get
- *  the HF exterior overlay; high-contagion zones can pass `infected` for damaged art. */
+ * Returns WORLD-tile rects fully covered by HF art (for roof-parallax exclusion).
+ */
 export function paintDistrictBuildingFacades(
   scene: Phaser.Scene,
   buildings: Rect[],
   _zoneAccent: number,
-  depth = 3.2,
+  depth = 4.0,
   opts?: { districtId?: string; infected?: boolean },
-): void {
+): Rect[] {
   const S = DISTRICT_SCALE;
   const g = scene.add.graphics().setDepth(depth);
+  const hfRects: Rect[] = [];
   for (let i = 0; i < buildings.length; i++) {
     const b = buildings[i];
-    const kind = DISTRICT_KIND_CYCLE[i % DISTRICT_KIND_CYCLE.length];
+    const venueKind = districtBuildingKind(i);
+    // Scenery (no door): always district kit. Venues: one unique kind art each.
+    const kind: BuildingKind = venueKind ?? "home";
     const { accent, sign } = KIND_STYLE[kind];
-    const landmark = i % 3 === 0;
+    const landmark = venueKind !== null; // only enterable venues read as landmarks
+    // scaleRect is inclusive x1*S..x2*S — match fill() footprint exactly.
     const X1 = b.x1 * S * TILE;
     const Y1 = b.y1 * S * TILE;
     const X2 = (b.x2 * S + 1) * TILE;
     const Y2 = (b.y2 * S + 1) * TILE;
     const w = X2 - X1;
     const h = Y2 - Y1;
+    const worldRect: Rect = { x1: b.x1 * S, y1: b.y1 * S, x2: b.x2 * S, y2: b.y2 * S };
 
-    // kind wash over the whole roof — turns "another magenta block" into "the amber
-    // one" / "the cyan one". Strong enough to survive the district's screen-wide accent
-    // tint (each district signature-colours the frame, which flattens per-tile hues).
+    const spriteKey = pickBuildingSprite(scene, kind, {
+      districtId: opts?.districtId,
+      infected: opts?.infected || (opts?.districtId === "undercity" && i % 3 === 0),
+      // Scenery = district kit only; venues get kind-specific art.
+      preferDistrictKit: venueKind === null,
+      variantSalt: i * 19 + (b.x1 + b.y1) * 7 + (opts?.districtId?.length ?? 0),
+    });
+    const fullReplace = !!spriteKey && (landmark || isPaintableBuilding(b, S) || venueKind === null);
+
+    if (fullReplace && spriteKey) {
+      placeFullBuildingArt(scene, X1, Y1, w, h, spriteKey, depth, accent);
+      if (landmark) glow(scene, X1 + w * 0.5, Y1 + 6, accent, 2.4, 0.22, depth + 0.12);
+      hfRects.push(worldRect);
+      continue;
+    }
+
+    // Small / no-art fallback: procedural kind wash + crown.
     g.fillStyle(accent, 0.2).fillRect(X1, Y1, w, h);
-    // a darkening vignette on the roof mass so it reads as a raised solid, not flat tiles
     g.fillStyle(0x05060f, 0.22).fillRect(X1 + 3, Y1 + 8, w - 6, h - 12);
-    // roof crown — a thick kind band + a bright edge along the north face
     g.fillStyle(accent, landmark ? 0.7 : 0.5).fillRect(X1, Y1, w, 7);
     g.fillStyle(accent, landmark ? 1 : 0.85).fillRect(X1, Y1, w, 2);
-    // side trims so the mass reads with a little depth
     g.fillStyle(accent, 0.28).fillRect(X1, Y1 + 7, 3, h - 7);
     g.fillStyle(0x05060f, 0.4).fillRect(X2 - 3, Y1 + 7, 3, h - 7);
     if (landmark) glow(scene, X1 + w * 0.5, Y1 + 6, accent, 2.4, 0.24, depth - 0.1);
-
-    // block ID plaque on the south face (scaled)
     const sx = X1 + w / 2;
     const sy = Y2 - 5;
     g.fillStyle(0x0a0e18, 0.7).fillRect(sx - 8, sy - 5, 16, 8);
     g.fillStyle(sign, 0.85).fillRect(sx - 6, sy - 3, 12, 1);
-
-    // District kit / infected overlay on landmarks (and every 2nd block for variety).
-    if (landmark || i % 2 === 0) {
-      const spriteKey = pickBuildingSprite(scene, kind, {
-        districtId: opts?.districtId,
-        infected: opts?.infected || (opts?.districtId === "undercity" && i % 3 === 0),
-        preferDistrictKit: true,
-      });
-      if (spriteKey) {
-        scene.add
-          .image(X1 + w / 2, Y1 + h / 2, spriteKey)
-          .setDisplaySize(w * 0.92, h * 0.92)
-          .setDepth(depth + 0.05)
-          .setAlpha(0.92);
-      }
+    if (spriteKey) {
+      scene.add
+        .image(X1 + w / 2, Y1 + h / 2, spriteKey)
+        .setDisplaySize(w * 0.96, h * 0.96)
+        .setDepth(depth + 0.05)
+        .setAlpha(0.95);
+      hfRects.push(worldRect);
     }
   }
+  return hfRects;
 }

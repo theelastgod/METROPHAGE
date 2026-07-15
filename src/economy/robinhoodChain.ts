@@ -43,8 +43,8 @@ export const ROBINHOOD_TESTNET: RobinhoodNetworkDef = {
 
 export type RobinhoodCluster = "robinhood" | "robinhood-testnet";
 
-export function robinhoodNetwork(cluster: RobinhoodCluster = "robinhood-testnet"): RobinhoodNetworkDef {
-  return cluster === "robinhood" ? ROBINHOOD_MAINNET : ROBINHOOD_TESTNET;
+export function robinhoodNetwork(cluster: RobinhoodCluster = "robinhood"): RobinhoodNetworkDef {
+  return cluster === "robinhood-testnet" ? ROBINHOOD_TESTNET : ROBINHOOD_MAINNET;
 }
 
 /** wallet_addEthereumChain / wallet_switchEthereumChain params (MetaMask). */

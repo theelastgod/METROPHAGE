@@ -1,33 +1,32 @@
 // METROPHAGE server — real Solana settlement for the $METRO bridge (Phase 5).
 //
-// Implements the `Settlement` seam from metro.ts against a real chain (devnet for the
-// rehearsal). The custodial treasury keypair is a SERVER SECRET (wrangler secret /
-// .dev.vars), never in code or the client. Lazily constructed (see index.ts) only when
-// the treasury env is present, so the @solana/web3.js dependency never enters the
-// game's hot path.
+// Implements the `Settlement` seam from metro.ts against a real chain. The custodial
+// treasury keypair is a SERVER SECRET (wrangler secret / .dev.vars), never in code
+// or the client. Lazily constructed (see index.ts) only when the treasury env is
+// present, so the @solana/web3.js dependency never enters the game's hot path.
 //
-// $0-LAUNCH INVARIANT — the treasury NEVER spends SOL:
-//   * withdrawals are CLAIMS: we build a tx whose fee payer is the PLAYER, add an
-//     idempotent create for the player's own token account (player pays that rent too),
-//     partially sign with the treasury key (signing is free), and return it. The player
-//     signs + submits; confirm verifies it landed. Tampering is impossible — the
-//     treasury signature covers the whole message, so any edit invalidates it.
-//   * deposits are player-sent transfers (the sender's wallet pays the fee and creates
-//     the treasury's token account on the first send).
-// The treasury therefore needs a balance of exactly nothing, forever.
+// WITHDRAWALS (cash-out):
+//   Preferred: treasury is fee-payer — signs + broadcasts the SPL transfer so the
+//   player does not need SOL. Creates the player's ATA if missing (treasury pays rent).
+//   Fallback: if treasury SOL is too low, return a player-fee-payer partial-signed
+//   claim (legacy path) so cash-outs still work once the player tops up SOL.
+//
+// DEPOSITS:
+//   Player-sent transfers (player pays the fee and may create the treasury ATA).
 
-import { Connection, Keypair, PublicKey, Transaction } from "@solana/web3.js";
+import { Connection, Keypair, PublicKey, Transaction, LAMPORTS_PER_SOL } from "@solana/web3.js";
 import {
   getAssociatedTokenAddress,
   createAssociatedTokenAccountIdempotentInstruction,
   createTransferCheckedInstruction,
   getMint,
+  getAccount,
 } from "@solana/spl-token";
 import type { Settlement } from "./metro";
 
 export interface SolanaConfig {
   rpc: string;
-  mint: string; // the $METRO mint (devnet test mint for the rehearsal)
+  mint: string; // the $METRO mint
   treasurySecretB64: string; // base64 of the 64-byte treasury secret key
 }
 
@@ -45,6 +44,11 @@ function bytesToB64(bytes: Uint8Array): string {
   return btoa(bin);
 }
 
+/** ~tx fee when ATA already exists. */
+const FEE_ONLY_LAMPORTS = 20_000;
+/** Fee + rent for creating a player ATA (~0.00204 SOL rent + headroom). */
+const FEE_PLUS_ATA_LAMPORTS = 2_500_000;
+
 export function makeSolanaSettlement(cfg: SolanaConfig): Settlement {
   const conn = new Connection(cfg.rpc, "confirmed");
   const mint = new PublicKey(cfg.mint);
@@ -52,8 +56,23 @@ export function makeSolanaSettlement(cfg: SolanaConfig): Settlement {
   let decimalsP: Promise<number> | null = null;
   const decimals = () => (decimalsP ??= getMint(conn, mint).then((m) => m.decimals));
 
+  async function playerAtaExists(ata: PublicKey): Promise<boolean> {
+    try {
+      await getAccount(conn, ata, "confirmed");
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   return {
-    /** Build the payout claim: treasury -> player transfer, PLAYER pays the fee. */
+    /**
+     * Build + preferably broadcast a treasury-paid payout (treasury spends SOL).
+     * Returns either:
+     *   - `solana-sent:<sig>` when the Worker already landed the tx (best path)
+     *   - base64 fully-signed treasury-paid tx (client just broadcasts)
+     *   - base64 partial-signed player-paid tx if treasury has no SOL (fallback)
+     */
     async buildClaim(wallet, metro) {
       try {
         const owner = new PublicKey(wallet);
@@ -63,8 +82,7 @@ export function makeSolanaSettlement(cfg: SolanaConfig): Settlement {
         const from = await getAssociatedTokenAddress(mint, treasury.publicKey);
         const to = await getAssociatedTokenAddress(mint, owner);
 
-        // Hard gate: on-chain treasury ATA must cover the claim. Ledger pool can lag
-        // (or a pending claim drained the ATA). Never hand the player a doomed tx.
+        // Hard gate: on-chain treasury ATA must cover the claim.
         try {
           const bal = await conn.getTokenAccountBalance(from, "confirmed");
           const have = BigInt(bal.value.amount);
@@ -72,18 +90,71 @@ export function makeSolanaSettlement(cfg: SolanaConfig): Settlement {
             return { ok: false, reason: "Check back later." };
           }
         } catch {
-          // Missing ATA / empty account → nothing to pay out.
           return { ok: false, reason: "Check back later." };
         }
 
-        const { blockhash } = await conn.getLatestBlockhash("confirmed");
+        const ataReady = await playerAtaExists(to);
+        const needLamports = ataReady ? FEE_ONLY_LAMPORTS : FEE_PLUS_ATA_LAMPORTS;
+        let solBal = 0;
+        try {
+          solBal = await conn.getBalance(treasury.publicKey, "confirmed");
+        } catch {
+          solBal = 0;
+        }
+        const treasuryCanPay = solBal >= needLamports;
+
+        const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash("confirmed");
+
+        if (treasuryCanPay) {
+          // ── Preferred: treasury pays SOL fee (+ ATA rent if needed) ──────
+          const tx = new Transaction({ feePayer: treasury.publicKey, recentBlockhash: blockhash });
+          tx.add(
+            createAssociatedTokenAccountIdempotentInstruction(
+              treasury.publicKey, // payer (SOL)
+              to,
+              owner,
+              mint,
+            ),
+          );
+          tx.add(createTransferCheckedInstruction(from, mint, to, treasury.publicKey, amount, d));
+          tx.sign(treasury); // fully signed — only treasury signature required
+
+          // Broadcast from the Worker so cash-out completes without the player holding SOL.
+          try {
+            const raw = tx.serialize();
+            const sig = await conn.sendRawTransaction(raw, {
+              skipPreflight: false,
+              preflightCommitment: "confirmed",
+              maxRetries: 3,
+            });
+            try {
+              await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "confirmed");
+            } catch {
+              /* confirm may lag; confirmClaim will re-check by sig */
+            }
+            return { ok: true, claimTx: `solana-sent:${sig}`, ref: sig };
+          } catch (sendErr) {
+            // RPC send failed — hand the fully-signed tx to the client to broadcast.
+            const claimTx = bytesToB64(tx.serialize({ requireAllSignatures: true, verifySignatures: false }));
+            return {
+              ok: true,
+              claimTx,
+              reason: `treasury-paid tx ready (server broadcast failed: ${String((sendErr as Error)?.message ?? sendErr).slice(0, 80)})`,
+            };
+          }
+        }
+
+        // ── Fallback: player pays SOL (treasury only signs the transfer) ──
         const tx = new Transaction({ feePayer: owner, recentBlockhash: blockhash });
-        // the player pays the rent for their own token account (no-op if it exists)
         tx.add(createAssociatedTokenAccountIdempotentInstruction(owner, to, owner, mint));
         tx.add(createTransferCheckedInstruction(from, mint, to, treasury.publicKey, amount, d));
-        tx.partialSign(treasury); // free — a signature, not a spend
+        tx.partialSign(treasury);
         const claimTx = bytesToB64(tx.serialize({ requireAllSignatures: false, verifySignatures: false }));
-        return { ok: true, claimTx };
+        return {
+          ok: true,
+          claimTx,
+          reason: `treasury SOL low (${(solBal / LAMPORTS_PER_SOL).toFixed(4)} SOL) — player pays fee`,
+        };
       } catch (e) {
         return { ok: false, reason: String((e as Error)?.message ?? e).slice(0, 160) };
       }
@@ -92,7 +163,9 @@ export function makeSolanaSettlement(cfg: SolanaConfig): Settlement {
     /** Confirm the claim landed: the treasury paid exactly `metro` to `wallet` in this tx. */
     async verifyClaim(txSig, wallet, metro) {
       try {
-        const tx = await conn.getParsedTransaction(txSig, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
+        // Strip helper prefix if a client re-submitted the marker as a "sig".
+        const sig = txSig.startsWith("solana-sent:") ? txSig.slice("solana-sent:".length) : txSig;
+        const tx = await conn.getParsedTransaction(sig, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
         if (!tx || tx.meta?.err) return { ok: false, reason: "tx not found or failed" };
         const owner = new PublicKey(wallet).toBase58();
         const treas = treasury.publicKey.toBase58();
@@ -106,7 +179,7 @@ export function makeSolanaSettlement(cfg: SolanaConfig): Settlement {
         const walletGot = amt(post, owner) - amt(pre, owner);
         if (treasuryPaid !== units) return { ok: false, reason: "tx does not pay this claim's amount from the treasury" };
         if (walletGot !== units) return { ok: false, reason: "tx does not pay this claim's wallet" };
-        return { ok: true, ref: txSig };
+        return { ok: true, ref: sig };
       } catch (e) {
         return { ok: false, reason: String((e as Error)?.message ?? e).slice(0, 160) };
       }
@@ -122,42 +195,30 @@ export function makeSolanaSettlement(cfg: SolanaConfig): Settlement {
         const d = await decimals();
         const pre = tx.meta?.preTokenBalances ?? [];
         const post = tx.meta?.postTokenBalances ?? [];
-        // Treasury $METRO balance must INCREASE.
         const treasAmt = (list: typeof pre) =>
           Number(list.find((b) => b.mint === cfg.mint && b.owner === treas)?.uiTokenAmount.amount ?? 0);
         const delta = treasAmt(post) - treasAmt(pre);
         if (delta <= 0) return { ok: false, reason: "no $METRO received by treasury in this tx" };
 
-        // Require the claimed wallet to have lost at least `delta` units of this mint
-        // (they funded the treasury increase). Catches random third-party fills.
         const ownerPre = Number(pre.find((b) => b.mint === cfg.mint && b.owner === owner)?.uiTokenAmount.amount ?? 0);
         const ownerPost = Number(post.find((b) => b.mint === cfg.mint && b.owner === owner)?.uiTokenAmount.amount ?? 0);
         const ownerLost = ownerPre - ownerPost;
         if (ownerLost < delta) {
           return { ok: false, reason: "tx not a $METRO transfer from the claimed wallet to treasury" };
         }
-        // Prefer matching a parsed SPL transfer into the treasury ATA when available.
         try {
           const treasAta = (await getAssociatedTokenAddress(mint, treasury.publicKey)).toBase58();
           const outer = tx.transaction.message.instructions as unknown as Array<Record<string, unknown>>;
           const inner = (tx.meta?.innerInstructions ?? []).flatMap((ii) => ii.instructions) as unknown as Array<
             Record<string, unknown>
           >;
-          let sawTransferToTreasury = false;
           for (const ix of [...outer, ...inner]) {
             const parsed = ix.parsed as { type?: string; info?: Record<string, unknown> } | undefined;
             if (!parsed || (parsed.type !== "transfer" && parsed.type !== "transferChecked")) continue;
             const info = parsed.info ?? {};
             if (info.mint && String(info.mint) !== cfg.mint) continue;
             const dest = String(info.destination ?? "");
-            if (dest === treasAta) {
-              sawTransferToTreasury = true;
-              break;
-            }
-          }
-          if (!sawTransferToTreasury && outer.length + inner.length > 0) {
-            // Parsed instructions present but none hit treasury ATA — still allow if
-            // balance deltas are consistent (some wallets wrap transfers).
+            if (dest === treasAta) break;
           }
         } catch {
           /* balance check above is sufficient */
@@ -174,3 +235,11 @@ export function makeSolanaSettlement(cfg: SolanaConfig): Settlement {
 export function treasuryPubkey(secretB64: string): string {
   return Keypair.fromSecretKey(b64ToBytes(secretB64)).publicKey.toBase58();
 }
+
+/** Optional ops helper — SOL + mint awareness for /metro/pool health (unused by default). */
+export async function treasurySolBalance(rpc: string, secretB64: string): Promise<number> {
+  const conn = new Connection(rpc, "confirmed");
+  const kp = Keypair.fromSecretKey(b64ToBytes(secretB64));
+  return (await conn.getBalance(kp.publicKey, "confirmed")) / LAMPORTS_PER_SOL;
+}
+

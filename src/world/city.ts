@@ -507,10 +507,36 @@ export const INTERIOR_NAMES: Record<BuildingKind, string> = {
   citycenter: "CIVIC SPIRE",
 };
 
+/** Per-kind interior footprint — room shape matches HF interior plates / furniture. */
+function interiorDims(kind: BuildingKind): { w: number; h: number } {
+  switch (kind) {
+    case "bar":
+      return { w: 24, h: 14 }; // long counter hall
+    case "clinic":
+    case "hospital":
+      return { w: 22, h: 15 }; // ward depth
+    case "shop":
+      return { w: 21, h: 14 }; // aisle length
+    case "guild":
+      return { w: 22, h: 15 }; // war-table center
+    case "subway":
+      return { w: 24, h: 15 }; // turnstile + track strip
+    case "stadium":
+      return { w: 23, h: 16 }; // barrier ring
+    case "citycenter":
+      return { w: 22, h: 15 }; // fountain lobby
+    case "den":
+      return { w: 18, h: 13 }; // tight backroom
+    case "hotel":
+      return { w: 20, h: 14 };
+    default:
+      return { w: 20, h: 13 }; // home / default
+  }
+}
+
 /** Build a small interior room for a building of the given kind. */
 export function buildInterior(kind: BuildingKind): Interior {
-  const w = 20;
-  const h = 13;
+  const { w, h } = interiorDims(kind);
   const grid: TileGrid = [];
   for (let y = 0; y < h; y++) grid.push(new Array(w).fill(TILE_INNER_FLOOR));
   // wall ring
@@ -529,18 +555,62 @@ export function buildInterior(kind: BuildingKind): Interior {
   const spawn: [number, number] = [ex, h - 2];
 
   const npcSpots: [number, number][] = [];
-  // a counter for service buildings: a wall row with a gap, NPC behind it
-  if (kind === "shop" || kind === "bar" || kind === "clinic" || kind === "guild" || kind === "hospital" || kind === "hotel") {
+  // Structure partitions that frame HF furniture (not a single generic counter for all).
+  if (kind === "bar") {
+    // L-counter: north run + short west stub (matches bar counter art)
+    for (let x = 3; x <= w - 4; x++) grid[4][x] = TILE_INNER_WALL;
+    for (let y = 4; y <= 7; y++) grid[y][3] = TILE_INNER_WALL;
+    grid[4][ex] = TILE_INNER_FLOOR;
+    npcSpots.push([ex, 3], [6, h - 4], [w - 5, h - 4]);
+  } else if (kind === "clinic" || kind === "hospital") {
+    // Reception counter + light ward pillars
+    for (let x = 3; x <= w - 4; x++) grid[4][x] = TILE_INNER_WALL;
+    grid[4][ex] = TILE_INNER_FLOOR;
+    grid[8][7] = TILE_INNER_WALL;
+    grid[8][w - 8] = TILE_INNER_WALL;
+    npcSpots.push([ex, 3], [5, h - 4], [w - 5, h - 4]);
+  } else if (kind === "shop") {
+    // Aisle islands
+    for (let x = 3; x <= w - 4; x++) grid[4][x] = TILE_INNER_WALL;
+    grid[4][ex] = TILE_INNER_FLOOR;
+    for (let y = 7; y <= 9; y++) {
+      grid[y][6] = TILE_INNER_WALL;
+      grid[y][w - 7] = TILE_INNER_WALL;
+    }
+    npcSpots.push([ex, 3], [5, h - 4], [w - 5, h - 4]);
+  } else if (kind === "guild") {
+    // Open center for war table; rack walls as side stubs
+    for (let x = 4; x <= w - 5; x++) grid[3][x] = TILE_INNER_WALL;
+    grid[3][ex] = TILE_INNER_FLOOR;
+    for (let y = 6; y <= 9; y++) {
+      grid[y][2] = TILE_INNER_WALL;
+      grid[y][w - 3] = TILE_INNER_WALL;
+    }
+    npcSpots.push([ex, 2], [6, h - 4], [w - 6, h - 4]);
+  } else if (kind === "subway") {
+    // Turnstile wall + south track strip (non-walkable edge flavor via wall tiles)
+    for (let x = 4; x <= w - 5; x++) grid[5][x] = TILE_INNER_WALL;
+    grid[5][ex] = TILE_INNER_FLOOR;
+    for (let x = 2; x <= w - 3; x++) grid[h - 3][x] = TILE_INNER_WALL;
+    npcSpots.push([ex, 4], [5, 8], [w - 5, 8]);
+  } else if (kind === "stadium") {
+    // Barrier arc mid-room
+    for (let x = 4; x <= w - 5; x++) grid[8][x] = TILE_INNER_WALL;
+    grid[8][ex] = TILE_INNER_FLOOR;
+    npcSpots.push([ex, 3], [5, 6], [w - 5, 6]);
+  } else if (kind === "hotel" || kind === "citycenter") {
     const cy = 4;
     for (let x = 3; x <= w - 4; x++) grid[cy][x] = TILE_INNER_WALL;
-    grid[cy][ex] = TILE_INNER_FLOOR; // a gap to step behind, if needed
-    npcSpots.push([ex, cy - 1]); // keeper / quest-giver behind the counter
-    npcSpots.push([5, h - 4]); // a patron / second NPC
-    npcSpots.push([w - 5, h - 4]); // a third NPC
+    grid[cy][ex] = TILE_INNER_FLOOR;
+    npcSpots.push([ex, cy - 1], [5, h - 4], [w - 5, h - 4]);
   } else {
-    // home / den — a lived-in room: an occupant + a visitor (furniture is decorative)
-    npcSpots.push([ex, 3]); // occupant
-    npcSpots.push([5, h - 4]); // a visitor
+    // home / den — lived-in room; den gets a crate-nest corner partition
+    npcSpots.push([ex, 3], [5, h - 4]);
+    if (kind === "den") {
+      grid[3][3] = TILE_INNER_WALL;
+      grid[3][4] = TILE_INNER_WALL;
+      grid[4][3] = TILE_INNER_WALL;
+    }
   }
 
   return { grid, w, h, spawn, exit, npcSpots, props: furnishInterior(kind, ex), name: INTERIOR_NAMES[kind] };

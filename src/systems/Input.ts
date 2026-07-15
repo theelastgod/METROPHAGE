@@ -69,16 +69,47 @@ export function resetBinds() {
   }
 }
 
+/** Cache of Phaser Key objects per scene (addKey every frame is unreliable). */
+const keyCache = new WeakMap<object, Map<string, Phaser.Input.Keyboard.Key>>();
+
+function resolveKeyCode(code: string): number | string {
+  const c = (code || "").toUpperCase();
+  if (c === "CTRL" || c === "CONTROL") return Phaser.Input.Keyboard.KeyCodes.CTRL;
+  if (c === "SPACE" || c === " ") return Phaser.Input.Keyboard.KeyCodes.SPACE;
+  if (c === "UP") return Phaser.Input.Keyboard.KeyCodes.UP;
+  if (c === "DOWN") return Phaser.Input.Keyboard.KeyCodes.DOWN;
+  if (c === "LEFT") return Phaser.Input.Keyboard.KeyCodes.LEFT;
+  if (c === "RIGHT") return Phaser.Input.Keyboard.KeyCodes.RIGHT;
+  if (c === "ENTER") return Phaser.Input.Keyboard.KeyCodes.ENTER;
+  if (c === "ESC" || c === "ESCAPE") return Phaser.Input.Keyboard.KeyCodes.ESC;
+  // Letter / digit — use KeyCodes map when present (e.g. F → 70).
+  const kc = (Phaser.Input.Keyboard.KeyCodes as unknown as Record<string, number>)[c];
+  if (typeof kc === "number") return kc;
+  return c;
+}
+
+function keyFor(scene: Phaser.Scene, code: string): Phaser.Input.Keyboard.Key | null {
+  const kb = scene.input.keyboard;
+  if (!kb) return null;
+  let map = keyCache.get(scene);
+  if (!map) {
+    map = new Map();
+    keyCache.set(scene, map);
+  }
+  let k = map.get(code);
+  if (!k) {
+    k = kb.addKey(resolveKeyCode(code), /* enableCapture */ true, /* emitOnRepeat */ false);
+    map.set(code, k);
+  }
+  return k;
+}
+
 export function keyDown(scene: Phaser.Scene, action: BindAction): boolean {
   const kb = scene.input.keyboard;
   if (!kb) return false;
-  return binds[action].some((code) => {
-    // CTRL — Phaser maps Control to KeyCodes.CTRL (17).
-    if (code === "CTRL" || code === "CONTROL") {
-      return kb.addKey(Phaser.Input.Keyboard.KeyCodes.CTRL).isDown;
-    }
-    return kb.addKey(code).isDown;
-  });
+  // Modals / focus loss can leave the plugin soft-disabled — always re-arm for fire.
+  if (!kb.enabled) kb.enabled = true;
+  return binds[action].some((code) => !!keyFor(scene, code)?.isDown);
 }
 
 /** Human-readable fire controls for HUD / coach (keyboard + mouse). */
@@ -89,9 +120,11 @@ export function fireControlLabel(): string {
 }
 
 export function keyJustDown(scene: Phaser.Scene, action: BindAction): boolean {
-  const kb = scene.input.keyboard;
-  if (!kb) return false;
-  return binds[action].some((code) => Phaser.Input.Keyboard.JustDown(kb.addKey(code)));
+  if (!scene.input.keyboard) return false;
+  return binds[action].some((code) => {
+    const k = keyFor(scene, code);
+    return k ? Phaser.Input.Keyboard.JustDown(k) : false;
+  });
 }
 
 /** Read left stick / D-pad as movement intent (-1..1). */

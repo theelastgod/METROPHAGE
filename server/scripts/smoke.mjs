@@ -2789,12 +2789,26 @@ async function kit() {
   while (Date.now() - t0 < 12000) {
     let best = null;
     let bd = Infinity;
+    let anyBest = null;
+    let anyBd = Infinity;
     for (const e of store.enemies) {
       const d = Math.hypot(e.x - store.x, e.y - store.y);
+      if (d < anyBd) {
+        anyBd = d;
+        anyBest = e;
+      }
+      // The pod check below needs ≥30 hp of headroom to MEASURE the hit. The
+      // district rotation mixes in 24hp wasps that the pod simply one-shots —
+      // picking one proves nothing, so prefer a target that can absorb it.
+      if ((e.hp ?? 0) < 40) continue;
       if (d < bd) {
         bd = d;
         best = e;
       }
+    }
+    if (!best) {
+      best = anyBest;
+      bd = anyBd;
     }
     target = best;
     if (best && bd < 120) break;
@@ -2907,8 +2921,17 @@ async function kit() {
     const before = totalHp();
     if (before > 0) {
       ws2.send(JSON.stringify({ t: "ability2", seq: 950, aim: 0 }));
-      await sleep(4500);
-      dronesWorked = totalHp() < before; // shots fired by the escort, not by us
+      // Can't compare start vs end: RESPAWN_MS (2600) is shorter than this
+      // window, so enemies killed earlier come back at full hp and the total
+      // climbs. Poll instead — with our gun silent, only the escort can make
+      // the total DROP, while a respawn only ever adds.
+      let prev = before;
+      for (let i = 0; i < 18; i++) {
+        await sleep(250);
+        const cur = totalHp();
+        if (cur < prev) dronesWorked = true;
+        prev = cur;
+      }
     }
   }
   // 3c) HEAT + R — damage builds the meter past the arm threshold (50); the ultimate

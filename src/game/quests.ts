@@ -512,3 +512,21 @@ export const QUESTS: QuestDef[] = [
 export function getQuest(id: string): QuestDef | undefined {
   return QUESTS.find((q) => q.id === id);
 }
+
+/** The quest whose completion sets `flag`, if any. */
+export function questSettingFlag(flag: string): QuestDef | undefined {
+  return QUESTS.find((q) => q.setsFlag === flag);
+}
+
+/**
+ * Infer a campaign flag from completed quest ids. The wire protocol sends
+ * `completed` but not `flags` (see the `t:"campaign"` message), so client UI
+ * recovers flag state this way. A flag no quest sets is treated as held —
+ * edge data shouldn't lock content.
+ */
+export function hasFlagFromCompleted(flag: string, completed: Iterable<string>): boolean {
+  const setter = questSettingFlag(flag);
+  if (!setter) return true;
+  for (const id of completed) if (id === setter.id) return true;
+  return false;
+}

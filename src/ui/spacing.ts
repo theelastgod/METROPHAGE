@@ -36,15 +36,17 @@ export const wrapWidth = (marginDesign: number = UI_SPACE.gutter) => VIEW_W - ui
  *  The footer hint gets its own reserved strip below the bars; the hotbar
  *  (left-anchored) and action bar (right-anchored) share one band. */
 export function onlineHudStack(viewH: number = VIEW_H) {
-  const hintStrip = uiDim(18);
-  const footerPad = uiDim(UI_SPACE.sm);
-  const actionH = uiDim(56);
+  // Short landscape phones: tighter chrome so world stays readable.
+  const short = viewH < uiDim(480);
+  const hintStrip = uiDim(short ? 14 : 18);
+  const footerPad = uiDim(short ? UI_SPACE.xs : UI_SPACE.sm);
+  const actionH = uiDim(short ? 48 : 56);
   const actionY = viewH - footerPad - hintStrip - actionH;
-  const hotbarCell = uiDim(48);
+  const hotbarCell = uiDim(short ? 42 : 48);
   const hotbarY = actionY + (actionH - hotbarCell) / 2; // vertically centered in the band
   return {
     footerHintY: viewH - uiDim(UI_SPACE.xs),
-    interactY: actionY - uiGap("lg"),
+    interactY: actionY - uiGap(short ? "md" : "lg"),
     hotbarY,
     hotbarCell,
     actionY,

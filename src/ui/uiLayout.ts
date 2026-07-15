@@ -28,15 +28,78 @@ export {
 
 /** Full-bleed overlay panel with even margins (design-space inset, scaled). */
 export function overlayRect(marginDesign = 20) {
-  const m = uiDim(marginDesign);
+  // Phones: keep a few px inset so rounded sheets don't kiss the status bar /
+  // home indicator; never use desktop 20px margins that waste landscape width.
+  const m = uiDim(prefersMobileUx() ? Math.min(marginDesign, 6) : marginDesign);
   return { x: m, y: m, w: VIEW_W - m * 2, h: VIEW_H - m * 2 };
 }
 
-/** Centered modal sized in design-space pixels. */
+/**
+ * Centered modal sized in design-space pixels.
+ * Phones: near full-bleed sheet with safe inset so lists/toggles are finger-sized
+ * without edge-clipping under the notch. Desktop: classic centered card —
+ * ALWAYS clamped to the viewport so tall panels never hang off-screen.
+ */
 export function modalRect(designW: number, designH: number) {
-  const w = uiDim(designW);
-  const h = uiDim(designH);
-  return { x: (VIEW_W - w) / 2, y: (VIEW_H - h) / 2, w, h };
+  if (prefersMobileUx()) {
+    const marginX = uiDim(4);
+    const marginY = uiDim(4);
+    return {
+      x: marginX,
+      y: marginY,
+      w: VIEW_W - marginX * 2,
+      h: VIEW_H - marginY * 2,
+    };
+  }
+  // Same clamp as fitModalRect — design sizes only, uiDim once.
+  const margin = uiDim(16);
+  const maxW = Math.max(uiDim(200), VIEW_W - margin * 2);
+  const maxH = Math.max(uiDim(120), VIEW_H - margin * 2);
+  const w = Math.min(uiDim(designW), maxW);
+  const h = Math.min(uiDim(designH), maxH);
+  const x = (VIEW_W - w) / 2;
+  let y = (VIEW_H - h) / 2;
+  if (y + h > VIEW_H - margin) y = Math.max(margin, VIEW_H - margin - h);
+  if (y < margin) y = margin;
+  return { x, y, w, h };
+}
+
+/** Minimum comfortable touch-row height in design px (before uiDim). */
+export function touchRowDesign(desktop = 36): number {
+  // 48–52 design px ≈ finger target after UI_SCALE; avoid 60+ which starves lists.
+  return prefersMobileUx() ? Math.max(desktop, 48) : desktop;
+}
+
+/**
+ * Modal that always fits the viewport (design-space size, clamped).
+ * Use for dialogue / talk panels so they never draw off-screen on mobile or
+ * tall supersampled backings. Optional vertical bias: "center" | "upper" | "lower".
+ */
+export function fitModalRect(
+  designW: number,
+  designH: number,
+  opts: { marginDesign?: number; vAlign?: "center" | "upper" | "lower" } = {},
+) {
+  const margin = uiDim(opts.marginDesign ?? (prefersMobileUx() ? 12 : 20));
+  const maxW = Math.max(uiDim(200), VIEW_W - margin * 2);
+  const maxH = Math.max(uiDim(120), VIEW_H - margin * 2);
+  let w = Math.min(uiDim(designW), maxW);
+  let h = Math.min(uiDim(designH), maxH);
+  const x = (VIEW_W - w) / 2;
+  let y: number;
+  if (opts.vAlign === "upper") {
+    y = margin + (prefersMobileUx() ? uiDim(8) : uiDim(16));
+  } else if (opts.vAlign === "lower") {
+    // Sit above the mobile action bar / desktop footer chrome.
+    const bottomReserve = prefersMobileUx() ? uiDim(96) : uiDim(48);
+    y = Math.max(margin, VIEW_H - margin - bottomReserve - h);
+  } else {
+    y = (VIEW_H - h) / 2;
+  }
+  // Final clamp if h was reduced after y pick.
+  if (y + h > VIEW_H - margin) y = Math.max(margin, VIEW_H - margin - h);
+  if (y < margin) y = margin;
+  return { x, y, w, h };
 }
 
 /**

@@ -122,17 +122,17 @@ const ROLE_SERVICES: Record<NpcRole, NpcServiceId[]> = {
  * Variety comes from *who* does what, not from long lists.
  */
 const NPC_SERVICE_OVERRIDES: Record<string, NpcServiceId[]> = {
-  // Story allies — job + one soft extra
-  rin: ["chat", "bounty"],
-  doc: ["chat", "heal_charity", "bounty"],
-  vex: ["chat", "rumor", "bounty"],
+  // Story allies — room systems + soft extras
+  rin: ["chat", "open_vendor", "bounty"],
+  doc: ["chat", "heal_charity", "heal_paid", "bounty"],
+  vex: ["chat", "open_market", "rumor", "bounty"],
   marek: ["chat", "bounty"],
   // Hub cast
   juno: ["chat", "bounty"],
-  sable: ["chat", "meal", "bounty"],
-  kessler: ["chat", "bounty"],
-  mira: ["chat", "bounty"],
-  ghost: ["chat", "sell_core", "bounty"],
+  sable: ["chat", "meal", "open_contracts", "bounty"],
+  kessler: ["chat", "open_guild", "bounty"],
+  mira: ["chat", "open_vendor", "bounty"],
+  ghost: ["chat", "sell_core", "open_market", "bounty"],
   // Regional — light
   porter: ["chat", "bounty", "rumor"],
   tunnel_rat: ["chat", "bounty", "cool_down"],
@@ -149,18 +149,18 @@ const NPC_SERVICE_OVERRIDES: Record<string, NpcServiceId[]> = {
   amb_arc_clerk: ["chat", "rumor"],
   amb_tech: ["chat", "cool_down", "bounty"],
   amb_vendor: ["chat", "meal", "bounty"],
-  // Keepers — one job matching the room
-  keep_bar: ["chat", "meal", "bounty"],
-  keep_shop: ["chat", "rumor"],
+  // Keepers — job matching the room (open_* opens the real system panel)
+  keep_bar: ["chat", "meal", "open_contracts", "bounty"],
+  keep_shop: ["chat", "open_vendor", "rumor"],
   keep_clinic: ["chat", "heal_charity", "heal_paid", "bounty"],
-  keep_guild: ["chat", "rumor", "bounty"],
-  keep_den: ["chat", "sell_core"],
-  keep_home: ["chat"],
-  keep_hospital: ["chat", "heal_paid"],
+  keep_guild: ["chat", "open_guild", "open_forge", "bounty"],
+  keep_den: ["chat", "open_market", "sell_core"],
+  keep_home: ["chat", "open_stash"],
+  keep_hospital: ["chat", "heal_paid", "heal_charity"],
   keep_hotel: ["chat", "meal"],
-  keep_subway: ["chat"],
-  keep_stadium: ["chat"],
-  keep_citycenter: ["chat", "rumor"],
+  keep_subway: ["chat", "rumor"], // enter UNDERLINE via door / CONDUCTOR service on client
+  keep_stadium: ["chat", "open_board", "bounty"],
+  keep_citycenter: ["chat", "open_board", "rumor"],
   // Residents — rotate single specialties (not full kits)
   res_nix: ["chat", "rumor", "bounty"],
   res_solenne: ["chat"],

@@ -1,7 +1,7 @@
 import Phaser from "phaser";
 import { GLOW_KEY } from "../assets/manifest";
 import { fmtMetro } from "../economy/metro";
-import { PVP_BUY_IN_METRO } from "../game/pvp";
+import { PVP_BUY_IN_METRO, PVP_CREDIT_DROP_NOTICE } from "../game/pvp";
 import { drawStudioChip, STUDIO, animatePanelIn } from "./studioChrome";
 import { uiDim } from "./uiLayout";
 import { bodyFont, displayFont } from "./typography";
@@ -86,17 +86,19 @@ export default class PvpCrucibleHud {
     if (state.inZone !== this.wasInZone) {
       this.wasInZone = state.inZone;
       const entering = state.inZone;
-      const title = entering ? "◢ THE CRUCIBLE" : "✓ ESCROW RETURNED";
+      const title = entering ? "◢ THE CRUCIBLE — PVP ZONE" : "✓ LEFT THE CRUCIBLE";
       const accent = entering ? 0xff3b6b : 0x39ff88;
       const sub = entering
         ? state.inArena
-          ? `Contest live · pot ◈${fmtMetro(state.escrow)} · exit safely to cash out`
-          : `◈${buyIn} $METRO buy-in locks on entry · kills loot the pot`
-        : "Your $METRO escrow was released — safe outside the arena";
+          ? `Contest live · pot ◈${fmtMetro(state.escrow)} · ${PVP_CREDIT_DROP_NOTICE}`
+          : `◈${buyIn} $METRO buy-in on entry · ${PVP_CREDIT_DROP_NOTICE}`
+        : "Escrow released if you left safely — credits only drop when another player kills you in PvP";
 
       this.warnGlow.setTint(accent).setAlpha(entering ? 0.16 : 0.1);
       this.warnG.clear().setAlpha(1);
-      drawStudioChip(this.warnG, cx - this.warnW / 2, warnY, this.warnW, this.warnH, accent);
+      // Taller chip so the credit-drop warning fully fits.
+      const h = entering ? this.warnH + uiDim(18) : this.warnH;
+      drawStudioChip(this.warnG, cx - this.warnW / 2, warnY, this.warnW, h, accent);
       this.warnTitle.setText(title).setColor(entering ? STUDIO.danger : STUDIO.ready);
       this.warnSub.setText(sub);
 
@@ -105,7 +107,7 @@ export default class PvpCrucibleHud {
       this.scene.tweens.add({
         targets: [this.warnG, this.warnTitle, this.warnSub, this.warnGlow],
         alpha: 0,
-        delay: entering ? 2200 : 1400,
+        delay: entering ? 4200 : 1600,
         duration: 700,
         ease: "Quad.in",
       });

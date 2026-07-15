@@ -3,6 +3,7 @@ import { COLORS } from "../config";
 import { repProgress } from "../game/dailies";
 import Modal from "./Modal";
 import { closeHint, dimBackdrop, modalRect, uiDim, uiFont } from "./uiLayout";
+import { prefersMobileUx } from "../systems/Mobile";
 
 interface DailyView {
   id: string;
@@ -42,8 +43,9 @@ export default class OnlineContracts extends Modal {
     };
     const D = 1700;
     const { x, y, w, h } = modalRect(700, 500);
-    const bountyH = uiDim(80);
-    const bountyGap = uiDim(4);
+    // Full-sheet modal on mobile; taller bounty cards for fingers.
+    const bountyH = uiDim(prefersMobileUx() ? 96 : 80);
+    const bountyGap = uiDim(prefersMobileUx() ? 8 : 4);
 
     add(dimBackdrop(scene, D, 0.64, () => this.close(), { x, y, w, h }));
     const g = add(scene.add.graphics().setScrollFactor(0).setDepth(D + 1));

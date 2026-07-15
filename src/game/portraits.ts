@@ -11,11 +11,21 @@ import {
   PORTRAIT_RESIDENTS_KEY,
   PORTRAIT_INTERACT_KEY,
   PORTRAIT_BOSSES_KEY,
+  portraitBossKey,
+  portraitInteractKey,
+  HF_BOSS_PORTRAIT_SLUGS,
+  HF_INTERACT_PORTRAIT_SLUGS,
 } from "../assets/manifest";
 
 export interface PortraitRef {
   key: string;
+  /** Sheet cell; 0 for single-image textures. */
   frame: number;
+}
+
+/** True when a texture key is a single painted bust (not a multi-frame sheet). */
+function isSinglePortraitKey(key: string): boolean {
+  return key.startsWith("portrait_boss_") || key.startsWith("portrait_npc_");
 }
 
 /** Named story cast — cast_sheet.jpg frame order. */
@@ -97,6 +107,10 @@ const BOSSES: Record<string, number> = {
   "helios warden": 7,
   void_herald: 8,
   "void herald": 8,
+  // Wishlist single (not on the 3×3 sheet) — portraitForBoss prefers single JPG.
+  underline_warden: 0,
+  "underline warden": 0,
+  "the underline warden": 0,
 };
 
 /**
@@ -147,22 +161,48 @@ function hash(id: string): number {
 }
 
 /**
+ * Prefer a named single JPG (portrait_npc_*) when the slug is known.
+ * OnlineScene.showBubble falls back to the sheet if the single is missing.
+ */
+function preferInteractSingle(id: string, sheetFrame: number): PortraitRef {
+  if ((HF_INTERACT_PORTRAIT_SLUGS as readonly string[]).includes(id)) {
+    return { key: portraitInteractKey(id), frame: 0 };
+  }
+  return { key: PORTRAIT_INTERACT_KEY, frame: sheetFrame };
+}
+
+/** Sheet fallback for an interact single (used when single texture not loaded). */
+export function portraitSheetFallback(ref: PortraitRef): PortraitRef | undefined {
+  if (ref.key.startsWith("portrait_npc_")) {
+    const id = ref.key.slice("portrait_npc_".length);
+    if (INTERACT[id] !== undefined) return { key: PORTRAIT_INTERACT_KEY, frame: INTERACT[id] };
+  }
+  if (ref.key.startsWith("portrait_boss_")) {
+    const slug = ref.key.slice("portrait_boss_".length);
+    const frame = (HF_BOSS_PORTRAIT_SLUGS as readonly string[]).indexOf(slug);
+    if (frame >= 0) return { key: PORTRAIT_BOSSES_KEY, frame };
+  }
+  return undefined;
+}
+
+/**
  * Stable painted portrait for any city NPC id. `sex` (from the NPC's look)
  * steers the fallback pool so the bust matches the paper-doll sprite.
  */
 export function portraitFor(id: string, sex?: string): PortraitRef {
   if (CAST[id] !== undefined) return { key: PORTRAIT_CAST_KEY, frame: CAST[id] };
-  // Interact sheet beats keepers for shared ids (porter / keep_den / keep_citycenter)
-  // so the new npcServices faces show in dialogue.
-  if (INTERACT[id] !== undefined) return { key: PORTRAIT_INTERACT_KEY, frame: INTERACT[id] };
+  // Interact singles beat sheet frames for named service NPCs.
+  if (INTERACT[id] !== undefined) return preferInteractSingle(id, INTERACT[id]);
   if (KEEPERS[id] !== undefined) return { key: PORTRAIT_KEEPERS_KEY, frame: KEEPERS[id] };
   if (RESIDENTS[id] !== undefined) return { key: PORTRAIT_RESIDENTS_KEY, frame: RESIDENTS[id] };
   if (id.startsWith("keep_")) {
+    if ((HF_INTERACT_PORTRAIT_SLUGS as readonly string[]).includes(id)) {
+      return { key: portraitInteractKey(id), frame: 0 };
+    }
     return { key: PORTRAIT_KEEPERS_KEY, frame: hash(id) % 11 };
   }
   if (id.startsWith("amb_") || id.startsWith("res_")) {
-    // Prefer interact when we have a named amb face; else hash residents.
-    if (INTERACT[id] !== undefined) return { key: PORTRAIT_INTERACT_KEY, frame: INTERACT[id] };
+    if (INTERACT[id] !== undefined) return preferInteractSingle(id, INTERACT[id]);
   }
   const svc = SERVICE_FACES[id.toLowerCase()];
   if (svc) return svc;
@@ -194,12 +234,31 @@ export function portraitForName(name: string): PortraitRef | undefined {
 export function portraitForBoss(name: string): PortraitRef | undefined {
   const raw = name.trim().toLowerCase().replace(/\s+/g, " ");
   if (!raw) return undefined;
-  if (BOSSES[raw] !== undefined) return { key: PORTRAIT_BOSSES_KEY, frame: BOSSES[raw] };
   const slug = raw.replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
-  if (BOSSES[slug] !== undefined) return { key: PORTRAIT_BOSSES_KEY, frame: BOSSES[slug] };
-  // Partial match: "GUTTER KING" without THE, etc.
-  for (const [k, frame] of Object.entries(BOSSES)) {
-    if (raw.includes(k) || k.includes(raw)) return { key: PORTRAIT_BOSSES_KEY, frame };
+
+  // Resolve frame index first (display names + slugs share the same table).
+  let frame: number | undefined =
+    BOSSES[raw] !== undefined ? BOSSES[raw]
+    : BOSSES[slug] !== undefined ? BOSSES[slug]
+    : undefined;
+  if (frame === undefined) {
+    for (const [k, f] of Object.entries(BOSSES)) {
+      if (raw.includes(k) || k.includes(raw)) {
+        frame = f;
+        break;
+      }
+    }
   }
-  return undefined;
+  if (frame === undefined) return undefined;
+
+  // Wishlist conductor boss has its own single, not a sheet cell.
+  if (slug.includes("underline") || raw.includes("underline warden")) {
+    return { key: portraitBossKey("underline_warden"), frame: 0 };
+  }
+  // Prefer single JPG (tools/higgsfield-expand-build.mjs) over sheet cell.
+  const singleSlug = HF_BOSS_PORTRAIT_SLUGS[frame];
+  if (singleSlug) return { key: portraitBossKey(singleSlug), frame: 0 };
+  return { key: PORTRAIT_BOSSES_KEY, frame };
 }
+
+export { isSinglePortraitKey };

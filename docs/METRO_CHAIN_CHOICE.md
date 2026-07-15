@@ -1,71 +1,71 @@
-# $METRO chain choice — Solana (primary) vs Robinhood (legacy)
+# $METRO chain choice — Solana (authoritative)
 
-**Solana SPL is the active launch path.** Robinhood ERC-20 remains implemented as
-legacy. The live path is chosen by the **mint / contract address (CA)** (or an
-explicit force env). Until you have a CA, the game stays **credits-only**.
+**Solana SPL is the only live launch path.**  
+Robinhood ERC-20 code remains in-tree as a **dormant alternate** you can re-enable
+explicitly — it is not auto-selected.
 
-| Family | Mint shape | Wallet | Server adapter | Client cluster |
-|--------|------------|--------|----------------|----------------|
-| **Solana** (primary) | base58 pubkey (~32–44 chars) | Phantom / Solana | `server/src/solana.ts` | `VITE_METRO_CLUSTER=devnet` or `mainnet-beta` |
-| **Robinhood Chain** (legacy) | `0x` + 40 hex | MetaMask | `server/src/evm.ts` | `VITE_METRO_CLUSTER=robinhood` or `robinhood-testnet` |
+| Family | Mint shape | Wallet | Server adapter | Status |
+|--------|------------|--------|----------------|--------|
+| **Solana** | base58 pubkey | Phantom / Solana | `server/src/solana.ts` | **Authoritative** |
+| **Robinhood** | `0x` + 40 hex | MetaMask | `server/src/evm.ts` | Dormant alternate |
 
-Shared ledger (always): server `credits` + D1 `metro_*` tables.  
-Rates: **1 $METRO deposit → 100 ₵**, **125 ₵ → 1 $METRO** withdraw (see `BRIDGE` in `server/src/metro.ts`).
+Shared ledger: server `credits` + D1 `metro_*` tables.  
+Rates: see `src/game/economyPolicy.ts` / `server/src/metro.ts`.
 
 ---
 
-## When you get the CA
-
-### A) CA is on Robinhood (`0x…`)
-
-```sh
-# server
-npx wrangler secret put METRO_MINT              # 0x…
-npx wrangler secret put METRO_TREASURY_SECRET   # 0x treasury private key
-npx wrangler secret put METRO_RPC               # RH testnet or mainnet RPC
-npx wrangler secret put METRO_CHAIN_ID          # 46630 testnet | 4663 mainnet
-# optional force (usually auto from 0x shape):
-# npx wrangler secret put METRO_SETTLEMENT      # robinhood
-npx wrangler deploy
-
-# client build
-VITE_METRO_MINT=0x… \
-VITE_METRO_CLUSTER=robinhood-testnet \   # or robinhood for mainnet
-VITE_METRO_RPC=https://rpc.testnet.chain.robinhood.com \
-VITE_METRO_CHAIN_ID=46630 \
-npm run deploy:client
-```
-
-Mainnet: counsel `METRO_MAINNET_ARMED=1` + `VITE_METRO_MAINNET_ARMED=1`.
-
-### B) CA is on Solana (base58 mint)
+## Live path (Solana)
 
 ```sh
 # server
 npx wrangler secret put METRO_MINT              # base58 mint
 npx wrangler secret put METRO_TREASURY_SECRET   # base64 64-byte keypair
-npx wrangler secret put METRO_RPC               # https://api.devnet.solana.com (or mainnet RPC)
-# optional force:
-# npx wrangler secret put METRO_SETTLEMENT      # solana
+npx wrangler secret put METRO_RPC               # https://api.devnet.solana.com or mainnet
+# wrangler.toml already has METRO_SETTLEMENT = "solana"
 npx wrangler deploy
 
-# client build
+# client
 VITE_METRO_MINT=<base58> \
 VITE_METRO_CLUSTER=devnet \                 # or mainnet-beta
 VITE_METRO_RPC=https://api.devnet.solana.com \
+VITE_METRO_SETTLEMENT=solana \
 npm run deploy:client
 ```
 
-Mainnet: same counsel arm flags. Treasury **never** spends SOL (player is fee-payer on claims).
+Mainnet: counsel `METRO_MAINNET_ARMED=1` + `VITE_METRO_MAINNET_ARMED=1`.  
+Treasury **pays SOL on cash-outs** when funded (preferred). Deposits remain player-paid.
 
-### Force family (if CA shape is ambiguous)
+Treasury prep (no CA yet):
+
+```sh
+cd server && node scripts/mainnet-prepare.mjs
+```
+
+---
+
+## Dormant alternate (Robinhood / EVM)
+
+Only if you deliberately switch back:
+
+```sh
+cd server
+node scripts/mainnet-prepare.mjs --evm --replace
+node scripts/mainnet-arm.mjs <0x_CA> --evm
+# set METRO_SETTLEMENT=robinhood + EVM METRO_TREASURY_SECRET + METRO_CHAIN_ID
+```
+
+Client: `VITE_METRO_SETTLEMENT=robinhood` + `VITE_METRO_CLUSTER=robinhood-testnet|robinhood`.
+
+---
+
+## Force family
 
 | Env | Values |
 |-----|--------|
-| Client | `VITE_METRO_SETTLEMENT=robinhood` \| `solana` \| `auto` |
-| Server | `METRO_SETTLEMENT=robinhood` \| `solana` \| `auto` |
+| Client | `VITE_METRO_SETTLEMENT=solana` (default) \| `robinhood` \| `auto` |
+| Server | `METRO_SETTLEMENT=solana` (default in wrangler.toml) \| `robinhood` \| `auto` |
 
-Default **auto** = detect from mint shape.
+`auto` restores mint-shape detection (base58 → solana, `0x` → robinhood).
 
 ---
 
@@ -73,24 +73,11 @@ Default **auto** = detect from mint shape.
 
 | Path | Role |
 |------|------|
-| `src/economy/chainProfile.ts` | Client dual-path resolve + status |
-| `src/economy/robinhoodChain.ts` | RH L2 network defs |
+| `src/economy/chainProfile.ts` | Client family resolve |
 | `src/economy/solanaChain.ts` | Solana network defs |
-| `src/economy/metro.ts` | Mint gate, rates, UI status |
-| `src/economy/claim.ts` | Broadcast claim (EVM raw tx **or** Solana wallet sign) |
-| `server/src/settlementFamily.ts` | Server family resolve |
-| `server/src/evm.ts` | ERC-20 settlement |
-| `server/src/solana.ts` | SPL settlement |
-| `server/src/metro.ts` | Bridge accounting (chain-agnostic) |
-| `server/src/index.ts` `pickSettlement()` | Picks sim / evm / solana |
-
----
-
-## What to tell the team when CA lands
-
-1. Paste the **full contract/mint address**.  
-2. Say **Robinhood** or **Solana** (or “auto from shape”).  
-3. **Testnet vs mainnet**.  
-4. We set secrets + rebuild client; no second ledger redesign required.
-
-Until then: leave `METRO_MINT` / `VITE_METRO_MINT` **unset** — pure multiplayer credits.
+| `src/economy/splDeposit.ts` | Phantom deposit |
+| `src/economy/robinhoodChain.ts` | RH defs (alternate) |
+| `src/economy/erc20Deposit.ts` | MetaMask deposit (alternate) |
+| `server/src/solana.ts` | Live settlement |
+| `server/src/evm.ts` | Alternate settlement |
+| `server/src/settlementFamily.ts` | Family resolution |

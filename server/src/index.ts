@@ -1,11 +1,96 @@
 import { WorldDO, parseZone, isNamedZone, type Env } from "./world";
 import { getAccount, quote, withdraw, confirmWithdraw, deposit, poolInfo, simSettlement, type Settlement } from "./metro";
 import { verifyWalletLogin } from "./auth";
-import { loginMessage } from "../../src/net/protocol";
+import { loginMessage, PROTOCOL_VERSION } from "../../src/net/protocol";
 import { simulatedSettlementLocked } from "./bridgePolicy";
 import { resolveSettlementFamily, settlementFamilyLabel } from "./settlementFamily";
+import { launchFlagsFromEnv } from "../../src/game/featureFlags";
+import {
+  doName,
+  hardCapFor,
+  isShardableZone,
+  maxInstancesFor,
+  parseInstParam,
+  pickInstance,
+  softCapFor,
+  type InstanceLoad,
+} from "./zoneRouting";
 
 export { WorldDO };
+
+// ── Load-aware zone instance router (per-isolate cache; fine for sticky-ish picks) ──
+const LOAD_CACHE_MS = 2500;
+const loadCache = new Map<string, { players: number; tickMsAvg: number; at: number }>();
+
+async function probeInstanceLoad(env: Env, zone: string, inst: number): Promise<InstanceLoad> {
+  const key = doName(zone, inst);
+  const hit = loadCache.get(key);
+  if (hit && Date.now() - hit.at < LOAD_CACHE_MS) {
+    return { inst, players: hit.players, tickMsAvg: hit.tickMsAvg };
+  }
+  try {
+    const stub = env.WORLD.get(env.WORLD.idFromName(key));
+    const res = await stub.fetch(
+      new Request(`https://world/stats?zone=${encodeURIComponent(zone)}&inst=${inst}`),
+    );
+    if (!res.ok) {
+      loadCache.set(key, { players: 0, tickMsAvg: 0, at: Date.now() });
+      return { inst, players: 0, tickMsAvg: 0, error: true };
+    }
+    const s = (await res.json()) as { players?: number; tickMsAvg?: number };
+    const players = Math.max(0, Math.floor(Number(s.players) || 0));
+    const tickMsAvg = Number(s.tickMsAvg) || 0;
+    loadCache.set(key, { players, tickMsAvg, at: Date.now() });
+    return { inst, players, tickMsAvg };
+  } catch {
+    loadCache.set(key, { players: 0, tickMsAvg: 0, at: Date.now() });
+    return { inst, players: 0, tickMsAvg: 0, error: true };
+  }
+}
+
+/**
+ * Resolve which DO shard hosts this logical zone for a new / reconnecting client.
+ * Sticky `inst` is honored while under hard cap; otherwise least-loaded under soft.
+ */
+async function resolveZoneInstance(
+  env: Env,
+  zone: string,
+  stickyInst?: number,
+): Promise<{ inst: number; doKey: string }> {
+  const maxInst = maxInstancesFor(zone, env);
+  if (!isShardableZone(zone) || maxInst <= 1) {
+    return { inst: 0, doKey: doName(zone, 0) };
+  }
+  const flags = launchFlagsFromEnv(env);
+  const soft = softCapFor(zone, env, flags);
+  const hard = hardCapFor(zone, env, flags);
+
+  // Probe in parallel — cold DOs report 0 players cheaply enough for join path.
+  const loads = await Promise.all(
+    Array.from({ length: maxInst }, (_, i) => probeInstanceLoad(env, zone, i)),
+  );
+  const inst = pickInstance(loads, {
+    sticky: stickyInst,
+    softCap: soft,
+    hardCap: hard,
+    maxInst,
+  });
+  return { inst, doKey: doName(zone, inst) };
+}
+
+function canonicalZone(raw: string | null): string {
+  return isNamedZone(raw) ? raw! : "d" + parseZone(raw);
+}
+
+/** Forward HTTP/WS to a zone DO with zone+inst query so the DO binds correctly. */
+function forwardToWorld(env: Env, req: Request, zone: string, inst: number): Promise<Response> {
+  const doKey = doName(zone, inst);
+  const stub = env.WORLD.get(env.WORLD.idFromName(doKey));
+  const u = new URL(req.url);
+  u.searchParams.set("zone", zone);
+  u.searchParams.set("inst", String(inst));
+  return stub.fetch(new Request(u.toString(), req));
+}
 
 /** Mint from either METRO_MINT (preferred) or legacy METRO_DEVNET_MINT. */
 function metroMint(env: Env): string | undefined {
@@ -22,10 +107,6 @@ function rpcIsMainnet(rpc: string, chainId?: number): boolean {
   return /mainnet/i.test(rpc) && !/sepolia|goerli|holesky|devnet|testnet/i.test(rpc);
 }
 
-function isEvmMintAddr(mint: string): boolean {
-  return /^0x[a-fA-F0-9]{40}$/.test(mint);
-}
-
 function isEvmTreasurySecret(secret: string | undefined): boolean {
   const s = (secret || "").trim();
   if (/^0x[0-9a-fA-F]{64}$/.test(s) || /^[0-9a-fA-F]{64}$/.test(s)) return true;
@@ -36,10 +117,10 @@ function isEvmTreasurySecret(secret: string | undefined): boolean {
   }
 }
 
-/** Preferred EVM defaults: Robinhood Chain testnet (safe); mainnet when chain id 4663. */
+/** Preferred EVM defaults: Robinhood Chain mainnet; testnet only when chain id 46630. */
 function defaultEvmRpc(chainId?: number): string {
-  if (chainId === 4663) return "https://rpc.mainnet.chain.robinhood.com";
-  return "https://rpc.testnet.chain.robinhood.com"; // 46630 testnet
+  if (chainId === 46630) return "https://rpc.testnet.chain.robinhood.com";
+  return "https://rpc.mainnet.chain.robinhood.com"; // 4663 mainnet
 }
 
 function defaultEvmChainId(env: Env): number {
@@ -47,16 +128,17 @@ function defaultEvmChainId(env: Env): number {
     const n = parseInt(env.METRO_CHAIN_ID, 10);
     if (Number.isFinite(n)) return n;
   }
-  // Counsel-armed + mint → mainnet Robinhood; else testnet.
-  if (env.METRO_MAINNET_ARMED === "1") return 4663;
-  return 46630;
+  // Explicit testnet RPC → testnet; otherwise Robinhood mainnet.
+  if (/testnet\.chain\.robinhood/i.test(env.METRO_RPC || "")) return 46630;
+  return 4663;
 }
 
 export type SettlementKind = "sim" | "evm" | "solana";
 
 /**
- * Choose the bridge settlement (Solana SPL primary; Robinhood ERC-20 legacy).
- * Family from mint shape (base58 → Solana, 0x → RH/EVM) or METRO_SETTLEMENT force.
+ * Choose the bridge settlement.
+ * AUTHORITATIVE: Robinhood Chain ERC-20 (default METRO_SETTLEMENT=robinhood).
+ * Dormant alternate: Solana SPL only when METRO_SETTLEMENT=solana.
  * Mainnet requires METRO_MAINNET_ARMED=1. Missing mint/treasury → sim.
  */
 async function pickSettlement(env: Env): Promise<{ settlement: Settlement; kind: SettlementKind; family: string }> {
@@ -67,10 +149,14 @@ async function pickSettlement(env: Env): Promise<{ settlement: Settlement; kind:
     return { settlement: simSettlement, kind: "sim", family: family === "off" ? "off" : family };
   }
 
-  // Solana SPL first when family is solana (base58 mint or force).
-  if (family === "solana" || (!isEvmMintAddr(mint) && family !== "robinhood")) {
+  // Solana SPL — dormant alternate (METRO_SETTLEMENT=solana only).
+  if (family === "solana") {
     const rpc = (env.METRO_RPC || "https://api.devnet.solana.com").trim();
     if (rpcIsMainnet(rpc) && env.METRO_MAINNET_ARMED !== "1") {
+      return { settlement: simSettlement, kind: "sim", family: "solana" };
+    }
+    // Reject EVM-shaped secrets so a leftover 0x key never pretends to be Solana.
+    if (/^0x[0-9a-fA-F]{64}$/.test(secret) || /^[0-9a-fA-F]{64}$/.test(secret)) {
       return { settlement: simSettlement, kind: "sim", family: "solana" };
     }
     const { makeSolanaSettlement } = await import("./solana");
@@ -81,8 +167,8 @@ async function pickSettlement(env: Env): Promise<{ settlement: Settlement; kind:
     };
   }
 
-  // Robinhood / EVM ERC-20 path (0x mint).
-  if (family === "robinhood" || isEvmMintAddr(mint)) {
+  // Robinhood / EVM — authoritative live path.
+  if (family === "robinhood") {
     const chainId = defaultEvmChainId(env);
     const rpc = (env.METRO_RPC || defaultEvmRpc(chainId)).trim();
     if (rpcIsMainnet(rpc, chainId) && env.METRO_MAINNET_ARMED !== "1") {
@@ -226,6 +312,67 @@ async function handleIdentity(req: Request, env: Env): Promise<Response> {
   }
 }
 
+/**
+ * NEW RUNNER — explicit player deletion.
+ *  - Guest: { callsign, secret } device key
+ *  - Wallet: { wallet, sig, ts } fresh signature (only way to free a locked wallet)
+ */
+async function handlePlayerRetire(req: Request, env: Env): Promise<Response> {
+  try {
+    const b = (await req.json()) as {
+      callsign?: string;
+      secret?: string;
+      wallet?: string;
+      sig?: string;
+      ts?: number;
+    };
+    if (b.wallet && b.sig && Number.isFinite(b.ts)) {
+      const { retireWalletPlayer } = await import("./playerLink");
+      const result = await retireWalletPlayer(env.DB, {
+        wallet: b.wallet,
+        sig: b.sig,
+        ts: Number(b.ts),
+      });
+      if (!result.ok) return json(result, 401);
+      return json(result);
+    }
+    const { retireGuestPlayer } = await import("./playerRetire");
+    const result = await retireGuestPlayer(env.DB, b.callsign ?? "", b.secret ?? "");
+    if (!result.ok) return json(result, result.reason.includes("does not match") ? 403 : 400);
+    return json(result);
+  } catch (e) {
+    return json({ ok: false, reason: String((e as Error)?.message ?? e) }, 400);
+  }
+}
+
+/** Bind a Solana wallet to an existing guest runner (permanent until NEW RUNNER). */
+async function handlePlayerLinkWallet(req: Request, env: Env): Promise<Response> {
+  try {
+    const b = (await req.json()) as {
+      callsign?: string;
+      secret?: string;
+      wallet?: string;
+      sig?: string;
+      ts?: number;
+    };
+    const { linkGuestToWallet } = await import("./playerLink");
+    const result = await linkGuestToWallet(env.DB, {
+      callsign: b.callsign ?? "",
+      secret: b.secret ?? "",
+      wallet: b.wallet ?? "",
+      sig: b.sig ?? "",
+      ts: Number(b.ts),
+    });
+    if (!result.ok) {
+      const status = /sign-in failed|mismatch/i.test(result.reason) ? 401 : 400;
+      return json(result, status);
+    }
+    return json(result);
+  } catch (e) {
+    return json({ ok: false, reason: String((e as Error)?.message ?? e) }, 400);
+  }
+}
+
 async function handleLeaderboard(url: URL, env: Env): Promise<Response> {
   // digits allowed: weekly stats are keyed "wk<week>" and rotate with the epoch week
   const stat = (url.searchParams.get("stat") || "kills").replace(/[^a-z0-9]/g, "").slice(0, 24);
@@ -248,6 +395,17 @@ async function handleLeaderboard(url: URL, env: Env): Promise<Response> {
  * global `credits` ledger in D1, independent of which zone DO a player is in. Settlement
  * is the devnet sim for now (step 2a); step 2b selects a real settlement when armed.
  */
+function priceEnvFrom(env: Env) {
+  return {
+    METRO_MINT: env.METRO_MINT,
+    METRO_DEVNET_MINT: env.METRO_DEVNET_MINT,
+    METRO_CHAIN_ID: env.METRO_CHAIN_ID,
+    METRO_RPC: env.METRO_RPC,
+    METRO_USD_PRICE: env.METRO_USD_PRICE,
+    METRO_MAINNET_ARMED: env.METRO_MAINNET_ARMED,
+  };
+}
+
 async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> {
   const { settlement, kind, family } = await pickSettlement(env);
   const mint = metroMint(env);
@@ -255,6 +413,7 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
   const rpc = (env.METRO_RPC || "").trim();
   const armed = env.METRO_MAINNET_ARMED === "1";
   const live = kind !== "sim";
+  const priceEnv = priceEnvFrom(env);
   // CRITICAL: simulated settlement trusts client-reported amounts, so it must never
   // mutate a public ledger. It is read-only by default even when no mint is configured.
   // Local smoke/dev runs opt in explicitly with METRO_ALLOW_SIM=1.
@@ -284,7 +443,7 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
       const qTs = Number(url.searchParams.get("ts"));
       if (kind === "sim" && allowSim && qPlayer && !qSig) {
         // Local smoke: account by player id without MetaMask (never on live settlement).
-        return json(await getAccount(env.DB, qPlayer, settlement));
+        return json(await getAccount(env.DB, qPlayer, settlement, priceEnv));
       }
       const auth = await authorizeBridgeActor(
         { player: qPlayer, wallet: qWallet, sig: qSig, ts: qTs },
@@ -292,28 +451,37 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
         allowSim,
       );
       if (!auth.ok) return json(auth, 401);
-      return json(await getAccount(env.DB, auth.player, settlement));
+      return json(await getAccount(env.DB, auth.player, settlement, priceEnv));
     }
     if (url.pathname === "/metro/pool" && req.method === "GET") {
-      const info = (await poolInfo(env.DB)) as Record<string, unknown>;
+      const info = (await poolInfo(env.DB, priceEnv)) as Record<string, unknown>;
       info.mintConfigured = !!mint;
       // Public mint CA so clients can deposit even when the build-time env is empty.
       if (mint) info.mint = mint;
       info.treasuryConfigured = hasTreasury;
       info.mainnetArmed = armed;
       info.rpc = rpc || null;
-      const cid = family === "robinhood" || (mint && isEvmMintAddr(mint)) ? defaultEvmChainId(env) : null;
+      const force = (env.METRO_SETTLEMENT || "robinhood").toLowerCase().trim();
+      const wantRobinhood =
+        family === "robinhood" ||
+        force === "robinhood" ||
+        force === "rh" ||
+        force === "evm" ||
+        force === "" ||
+        (!force.includes("sol") && force !== "auto");
+      const cid = wantRobinhood || family === "robinhood" ? defaultEvmChainId(env) : null;
       info.family = family;
       info.familyLabel = settlementFamilyLabel(family as "robinhood" | "solana" | "off");
+      // Robinhood is authoritative even while awaiting mint (family=off).
       info.chain =
-        family === "robinhood" || (mint && isEvmMintAddr(mint))
-          ? cid === 4663 || cid === 46630
+        family === "solana"
+          ? "solana"
+          : cid === 4663 || cid === 46630
             ? "robinhood"
-            : "evm"
-          : family === "solana" || mint
-            ? "solana"
-            : null;
-      info.chainId = cid;
+            : wantRobinhood
+              ? "evm"
+              : "robinhood";
+      info.chainId = family === "solana" ? null : cid;
       info.networkName =
         family === "solana"
           ? /mainnet/i.test(rpc)
@@ -321,34 +489,29 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
             : "Solana Devnet"
           : cid === 4663
             ? "Robinhood Chain"
-            : cid === 46630
-              ? "Robinhood Chain Testnet"
-              : info.chain;
+            : "Robinhood Chain Testnet";
       info.readyForCa = hasTreasury && !mint;
       info.liveBridge = live;
       info.settlement = kind;
       info.simLocked = simLocked;
       info.simAllowed = allowSim;
-      info.dualPathReady = { robinhood: true, solana: true };
+      // Robinhood is authoritative; solana adapter remains loadable as alternate only.
+      info.dualPathReady = { robinhood: true, solana: false, solanaAlternate: true };
+      info.authoritativeChain = "robinhood";
       info.note =
-        family === "solana" || (!mint && !isEvmMintAddr(mint || ""))
-          ? "Solana SPL $METRO — Phantom signs claims; player pays SOL fee. Treasury never spends SOL."
-          : "Robinhood Chain ≠ Robinhood app. Use MetaMask on chain " +
-            (cid ?? "46630") +
-            " to deposit/withdraw.";
+        family === "solana"
+          ? "Solana SPL alternate — Phantom cash-outs when forced."
+          : "Robinhood Chain $METRO — MetaMask deposits; treasury pays gas on cash-outs when funded.";
       info.getMetroHint =
-        family === "solana" || (mint && !isEvmMintAddr(mint))
-          ? "Get $METRO (SPL), Send via Phantom to treasury, then Claim deposit."
-          : cid === 4663
-            ? "Trade $METRO on Robinhood Chain DEXes or peer transfers — not the Robinhood stock app."
-            : "Testnet: mint/get test $METRO on RH testnet, then deposit via MetaMask in this panel.";
+        family === "solana"
+          ? "Alternate SPL path — deposit via Phantom."
+          : "Get $METRO (ERC-20), Send via MetaMask to treasury, then Claim deposit.";
       if (hasTreasury) {
-        // Prefer Solana treasury decode when mint is SPL or secret is base64 keypair (not EVM hex).
-        const treasuryIsEvm =
-          (mint && isEvmMintAddr(mint)) ||
-          (family === "robinhood" && isEvmTreasurySecret(env.METRO_TREASURY_SECRET)) ||
-          (!mint && isEvmTreasurySecret(env.METRO_TREASURY_SECRET) && family !== "solana");
-        if (treasuryIsEvm && family !== "solana") {
+        // Prefer EVM treasury when Robinhood is primary (or secret is clearly EVM).
+        if (
+          (wantRobinhood || family === "robinhood" || isEvmTreasurySecret(env.METRO_TREASURY_SECRET)) &&
+          isEvmTreasurySecret(env.METRO_TREASURY_SECRET)
+        ) {
           const { treasuryEvmAddress, treasuryHealth, robinhoodRpcs } = await import("./evm");
           info.treasury = treasuryEvmAddress(env.METRO_TREASURY_SECRET!);
           info.treasuryChain = "evm";
@@ -379,7 +542,7 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
       }
       if (!live) {
         if (!mint) {
-          info.reason = "awaiting mint CA — set METRO_MINT (in-game ₵ is fully live meanwhile)";
+          info.reason = "awaiting mint CA — set METRO_MINT (0x) (in-game ₵ is fully live meanwhile)";
           info.phaseHint = "awaiting_ca";
         } else if (simLocked) {
           info.reason =
@@ -390,9 +553,9 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
           info.phaseHint = "mainnet_gated";
         } else if (!hasTreasury) {
           info.reason =
-            family === "solana" || (mint && !isEvmMintAddr(mint))
+            family === "solana"
               ? "awaiting METRO_TREASURY_SECRET (base64 Solana keypair)"
-              : "awaiting METRO_TREASURY_SECRET (EVM hex key or Solana base64 keypair)";
+              : "awaiting METRO_TREASURY_SECRET (EVM 0x private key)";
           info.phaseHint = "awaiting_treasury";
         }
       } else if ((info.poolMetro as number) <= 0) {
@@ -403,32 +566,64 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
       return json(info);
     }
     if (url.pathname === "/metro/status" && req.method === "GET") {
+      const force = (env.METRO_SETTLEMENT || "robinhood").toLowerCase().trim();
+      const wantRobinhood =
+        family === "robinhood" ||
+        force === "robinhood" ||
+        force === "rh" ||
+        force === "evm" ||
+        force === "" ||
+        (!force.includes("sol") && force !== "auto");
       const status: Record<string, unknown> = {
         ok: true,
         mintConfigured: !!mint,
         treasuryConfigured: hasTreasury,
         mainnetArmed: armed,
         settlement: kind,
+        family,
+        authoritativeChain: "robinhood",
         simLocked,
         simAllowed: allowSim,
-        chain: mint && isEvmMintAddr(mint) ? (defaultEvmChainId(env) === 4663 || defaultEvmChainId(env) === 46630 ? "robinhood" : "evm") : mint ? "solana" : null,
-        chainId: mint && isEvmMintAddr(mint) ? defaultEvmChainId(env) : null,
+        chain: family === "solana" ? "solana" : "robinhood",
+        chainId: family === "solana" ? null : defaultEvmChainId(env),
         readyForCa: hasTreasury && !mint,
-        clusterHint: rpcIsMainnet(rpc, mint && isEvmMintAddr(mint) ? defaultEvmChainId(env) : undefined)
+        clusterHint: rpcIsMainnet(rpc, family === "solana" ? undefined : defaultEvmChainId(env))
           ? "mainnet"
           : rpc
             ? "testnet/custom"
             : "unset",
       };
-      if (hasTreasury && isEvmTreasurySecret(env.METRO_TREASURY_SECRET)) {
-        const { treasuryEvmAddress } = await import("./evm");
-        status.treasury = treasuryEvmAddress(env.METRO_TREASURY_SECRET!);
-        status.treasuryChain = "evm";
+      if (hasTreasury) {
+        if (
+          (wantRobinhood || family === "robinhood" || isEvmTreasurySecret(env.METRO_TREASURY_SECRET)) &&
+          isEvmTreasurySecret(env.METRO_TREASURY_SECRET)
+        ) {
+          const { treasuryEvmAddress } = await import("./evm");
+          status.treasury = treasuryEvmAddress(env.METRO_TREASURY_SECRET!);
+          status.treasuryChain = "evm";
+        } else {
+          try {
+            const { treasuryPubkey } = await import("./solana");
+            status.treasury = treasuryPubkey(env.METRO_TREASURY_SECRET!);
+            status.treasuryChain = "solana";
+          } catch {
+            status.treasury = null;
+          }
+        }
       }
       return json(status);
     }
-    if (url.pathname === "/metro/quote" && req.method === "GET")
-      return json(quote(Number(url.searchParams.get("credits") ?? "0")));
+    if (url.pathname === "/metro/quote" && req.method === "GET") {
+      const { resolveBridge: rb } = await import("./metro");
+      const live = await rb(env.DB, priceEnv);
+      return json(
+        quote(
+          Number(url.searchParams.get("credits") ?? "0"),
+          live.withdrawCreditsPerMetro,
+          live.depositCreditsPerMetro,
+        ),
+      );
+    }
     if (url.pathname === "/metro/withdraw" && req.method === "POST") {
       const locked = rejectIfSimLocked();
       if (locked) return locked;
@@ -446,11 +641,16 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
         return json({ ok: false, reason: "wallet must match signed identity" }, 401);
       }
       return json(
-        await withdraw(env.DB, settlement, {
-          player: auth.player,
-          wallet: auth.wallet,
-          credits: Number(b.credits),
-        }),
+        await withdraw(
+          env.DB,
+          settlement,
+          {
+            player: auth.player,
+            wallet: auth.wallet,
+            credits: Number(b.credits),
+          },
+          priceEnv,
+        ),
       );
     }
     if (url.pathname === "/metro/withdraw/confirm" && req.method === "POST") {
@@ -492,12 +692,17 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
       }
       // On-chain amount only for live settlement; sim may use claimed metro under ALLOW_SIM.
       return json(
-        await deposit(env.DB, settlement, {
-          player: auth.player,
-          wallet: auth.wallet,
-          txSig: b.txSig ?? "",
-          metro: Number(b.metro) || 0,
-        }),
+        await deposit(
+          env.DB,
+          settlement,
+          {
+            player: auth.player,
+            wallet: auth.wallet,
+            txSig: b.txSig ?? "",
+            metro: Number(b.metro) || 0,
+          },
+          priceEnv,
+        ),
       );
     }
     return json({ ok: false, reason: "not found" }, 404);
@@ -530,32 +735,58 @@ export default {
     }
 
     if (url.pathname === "/health") {
-      // Sample a few hot zones so ops can see load without hammering every DO.
-      const sampleZones = ["safe", "d0", "d1", "d2"];
-      const zones: Array<Record<string, unknown>> = [];
-      let errTotal = 0;
-      let playersTotal = 0;
-      for (const z of sampleZones) {
-        try {
-          const stub = env.WORLD.get(env.WORLD.idFromName(z));
-          const res = await stub.fetch(new Request(`https://world/stats?zone=${z}`));
-          if (res.ok) {
+      // Sample hot zones + primary overflow shards in parallel.
+      const sampleTargets: Array<{ zone: string; inst: number }> = [
+        { zone: "safe", inst: 0 },
+        { zone: "safe", inst: 1 },
+        { zone: "d0", inst: 0 },
+        { zone: "d0", inst: 1 },
+        { zone: "d1", inst: 0 },
+        { zone: "d2", inst: 0 },
+        { zone: "d3", inst: 0 },
+        { zone: "subway", inst: 0 },
+      ];
+      const zoneResults = await Promise.all(
+        sampleTargets.map(async ({ zone: z, inst }) => {
+          try {
+            const key = doName(z, inst);
+            const stub = env.WORLD.get(env.WORLD.idFromName(key));
+            const res = await stub.fetch(
+              new Request(`https://world/stats?zone=${encodeURIComponent(z)}&inst=${inst}`),
+            );
+            if (!res.ok) return { zone: z, inst, doName: key, error: true as const };
             const s = (await res.json()) as Record<string, unknown>;
-            zones.push({
-              zone: s.zone,
+            return {
+              zone: s.zone ?? z,
+              inst: s.inst ?? inst,
+              doName: s.doName ?? key,
               players: s.players,
               tickMsAvg: s.tickMsAvg,
+              tickMsMax: s.tickMsMax,
+              snapBytesPerTick: s.snapBytesPerTick,
               hubFull: s.hubFull,
+              instanceFull: s.instanceFull,
               floodKills: s.floodKills,
               errCount: s.errCount,
-            });
-            errTotal += Number(s.errCount) || 0;
-            playersTotal += Number(s.players) || 0;
+              running: s.running,
+            };
+          } catch {
+            return { zone: z, inst, doName: doName(z, inst), error: true as const };
           }
-        } catch {
-          zones.push({ zone: z, error: true });
+        }),
+      );
+      const zones: Array<Record<string, unknown>> = zoneResults;
+      let errTotal = 0;
+      let playersTotal = 0;
+      let tickHot = 0;
+      for (const z of zones) {
+        if ((z as { error?: boolean }).error) {
           errTotal++;
+          continue;
         }
+        errTotal += Number((z as { errCount?: number }).errCount) || 0;
+        playersTotal += Number((z as { players?: number }).players) || 0;
+        if (Number((z as { tickMsAvg?: number }).tickMsAvg) > 40) tickHot++;
       }
       const { launchFlagsFromEnv } = await import("../../src/game/featureFlags");
       const flags = launchFlagsFromEnv(env);
@@ -586,20 +817,28 @@ export default {
         warnings.push("economy_unavailable");
       }
       for (const z of zones) {
-        if (Number((z as { tickMsAvg?: number }).tickMsAvg) > 40) warnings.push(`tick_hot:${(z as { zone?: string }).zone}`);
+        if (Number((z as { tickMsAvg?: number }).tickMsAvg) > 40) {
+          warnings.push(`tick_hot:${(z as { zone?: string }).zone}`);
+        }
         if ((z as { hubFull?: boolean }).hubFull) warnings.push("hub_full");
+        if (Number((z as { floodKills?: number }).floodKills) > 20) {
+          warnings.push(`flood:${(z as { zone?: string }).zone}`);
+        }
       }
       if (errTotal > 50) warnings.push("err_elevated");
+      if (tickHot >= 2) warnings.push("tick_hot_multi_zone");
       return new Response(
         JSON.stringify({
           ok: true,
           degraded: warnings.length > 0,
           ts: Date.now(),
           build: env.METRO_BUILD || "unset",
+          /** Wire protocol — clients compare to local PROTOCOL_VERSION and hard-reload on mismatch. */
+          protocol: PROTOCOL_VERSION,
           paidTier: env.METRO_PAID_TIER === "1",
           plan: env.METRO_PAID_TIER === "1" ? "workers-paid" : "workers-free",
           flags,
-          sample: { playersTotal, errTotal, zones },
+          sample: { playersTotal, errTotal, tickHotZones: tickHot, zones },
           economy,
           warnings,
         }),
@@ -614,12 +853,60 @@ export default {
       );
     }
 
-    // Ops: forward a per-zone metrics probe to that zone's DO.
+    // Ops: forward a per-zone metrics probe. Optional ?inst=; omit to sample all shards.
     if (url.pathname === "/stats") {
-      const raw = url.searchParams.get("zone");
-      const zone = isNamedZone(raw) ? raw! : "d" + parseZone(raw);
-      const stub = env.WORLD.get(env.WORLD.idFromName(zone));
-      return stub.fetch(new Request(`https://world/stats?zone=${zone}`));
+      const zone = canonicalZone(url.searchParams.get("zone"));
+      const instQ = parseInstParam(url.searchParams.get("inst"));
+      const maxInst = maxInstancesFor(zone, env);
+      if (instQ != null || maxInst <= 1) {
+        const inst = instQ ?? 0;
+        return forwardToWorld(
+          env,
+          new Request(`https://world/stats?zone=${encodeURIComponent(zone)}&inst=${inst}`),
+          zone,
+          inst,
+        );
+      }
+      // Aggregate all instances for this zone (ops / capacity planning).
+      const loads = await Promise.all(
+        Array.from({ length: maxInst }, async (_, i) => {
+          try {
+            const res = await forwardToWorld(
+              env,
+              new Request(`https://world/stats?zone=${encodeURIComponent(zone)}&inst=${i}`),
+              zone,
+              i,
+            );
+            if (!res.ok) return { inst: i, error: true as const };
+            return (await res.json()) as Record<string, unknown>;
+          } catch {
+            return { inst: i, error: true as const };
+          }
+        }),
+      );
+      const playersTotal = loads.reduce(
+        (s, r) => s + (Number((r as { players?: number }).players) || 0),
+        0,
+      );
+      return new Response(
+        JSON.stringify({
+          zone,
+          sharded: true,
+          maxInstances: maxInst,
+          softCap: softCapFor(zone, env, launchFlagsFromEnv(env)),
+          hardCap: hardCapFor(zone, env, launchFlagsFromEnv(env)),
+          playersTotal,
+          instances: loads,
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+            "access-control-allow-origin": "*",
+            "cache-control": "no-store",
+          },
+        },
+      );
     }
 
     if (url.pathname === "/leaderboard") return handleLeaderboard(url, env);
@@ -631,16 +918,66 @@ export default {
     }
 
     if (url.pathname === "/identity" && req.method === "POST") return handleIdentity(req, env);
+    // NEW RUNNER — deletes guest (device secret) or wallet runner (signed).
+    if (url.pathname === "/player/retire" && req.method === "POST") return handlePlayerRetire(req, env);
+    // Bind Solana wallet → existing guest runner (locked until NEW RUNNER).
+    if (url.pathname === "/player/link-wallet" && req.method === "POST") return handlePlayerLinkWallet(req, env);
 
     if (url.pathname.startsWith("/metro/")) return handleMetro(url, req, env);
 
     if (url.pathname === "/ws") {
-      const raw = url.searchParams.get("zone");
-      const zone = isNamedZone(raw) ? raw! : "d" + parseZone(raw); // canonical; interiors + building interiors pass through
-      const stub = env.WORLD.get(env.WORLD.idFromName(zone));
-      return stub.fetch(req);
+      // Load-aware instance pick for hot zones; interiors stay single-DO.
+      // Client may pass ?inst=N for sticky reconnect (honored under hard cap).
+      const zone = canonicalZone(url.searchParams.get("zone"));
+      const sticky = parseInstParam(url.searchParams.get("inst"));
+      const { inst, doKey } = await resolveZoneInstance(env, zone, sticky);
+      // Touch cache after join intent so back-to-back connects see fresh-ish counts.
+      // (Actual count updates when DO /stats is probed again.)
+      const cached = loadCache.get(doKey);
+      if (cached) {
+        loadCache.set(doKey, { ...cached, players: cached.players + 1, at: Date.now() });
+      }
+      return forwardToWorld(env, req, zone, inst);
     }
 
     return new Response("metrophage-server", { status: 200 });
+  },
+
+  /**
+   * Cron (every 5m):
+   *  - reclaim abandoned $METRO cash-out claims
+   *  - refresh EVM $METRO market USD when the quote is older than 30 minutes
+   * Never touches zone DO ticks.
+   */
+  async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(
+      (async () => {
+        try {
+          const { settlement } = await pickSettlement(env);
+          const { reclaimExpired } = await import("./metro");
+          const n = await reclaimExpired(env.DB, settlement);
+          if (n > 0) console.log(`[cron] reclaimed ${n} expired metro claims`);
+        } catch (e) {
+          console.error("[cron] reclaim failed", e);
+        }
+        try {
+          const { maybeRefreshMetroPrice } = await import("./metroPrice");
+          const q = await maybeRefreshMetroPrice({
+            DB: env.DB,
+            METRO_MINT: env.METRO_MINT,
+            METRO_DEVNET_MINT: env.METRO_DEVNET_MINT,
+            METRO_CHAIN_ID: env.METRO_CHAIN_ID,
+            METRO_RPC: env.METRO_RPC,
+            METRO_USD_PRICE: env.METRO_USD_PRICE,
+            METRO_MAINNET_ARMED: env.METRO_MAINNET_ARMED,
+          });
+          console.log(
+            `[cron] metro price usd=${q.usd} source=${q.source} stale=${q.stale} mult≈${(q.usd / 1).toFixed(3)}`,
+          );
+        } catch (e) {
+          console.error("[cron] metro price refresh failed", e);
+        }
+      })(),
+    );
   },
 };

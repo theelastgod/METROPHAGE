@@ -92,6 +92,8 @@ export const UI_GUN_KEY = "ui_gun";
 export const UI_PANEL_KEY = "ui_panel";
 /** Circular neon ring for mobile action buttons. */
 export const UI_BTN_RING_KEY = "ui_btn_ring";
+/** Alt ring (Higgsfield chrome sheet) for secondary / ability pads. */
+export const UI_BTN_RING_ALT_KEY = "ui_btn_ring_alt";
 /** Title identity-gate chrome (Higgsfield gpt_image_2 pack). */
 export const IDENTITY_PANEL_KEY = "identity_panel";
 export const IDENTITY_BTN_PRIMARY_KEY = "identity_btn_primary";
@@ -109,6 +111,35 @@ export const ABILITY_ICON_KEYS = [
   "ability_radar",
 ] as const;
 export type AbilityIconKey = (typeof ABILITY_ICON_KEYS)[number];
+/**
+ * Higgsfield expand-sheet ability pack (ability_hf_*). Manifest still serves the
+ * ability_* keys (copies / aliases); this list is for tooling + class icon maps.
+ */
+export const ABILITY_HF_ICON_KEYS = [
+  "ability_hf_dash",
+  "ability_hf_cone",
+  "ability_hf_drones",
+  "ability_hf_ult",
+  "ability_hf_shield",
+  "ability_hf_pulse",
+  "ability_hf_rail",
+  "ability_hf_radar",
+] as const;
+/** Weapon silhouettes gun_hf_01..06 (tools/higgsfield-hud-build.mjs). */
+export const HF_GUN_KEYS = Array.from({ length: 6 }, (_, i) => "gun_hf_" + String(i + 1).padStart(2, "0"));
+/** Map weapon klass → gun_hf cell (0-based). */
+export function hfGunKeyForKlass(klass: string): string {
+  const k = klass.replace(/[^a-z0-9]/gi, "").toUpperCase();
+  const idx =
+    /PISTOL|REVOLVER/.test(k) ? 0
+    : /SMG|MACHINEPISTOL/.test(k) ? 1
+    : /SHOTGUN/.test(k) ? 2
+    : /BURSTRIFLE|MARKSMAN|LMG|RIFLE/.test(k) ? 3
+    : /RAIL|ARC|FLAK|LAUNCHER|FLAME/.test(k) ? 4
+    : /BLADE|KATANA/.test(k) ? 5
+    : 0;
+  return HF_GUN_KEYS[idx];
+}
 /** Loot / faction crest / token icons (expand sheet). */
 export const LOOT_ICON_KEYS = ["loot_credit", "loot_core", "loot_crate", "loot_medpatch"] as const;
 export const CREST_ICON_KEYS = [
@@ -118,6 +149,35 @@ export const CREST_ICON_KEYS = [
   "crest_swarm",
 ] as const;
 export const METRO_TOKEN_KEY = "metro_token";
+/** World-boss splash singles (prefer over sheet frames when loaded). */
+export const HF_BOSS_PORTRAIT_SLUGS = [
+  "gutter_king",
+  "anduril_sentinel",
+  "palantir_oracle",
+  "tidal_leviathan",
+  "the_maw",
+  "skylink_beacon",
+  "scrap_sovereign",
+  "helios_warden",
+  "void_herald",
+] as const;
+/** Interact NPC portrait singles. */
+export const HF_INTERACT_PORTRAIT_SLUGS = [
+  "porter",
+  "tunnel_rat",
+  "scrap_boss",
+  "hawker",
+  "preacher",
+  "street_kid",
+  "amb_tech",
+  "amb_vendor",
+  "subway_warden",
+  "amb_courier",
+  "keep_den",
+  "keep_citycenter",
+] as const;
+export const portraitBossKey = (slug: string) => "portrait_boss_" + slug;
+export const portraitInteractKey = (slug: string) => "portrait_npc_" + slug;
 // Painted menu backdrop + per-class select-card art (same Higgsfield build).
 export const MENU_BG_KEY = "menu_bg";
 export const classArtKey = (classId: string) => "classart_" + classId;
@@ -141,18 +201,151 @@ export const HF_BUILDING_SLUGS = [
   "bar", "clinic", "subway", "shop",
   "guild", "hotel", "stadium", "citycenter", "home", "den",
 ] as const;
-/** District exterior kits (NEON CORE / SPRAWL / UNDERCITY / …). */
+/** District exterior kits (NEON CORE / SPRAWL / UNDERCITY / … + wishlist unique kits). */
 export const HF_DIST_BUILDING_SLUGS = [
   "dist_core", "dist_sprawl", "dist_undercity", "dist_docks", "dist_helios", "dist_stacks",
+  "dist_spire", "dist_wastes", "dist_relay",
 ] as const;
 /** Contagion-damaged building variants. */
 export const HF_INF_BUILDING_SLUGS = [
   "inf_bar", "inf_clinic", "inf_shop", "inf_den", "inf_guild", "inf_home",
+  "inf_hotel", "inf_subway", "inf_stadium", "inf_citycenter",
 ] as const;
 export const hfBuildingKey = (slug: string) => "hf_building_" + slug;
 export const HF_BUILDING_KEYS = HF_BUILDING_SLUGS.map(hfBuildingKey);
 export const HF_DIST_BUILDING_KEYS = HF_DIST_BUILDING_SLUGS.map(hfBuildingKey);
 export const HF_INF_BUILDING_KEYS = HF_INF_BUILDING_SLUGS.map(hfBuildingKey);
+
+/** Wishlist pack — subway props (tools/higgsfield-wishlist-gen.mjs). Includes multivariants. */
+export const HF_SUBWAY_PROP_KEYS = [
+  "hf_subway_platform_hub", "hf_subway_platform_hub_b",
+  "hf_subway_platform_mid", "hf_subway_platform_mid_b",
+  "hf_subway_platform_deep", "hf_subway_platform_deep_b",
+  "hf_subway_tunnel_straight",
+  "hf_subway_tunnel_junction",
+  "hf_subway_tunnel_cross",
+  "hf_subway_train_dead", "hf_subway_train_dead_b", "hf_subway_train_dead_c",
+  "hf_subway_signal",
+  "hf_subway_gore",
+  "hf_subway_exit", "hf_subway_exit_b",
+  "hf_subway_booth", "hf_subway_booth_b",
+  "hf_subway_ghost_train",
+  "hf_subway_ticket_hall", "hf_subway_ticket_hall_b",
+  "hf_subway_escalator_mouth", "hf_subway_escalator_mouth_b",
+  "hf_subway_apron", "hf_subway_apron_b",
+  "hf_subway_track_bay",
+  "hf_enemy_rail_wraith",
+  "hf_enemy_ticket_specter",
+  "hf_enemy_tunnel_centipede",
+  "hf_enemy_platform_husk",
+] as const;
+/** Per-district street clutter (signature props + expanse extras). */
+export const HF_DIST_PROP_KEYS = [
+  "hf_distprop_plaza_drone", "hf_distprop_plaza_tape", "hf_distprop_plaza_booth",
+  "hf_distprop_stacks_barrel", "hf_distprop_stacks_slag", "hf_distprop_stacks_conveyor",
+  "hf_distprop_spire_drone", "hf_distprop_spire_barrier", "hf_distprop_spire_valet",
+  "hf_distprop_docks_crate", "hf_distprop_docks_buoy", "hf_distprop_docks_crane",
+  "hf_distprop_under_grow", "hf_distprop_under_grate", "hf_distprop_under_shrine",
+  "hf_distprop_relay_spool", "hf_distprop_relay_board", "hf_distprop_relay_dish",
+  "hf_distprop_wastes_tire", "hf_distprop_wastes_idol", "hf_distprop_wastes_barrels",
+  "hf_distprop_kernel_core", "hf_distprop_kernel_mannequin", "hf_distprop_kernel_pillar",
+] as const;
+/** Interior furniture wishlist pack + multivariants. */
+export const HF_FURN_KEYS = [
+  "hf_furn_sofa", "hf_furn_sofa_b",
+  "hf_furn_terminal", "hf_furn_terminal_b",
+  "hf_furn_locker", "hf_furn_locker_b",
+  "hf_furn_plant", "hf_furn_plant_b",
+  "hf_furn_neon_lamp", "hf_furn_neon_lamp_b",
+  "hf_furn_bar_counter", "hf_furn_bar_counter_b",
+  "hf_furn_clinic_bed", "hf_furn_clinic_bed_b",
+  "hf_furn_war_table", "hf_furn_war_table_b",
+  "hf_furn_shelf", "hf_furn_shelf_b",
+  "hf_furn_bed", "hf_furn_bed_b",
+  "hf_furn_crate_stack",
+] as const;
+/** Interior room floor plates (structure matched to venue kind). */
+export const HF_INT_ROOM_KEYS = [
+  "hf_int_bar_room", "hf_int_clinic_room", "hf_int_shop_room", "hf_int_guild_room",
+  "hf_int_den_room", "hf_int_home_room", "hf_int_home_room_b",
+  "hf_int_subway_room", "hf_int_stadium_room",
+  "hf_int_citycenter_room", "hf_int_estate_room",
+] as const;
+/** Contagion-damaged district kits — scenery art for an outbreak district. */
+export const HF_DIST_INF_KEYS = [
+  "hf_building_dist_core_inf", "hf_building_dist_sprawl_inf", "hf_building_dist_undercity_inf",
+  "hf_building_dist_docks_inf", "hf_building_dist_stacks_inf", "hf_building_dist_spire_inf",
+  "hf_building_dist_wastes_inf", "hf_building_dist_relay_inf", "hf_building_dist_kernel_inf",
+] as const;
+/** Env-identity building kits (zones that previously borrowed another district's kit). */
+export const HF_ENV_KIT_KEYS = [
+  "hf_building_dist_market", "hf_building_dist_park", "hf_building_dist_corporate",
+  "hf_building_dist_arcology", "hf_building_dist_kernel",
+] as const;
+/** THE ESTATES street facades. */
+export const HF_ESTATE_KEYS = [
+  "hf_building_estate_a", "hf_building_estate_b", "hf_building_estate_c",
+] as const;
+/** Per-biome wilderness ground plates (bridge zones w0–w6). */
+export const HF_WILD_BIOME_KEYS = [
+  "hf_wild_biome_ruined_urban", "hf_wild_biome_industrial_cut", "hf_wild_biome_floodplain",
+  "hf_wild_biome_undercity", "hf_wild_biome_debris_field", "hf_wild_biome_ash_wastes",
+  "hf_wild_biome_meltdown",
+] as const;
+/** General world street props wishlist. */
+export const HF_WORLD_PROP_KEYS = [
+  "hf_prop_taxi_over", "hf_prop_dumpster_fire", "hf_prop_vending_broke", "hf_prop_slates",
+  "hf_prop_cart_barricade", "hf_prop_holo_pole", "hf_prop_manhole_glow", "hf_prop_wanted_pole",
+  "hf_prop_credit_pile", "hf_prop_puddle_neon", "hf_prop_subway_kiosk",
+] as const;
+/** Hub plaza landmarks + furniture. */
+export const HF_LANDMARK_KEYS = [
+  "hf_landmark_fountain", "hf_landmark_fountain_b", "hf_landmark_crucible",
+  "hf_hub_bench", "hf_hub_bench_b", "hf_hub_planter",
+] as const;
+/** Wilderness corridor props. */
+export const HF_WILD_PROP_KEYS = [
+  "hf_wild_bridge_span", "hf_wild_bridge_span_b",
+  "hf_wild_guardrail", "hf_wild_ash_pile", "hf_wild_salt_crust",
+  "hf_wild_rust_car", "hf_wild_sign_post", "hf_wild_relay_pylon",
+] as const;
+/** ICE vault / dungeon props. */
+export const HF_DUNGEON_PROP_KEYS = [
+  "hf_dungeon_core_pedestal", "hf_dungeon_core_pedestal_b",
+  "hf_dungeon_ice_crystal", "hf_dungeon_server_rack",
+  "hf_dungeon_guardian_nest", "hf_dungeon_cable_curtain", "hf_dungeon_floor_hex",
+] as const;
+/** Landmark building multivariants (_b / _c). Base keys already in HF_BUILDING_KEYS. */
+export const HF_BUILDING_VARIANT_KEYS = [
+  "hf_building_bar_b", "hf_building_bar_c",
+  "hf_building_clinic_b", "hf_building_clinic_c",
+  "hf_building_shop_b", "hf_building_shop_c",
+  "hf_building_guild_b", "hf_building_guild_c",
+  "hf_building_home_b", "hf_building_home_c",
+  "hf_building_den_b", "hf_building_den_c",
+  "hf_building_subway_b", "hf_building_hotel_b",
+] as const;
+/** District kit multivariants. */
+export const HF_DIST_BUILDING_VARIANT_KEYS = [
+  "hf_building_dist_core_b", "hf_building_dist_sprawl_b", "hf_building_dist_undercity_b",
+  "hf_building_dist_docks_b", "hf_building_dist_stacks_b", "hf_building_dist_spire_b",
+  "hf_building_dist_wastes_b", "hf_building_dist_relay_b", "hf_building_dist_helios_b",
+] as const;
+
+/** Pick base or _b/_c variant by stable salt when textures exist. */
+export function pickHfVariant(
+  exists: (key: string) => boolean,
+  base: string,
+  salt: number,
+  max = 3,
+): string {
+  const candidates: string[] = [base];
+  if (max >= 2) candidates.push(base + "_b");
+  if (max >= 3) candidates.push(base + "_c");
+  const ok = candidates.filter((k) => exists(k));
+  if (ok.length === 0) return base;
+  return ok[Math.abs(salt) % ok.length];
+}
 
 // Top-down character sheet frame order (drop-in pack): 0=down 1=left 2=right 3=up.
 const CHAR: Pick<AssetEntry, "frameWidth" | "frameHeight"> = {
@@ -211,21 +404,32 @@ export const ASSETS: Record<string, AssetEntry[]> = {
     // Premium dialogue portraits — painted Higgsfield busts (fixer + runner singles).
     { key: PORTRAIT_PLAYER_KEY, file: "assets/portraits/painted_player.jpg" },
     { key: PORTRAIT_NPC_KEY, file: "assets/portraits/painted_fixer.jpg" },
-    // The three city-cast sheets are loaded by OnlineScene, where they are first used.
-    // Keeping them out of BootScene removes ~0.5 MB from the cold-open critical path.
+    // Boss + interact singles and cast sheets load in OnlineScene (first use).
   ],
   ui: [
     // Real art (PixelWhale pack + Higgsfield HUD kit via tools/higgsfield-hud-build.mjs).
     // Procedural bake in textures.ts only fills keys still missing after load.
-    { key: UI_FRAME_KEY, file: "assets/ui/skill_frame.png" },
+    { key: UI_FRAME_KEY, file: "assets/ui/skill_frame_hf.png" },
     { key: UI_GUN_KEY, file: "assets/ui/gun_hf_01.png" },
     { key: UI_PANEL_KEY, file: "assets/ui/hud_panel.png" },
     { key: UI_BTN_RING_KEY, file: "assets/ui/btn_ring.png" },
+    { key: UI_BTN_RING_ALT_KEY, file: "assets/ui/btn_ring_alt.png" },
     { key: IDENTITY_PANEL_KEY, file: "assets/ui/identity_panel.png" },
     { key: IDENTITY_BTN_PRIMARY_KEY, file: "assets/ui/identity_btn_primary.png" },
     { key: IDENTITY_BTN_SECONDARY_KEY, file: "assets/ui/identity_btn_secondary.png" },
     { key: IDENTITY_MARK_KEY, file: "assets/ui/identity_mark.png" },
-    ...ABILITY_ICON_KEYS.map((k) => ({ key: k, file: `assets/ui/${k}.png` })),
+    // Prefer expand-pack ability_hf_* files where they are the painted source.
+    { key: "ability_dash", file: "assets/ui/ability_hf_dash.png" },
+    { key: "ability_shield", file: "assets/ui/ability_hf_shield.png" },
+    { key: "ability_pulse", file: "assets/ui/ability_hf_pulse.png" },
+    { key: "ability_virus", file: "assets/ui/ability_hf_cone.png" },
+    { key: "ability_rail", file: "assets/ui/ability_hf_rail.png" },
+    { key: "ability_overdrive", file: "assets/ui/ability_hf_ult.png" },
+    { key: "ability_blade", file: "assets/ui/ability_hf_drones.png" },
+    { key: "ability_radar", file: "assets/ui/ability_hf_radar.png" },
+    // Also register ability_hf_* keys so MobileControls / class kits can opt in by name.
+    ...ABILITY_HF_ICON_KEYS.map((k) => ({ key: k, file: `assets/ui/${k}.png` })),
+    ...HF_GUN_KEYS.map((k) => ({ key: k, file: `assets/ui/${k}.png` })),
     ...LOOT_ICON_KEYS.map((k) => ({ key: k, file: `assets/ui/${k}.png` })),
     ...CREST_ICON_KEYS.map((k) => ({ key: k, file: `assets/ui/${k}.png` })),
     { key: METRO_TOKEN_KEY, file: "assets/ui/metro_token.png" },
@@ -271,9 +475,24 @@ export const ASSETS: Record<string, AssetEntry[]> = {
     ...HOLO_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
     // Higgsfield top-down landmark buildings (tools/higgsfield-building-build.mjs).
     ...HF_BUILDING_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
+    ...HF_BUILDING_VARIANT_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
     // District kits + contagion-damaged variants (tools/higgsfield-expand-build.mjs).
     ...HF_DIST_BUILDING_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
+    ...HF_DIST_BUILDING_VARIANT_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
     ...HF_INF_BUILDING_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
+    ...HF_DIST_INF_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
+    // Wishlist + expanse packs — missing files skip silently at load (BootScene loaderror).
+    ...HF_SUBWAY_PROP_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
+    ...HF_DIST_PROP_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
+    ...HF_WORLD_PROP_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
+    ...HF_LANDMARK_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
+    ...HF_WILD_PROP_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
+    ...HF_DUNGEON_PROP_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
+    ...HF_INT_ROOM_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
+    // Holistic tier — env-identity kits, estates, per-biome wilderness plates.
+    ...HF_ENV_KIT_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
+    ...HF_ESTATE_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
+    ...HF_WILD_BIOME_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
   ],
   // Real isometric cyberpunk crates/containers — non-colliding cargo decals (asset-drop).
   decals: [
@@ -282,7 +501,11 @@ export const ASSETS: Record<string, AssetEntry[]> = {
     ...HF_PROP_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
   ],
   // Real isometric tech machines — building-interior set-dressing (asset-drop).
-  interior: OBJ_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
+  // + wishlist HF furniture (sofa/terminal/locker/…) when present.
+  interior: [
+    ...OBJ_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
+    ...HF_FURN_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
+  ],
   // Real garment icons (apparel pack) for the cosmetics wardrobe — keyed "cos_<id>".
   cosIcons: COSMETICS.map((c) => ({ key: "cos_" + c.id, file: "assets/icons/cos_" + c.id + ".png" })),
 };

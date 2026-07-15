@@ -1,5 +1,13 @@
 import { loginMessage, type PlayerLook } from "../net/protocol";
-import { connectWallet, connectedWallet, signWalletLogin, walletAvailable } from "./wallet";
+import {
+  connectWallet,
+  connectedWallet,
+  signWalletLogin,
+  walletAvailable,
+  walletConnectAvailable,
+  connectWalletLabel,
+} from "./wallet";
+import { isLikelyMobile } from "./walletConnect";
 
 const HTTP_BASE =
   (import.meta.env as Record<string, string | undefined>).VITE_SERVER_URL?.replace(/^ws/, "http").replace(/\/ws$/, "") ??
@@ -77,12 +85,23 @@ export async function fetchWalletIdentity(proof: {
   }
 }
 
-/** Connect wallet (if needed) — does not sign or hit the server. Solana-first (Phantom). */
+/** Connect wallet (if needed) — does not sign or hit the server. EVM-first + WalletConnect. */
 export async function ensureWalletConnected(): Promise<string | null> {
   const existing = connectedWallet();
   if (existing) return existing;
+  // Always attempt connect when any path is available (inject / WC / mobile deep-link).
   if (!walletAvailable()) return null;
-  return connectWallet(); // prefers Solana when mint is SPL / no CA yet
+  return connectWallet();
+}
+
+function noWalletDetail(): string {
+  if (walletConnectAvailable()) {
+    return "Open the wallet picker, choose MetaMask / Phantom / any WalletConnect wallet, then approve.";
+  }
+  if (isLikelyMobile()) {
+    return "No browser wallet detected. Tap Connect to open MetaMask (or install a wallet app), then return.";
+  }
+  return "Install MetaMask, Phantom, or another wallet extension — or set VITE_WALLETCONNECT_PROJECT_ID for mobile WalletConnect.";
 }
 
 /** Full wallet sign-up: connect + sign login message (proof for /identity and WS). */
@@ -91,18 +110,28 @@ export async function metaMaskSignUp(): Promise<
   | { ok: false; error: IdentityError; detail?: string }
 > {
   if (!walletAvailable()) {
-    return { ok: false, error: "no_wallet", detail: "Install Phantom (or MetaMask for legacy ERC-20)" };
+    return { ok: false, error: "no_wallet", detail: noWalletDetail() };
   }
   const addr = await ensureWalletConnected();
-  if (!addr) return { ok: false, error: "connect_failed", detail: "Wallet connection cancelled" };
+  if (!addr) {
+    return {
+      ok: false,
+      error: "connect_failed",
+      detail: isLikelyMobile() && !walletConnectAvailable()
+        ? "Opening your wallet browser… return here after it loads, then tap Connect again."
+        : "Wallet connection cancelled",
+    };
+  }
   const proof = await signIdentityProof(addr);
   if (!proof) return { ok: false, error: "sign_failed", detail: "Wallet signature cancelled" };
   return { ok: true, proof };
 }
 
-/** Alias — Solana-first sign-up (same implementation). */
+/** Alias — wallet sign-up (same implementation). */
 export const walletSignUp = metaMaskSignUp;
 
 export function hasWalletProvider(): boolean {
   return walletAvailable();
 }
+
+export { connectWalletLabel };

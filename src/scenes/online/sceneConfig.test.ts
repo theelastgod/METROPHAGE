@@ -11,11 +11,14 @@ import {
   hubT,
   parseBuildingInterior,
   parseHubInterior,
+  venueStaffFor,
 } from "./sceneConfig";
 
 describe("online scene configuration", () => {
   it("parses district interiors without accepting partial zone ids", () => {
-    expect(parseBuildingInterior("d3i12")).toEqual({ district: 3, index: 12 });
+    // Only unique venue indices 0–4 (one of each kind) are enterable.
+    expect(parseBuildingInterior("d3i2")).toEqual({ district: 3, index: 2 });
+    expect(parseBuildingInterior("d3i12")).toBeNull();
     expect(parseBuildingInterior("d3i12-extra")).toBeNull();
     expect(parseBuildingInterior("w3")).toBeNull();
   });
@@ -38,8 +41,9 @@ describe("online scene configuration", () => {
   });
 
   it("keeps building titles and appearance defaults deterministic", () => {
-    expect([0, 1, 2, 3, 4, 5].map(districtBuildingKind)).toEqual(["shop", "home", "guild", "den", "bar", "shop"]);
-    expect(DISTRICT_VENUE_TITLE[districtBuildingKind(3)]).toBe("THE DEN");
+    // Exactly one of each kind — no wrap / no second shop.
+    expect([0, 1, 2, 3, 4, 5].map(districtBuildingKind)).toEqual(["shop", "home", "guild", "den", "bar", null]);
+    expect(DISTRICT_VENUE_TITLE[districtBuildingKind(3)!]).toBe("THE DEN");
     expect(hubLook({ color: 0x123456, hair: "buzz" })).toMatchObject({
       color: 0x123456,
       hair: "buzz",
@@ -48,5 +52,29 @@ describe("online scene configuration", () => {
     });
     expect(hexColor(0x123456)).toBe("#123456");
     expect(hexColor(0xff123456)).toBe("#123456");
+  });
+
+  it("gives every building kind at least one functional staff service", () => {
+    const kinds = [
+      "shop",
+      "home",
+      "guild",
+      "den",
+      "bar",
+      "clinic",
+      "hospital",
+      "hotel",
+      "subway",
+      "stadium",
+      "citycenter",
+    ];
+    for (const k of kinds) {
+      const staff = venueStaffFor(k);
+      expect(staff.length, k).toBeGreaterThan(0);
+      expect(staff[0].svc, k).toBeTruthy();
+    }
+    expect(venueStaffFor("subway")[0].svc).toBe("subway");
+    expect(venueStaffFor("clinic")[0].svc).toBe("heal");
+    expect(venueStaffFor("shop")[0].svc).toBe("vendor");
   });
 });

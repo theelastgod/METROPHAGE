@@ -146,22 +146,26 @@ export const INTERIOR_TITLES: Record<string, string> = {
   vault: "◆ THE PROVING — WEEKLY VAULT",
 };
 
-const DISTRICT_BUILDING_KINDS = ["shop", "home", "guild", "den", "bar"] as const;
-export const DISTRICT_VENUE_TITLE: Record<(typeof DISTRICT_BUILDING_KINDS)[number], string> = {
-  shop: "MARKET STALL",
-  home: "TENEMENT",
-  guild: "GUILD HALL",
-  den: "THE DEN",
-  bar: "DIVE BAR",
-};
+// One of each enterable kind per district — no cycling / no second shop.
+export {
+  DISTRICT_VENUE_KINDS as DISTRICT_BUILDING_KINDS,
+  DISTRICT_VENUE_COUNT,
+  DISTRICT_VENUE_TITLE,
+  districtBuildingKind,
+  isDistrictEnterable,
+} from "../../game/districtVenues";
 
-export const districtBuildingKind = (index: number) =>
-  DISTRICT_BUILDING_KINDS[index % DISTRICT_BUILDING_KINDS.length];
-
-/** Per-building district interior — zone id `d{district}i{buildingIndex}`. */
+/** Per-building district interior — zone id `d{district}i{buildingIndex}`.
+ *  Only enterable venue indices (one of each kind) are accepted. */
 export const parseBuildingInterior = (zone: string): { district: number; index: number } | null => {
   const match = /^d(\d+)i(\d+)$/.exec(zone);
-  return match ? { district: parseInt(match[1], 10), index: parseInt(match[2], 10) } : null;
+  if (!match) return null;
+  const district = parseInt(match[1], 10);
+  const index = parseInt(match[2], 10);
+  // Lazy import avoided — count is fixed (5 unique venue kinds).
+  if (index < 0 || index >= 5) return null;
+  if (district < 0 || district >= 32) return null;
+  return { district, index };
 };
 
 /** Hub building interior — zone id `h{buildingIndex}`. */
@@ -175,9 +179,174 @@ export const parseHubInterior = (zone: string): number | null => {
 /** Readable interior label per hub building kind. */
 export const HUB_INTERIOR_TITLE: Record<string, string> = {
   home: "RESIDENCE", shop: "SHOP", bar: "BAR", clinic: "CLINIC", den: "DEN",
-  guild: "GUILD HALL", hotel: "HOTEL", hospital: "HOSPITAL", subway: "TRANSIT OFFICE",
+  guild: "GUILD HALL", hotel: "HOTEL", hospital: "HOSPITAL", subway: "▼ UNDERLINE",
   stadium: "ARENA LOBBY", citycenter: "CITY HALL",
 };
+
+/**
+ * Functional staff for each building KIND — what the place *does*.
+ * Spawned as interactive service NPCs so every named building type opens a real system
+ * (vendor / heal / stash / forge / market / underground subway / …), not just flavour talk.
+ */
+export type VenueStaff = {
+  /** openService key, or specials: "heal" | "meal" | "subway". */
+  svc: string;
+  name: string;
+  tag: string;
+  color: number;
+  look: PlayerLook;
+  /** Optional id for server-side npc services (heal/meal). */
+  npcId?: string;
+};
+
+export function venueStaffFor(kind: string): VenueStaff[] {
+  switch (kind) {
+    case "shop":
+      return [
+        {
+          svc: "vendor",
+          name: "CLERK",
+          tag: "WARES",
+          color: 0x00e5ff,
+          look: hubLook({ color: 0x00e5ff, skin: 0xe6b58c, hair: "buzz", hairColor: 0x2a1d14 }),
+          npcId: "keep_shop",
+        },
+      ];
+    case "home":
+      return [
+        {
+          svc: "stash",
+          name: "CUSTODIAN",
+          tag: "LOCKBOX",
+          color: 0xffb13c,
+          look: hubLook({ color: 0xffb13c, skin: 0xc98a5e, hair: "bun", hairColor: 0x1b1820 }),
+          npcId: "keep_home",
+        },
+      ];
+    case "guild":
+      return [
+        {
+          svc: "guild",
+          name: "REGISTRAR",
+          tag: "CELL",
+          color: 0x4d8cff,
+          look: hubLook({
+            color: 0x4d8cff,
+            skin: 0xf3d2b8,
+            hair: "short",
+            hairColor: 0x4a2f1c,
+            beard: "stubble",
+            cloak: "coat",
+          }),
+          npcId: "keep_guild",
+        },
+        {
+          svc: "forge",
+          name: "ARMORER",
+          tag: "FORGE",
+          color: 0xff2bd6,
+          look: hubLook({
+            color: 0xff2bd6,
+            sex: "f",
+            skin: 0xe6b58c,
+            hair: "undercut",
+            hairColor: 0x1b1820,
+            gloves: "wraps",
+          }),
+        },
+      ];
+    case "den":
+      return [
+        {
+          svc: "market",
+          name: "FENCE",
+          tag: "BLACK MARKET",
+          color: 0xff2bd6,
+          look: hubLook({ color: 0xff2bd6, head: "hood", skin: 0xa9794a, hair: "short", hairColor: 0x1b1820, cloak: "coat" }),
+          npcId: "keep_den",
+        },
+      ];
+    case "bar":
+      return [
+        {
+          svc: "contracts",
+          name: "BARTENDER",
+          tag: "THE WAKE",
+          color: 0x9dff3c,
+          look: hubLook({ color: 0x9dff3c, skin: 0x7c4f30, hair: "dreads", hairColor: 0x1b1820, cloak: "coat" }),
+          npcId: "keep_bar",
+        },
+      ];
+    case "clinic":
+      return [
+        {
+          svc: "heal",
+          name: "MEDIC",
+          tag: "PATCH",
+          color: 0x39ff88,
+          look: hubLook({ color: 0x39ff88, skin: 0x7c4f30, hair: "ponytail", hairColor: 0x1b1820, decal: "cross" }),
+          npcId: "keep_clinic",
+        },
+      ];
+    case "hospital":
+      return [
+        {
+          svc: "heal",
+          name: "TRAUMA DOC",
+          tag: "FULL PATCH",
+          color: 0x8dfff0,
+          look: hubLook({ color: 0x39ff88, skin: 0xe6b58c, hair: "buzz", hairColor: 0x4a2f1c, decal: "cross" }),
+          npcId: "keep_hospital",
+        },
+      ];
+    case "hotel":
+      return [
+        {
+          svc: "meal",
+          name: "CONCIERGE",
+          tag: "REST",
+          color: 0xff79c6,
+          look: hubLook({ color: 0xffb13c, skin: 0xc98a5e, hair: "short", hairColor: 0x1b1820, cloak: "coat" }),
+          npcId: "keep_hotel",
+        },
+      ];
+    case "subway":
+      return [
+        {
+          svc: "subway",
+          name: "CONDUCTOR",
+          tag: "▼ UNDERLINE",
+          color: 0xff3b6b,
+          look: hubLook({ color: 0x29e7ff, head: "cap", skin: 0x7c4f30, hair: "buzz", hairColor: 0x1b1820, cloak: "coat" }),
+          npcId: "keep_subway",
+        },
+      ];
+    case "stadium":
+      return [
+        {
+          svc: "board",
+          name: "ARENA HERALD",
+          tag: "RECORDS",
+          color: 0xf7ff3c,
+          look: hubLook({ color: 0xff3b6b, head: "cap", skin: 0xf3d2b8, hair: "long", hairColor: 0x1b1820, beard: "goatee" }),
+          npcId: "keep_stadium",
+        },
+      ];
+    case "citycenter":
+      return [
+        {
+          svc: "board",
+          name: "CIVIC AIDE",
+          tag: "DOSSIER",
+          color: 0xb06bff,
+          look: hubLook({ color: 0x4d8cff, skin: 0xa9794a, hair: "bun", hairColor: 0x1b1820 }),
+          npcId: "keep_citycenter",
+        },
+      ];
+    default:
+      return [];
+  }
+}
 
 /** 0xRRGGBB → "#rrggbb" CSS string. */
 export const hexColor = (color: number) => `#${(color & 0xffffff).toString(16).padStart(6, "0")}`;

@@ -165,7 +165,7 @@ export const MINION = {
 
 /** Infection node — channel by proximity to capture it. */
 export const NODE = {
-  channelRange: 74, // stand within this to channel
+  channelRange: 84, // stand within this to channel (must match sim.NODE_CHANNEL_RANGE)
   channelTimeMs: 2200, // time to fully infect
   channelDecayMs: 1500, // progress bleed-off when you step away
 } as const;

@@ -70,4 +70,25 @@ describe("economyPolicy — unlimited earn/WD + pop rate tiers", () => {
     expect(nextPopThreshold(501)).toBe(1000);
     expect(nextPopThreshold(2501)).toBe(null);
   });
+
+  it("scales credits-per-$METRO with market USD price", () => {
+    const base = {
+      poolMetro: METRO_DEV_SEED_METRO,
+      circulatingCredits: 100_000,
+      activePlayers: 500,
+      seedMetro: METRO_DEV_SEED_METRO,
+    };
+    const at1 = resolveEconomyPolicy({ ...base, metroUsd: 1, priceSource: "test" });
+    const at2 = resolveEconomyPolicy({ ...base, metroUsd: 2, priceSource: "test" });
+    const atHalf = resolveEconomyPolicy({ ...base, metroUsd: 0.5, priceSource: "test" });
+    expect(at1.priceMult).toBeCloseTo(1, 5);
+    expect(at2.priceMult).toBeCloseTo(2, 5);
+    expect(atHalf.priceMult).toBeCloseTo(0.5, 5);
+    // Higher USD price → more credits per $METRO both ways (spread preserved)
+    expect(at2.depositCreditsPerMetro).toBeGreaterThan(at1.depositCreditsPerMetro);
+    expect(at2.withdrawCreditsPerMetro).toBeGreaterThan(at1.withdrawCreditsPerMetro);
+    expect(atHalf.depositCreditsPerMetro).toBeLessThan(at1.depositCreditsPerMetro);
+    // Round-trip still retains house edge (deposit < withdraw rate)
+    expect(at2.depositCreditsPerMetro).toBeLessThan(at2.withdrawCreditsPerMetro);
+  });
 });

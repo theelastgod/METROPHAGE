@@ -1,6 +1,6 @@
 // One-click ERC-20 deposit via MetaMask on Robinhood Chain.
 
-import { getInjectedProvider, ensureRobinhoodNetwork, connectedWallet } from "./wallet";
+import { getEvmProvider, ensureRobinhoodNetwork, connectedWallet } from "./wallet";
 import { METRO_MINT, metroIsEvm } from "./metro";
 
 interface EvmProvider {
@@ -57,9 +57,9 @@ export async function sendErc20Deposit(args: {
   if (!metroIsEvm && !args.mint) return { ok: false, reason: "not an ERC-20 mint" };
   const mint = args.mint || METRO_MINT;
   const from = connectedWallet();
-  if (!from) return { ok: false, reason: "connect MetaMask first" };
-  const eth = getInjectedProvider() as EvmProvider | null;
-  if (!eth?.request) return { ok: false, reason: "no EVM wallet" };
+  if (!from) return { ok: false, reason: "connect a wallet first" };
+  const eth = getEvmProvider() as EvmProvider | null;
+  if (!eth?.request) return { ok: false, reason: "no EVM wallet — connect via WalletConnect or extension" };
   try {
     await ensureRobinhoodNetwork();
     const decimals = await readDecimals(eth, mint);

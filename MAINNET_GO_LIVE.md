@@ -1,9 +1,10 @@
-# $METRO Mainnet Go-Live
+# $METRO Mainnet Go-Live (Solana)
 
 > **Canonical ordered checklist:** [`docs/BRIDGE_GO_LIVE.md`](./docs/BRIDGE_GO_LIVE.md)
 
-Current launch path: **Robinhood Chain mainnet** (`chainId=4663`) with an
-ERC-20 `0x...` contract address.
+**Authoritative path: Solana SPL** (Phantom, base58 mint).  
+Robinhood/EVM adapters remain in the repo as a **dormant alternate** only
+(`METRO_SETTLEMENT=robinhood` + `--evm` prepare scripts). Do not use them for launch.
 
 ## Invariants
 
@@ -11,10 +12,10 @@ ERC-20 `0x...` contract address.
 |------|-----|
 | Server secrets before client CA | A live panel without real settlement must never trust client amounts |
 | `METRO_MAINNET_ARMED` is counsel-gated | Real-value mainnet cannot arm by accident |
-| Treasury is EVM `0x...` | Robinhood Chain settlement uses ERC-20 transfers |
-| Treasury needs ETH for gas | EVM cash-outs are treasury-signed ERC-20 transfers |
+| Treasury is Solana base58 | SPL deposits + claim withdraws |
+| Treasury pays SOL on cash-outs | Keep a small SOL float for withdraw fees + player ATA rent |
 | Pool is player-funded | Deposits fill the pool; withdrawals cannot exceed it |
-| Rates stay 100 in / 125 out | Launch economics: min `250 ₵`, daily cap `50k ₵` |
+| Rates stay 100 in / 125 out | Launch economics (see `economyPolicy`) |
 
 ## 1. Pre-CA Readiness
 
@@ -23,17 +24,19 @@ cd server
 node scripts/mainnet-prepare.mjs
 ```
 
-This creates or reuses gitignored `server/.mainnet-treasury.json`:
+Creates gitignored:
 
-- `treasuryAddress` — public Robinhood Chain deposit / payout address
-- `treasurySecret` — private EVM key for Cloudflare secret storage
+- `server/.mainnet-treasury.json`
+- `server/.solana-treasury.json`
+
+Fields:
+
+- `treasuryAddress` / `treasuryPubkey` — Solana deposit address
+- `treasurySecret` — base64 64-byte keypair for Cloudflare
 - `mint: null` — filled later by `mainnet-arm.mjs`
-- `mainnetArmed: false` — remains false until counsel sign-off
+- `mainnetArmed: false`
 
-If an old Solana treasury file is present, the script refuses to overwrite it
-unless run with `--replace-legacy`.
-
-Install the treasury secret on Cloudflare before the CA exists:
+Install the treasury secret on Cloudflare **before** the CA exists:
 
 ```sh
 cd server
@@ -44,23 +47,21 @@ npx wrangler deploy
 
 Do **not** set `METRO_MINT`, `VITE_METRO_MINT`, or either mainnet arm flag yet.
 
-## 2. When You Have The CA
+## 2. When You Have The Solana Mint CA
 
 ```sh
 cd server
-node scripts/mainnet-arm.mjs <0x_CA>
+node scripts/mainnet-arm.mjs <base58_MINT>
 ```
 
-The helper records the CA locally and prints the exact Cloudflare + client build
-commands. It uses:
+Prints exact Cloudflare + client commands using:
 
-- `METRO_MINT=<0x_CA>`
-- `METRO_RPC=https://rpc.mainnet.chain.robinhood.com`
-- `METRO_CHAIN_ID=4663`
-- `VITE_METRO_CLUSTER=robinhood`
+- `METRO_MINT=<base58>`
+- `METRO_RPC=https://api.mainnet-beta.solana.com`
+- `METRO_SETTLEMENT=solana`
+- `VITE_METRO_CLUSTER=mainnet-beta`
 
-Run the printed **server** commands first, including the remote D1 migrations and
-Worker deploy. Only then run the printed **client** build and Pages deploy.
+Run **server** commands first (secrets, migrations, Worker deploy), then client build.
 
 ## 3. Counsel Arm
 
@@ -72,43 +73,12 @@ echo -n '1' | npx wrangler secret put METRO_MAINNET_ARMED
 npx wrangler deploy
 ```
 
-Then rebuild the client with all CA flags plus:
+Rebuild client with `VITE_METRO_MAINNET_ARMED=1`.
+
+## Dormant EVM alternate (not launch)
 
 ```sh
-VITE_METRO_MAINNET_ARMED=1
+node scripts/mainnet-prepare.mjs --evm --replace
+node scripts/mainnet-arm.mjs <0x_CA> --evm
+# then set METRO_SETTLEMENT=robinhood + EVM secrets
 ```
-
-Without both server and client arm flags, mainnet-value settlement stays locked.
-
-## 4. Verify
-
-```sh
-curl -s https://metrophage-server.wendellphillips.workers.dev/metro/status
-curl -s https://metrophage-server.wendellphillips.workers.dev/metro/pool
-```
-
-Expected after CA + server deploy:
-
-- `mintConfigured: true`
-- `treasuryConfigured: true`
-- `chain: "robinhood"`
-- `chainId: 4663`
-- `settlement: "evm"` after `METRO_MAINNET_ARMED=1`
-- no `dangerousSim`
-
-Before cash-outs, fund the treasury address with a small ETH balance on
-Robinhood Chain for gas. The $METRO pool itself fills from player deposits.
-
-## 5. Player Flow
-
-1. Connect MetaMask on Robinhood Chain.
-2. Deposit $METRO ERC-20 to the treasury through the in-game panel.
-3. Claim the deposit; server verifies on-chain logs and grants credits.
-4. Withdraw credits; server signs an ERC-20 payout and verifies the transaction.
-
-## Safety Reminders
-
-- Never ship `VITE_METRO_MINT` before Worker secrets are deployed.
-- Never set `METRO_ALLOW_SIM=1` in production.
-- Never arm mainnet without counsel sign-off.
-- Keep `server/.mainnet-treasury.json` backed up offline and never commit it.

@@ -204,11 +204,11 @@ export function firstSessionLine(): string | null {
   if (state.dismissed || state.step === "done") return null;
   switch (state.step) {
     case "meet_fixer":
-      return "▶ Talk to THE FIXER (green light / E) — start THE WAKE · then deploy south";
+      return "▶ Talk to THE FIXER (green light / E) — start THE WAKE · then DEPLOY south (combat starts there)";
     case "deploy":
-      return "▶ DEPLOY south through the gate — enter a combat district";
+      return "▶ DEPLOY south — safe zone has no combat; hold F once you're in a district";
     case "combat":
-      return "▶ ATTACK: hold LEFT CLICK or hold F · aim with mouse · SPACE dash · drop an HSS unit";
+      return "▶ ATTACK: hold F or LEFT CLICK · SPACE dash · Q ability · R ultimate · drop an HSS unit";
     case "heat":
       return "▶ HEAT builds on hits — at orange, press R for your ultimate";
     case "contracts":

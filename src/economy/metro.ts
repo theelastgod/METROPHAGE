@@ -1,10 +1,9 @@
 // METROPHAGE — $METRO on-chain layer gate (Phase 5).
 //
-// Primary: Solana SPL (base58 mint) — Phantom / Solana
-// Legacy:  Robinhood Chain ERC-20 (0x mint) — MetaMask / RH L2
-// Auto-detect from mint shape, or force VITE_METRO_SETTLEMENT=robinhood|solana.
-// Empty mint → pure off-chain credits. Mainnet requires METRO_MAINNET_ARMED.
-// Go-live: set VITE_METRO_MINT (+ server METRO_MINT + METRO_TREASURY_SECRET).
+// AUTHORITATIVE: Robinhood Chain mainnet ERC-20 (0x mint) — WalletConnect / MetaMask
+// Dormant alternate: Solana SPL (base58) — only with VITE_METRO_SETTLEMENT=solana
+// Empty mint → pure off-chain credits (awaiting CA). Real-value settlement also needs METRO_MAINNET_ARMED.
+// Go-live: VITE_METRO_MINT (0x) + server METRO_MINT + METRO_TREASURY_SECRET + MAINNET_ARMED=1.
 
 import {
   ROBINHOOD_MAINNET,
@@ -44,16 +43,18 @@ export type MetroCluster =
 
 function parseCluster(): MetroCluster {
   const c = (env.VITE_METRO_CLUSTER || "").toLowerCase().trim();
-  if (c === "robinhood" || c === "rh" || c === "rh-mainnet") return "robinhood";
-  if (c === "robinhood-testnet" || c === "rh-testnet" || c === "testnet") return "robinhood-testnet";
-  if (c === "mainnet" || c === "mainnet-beta") return c === "mainnet-beta" ? "mainnet-beta" : "mainnet";
+  if (c === "robinhood" || c === "rh" || c === "rh-mainnet" || c === "mainnet") return "robinhood";
+  if (c === "robinhood-testnet" || c === "rh-testnet") return "robinhood-testnet";
+  if (c === "mainnet-beta") return "mainnet-beta";
   if (c === "sepolia" || c === "devnet" || c === "custom") return c as MetroCluster;
-  // Default for ERC-20 mints: Robinhood Chain testnet (safe rehearsal).
-  if (isEvmAddress(METRO_MINT)) return "robinhood-testnet";
-  return "devnet";
+  // Robinhood mainnet is authoritative. Only explicit solana force uses Solana defaults.
+  if ((env.VITE_METRO_SETTLEMENT || "").toLowerCase().includes("sol")) {
+    return "devnet";
+  }
+  return "robinhood";
 }
 
-/** Target network. Defaults Robinhood Chain testnet for EVM mints. */
+/** Target network. Defaults Robinhood Chain mainnet (authoritative path). */
 export const METRO_CLUSTER: MetroCluster = parseCluster();
 
 export const METRO_MAINNET_ARMED = env.VITE_METRO_MAINNET_ARMED === "1";
@@ -81,21 +82,26 @@ export function metroChainId(): number | null {
     const n = parseInt(env.VITE_METRO_CHAIN_ID, 10);
     return Number.isFinite(n) ? n : null;
   }
-  if (isEvmAddress(METRO_MINT)) return ROBINHOOD_TESTNET.chainId;
-  return null;
+  // Robinhood mainnet default while awaiting / after EVM CA.
+  if (isEvmAddress(METRO_MINT) || METRO_CLUSTER === "robinhood") return ROBINHOOD_MAINNET.chainId;
+  if (METRO_CLUSTER === "robinhood-testnet") return ROBINHOOD_TESTNET.chainId;
+  return ROBINHOOD_MAINNET.chainId;
 }
 
 export function metroRpc(): string {
   if (env.VITE_METRO_RPC) return env.VITE_METRO_RPC;
   const rh = activeRobinhoodNetwork();
   if (rh) return rh.rpcUrl;
-  if (isEvmAddress(METRO_MINT)) return ROBINHOOD_TESTNET.rpcUrl;
-  return METRO_CLUSTER === "mainnet-beta" ? "https://api.mainnet-beta.solana.com" : "https://api.devnet.solana.com";
+  if (isEvmAddress(METRO_MINT) || METRO_CLUSTER === "robinhood") return ROBINHOOD_MAINNET.rpcUrl;
+  if (METRO_CLUSTER === "robinhood-testnet") return ROBINHOOD_TESTNET.rpcUrl;
+  if (METRO_CLUSTER === "mainnet-beta") return "https://api.mainnet-beta.solana.com";
+  if (METRO_CLUSTER === "devnet") return "https://api.devnet.solana.com";
+  return ROBINHOOD_MAINNET.rpcUrl;
 }
 
-/** Default Robinhood cluster string for wallet_switch. */
+/** Default Robinhood cluster string for wallet_switch — mainnet unless testnet forced. */
 export function metroRobinhoodCluster(): RobinhoodCluster {
-  return METRO_CLUSTER === "robinhood" ? "robinhood" : "robinhood-testnet";
+  return METRO_CLUSTER === "robinhood-testnet" ? "robinhood-testnet" : "robinhood";
 }
 
 const BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
@@ -178,7 +184,7 @@ export function getMetroStatus(): MetroStatus {
   };
 }
 
-// ── Token framing (Solana SPL primary; 1% dev seed + player deposits) ─────
+// ── Token framing (Robinhood ERC-20 primary; 1% dev seed + player deposits) ─────
 // Fixed 1B human units. Cash-out pool = 1% seed + deposits − withdrawals.
 // USD price floats with the market; game math is in $METRO + credits.
 export const METRO_TOTAL_SUPPLY = POLICY_SUPPLY;

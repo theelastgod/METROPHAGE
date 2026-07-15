@@ -54,7 +54,7 @@ $METRO is a tradeable on-chain token bridged to server-authoritative `credits`.
   **"Check back later."**
 - **Rate spread**: deposit 1 ◈ → **100 ₵**, withdraw **125 ₵** → 1 ◈
   (~20% stays in the pool). Min cash-out **250 ₵** (2 ◈). Daily cap **50k ₵** / player.
-- Cash-outs are **claims**: player pays SOL fee; treasury only signs (never spends SOL).
+- Cash-outs: treasury preferably pays SOL and sends $METRO; player-pays only if treasury SOL is empty.
 - Go-live: server `METRO_MINT` + `METRO_TREASURY_SECRET` (base64 keypair) first, then
   client `VITE_METRO_MINT`. Mainnet stays disarmed (`METRO_MAINNET_ARMED`) until counsel
   signs off. See `SHIPPING.md` §5 / `docs/METRO_CHAIN_CHOICE.md`.

@@ -41,6 +41,7 @@ import {
   PORTRAIT_BOSSES_KEY,
   PORTRAIT_INTERACT_KEY,
   STINGER_BOSS_KEY,
+  VO_MELTDOWN_KEY,
 } from "../assets/manifest";
 import { driveChar } from "../assets/anim";
 import {
@@ -170,15 +171,34 @@ import RsSkillsPanel from "../ui/RsSkillsPanel";
 import RsActionBar from "../ui/RsActionBar";
 import RsGameMessage from "../ui/RsGameMessage";
 import { grantSkillXp, loadRsSkills, type RsSkillXp } from "../game/rsSkills";
-import { scatterWorldProps } from "../render/propScatter";
+import { scatterWorldProps, fixtureKeyFor } from "../render/propScatter";
+import { envForDistrict, type DistrictEnvTheme } from "../game/districtEnv";
 import OnlineMinimap from "../ui/OnlineMinimap";
 import RsQuestLog from "../ui/RsQuestLog";
 import { CITY_HUB_SPAWN, ENV_IDENTITY, envAt, ONLINE_CITY } from "../world/city";
+import { SUBWAY_STATIONS, subwaySpawnForEntry, subwayStationTier } from "../world/subway";
+import { recLevelLabel } from "../game/progression";
+import { zoneAccess } from "../game/zoneAccess";
 import { ESTATES, ESTATES_ZONE, buildHomeRoom, parseEstateInterior, FURNITURE, furnitureKind, furnitureFits, furnitureHomeBuffs, occupiedTiles, pieceAt, type FurniturePiece } from "../world/estates";
 import { drawFurniture } from "../render/furnitureArt";
-import { paintCityEnvWash, paintCityStorefrontReflections } from "../render/cityTerrainPolish";
+import { paintCityEnvWash, paintCityStorefrontReflections, paintDistrictEnvWash } from "../render/cityTerrainPolish";
 import { paintCityBuildingFacades, buildingExteriorAccent } from "../render/buildingFacades";
-import NetClient, { ensureGuestDeviceSecret, type NetEnemy } from "../net/NetClient";
+import {
+  dressHubWishlistArt,
+  dressSubwayWishlistArt,
+  dressInteriorWishlistArt,
+  dressRoomPlate,
+  dressEstateFacades,
+  dressWildernessWishlistArt,
+  dressDungeonWishlistArt,
+} from "../render/wishlistArt";
+import NetClient, {
+  buildZoneWsUrl,
+  clearStickyInst,
+  ensureGuestDeviceSecret,
+  writeStickyInst,
+  type NetEnemy,
+} from "../net/NetClient";
 import NeonPipeline from "../render/NeonPipeline";
 import { campaignHud, Campaign } from "../net/campaign";
 import OnlineCosmetics from "../ui/OnlineCosmetics";
@@ -206,11 +226,18 @@ import {
   hubT,
   parseBuildingInterior,
   parseHubInterior,
+  venueStaffFor,
   type ZoneNpc,
 } from "./online/sceneConfig";
+import {
+  parseWildernessShack,
+  wildernessShackDef,
+  wildernessShackZone,
+  wildernessShacks,
+} from "../game/districtVenues";
 import { applyCosmetic } from "../game/cosmetics";
-import { npcDef, AMBIENT_NPCS, INTERIOR_PLAN, keeperFor, districtResident, hubResident, campaignAllyLines, STORY_ALLIES } from "../game/cityNpcs";
-import { portraitFor, portraitForName, portraitForBoss, type PortraitRef } from "../game/portraits";
+import { npcDef, AMBIENT_NPCS, INTERIOR_PLAN, keeperFor, districtResident, hubResident, campaignAllyLines, STORY_ALLIES, locationAwareLine } from "../game/cityNpcs";
+import { portraitFor, portraitForName, portraitForBoss, portraitSheetFallback, type PortraitRef } from "../game/portraits";
 import { bountyForNpc } from "../game/bounties";
 import { noteRecentPlayer, listRecentPlayers, pinRecentPlayer } from "../game/recentPlayers";
 import {
@@ -225,7 +252,6 @@ import {
   connectedWallet,
   signWalletLogin,
   walletSessionSecret,
-  rotateWalletSessionSecret,
   restoreWalletSession,
 } from "../economy/wallet";
 import { loginMessage } from "../net/protocol";
@@ -238,7 +264,7 @@ import {
   PLAYER_CUSTOM_KEY,
   type Customization,
 } from "../game/customization";
-import { writeLocalRunner } from "../systems/LocalRunner";
+import { writeLocalRunner, touchLocalRunnerZone } from "../systems/LocalRunner";
 import { prefersMobileUx } from "../systems/Mobile";
 import MobileControls from "../ui/MobileControls";
 
@@ -292,6 +318,7 @@ export default class OnlineScene extends Phaser.Scene {
   private kitPipsRect = { x: 0, y: 0, w: 0, h: 0 }; // dash + ability cooldown bars
   private deadText!: Phaser.GameObjects.Text;
   private deathSub!: Phaser.GameObjects.Text; // reboot countdown under SIGNAL LOST
+  private deathExtractBtn?: Phaser.GameObjects.Text; // CITY START — world hub pad on death
   private deathOverlay!: Phaser.GameObjects.Rectangle;
   private deathStartedAt = 0; // wall-clock start of the current death, for the countdown
   private wasDead = false;
@@ -301,6 +328,11 @@ export default class OnlineScene extends Phaser.Scene {
   private killFeedText?: Phaser.GameObjects.Text;
   private phantomOnline = 0; // ambient population illusion when solo
   private bossIntroShown = ""; // boss name whose title card already played this visit
+  /** Live boss title-card GOs — always force-destroyed so portrait never sticks. */
+  private bossIntroNodes: Phaser.GameObjects.GameObject[] = [];
+  private bossIntroFadeTimer?: Phaser.Time.TimerEvent;
+  private bossIntroFailsafe?: ReturnType<typeof setTimeout>;
+  private bossIntroFading = false;
   /** Last-seen node owners — detect captures for second-hour coach. */
   private prevNodeOwners = new Map<number, number>();
   /** Progress snapshot while we channel — only credit captures we helped flip. */
@@ -360,6 +392,8 @@ export default class OnlineScene extends Phaser.Scene {
   private callsign = "runner";
   private zone = "d0";
   private zoneAccent = 0x29e7ff;
+  /** Active combat-district environment theme (undefined in hub / interiors). */
+  private districtEnvTheme?: DistrictEnvTheme;
   private districtIndex = 0;
   private interior = false; // true in a no-combat interior (hub / building)
   private isCityHub = false; // shared METRO CITY — the live online hub
@@ -369,6 +403,8 @@ export default class OnlineScene extends Phaser.Scene {
   private isEstates = false; // THE ESTATES — the residential street of purchasable homes
   private bridgeIndex = -1;
   private fromZone = "d0"; // district to return to when leaving the safehouse
+  /** True only when scene data carried an explicit travel `from` (door/transit). */
+  private travelFromExplicit = false;
   private districtDoors: { tx: number; ty: number; dest: string }[] = []; // FRLG walk-in doors
   private doorTransit = false; // an auto walk-in/walk-out is underway — fire once
   private meDir = new Phaser.Math.Vector2(0, 1); // last facing for the local avatar
@@ -476,6 +512,22 @@ export default class OnlineScene extends Phaser.Scene {
     for (const [key, file] of sheets) {
       if (!this.textures.exists(key)) this.load.spritesheet(key, file, { frameWidth: 256, frameHeight: 256 });
     }
+    // Higgsfield expand singles — preferred over sheet cells for splash + talk bubbles.
+    // Loaded here (not Boot) so cold-open stays light.
+    for (const slug of [
+      "gutter_king", "anduril_sentinel", "palantir_oracle", "tidal_leviathan", "the_maw",
+      "skylink_beacon", "scrap_sovereign", "helios_warden", "void_herald", "underline_warden",
+    ]) {
+      const key = "portrait_boss_" + slug;
+      if (!this.textures.exists(key)) this.load.image(key, `assets/portraits/bosses/${slug}.jpg`);
+    }
+    for (const slug of [
+      "porter", "tunnel_rat", "scrap_boss", "hawker", "preacher", "street_kid",
+      "amb_tech", "amb_vendor", "subway_warden", "amb_courier", "keep_den", "keep_citycenter",
+    ]) {
+      const key = "portrait_npc_" + slug;
+      if (!this.textures.exists(key)) this.load.image(key, `assets/portraits/interact/${slug}.jpg`);
+    }
   }
 
   create(data?: { zone?: string; from?: string; tutorialMode?: TutorialMode }) {
@@ -487,6 +539,8 @@ export default class OnlineScene extends Phaser.Scene {
     this.wheelObjs = [];
     this.lastEmoteShownAt = 0;
     this.bossOverlays.clear(); // GO destroyed on shutdown; drop stale refs before re-create
+    this.clearBossIntro();
+    this.bossIntroShown = "";
     // Zone = which district (or the safehouse interior) this client is in. Travel hands off
     // to another DO by reconnecting with a new zone.
     // named zones (interiors + the subway dungeon) pass through by name; else a district
@@ -496,6 +550,7 @@ export default class OnlineScene extends Phaser.Scene {
     this.bridgeIndex = bridgeIdx;
     const diveIdx = parseDiveZone(rawZone);
     this.isDive = diveIdx >= 0;
+    const wildShack = parseWildernessShack(rawZone);
     const named =
       !!INTERIOR_TITLES[rawZone] ||
       rawZone === "subway" ||
@@ -504,9 +559,10 @@ export default class OnlineScene extends Phaser.Scene {
       !!parseBuildingInterior(rawZone) ||
       parseHubInterior(rawZone) !== null ||
       parseEstateInterior(rawZone) !== null ||
+      !!wildShack ||
       this.isBridge ||
       this.isDive;
-    this.zone = this.isBridge ? rawZone : named ? rawZone : "d" + this.parseZone(data?.zone);
+    this.zone = this.isBridge && !wildShack ? rawZone : named ? rawZone : "d" + this.parseZone(data?.zone);
     this.isTutorial = isTutorialZone(this.zone);
     // Fresh skip state each time we enter the drill (registry survives zone hops).
     if (this.isTutorial) this.registry.remove("tutorialSkipFired");
@@ -516,11 +572,16 @@ export default class OnlineScene extends Phaser.Scene {
       this.zone === ESTATES_ZONE ||
       !!parseBuildingInterior(this.zone) ||
       parseHubInterior(this.zone) !== null ||
-      parseEstateInterior(this.zone) !== null; // hub plaza + estates street + all building/home interiors
+      parseEstateInterior(this.zone) !== null ||
+      !!parseWildernessShack(this.zone); // hub + estates + building/home + trail shacks
     this.isCityHub = this.zone === "safe";
     this.isEstates = this.zone === ESTATES_ZONE;
     this.isSubway = this.zone === "subway";
-    this.fromZone = data?.from ?? "d0"; // where 'H' returns to from inside an interior
+    // `from` is ONLY set on intentional door/transit handoffs.
+    // Default surface exit for H / mat / subway SURFACE is METRO CITY hub — never d0
+    // combat (that dumped resumed subway runners into Plaza on leave).
+    this.fromZone = typeof data?.from === "string" && data.from.trim() ? data.from : "safe";
+    this.travelFromExplicit = typeof data?.from === "string" && !!data.from.trim();
     // Persist offline resume (zone + ensure profile exists even if they only had registry state).
     this.persistLocalRunnerSnapshot();
     this.homeIdx = -1; // reset home-editor state unless this zone is an est{K} interior
@@ -591,7 +652,9 @@ export default class OnlineScene extends Phaser.Scene {
                 ? ESTATES.grid
                 : parseEstateInterior(this.zone) !== null
                   ? buildHomeRoom()
-                  : parseBuildingInterior(this.zone) || parseHubInterior(this.zone) !== null
+                  : parseBuildingInterior(this.zone) ||
+                      parseHubInterior(this.zone) !== null ||
+                      parseWildernessShack(this.zone)
                     ? buildVenueRoom(this.zone)
                     : buildSafehouse()
               : this.isBridge
@@ -612,6 +675,11 @@ export default class OnlineScene extends Phaser.Scene {
             ? bridgeDef!.accent
             : def.accent;
     this.zoneAccent = zoneAccent;
+    // Combat districts get a full environment identity (ground/wash/props/weather/neon).
+    const isCombatDistrict =
+      !this.isCityHub && !this.interior && !this.isSubway && !this.isDive && !this.isTutorial && !this.isBridge && !!def;
+    this.districtEnvTheme = isCombatDistrict ? envForDistrict(def.id) : undefined;
+    const dEnv = this.districtEnvTheme;
     const terrainProfile: TerrainProfile = this.isTutorial
       ? "tutorial"
       : this.isCityHub
@@ -625,7 +693,7 @@ export default class OnlineScene extends Phaser.Scene {
               : "district";
     const cityW = grid[0]?.length ?? 0;
     const cityH = grid.length;
-    createTerrainLayer(this, grid, {
+    const { hfBuildingRects } = createTerrainLayer(this, grid, {
       profile: terrainProfile,
       accent: zoneAccent,
       accentAt: this.isCityHub
@@ -636,23 +704,42 @@ export default class OnlineScene extends Phaser.Scene {
               return (h & 3) === 0 ? bridgeDef!.accent : zoneAccent;
             }
           : undefined,
-      buildings:
-        !this.isCityHub && !this.interior && !this.isSubway && !this.isDive && !this.isTutorial && !this.isBridge ? districtBuildings(def) : undefined,
+      buildings: isCombatDistrict ? districtBuildings(def) : undefined,
       districtId: def?.id,
-      // High-contagion districts (undercity / core / wastes) get infected exteriors mixed in.
-      infected: !!def && (def.id === "undercity" || def.id === "wastes" || def.contagion >= 14),
+      infected: dEnv?.infectedFacades ?? (!!def && (def.id === "undercity" || def.id === "wastes" || def.contagion >= 14)),
       lightweight: this.isCityHub,
+      forceWetStreets: dEnv ? dEnv.wetStreets : undefined,
     });
     if (this.isCityHub) {
       paintCityEnvWash(this, ONLINE_CITY.zones);
-      paintCityBuildingFacades(this, ONLINE_CITY.buildings);
+      // Full HF replacement for landmarks / large blocks — skip roof caps on those rects
+      // so dark parallax slabs don't cover the painted art.
+      const cityHf = paintCityBuildingFacades(this, ONLINE_CITY.buildings);
+      const cityHfKeys = new Set(cityHf.map((r) => `${r.x1},${r.y1},${r.x2},${r.y2}`));
       paintCityStorefrontReflections(this, ONLINE_CITY.buildings);
-      this.roofParallax = installRoofParallax(this, ONLINE_CITY.buildings.map((b) => b.rect), zoneAccent);
+      this.roofParallax = installRoofParallax(
+        this,
+        ONLINE_CITY.buildings.map((b) => b.rect).filter((r) => !cityHfKeys.has(`${r.x1},${r.y1},${r.x2},${r.y2}`)),
+        zoneAccent,
+      );
+    } else if (dEnv) {
+      paintDistrictEnvWash(this, this.worldW, this.worldH, dEnv.wash, dEnv.washAlpha);
     }
     if (this.isBridge) {
       scatterWildernessProps(this, grid, zoneAccent, 4, bridgeDef!.layout.biome);
-    } else if (this.isCityHub || (!this.interior && !this.isSubway && !this.isDive && !this.isTutorial)) {
-      scatterWorldProps(this, grid, 4, this.isCityHub ? 0.003 : 0.006);
+      dressWildernessWishlistArt(
+        this,
+        this.worldW,
+        this.worldH,
+        this.bridgeIndex * 13 + 7,
+        undefined,
+        bridgeDef!.layout.biome,
+      );
+    } else if (this.isCityHub || isCombatDistrict) {
+      scatterWorldProps(this, grid, 4, this.isCityHub ? 0.003 : (dEnv?.propDensity ?? 0.006), {
+        propBias: dEnv?.propBias,
+        accent: zoneAccent,
+      });
     }
     if (this.isCityHub) {
       this.atmosphere = new Atmosphere(this, { weather: "rain", accent: zoneAccent, worldW: this.worldW, worldH: this.worldH });
@@ -663,41 +750,71 @@ export default class OnlineScene extends Phaser.Scene {
         worldW: this.worldW,
         worldH: this.worldH,
       });
-    } else if (!this.interior && !this.isSubway && !this.isDive && !this.isTutorial) {
+    } else if (isCombatDistrict && dEnv) {
       this.atmosphere = new Atmosphere(this, {
-        weather: def.weather,
+        weather: dEnv.weather ?? def.weather,
         accent: zoneAccent,
         worldW: this.worldW,
         worldH: this.worldH,
+        fogDensity: dEnv.fogDensity,
+        fogTint: dEnv.fogTint,
+        particleTint: dEnv.particleTint,
+        holoGlyphs: dEnv.holoGlyphs,
       });
-      for (let i = 0; i < districtBuildings(def).length; i += 3) {
-        const b = districtBuildings(def)[i];
-        const cx = ((b.x1 + b.x2) / 2) * TILE * 2 + TILE / 2;
-        const cy = ((b.y1 + b.y2) / 2) * TILE * 2 + TILE / 2;
-        this.atmosphere.addHologram(cx, cy, zoneAccent);
+      // Themed rooftop holograms (count + glyphs from district identity).
+      const bldgs = districtBuildings(def);
+      const holoN = Math.min(dEnv.holoCount, Math.max(1, bldgs.length));
+      for (let i = 0; i < holoN; i++) {
+        const b = bldgs[i % bldgs.length];
+        const cx = ((b.x1 + b.x2) / 2) * DISTRICT_SCALE * TILE + TILE / 2;
+        const cy = ((b.y1 + b.y2) / 2) * DISTRICT_SCALE * TILE + TILE / 2;
+        this.atmosphere.addHologram(cx, cy, zoneAccent, dEnv.holoGlyphs);
       }
+      // Wall-adjacent fixtures — mix matches the district (industrial dumpsters vs corp planters).
       const hash = (x: number, y: number) => ((x * 73856093) ^ (y * 19349663)) >>> 0;
       const adjWall = (x: number, y: number) =>
         isWall(grid[y]?.[x - 1]) || isWall(grid[y]?.[x + 1]) || isWall(grid[y - 1]?.[x]) || isWall(grid[y + 1]?.[x]);
+      const fixtures = dEnv.fixtureMix.length ? dEnv.fixtureMix : (["streetlight", "vending", "ac"] as const);
       let placed = 0;
-      for (let ty = 1; ty < grid.length - 1 && placed < 12; ty++) {
+      for (let ty = 1; ty < grid.length - 1 && placed < 14; ty++) {
         for (let tx = 1; tx < grid[ty].length - 1; tx++) {
           if (isWall(grid[ty][tx]) || !adjWall(tx, ty)) continue;
           const h = hash(tx, ty);
           if (h % 10 !== 0) continue;
           const px = tx * TILE + TILE / 2;
           const py = ty * TILE + TILE / 2;
-          const pick = h % 3;
-          const key = pick === 0 ? PROP_STREETLIGHT_KEY : pick === 1 ? PROP_VENDING_KEY : PROP_AC_KEY;
-          const tall = key === PROP_STREETLIGHT_KEY;
+          const bias = fixtures[h % fixtures.length];
+          const key = fixtureKeyFor(bias, h >> 3);
+          if (!this.textures.exists(key)) continue;
+          const tall = key === PROP_STREETLIGHT_KEY || key.includes("streetlight") || key.includes("hf_prop_01");
           this.add.image(px, py + TILE / 2, key).setOrigin(0.5, tall ? 1 : 0.85).setDepth(4);
           placed++;
         }
       }
-      paintRooftopLights(this, districtBuildings(def), (b) => ({ x1: b.x1 * 2, y1: b.y1 * 2, x2: b.x2 * 2, y2: b.y2 * 2 }), () => zoneAccent);
+      paintRooftopLights(
+        this,
+        districtBuildings(def),
+        (b) => ({
+          x1: b.x1 * DISTRICT_SCALE,
+          y1: b.y1 * DISTRICT_SCALE,
+          x2: b.x2 * DISTRICT_SCALE,
+          y2: b.y2 * DISTRICT_SCALE,
+        }),
+        () => zoneAccent,
+      );
+      // World-tile HF footprints already painted at DISTRICT_SCALE; exclude them so
+      // dark roof caps don't sit on top of full Higgsfield exteriors.
+      const distHfKeys = new Set(hfBuildingRects.map((r) => `${r.x1},${r.y1},${r.x2},${r.y2}`));
       this.roofParallax = installRoofParallax(
         this,
-        districtBuildings(def).map((b) => ({ x1: b.x1 * 2, y1: b.y1 * 2, x2: b.x2 * 2, y2: b.y2 * 2 })),
+        districtBuildings(def)
+          .map((b) => ({
+            x1: b.x1 * DISTRICT_SCALE,
+            y1: b.y1 * DISTRICT_SCALE,
+            x2: b.x2 * DISTRICT_SCALE,
+            y2: b.y2 * DISTRICT_SCALE,
+          }))
+          .filter((r) => !distHfKeys.has(`${r.x1},${r.y1},${r.x2},${r.y2}`)),
         zoneAccent,
       );
     }
@@ -706,25 +823,27 @@ export default class OnlineScene extends Phaser.Scene {
     // sits dead-centre on screen; bounds clamping was pinning arrivals to the room
     // edge. The void past the walls reads like a GBA interior. Streets/combat zones
     // keep bounds + the full field of view.
-    const interiorZoom = this.interior && !this.isCityHub && !this.isEstates ? 2 : 1;
+    // Small venue rooms zoom in; the huge UNDERLINE spine + dives stay 1× so you can navigate.
+    const interiorZoom =
+      this.interior && !this.isCityHub && !this.isEstates && !this.isSubway && !this.isDive ? 2 : 1;
     if (interiorZoom === 1) this.cameras.main.setBounds(0, 0, this.worldW, this.worldH);
     installUiCamera(this, interiorZoom);
     this.applyNeon();
     fadeInScene(this, zoneAccent);
     if (!this.interior && !this.isSubway && !this.isDive && !this.isTutorial && !this.isCityHub) this.drawPvpZones();
-    // Every district building gets an enterable door on its south face — walk up + E (or click)
-    // drops you into that building's interior ("d{N}i{K}"); H returns to the district.
+    // Enterable doors: exactly ONE of each venue kind (shop/home/guild/den/bar).
+    // Extra footprints are scenery-only (district kit / small blocks — no second shop).
     if (!this.interior && !this.isSubway && !this.isDive && !this.isTutorial && !this.isCityHub && !this.isBridge) {
       districtBuildings(def).forEach((b, i) => {
-        // door colour matches the building's roof (buildingExteriorAccent) so you can
-        // read "amber shop / magenta bar" at a glance and orient by landmark colour
-        const doorColor = buildingExteriorAccent(districtBuildingKind(i));
+        const kind = districtBuildingKind(i);
+        if (!kind) return; // scenery block — no door
+        const doorColor = buildingExteriorAccent(kind);
         const tx = Math.round((b.x1 + b.x2) / 2) * DISTRICT_SCALE;
         const doorstep = b.y2 * DISTRICT_SCALE + 1; // walkable street tile just south of the south wall
         if (grid[doorstep]?.[tx] === undefined || isWall(grid[doorstep][tx])) return;
         this.makeDoor({
           dest: `d${this.districtIndex}i${i}`,
-          label: DISTRICT_VENUE_TITLE[districtBuildingKind(i)],
+          label: DISTRICT_VENUE_TITLE[kind],
           tile: [tx, doorstep],
           color: doorColor,
           flat: true,
@@ -738,7 +857,6 @@ export default class OnlineScene extends Phaser.Scene {
         dg.lineStyle(2, doorColor, 0.65).strokeRect(wx + 6, wy + 8, TILE - 12, TILE - 8);
         dg.fillStyle(0xeafdff, 0.22).fillRect(wx + TILE / 2 - 2, wy + 14, 4, TILE - 14);
         this.add.image(wx + TILE / 2, wy + TILE / 2, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(doorColor).setDepth(4.4).setScale(0.42).setAlpha(0.3);
-        // FRLG walk-in: pressing up while on the doorstep enters (E/click still works)
         this.districtDoors.push({ tx, ty: doorstep, dest: `d${this.districtIndex}i${i}` });
       });
       this.dressDistrictWeather();
@@ -800,15 +918,19 @@ export default class OnlineScene extends Phaser.Scene {
           // No permanent floating name tags — hover reveals them (see makeTalkNpc).
           this.makeTalkNpc(cdef.name, cdef.look, lines, px, py, cdef.id, isAlly);
         }
-        // EVERY building on the plaza is enterable — wire each one's door to its own h{K}
-        // interior (a distinct resident lives inside). FRLG walk-in + click/E both enter.
+        // EVERY building on the plaza is enterable — wire each door to its interior.
+        // Subway-kind buildings drop you into THE UNDERLINE combat zone (not a dead lobby).
         ONLINE_CITY.buildings.forEach((b, k) => {
           if (!b.door) return;
           const [dtx, dty] = b.door;
           if (isWall(grid[dty]?.[dtx] as number)) return;
-          const dest = `h${k}`;
+          const dest = b.kind === "subway" ? "subway" : `h${k}`;
           const doorColor = HUB_DOOR_COLOR[b.kind] ?? 0x8dfff0;
-          this.makeDoor({ dest, label: HUB_INTERIOR_TITLE[b.kind] ?? "BUILDING", tile: [dtx, dty], color: doorColor, flat: true });
+          const label =
+            b.kind === "subway"
+              ? "▼ UNDERLINE"
+              : HUB_INTERIOR_TITLE[b.kind] ?? "BUILDING";
+          this.makeDoor({ dest, label, tile: [dtx, dty], color: doorColor, flat: true });
           const dg = this.add.graphics().setDepth(4.5);
           const wx = dtx * TILE;
           const wy = (dty - 1) * TILE;
@@ -825,16 +947,30 @@ export default class OnlineScene extends Phaser.Scene {
       } else if (this.isEstates) {
         this.buildEstatesZone();
       } else if (parseEstateInterior(this.zone) !== null) {
-        this.buildHomeInterior(parseEstateInterior(this.zone)!);
+        const estIdx = parseEstateInterior(this.zone)!;
+        // Plate only — the owner's saved FURNITURE layout dresses this room.
+        dressRoomPlate(this, "estate", VENUE_ROOM_W, VENUE_ROOM_H, estIdx * 7 + 3);
+        this.buildHomeInterior(estIdx);
+      } else if (parseWildernessShack(this.zone)) {
+        this.buildWildernessShackInterior(parseWildernessShack(this.zone)!);
       } else {
         const bi = parseBuildingInterior(this.zone);
         const hb = bi ? null : parseHubInterior(this.zone);
         const isBldg = !!bi || hb !== null;
-        const kind = bi ? districtBuildingKind(bi.index) : hb !== null ? ONLINE_CITY.buildings[hb].kind : this.zone;
-        const accent = bi ? (DISTRICTS[bi.district]?.accent ?? 0x39ff88) : hb !== null ? (HUB_DOOR_COLOR[kind] ?? 0x39ff88) : 0x39ff88;
-        const venueTitle = DISTRICT_VENUE_TITLE[kind as keyof typeof DISTRICT_VENUE_TITLE];
+        const kindRaw = bi ? districtBuildingKind(bi.index) : hb !== null ? ONLINE_CITY.buildings[hb].kind : this.zone;
+        const kind = kindRaw ?? "home";
+        const accent = bi
+          ? (DISTRICTS[bi.district]?.accent ?? 0x39ff88)
+          : hb !== null
+            ? (HUB_DOOR_COLOR[String(kind)] ?? 0x39ff88)
+            : 0x39ff88;
+        const venueTitle =
+          kindRaw && kindRaw in DISTRICT_VENUE_TITLE
+            ? DISTRICT_VENUE_TITLE[kindRaw as keyof typeof DISTRICT_VENUE_TITLE]
+            : undefined;
         const title =
-          INTERIOR_TITLES[this.zone] ?? (isBldg ? `▣ ${venueTitle ?? HUB_INTERIOR_TITLE[kind] ?? kind.toUpperCase()}` : "▣ INTERIOR");
+          INTERIOR_TITLES[this.zone] ??
+          (isBldg ? `▣ ${venueTitle ?? HUB_INTERIOR_TITLE[String(kind)] ?? String(kind).toUpperCase()}` : "▣ INTERIOR");
         const backName = bi ? (DISTRICTS[bi.district]?.name ?? "the district") : "METRO CITY";
         this.add
           .text(this.worldW / 2, 4 * TILE, title, { fontFamily: "Courier New, monospace", fontSize: "20px", color: "#39ff88", fontStyle: "bold" })
@@ -848,45 +984,47 @@ export default class OnlineScene extends Phaser.Scene {
           })
           .setOrigin(0.5)
           .setDepth(6);
-        // seat the room's occupants. Every building interior (district + hub) gets its own
-        // DISTINCT named resident so every door opens on a unique face; the safehouse keeps
-        // its authored keeper + residents.
+        // Functional staff first (shop→vendor, clinic→heal, subway→UNDERLINE drop…).
+        // Then flavour residents so rooms feel peopled.
+        const seats = isBldg ? venueLayoutFor(this.zone).seats : INTERIOR_NPC_TILES;
+        const staff = venueStaffFor(String(kind));
+        staff.forEach((s, j) => {
+          const [tx, ty] = seats[j % seats.length];
+          const px = tx * TILE + TILE / 2;
+          const py = ty * TILE + TILE / 2;
+          const key = lookKey(s.look);
+          bakeRemoteLook(this, key, s.look);
+          this.add.image(px, py + 8, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(s.color).setDepth(8).setScale(0.6).setAlpha(0.45);
+          const spr = this.add.sprite(px, py, key, 0).setTint(0xffffff).setDepth(9).setInteractive({ useHandCursor: true });
+          spr.on("pointerdown", () => this.openService(s.svc));
+          drawHubNpcPlate(this, px, py, s.name, s.tag, s.color);
+          this.npcs.push({ kind: "service", svc: s.svc, name: `${s.name} · ${s.tag}`, x: px, y: py });
+        });
+        // Named talk residents (distinct face per door / authored room plan).
         const residents = INTERIOR_PLAN[this.zone]?.[0] ?? [];
-        const occupants = bi
+        const talkers = bi
           ? [districtResident(bi.district, bi.index)]
           : hb !== null
             ? [hubResident(hb)]
             : [keeperFor(kind), ...residents.map((id) => npcDef(id)).filter((d): d is NonNullable<typeof d> => !!d)];
-        const seats = isBldg ? venueLayoutFor(this.zone).seats : INTERIOR_NPC_TILES;
-        occupants.forEach((o, i) => {
-          const [tx, ty] = seats[i % seats.length];
+        // Skip talker if staff already filled the seat count for small rooms — still show up to 2 talkers.
+        talkers.slice(0, isBldg ? 1 : 3).forEach((o, i) => {
+          const seat = seats[(staff.length + i) % seats.length];
+          const [tx, ty] = seat;
           this.makeTalkNpc(o.name, o.look, o.lines, tx * TILE + TILE / 2, ty * TILE + TILE / 2, o.id);
         });
-        // venue services — each service-kind building DOES something: shop=vendor caches,
-        // home=personal stash, guild=cell registrar + forge, den=black market, bar=contracts
-        if (isBldg) {
-          const VENUE_SERVICES: Record<string, { svc: string; name: string; tag: string; color: number; look: PlayerLook }[]> = {
-            shop: [{ svc: "vendor", name: "CLERK", tag: "WARES", color: 0x00e5ff, look: hubLook({ color: 0x00e5ff, skin: 0xe6b58c, hair: "buzz", hairColor: 0x2a1d14 }) }],
-            home: [{ svc: "stash", name: "CUSTODIAN", tag: "LOCKBOX", color: 0xffb13c, look: hubLook({ color: 0xffb13c, skin: 0xc98a5e, hair: "bun", hairColor: 0x1b1820 }) }],
-            guild: [
-              { svc: "guild", name: "REGISTRAR", tag: "CELL", color: 0x4d8cff, look: hubLook({ color: 0x4d8cff, skin: 0xf3d2b8, hair: "short", hairColor: 0x4a2f1c, beard: "stubble", cloak: "coat" }) },
-              { svc: "forge", name: "ARMORER", tag: "FORGE", color: 0xff2bd6, look: hubLook({ color: 0xff2bd6, sex: "f", skin: 0xe6b58c, hair: "undercut", hairColor: 0x1b1820, gloves: "wraps" }) },
-            ],
-            den: [{ svc: "market", name: "FENCE", tag: "BLACK MARKET", color: 0xff2bd6, look: hubLook({ color: 0xff2bd6, head: "hood", skin: 0xa9794a, hair: "short", hairColor: 0x1b1820, cloak: "coat" }) }],
-            bar: [{ svc: "contracts", name: "FIXER", tag: "THE WAKE", color: 0x9dff3c, look: hubLook({ color: 0x9dff3c, skin: 0x7c4f30, hair: "dreads", hairColor: 0x1b1820, cloak: "coat" }) }],
-          };
-          (VENUE_SERVICES[kind] ?? []).forEach((s, j) => {
-            const [tx, ty] = seats[(occupants.length + j) % seats.length];
-            const px = tx * TILE + TILE / 2;
-            const py = ty * TILE + TILE / 2;
-            const key = lookKey(s.look);
-            bakeRemoteLook(this, key, s.look);
-            this.add.image(px, py + 8, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(s.color).setDepth(8).setScale(0.6).setAlpha(0.45);
-            const spr = this.add.sprite(px, py, key, 0).setTint(0xffffff).setDepth(9).setInteractive({ useHandCursor: true });
-            spr.on("pointerdown", () => this.openService(s.svc));
-            drawHubNpcPlate(this, px, py, s.name, s.tag, s.color);
-            this.npcs.push({ kind: "service", svc: s.svc, name: `${s.name} · ${s.tag}`, x: px, y: py });
+        // Subway-kind room that wasn't a direct drop: always offer a descent door.
+        if (kind === "subway" && this.zone !== "subway") {
+          const [mtx, mty] = seats[Math.min(seats.length - 1, staff.length)] ?? seats[0];
+          this.makeDoor({
+            dest: "subway",
+            label: "▼ DESCEND",
+            tile: [mtx, mty + 2],
+            color: 0xff3b6b,
+            flat: false,
           });
+        }
+        if (isBldg) {
           // the exit — an FRLG door mat against the south wall; stepping on it walks out
           const [matTx, matTy] = venueLayoutFor(this.zone).mat;
           const matX = matTx * TILE;
@@ -900,8 +1038,14 @@ export default class OnlineScene extends Phaser.Scene {
             .setOrigin(0.5)
             .setDepth(2.6);
           this.dressVenueRoom(kind, accent);
+          const VL = venueLayoutFor(this.zone);
+          let vh = 5381;
+          for (let i = 0; i < this.zone.length; i++) vh = ((vh << 5) + vh + this.zone.charCodeAt(i)) >>> 0;
+          dressInteriorWishlistArt(this, String(kind), VL.w, VL.h, VL.seats, vh);
         } else {
           this.dressServiceRoom(kind, accent);
+          // Named service interiors (clinic/bar/…) use safehouse-sized grid
+          dressInteriorWishlistArt(this, String(kind), 20, 13, seats as Array<[number, number]>, 3);
         }
       }
     } else if (this.isBridge && bridgeDef) {
@@ -927,21 +1071,9 @@ export default class OnlineScene extends Phaser.Scene {
         .setOrigin(0.5)
         .setDepth(6);
       this.dressDive(grid);
+      dressDungeonWishlistArt(this, DIVE_CORE_TILE[0], DIVE_CORE_TILE[1], this.districtIndex * 11);
     } else if (this.isSubway) {
-      // THE UNDERLINE — a combat dungeon: just a title; enemies + boss come from the server.
-      this.add
-        .text(this.worldW / 2, 4 * TILE, "▼ THE UNDERLINE", { fontFamily: "Courier New, monospace", fontSize: "20px", color: "#ff3b6b", fontStyle: "bold" })
-        .setOrigin(0.5)
-        .setDepth(6);
-      this.add
-        .text(this.worldW / 2, 4 * TILE + 26, "the subway dark — purge what nests here · H to surface", {
-          fontFamily: "Courier New, monospace",
-          fontSize: "11px",
-          color: "#9aa3b2",
-        })
-        .setOrigin(0.5)
-        .setDepth(6);
-      this.dressSubwayLife();
+      this.buildSubwayStations();
     } else {
       // district ambient life — a few authored citizens near the entrance so the world
       // outside the hub feels inhabited (cosmetic fixtures; HSS + player shots ignore them).
@@ -985,23 +1117,29 @@ export default class OnlineScene extends Phaser.Scene {
         break;
       }
     }
-    // floating dialogue bubble + proximity prompt (used in any zone that has NPCs)
+    // Floating dialogue bubble sits in WORLD space (follows the NPC). Use design-space
+    // fonts/padding — NOT uiDim — because the world camera already zooms by RENDER_SCALE.
+    // uiDim here made bubbles ~2–3× too large and pushed them off-screen.
     this.speechBubble = this.add
-      .text(0, 0, "", bodyFont(12, {
+      .text(0, 0, "", {
+        fontFamily: "Courier New, monospace",
+        fontSize: "11px",
         color: "#eafdff",
         align: "center",
-        backgroundColor: "#0b0716e6",
-        padding: { x: uiGap("md"), y: uiGap("sm") },
-        wordWrap: { width: uiDim(260) },
-      }))
+        backgroundColor: "#0b0716ee",
+        padding: { x: 8, y: 5 },
+        wordWrap: { width: 168 },
+        lineSpacing: 2,
+      })
       .setOrigin(0.5, 1)
       .setDepth(12)
       .setVisible(false);
     // painted speaker bust docked to the bubble's left edge (portraits.ts sheets)
-    const ps = uiDim(56);
+    // Design-space size (world units); camera zoom makes it screen-crisp.
+    const ps = 28;
     this.speechPortraitRing = this.add.graphics().setDepth(12).setVisible(false);
-    this.speechPortraitRing.fillStyle(0x0b0716, 0.92).fillRect(-ps / 2 - uiDim(3), -ps / 2 - uiDim(3), ps + uiDim(6), ps + uiDim(6));
-    this.speechPortraitRing.lineStyle(uiDim(2), 0x29e7ff, 0.85).strokeRect(-ps / 2 - uiDim(3), -ps / 2 - uiDim(3), ps + uiDim(6), ps + uiDim(6));
+    this.speechPortraitRing.fillStyle(0x0b0716, 0.92).fillRect(-ps / 2 - 2, -ps / 2 - 2, ps + 4, ps + 4);
+    this.speechPortraitRing.lineStyle(1.5, 0x29e7ff, 0.85).strokeRect(-ps / 2 - 2, -ps / 2 - 2, ps + 4, ps + 4);
     this.speechPortrait = this.add.image(0, 0, "__WHITE").setDepth(12.1).setVisible(false);
     // Mobile gets a bigger, pill-backed prompt — it doubles as the tap target for
     // doors/NPCs, so it has to read (and press) like a button under a thumb. It sits
@@ -1048,14 +1186,23 @@ export default class OnlineScene extends Phaser.Scene {
           .setInteractive({ useHandCursor: true });
         surface.on("pointerdown", (ptr: Phaser.Input.Pointer) => {
           ptr.event?.stopPropagation?.();
-          this.travelOrganic(this.fromZone);
+          // Pass current zone as travel origin (same as H key) so the destination
+          // places us at the correct door/gate — not a bare resume spawn.
+          this.travelOrganic(this.fromZone, { from: this.zone });
         });
       }
       this.mobilePad = new MobileControls(this, {
         onDash: () => this.tryDash(),
         onAbility: () => this.tryAbility(),
         onAbility2: () => this.tryAbility2(),
-        onUlt: () => this.tryUlt(),
+        // R / ULT pad doubles as LINK when offline — phones have no R key.
+        onUlt: () => {
+          if (!this.net.connected) {
+            this.retryServerLink();
+            return;
+          }
+          this.tryUlt();
+        },
         onInteract: () => this.doInteract(),
       });
     }
@@ -1087,7 +1234,8 @@ export default class OnlineScene extends Phaser.Scene {
       this.drillLocal = null;
     }
 
-    const url = SERVER_URL + (SERVER_URL.includes("?") ? "&" : "?") + "zone=" + this.zone;
+    // Load-aware Worker routing: sticky ?inst= when we already joined this zone's shard.
+    const url = buildZoneWsUrl(SERVER_URL, this.zone);
     // Pages + localhost WS footgun — surface in the world, not only the console.
     if (typeof location !== "undefined") {
       const host = location.hostname || "";
@@ -1119,7 +1267,22 @@ export default class OnlineScene extends Phaser.Scene {
     this.net = new NetClient(grid, this.callsign, url, this.faction, this.baseLook);
     this.net.classId = (this.registry.get("classId") as string) || "metrophage";
     this.net.arrival = fastArrival ? "fast" : "organic";
-    this.net.travelFrom = fastArrival ? undefined : this.fromZone;
+    // Only intentional handoffs send `from`. Resume / reconnect / title deploy omit it
+    // so the server restores D1 (or live) x,y for this zone.
+    // Exception: subway always needs `from` to pick the station pad (organic door OR
+    // map fast-track both pass an explicit from via travelTo data).
+    // Send `from` on organic handoffs always; on fast travel only when the destination
+    // needs door/station placement (subway + hub service rooms).
+    const namedNeedsFrom =
+      this.zone === "subway" ||
+      this.zone === "clinic" ||
+      this.zone === "shop" ||
+      this.zone === "bar" ||
+      this.zone === "den" ||
+      this.zone === "vault" ||
+      this.zone === "estates";
+    this.net.travelFrom =
+      this.travelFromExplicit && (!fastArrival || namedNeedsFrom) ? this.fromZone : undefined;
     this.wireHomeAfterNet(); // if this is an est{K} home, hook estate updates + furniture placement
     this.net.onCampaign = () => {
       this.refreshAllyLines(); // story allies re-react as the questline advances
@@ -1159,11 +1322,17 @@ export default class OnlineScene extends Phaser.Scene {
       }
       if (state === "reconnecting") {
         const n = this.net.reconnectTry || 1;
-        this.rsGameMessage?.show(`Reconnecting to the grid… (${n}/20)`, { ttlMs: 3200, color: "#f7ff3c" });
+        this.rsGameMessage?.show(`Reconnecting to the grid… (${n})`, { ttlMs: 2400, color: "#f7ff3c" });
       }
       if (state === "offline") {
-        this.rsGameMessage?.show("Link lost — solo preview · R retry · ESC menu", { ttlMs: 5000, color: "#ff7a9a" });
+        this.rsGameMessage?.show(
+          this.mobileUx()
+            ? "Link lost — tap LINK to retry"
+            : "Link lost — tap LINK or press R · ESC menu",
+          { ttlMs: 5000, color: "#ff7a9a" },
+        );
       }
+      this.syncLinkRetryUi();
       this.hudRefreshAcc = OnlineScene.HUD_REFRESH_MS;
       this.minimapRefreshAcc = OnlineScene.MINIMAP_REFRESH_MS;
     };
@@ -1173,7 +1342,16 @@ export default class OnlineScene extends Phaser.Scene {
       this.me.setPosition(x, y).setVisible(true);
       this.cameras.main.startFollow(this.me, true, 0.18, 0.18);
       setOnlinePlayer(this.net.id);
+      this.syncLinkRetryUi();
       this.journal?.setOwned(this.net.fragments);
+      // Resume hint for CONTINUE — exact zone; server restores x/y inside that zone.
+      try {
+        touchLocalRunnerZone(this.zone);
+      } catch {
+        /* private mode */
+      }
+      // Travel `from` is one-shot (also cleared inside NetClient on welcome).
+      this.net.travelFrom = undefined;
       // Clear stale node-capture tracking across reconnects / zone hops.
       this.prevNodeOwners.clear();
       this.prevNodeProgress.clear();
@@ -1219,11 +1397,19 @@ export default class OnlineScene extends Phaser.Scene {
       this.initCombatTracking();
       juiceFlash(this, 180, 40, 200, 80);
     };
-    this.net.onRedirect = (zone) => {
+    this.net.onRedirect = (zone, opts) => {
       // Flush current zone first, then hand off (avoids dual-session race with graduate).
+      // Use fast arrival (no `from`) so world-start / extract / graduate land on the
+      // saved hub pad — not a trail-gate entry from a phantom origin district.
+      // Instance rebalance (same zone, drop sticky) also uses travelFast so OnlineScene
+      // rebuilds the WS URL and the Worker load-picks a less-loaded shard.
+      if (this.registry.get("tutorialDeploying")) return;
+      this.registry.set("tutorialDeploying", true);
+      if (opts?.rebalance) clearStickyInst(zone);
+      else if (typeof opts?.inst === "number") writeStickyInst(zone, opts.inst);
       void (async () => {
         await this.net?.disconnectAwait(2500);
-        if (this.scene.isActive("Online")) this.travelOrganic(zone);
+        if (this.scene.isActive("Online")) this.travelFast(zone);
       })();
     };
     this.contextMenu = new ContextMenu(this);
@@ -1304,6 +1490,11 @@ export default class OnlineScene extends Phaser.Scene {
     this.mapPanel.onTravel = (zone) => this.fastTravel(zone);
     this.mapPanel.onWalkToZone = (zone) => this.walkToZoneFromMap(zone);
     this.mapPanel.onExamine = (text) => this.rsExamine(text);
+    // Pulled per render so story/level advisories track the live campaign.
+    this.mapPanel.standingProvider = () => ({
+      completed: this.net.campaignCompleted ?? [],
+      level: this.net.level,
+    });
     this.net.onDiscovered = () => {
       this.mapPanel.godMode = !!this.net.godMode;
       if (this.mapPanel.open) this.mapPanel.setState(this.net.discovered, this.net.unlocked, this.zone);
@@ -1439,6 +1630,30 @@ export default class OnlineScene extends Phaser.Scene {
       .setDepth(1001)
       .setVisible(false);
     this.deathSub.setWordWrapWidth(Math.min(this.scale.width - uiDim(48), uiDim(420)));
+    // CITY START — always offered on death outside the drill yard (world hub pad).
+    this.deathExtractBtn = this.add
+      .text(
+        this.scale.width / 2,
+        this.scale.height / 2 + uiDim(78),
+        "",
+        displayFont(13, {
+          color: "#39ff88",
+          fontStyle: "bold",
+          align: "center",
+          backgroundColor: "#0a1a12ee",
+          padding: { x: uiDim(16), y: uiDim(10) },
+        }),
+      )
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(1002)
+      .setVisible(false)
+      .setInteractive({ useHandCursor: true });
+    this.deathExtractBtn.on("pointerdown", () => {
+      if (this.net?.dead && this.net.deathExtract) this.net.respawnWorldStart();
+    });
+    this.deathExtractBtn.on("pointerover", () => this.deathExtractBtn?.setColor("#eafff4"));
+    this.deathExtractBtn.on("pointerout", () => this.deathExtractBtn?.setColor("#39ff88"));
 
     this.pvpHud = new PvpCrucibleHud(this);
     this.clickMove = new ClickToMove(this);
@@ -1487,7 +1702,16 @@ export default class OnlineScene extends Phaser.Scene {
           ]
         : [
             { key: "inv", label: "Bag", sub: mobile ? "tap" : "I", color: 0x00e5ff, onClick: () => this.inv?.toggle() },
-            { key: "skills", label: "Skills", sub: mobile ? "tap" : "'", color: 0xf7ff3c, onClick: () => this.rsSkillsPanel.toggle() },
+            {
+              key: "skills",
+              label: "Skills",
+              sub: mobile ? "tap" : "'",
+              color: 0xf7ff3c,
+              onClick: () => {
+                this.rsSkillsPanel.characterLevel = this.net.level;
+                this.rsSkillsPanel.toggle();
+              },
+            },
             { key: "map", label: "Map", sub: mobile ? "tap" : "M", color: 0x39ff88, onClick: () => this.mapPanel?.toggle(this.net.discovered, this.net.unlocked, this.zone) },
             { key: "market", label: "Market", sub: mobile ? "tap" : "K", color: 0xff2bd6, onClick: () => this.market?.toggle(this.net.marketListings, this.net.inventory, this.net.id, this.net.credits, this.net.metro) },
             { key: "quests", label: "Quests", sub: mobile ? "tap" : "J", color: 0xb06bff, onClick: () => this.refreshQuestLog(true) },
@@ -1641,21 +1865,22 @@ export default class OnlineScene extends Phaser.Scene {
       .setOrigin(0, 0)
       .setScrollFactor(0)
       .setDepth(1000);
-    // Compact story toast (was a large mid-screen banner).
+    // Compact story toast — clamped width so it never runs off mobile screens.
+    const storyWrap = Math.min(this.scale.width - uiDim(48), uiDim(this.mobileUx() ? 280 : 340));
     this.storyPanel = this.add
-      .text(this.scale.width / 2, this.scale.height * (this.mobileUx() ? 0.28 : 0.14), "", hudFont(10, {
+      .text(this.scale.width / 2, this.scale.height * (this.mobileUx() ? 0.18 : 0.12), "", hudFont(9, {
         color: "#eafdff",
         align: "center",
         backgroundColor: "#0b0716f0",
-        padding: { x: uiDim(12), y: uiDim(8) },
-        wordWrap: { width: uiDim(380) },
+        padding: { x: uiDim(10), y: uiDim(6) },
+        wordWrap: { width: storyWrap },
       }))
       .setOrigin(0.5)
       .setScrollFactor(0)
       .setDepth(1900)
       .setVisible(false)
       .setInteractive({ useHandCursor: true });
-    this.storyPanel.setWordWrapWidth(Math.min(this.scale.width - uiDim(80), uiDim(380)));
+    this.storyPanel.setWordWrapWidth(storyWrap);
     this.storyPanel.on("pointerdown", () => {
       this.storyHoldUntil = 0;
       this.storyPanel.setVisible(false);
@@ -1707,6 +1932,19 @@ export default class OnlineScene extends Phaser.Scene {
       }
       if (this.options?.isOpen) {
         if (e.key === "Escape" || e.key === "o" || e.key === "O") this.options.close();
+        // Combat keys still work under Options so a mid-fight O-open isn't a soft-lock.
+        if (e.key === " " || e.key === "Shift") {
+          this.tryDash();
+          return;
+        }
+        if ((e.key === "q" || e.key === "Q") && !this.isCityHub) {
+          this.tryAbility();
+          return;
+        }
+        if ((e.key === "r" || e.key === "R") && this.net.connected && !this.isCityHub) {
+          this.tryUlt();
+          return;
+        }
         return;
       }
       if (e.key === "o" || e.key === "O") {
@@ -1750,8 +1988,9 @@ export default class OnlineScene extends Phaser.Scene {
         return;
       }
       // home controls run BEFORE the global B=shop / G=forge bindings, or they'd shadow
-      // these inside an est{K} home: (F)urnish, (B)uy, si(G)n the guestbook
-      if ((e.key === "f" || e.key === "F") && this.homeIdx >= 0 && this.net.estate?.mine && !this.homeEditing) {
+      // these inside an est{K} home: (U) furnish, (B)uy, si(G)n the guestbook.
+      // F is always attack — never steal it for housing.
+      if ((e.key === "u" || e.key === "U") && this.homeIdx >= 0 && this.net.estate?.mine && !this.homeEditing) {
         this.startFurnishing();
         return;
       }
@@ -1808,6 +2047,7 @@ export default class OnlineScene extends Phaser.Scene {
         return;
       }
       if (e.key === "'" || e.key === '"') {
+        this.rsSkillsPanel.characterLevel = this.net.level;
         this.rsSkillsPanel.toggle();
         return;
       }
@@ -1912,6 +2152,11 @@ export default class OnlineScene extends Phaser.Scene {
         return;
       }
       if (e.key === "h" || e.key === "H") {
+        // While dead with CITY START offered, H evacuates to the METRO CITY hub pad.
+        if (this.net?.dead && this.net.deathExtract) {
+          this.net.respawnWorldStart();
+          return;
+        }
         if (this.isTutorial) {
           this.showBubble(this.me.x, this.me.y, "Finish the drill — or hit SKIP TO CITY (top-right).");
           return;
@@ -1920,7 +2165,11 @@ export default class OnlineScene extends Phaser.Scene {
         const dest = indoors ? this.fromZone : "safe";
         // leaving a district-building interior tells the district WHICH door to spawn at;
         // all other exits keep their classic entry spawn
-        const from = indoors ? (parseBuildingInterior(this.zone) ? this.zone : undefined) : this.zone;
+        const from = indoors
+          ? parseBuildingInterior(this.zone) || parseWildernessShack(this.zone)
+            ? this.zone
+            : undefined
+          : this.zone;
         this.travelOrganic(dest, from ? { from } : undefined);
         return;
       }
@@ -1942,8 +2191,7 @@ export default class OnlineScene extends Phaser.Scene {
           this.tryUlt(); // class ultimate — HEAT-gated, no cooldown
           return;
         }
-        this.connectStartedAt = Date.now();
-        this.net.retryConnect();
+        this.retryServerLink();
         return;
       }
       if (e.key === "Enter" || e.key === "t" || e.key === "T") {
@@ -2013,12 +2261,15 @@ export default class OnlineScene extends Phaser.Scene {
    * Guest server progress still keys off callsign + device secret on login.
    */
   private isGuestRun(): boolean {
-    const wallet = this.registry.get("walletAddress") as string | undefined;
-    const guest =
-      !wallet &&
-      (!!this.registry.get("guestPlay") ||
-        !!this.registry.get("offlinePlay"));
-    return guest;
+    // Explicit guest/offline flags win over a leftover wallet in localStorage —
+    // otherwise PLAY FREE / CONTINUE always hijacked into w:<addr> after any prior
+    // wallet connect on the device, ignoring callsign + device secret progress.
+    if (this.registry.get("guestPlay") || this.registry.get("offlinePlay")) return true;
+    const wallet =
+      (this.registry.get("walletAddress") as string | undefined) ||
+      connectedWallet() ||
+      undefined;
+    return !wallet;
   }
 
   private persistLocalRunnerSnapshot() {
@@ -2038,11 +2289,8 @@ export default class OnlineScene extends Phaser.Scene {
   }
 
   /**
-   * Wallet identity for WS login — prefer a silent path so zone travel never
-   * re-opens MetaMask:
-   *  1) fresh title-screen signature (≤2 min)
-   *  2) device session secret (bound after first successful signed login)
-   *  3) only then prompt MetaMask (first connect / session never bound)
+   * Wallet identity for WS login — SILENT on zone travel.
+   * Opens the socket ASAP (never waits on WalletConnect bundle load).
    */
   private async signInThenConnect() {
     // Generation token: ignore auth completion if the scene was shut down mid-await
@@ -2051,34 +2299,29 @@ export default class OnlineScene extends Phaser.Scene {
     const stillHere = () => this.sceneConnectGen === gen && this.sys?.isActive?.() !== false && !!this.net;
 
     const guest = this.isGuestRun();
-    let addr = guest
+    const addr = guest
       ? undefined
       : (this.registry.get("walletAddress") as string | undefined) || connectedWallet() || undefined;
-    if (!guest && !addr) {
-      // Silent restore after page reload (eth_accounts — no popup).
-      addr = (await restoreWalletSession()) ?? undefined;
-      if (!stillHere()) return;
-      if (addr) this.registry.set("walletAddress", addr);
-    }
-    if (!stillHere()) return;
-    if (!guest && addr) {
-      await this.applyWalletAuth(addr, /* allowPrompt */ false);
-    }
-    if (!stillHere()) return;
-    // If session resume fails (never bound / new device), re-sign once silently-as-possible.
-    this.net.onAuthRequired = () => {
+
+    this.net.onAuthRequired = (mode) => {
       void (async () => {
         if (!stillHere() || this.isGuestRun()) return;
         const a =
           (this.registry.get("walletAddress") as string | undefined) || connectedWallet();
         if (!a) return;
+        if (mode === "silent") {
+          // Re-assert session only — do NOT reset the 4001 budget (avoids infinite loop).
+          await this.applyWalletAuth(a, /* allowPrompt */ false);
+          if (!stillHere()) return;
+          this.net.retryConnect(false);
+          return;
+        }
+        // One personal_sign to re-bind D1 secret when silent session failed.
         await this.applyWalletAuth(a, /* allowPrompt */ true);
         if (!stillHere()) return;
-        this.net.retryConnect();
+        this.net.retryConnect(false);
       })();
     };
-    // Guest/wallet login rejected outright: surface the reason. In the drill yard,
-    // still offer an immediate escape to the city instead of trapping them offline.
     this.net.onGuestAuthFailed = (reason) => {
       if (!stillHere()) return;
       this.registry.set("guestAuthError", reason);
@@ -2092,46 +2335,154 @@ export default class OnlineScene extends Phaser.Scene {
         this.showOfflineSkipBanner();
         this.time.delayedCall(6000, () => {
           if (!stillHere() || !this.isTutorial) return;
-          // Still on drill after 6s without a skip click → title with the error.
           transitionTo(this, "Select", undefined, { style: "glitch", accent: 0xff3b6b });
         });
         return;
       }
-      this.hud?.setText(["⚠ SIGN-IN REJECTED", reason, "returning to title…"]);
-      this.time.delayedCall(1400, () => {
+      const sessionHint = /wallet session|sign-in|signature/i.test(reason)
+        ? "Esc → title → CONNECT WALLET once, then CONTINUE"
+        : "returning to title…";
+      this.hud?.setText(["⚠ SIGN-IN REJECTED", reason, sessionHint]);
+      this.time.delayedCall(2200, () => {
         if (!stillHere()) return;
         transitionTo(this, "Select", undefined, { style: "glitch", accent: 0xff3b6b });
       });
     };
+
+    // Apply known wallet auth without network — then open WS immediately.
+    if (!guest && addr) {
+      this.registry.set("walletAddress", addr);
+      this.registry.set("guestPlay", false);
+      this.registry.set("offlinePlay", false);
+      await this.applyWalletAuth(addr, /* allowPrompt */ false);
+    }
+    if (!stillHere()) return;
+    this.connectStartedAt = Date.now();
     this.net.connect();
+    this.syncLinkRetryUi();
+
+    // Background restore only when we had no address (capped; never blocks first link).
+    if (!guest && !addr) {
+      void (async () => {
+        const restored = (await restoreWalletSession()) ?? undefined;
+        if (!stillHere() || !restored) return;
+        this.registry.set("walletAddress", restored);
+        this.registry.set("guestPlay", false);
+        this.registry.set("offlinePlay", false);
+        await this.applyWalletAuth(restored, /* allowPrompt */ false);
+        if (!stillHere()) return;
+        if (!this.net.connected) this.net.retryConnect();
+      })();
+    }
   }
 
-  /** Prefer cached sig → device session (silent) → optional MetaMask personal_sign. */
+  /** Manual link retry (R when offline, mobile LINK button). */
+  private retryServerLink() {
+    if (this.net.connected) return;
+    this.connectStartedAt = Date.now();
+    this.connectionState = "reconnecting";
+    this.rsGameMessage?.show("Retrying link…", { ttlMs: 1800, color: "#f7ff3c" });
+    // User-initiated: full wallet 4001 recovery budget (silent + one sign prompt).
+    this.net.retryConnect(true);
+    this.syncLinkRetryUi();
+    this.hudRefreshAcc = OnlineScene.HUD_REFRESH_MS;
+  }
+
+  /** Big tappable LINK control while offline — phones have no R key. */
+  private linkRetryBtn?: Phaser.GameObjects.Text;
+  private syncLinkRetryUi() {
+    const need = !this.net?.connected;
+    if (!need) {
+      this.linkRetryBtn?.setVisible(false);
+      return;
+    }
+    if (!this.linkRetryBtn) {
+      const mobile = this.mobileUx();
+      this.linkRetryBtn = this.add
+        .text(
+          this.scale.width / 2,
+          mobile ? uiDim(52) : uiDim(40),
+          mobile ? "◎ TAP TO LINK" : "◎ LINK  ·  R",
+          bodyFont(mobile ? 13 : 11, {
+            color: "#041018",
+            backgroundColor: "#00e5ff",
+            padding: { x: mobile ? 16 : 12, y: mobile ? 10 : 7 },
+          }),
+        )
+        .setOrigin(0.5, 0)
+        .setScrollFactor(0)
+        .setDepth(2500)
+        .setInteractive({ useHandCursor: true });
+      this.linkRetryBtn.on("pointerdown", (ptr: Phaser.Input.Pointer) => {
+        ptr.event?.stopPropagation?.();
+        this.retryServerLink();
+      });
+      this.scale.on("resize", () => {
+        if (!this.linkRetryBtn) return;
+        this.linkRetryBtn.setPosition(this.scale.width / 2, this.mobileUx() ? uiDim(52) : uiDim(40));
+      });
+    }
+    const mobile = this.mobileUx();
+    const label =
+      this.connectionState === "offline"
+        ? mobile
+          ? "◎ TAP TO RETRY LINK"
+          : "◎ RETRY LINK  ·  R"
+        : mobile
+          ? "◎ LINKING… · TAP TO RETRY"
+          : "◎ LINKING…  ·  R RETRY";
+    this.linkRetryBtn.setText(label).setVisible(true);
+  }
+
+  /**
+   * Prefer cached sig → stable device session (silent) → optional wallet personal_sign.
+   * Zone travel always uses allowPrompt=false.
+   */
   private async applyWalletAuth(addr: string, allowPrompt: boolean) {
-    // Always mint/load the device session so NetClient can attach it.
+    // Stable device session — NetClient attaches this on every login (including zone hops).
     walletSessionSecret(addr);
+    this.registry.set("walletAddress", addr);
     const cached = this.registry.get("walletProof") as
       | { wallet: string; sig: string; ts: number }
       | undefined;
     // Match server FRESH_MS (120s) with a small safety margin.
-    if (cached?.wallet && cached.sig && Math.abs(Date.now() - cached.ts) < 110_000) {
-      this.net.setAuth({ wallet: cached.wallet, sig: cached.sig, ts: cached.ts });
+    // Prefer session-only when the sig is getting stale so a near-expiry sig never
+    // fails verification AND blocks the session fallback path.
+    // Only reuse proof if it matches the address we're authenticating as.
+    const proofMatches =
+      !!cached?.wallet &&
+      (cached.wallet === addr ||
+        (/^0x/i.test(cached.wallet) &&
+          /^0x/i.test(addr) &&
+          cached.wallet.toLowerCase() === addr.toLowerCase()));
+    const sigFresh = !!cached?.sig && Math.abs(Date.now() - (cached.ts ?? 0)) < 90_000;
+    if (proofMatches && sigFresh) {
+      this.net.setAuth({ wallet: cached!.wallet, sig: cached!.sig, ts: cached!.ts });
       return;
     }
+    // Drop stale proofs so zone hops never re-send a dead personal_sign.
+    if (cached && !sigFresh) {
+      try {
+        this.registry.remove("walletProof");
+      } catch {
+        /* ignore */
+      }
+    }
     if (!allowPrompt) {
-      // Session resume — no personal_sign. Server accepts wallet + bound session.
-      // If the session was never bound, onAuthRequired re-signs once.
+      // Session resume — no personal_sign / no WalletConnect modal.
       this.net.setAuth({ wallet: addr });
       return;
     }
     const ts = Date.now();
     const signed = await signWalletLogin(loginMessage(addr, ts), addr);
     if (signed) {
-      // Fresh signature → rotate device session so stolen old secrets die.
-      rotateWalletSessionSecret(signed.address);
+      // Keep the SAME device session secret — rotating here was the zone-travel bug
+      // (local secret changed before D1 re-bound → every district re-prompted).
+      walletSessionSecret(signed.address);
       const proof = { wallet: signed.address, sig: signed.signature, ts };
       this.net.setAuth(proof);
       this.registry.set("walletProof", proof);
+      this.registry.set("walletAddress", signed.address);
     }
   }
 
@@ -2140,6 +2491,7 @@ export default class OnlineScene extends Phaser.Scene {
     let preferred: { x: number; y: number } | null = null;
     if (this.isTutorial) preferred = TUTORIAL_SPAWN;
     else if (this.isCityHub) preferred = CITY_HUB_SPAWN;
+    else if (this.isSubway) preferred = subwaySpawnForEntry(this.fromZone);
     // Compact FRLG rooms (district buildings, hub facades, estate homes) — mat entry tile.
     // SAFEHOUSE_SPAWN is centre of the large safehouse plan and sits OUTSIDE 15×11 walls.
     else if (isVenueSizedZone(this.zone)) preferred = venueSpawnFor(this.zone, this.zoneGrid);
@@ -2158,7 +2510,7 @@ export default class OnlineScene extends Phaser.Scene {
   private chatAreaLabel(): string {
     if (this.isTutorial) return "DRILL YARD";
     if (this.isCityHub) return "METRO CITY";
-    if (this.isSubway) return "THE UNDERLINE";
+    if (this.isSubway) return "SUBWAY · THE UNDERLINE";
     if (this.isDive) return `ICE VAULT ${this.zone.toUpperCase()}`;
     if (this.isEstates) return "THE ESTATES";
     if (this.interior && INTERIOR_TITLES[this.zone]) return INTERIOR_TITLES[this.zone]!;
@@ -2167,7 +2519,15 @@ export default class OnlineScene extends Phaser.Scene {
     const hubInt = parseHubInterior(this.zone);
     if (hubInt !== null) return `METRO CITY · ${HUB_INTERIOR_TITLE[ONLINE_CITY.buildings[hubInt].kind] ?? "BUILDING"}`;
     const bldgInt = parseBuildingInterior(this.zone);
-    if (bldgInt) return `${DISTRICTS[bldgInt.district]?.name?.toUpperCase() ?? "DISTRICT"} · ${DISTRICT_VENUE_TITLE[districtBuildingKind(bldgInt.index)]}`;
+    if (bldgInt) {
+      const k = districtBuildingKind(bldgInt.index);
+      return `${DISTRICTS[bldgInt.district]?.name?.toUpperCase() ?? "DISTRICT"} · ${k ? DISTRICT_VENUE_TITLE[k] : "BUILDING"}`;
+    }
+    const wsh = parseWildernessShack(this.zone);
+    if (wsh) {
+      const sh = wildernessShackDef(wsh.bridge, wsh.index);
+      return `${getBridge(wsh.bridge).name.toUpperCase()} · ${sh?.label ?? "SHACK"}`;
+    }
     if (this.isBridge) return getBridge(this.bridgeIndex).name;
     if (/^d\d+$/.test(this.zone)) return DISTRICTS[this.districtIndex]?.name?.toUpperCase() ?? this.zone.toUpperCase();
     if (/^w\d+$/.test(this.zone)) return getBridge(parseBridgeZone(this.zone)).name;
@@ -2180,13 +2540,18 @@ export default class OnlineScene extends Phaser.Scene {
   private zoneLabelFor(z: string): string {
     if (INTERIOR_TITLES[z]) return INTERIOR_TITLES[z]!;
     if (z === ESTATES_ZONE) return "THE ESTATES";
-    if (z === "subway") return "THE UNDERLINE";
+    if (z === "subway") return "SUBWAY STATION · THE UNDERLINE";
     const est = parseEstateInterior(z);
     if (est !== null) return `HOME ${est + 1}`;
     const hb = parseHubInterior(z);
     if (hb !== null) return HUB_INTERIOR_TITLE[ONLINE_CITY.buildings[hb].kind] ?? "BUILDING";
     const bi = parseBuildingInterior(z);
-    if (bi) return DISTRICT_VENUE_TITLE[districtBuildingKind(bi.index)];
+    if (bi) {
+      const k = districtBuildingKind(bi.index);
+      return k ? DISTRICT_VENUE_TITLE[k] : "BUILDING";
+    }
+    const wsh = parseWildernessShack(z);
+    if (wsh) return wildernessShackDef(wsh.bridge, wsh.index)?.label ?? "TRAIL SHACK";
     if (/^d\d+$/.test(z)) return DISTRICTS[this.parseZone(z)]?.name ?? z.toUpperCase();
     if (/^w\d+$/.test(z)) return getBridge(parseBridgeZone(z)).name;
     return z.toUpperCase();
@@ -2377,7 +2742,9 @@ export default class OnlineScene extends Phaser.Scene {
   private openService(svc: string) {
     const n = this.net;
     // FIXER / contracts is the first-hour north star — never lock it. Everything else waits.
-    if (svc !== "contracts" && svc !== "stash" && firstHourSystemsLocked() && !this.isTutorial) {
+    // Heal / meal / subway entry are always allowed (survival utilities).
+    const utilitySvc = svc === "heal" || svc === "meal" || svc === "subway" || svc === "stash";
+    if (svc !== "contracts" && !utilitySvc && firstHourSystemsLocked() && !this.isTutorial) {
       this.pointBlockedPlayerToFixer();
       return;
     }
@@ -2416,6 +2783,33 @@ export default class OnlineScene extends Phaser.Scene {
         break;
       case "registry":
         this.toggleRegistry();
+        break;
+      case "heal": {
+        // Clinic / hospital staff — paid full patch via server.
+        if (!n.connected) {
+          this.showBubble(this.me?.x ?? 0, this.me?.y ?? 0, "grid's dark — can't patch offline");
+          break;
+        }
+        const hb = parseHubInterior(this.zone);
+        const hubKind = hb !== null ? ONLINE_CITY.buildings[hb]?.kind : "";
+        const medicId =
+          this.zone === "hospital" || hubKind === "hospital" ? "keep_hospital" : "keep_clinic";
+        n.npcService(medicId, "heal_paid");
+        this.showBubble(this.me?.x ?? 0, this.me?.y ?? 0, "MEDIC: hold still…");
+        break;
+      }
+      case "meal": {
+        if (!n.connected) {
+          this.showBubble(this.me?.x ?? 0, this.me?.y ?? 0, "kitchen's offline");
+          break;
+        }
+        n.npcService("keep_hotel", "meal");
+        this.showBubble(this.me?.x ?? 0, this.me?.y ?? 0, "CONCIERGE: sit. eat.");
+        break;
+      }
+      case "subway":
+        // Drop into THE UNDERLINE combat dungeon.
+        this.enterZone("subway");
         break;
     }
     const panelKind: Record<string, string> = {
@@ -2669,6 +3063,9 @@ export default class OnlineScene extends Phaser.Scene {
   /** Client-side leave for drill yard when the socket cannot graduate us. */
   private forceClientDeployToCity() {
     if (!this.sys.isActive()) return;
+    // Prevent double deploy when server redirect and failsafe both fire.
+    if (this.registry.get("tutorialDeploying")) return;
+    this.registry.set("tutorialDeploying", true);
     try {
       localStorage.setItem("metrophage_tutorial_skip_v1", "1");
     } catch {
@@ -2838,6 +3235,118 @@ export default class OnlineScene extends Phaser.Scene {
       "arc_tech", // quiet vent HEAT — not a job board
     );
     this.dressBridgeWilds(b);
+    this.placeWildernessShacks(this.bridgeIndex);
+  }
+
+  /**
+   * Small trail shacks on the wilderness corridor — enter for a talk-only NPC.
+   * Footprint drawn as a tiny structure; door steps into zone `w{N}s{K}`.
+   */
+  private placeWildernessShacks(bridgeIndex: number) {
+    const S = DISTRICT_SCALE;
+    const g = this.add.graphics().setDepth(4.2);
+    for (const [si, sh] of wildernessShacks(bridgeIndex).entries()) {
+      const fx = sh.foot[0] * S;
+      const fy = sh.foot[1] * S;
+      const fw = 2 * S;
+      const fh = 2 * S;
+      // Tiny shack body
+      g.fillStyle(0x121018, 0.98).fillRect(fx * TILE, fy * TILE, fw * TILE, fh * TILE);
+      g.fillStyle(0x2a1a14, 0.95).fillRect(fx * TILE, fy * TILE, fw * TILE, 6);
+      g.lineStyle(1, 0x6a5040, 0.7).strokeRect(fx * TILE + 1, fy * TILE + 1, fw * TILE - 2, fh * TILE - 2);
+      // Roof wash
+      g.fillStyle(0xffb13c, 0.25).fillRect(fx * TILE, fy * TILE, fw * TILE, 3);
+      const dest = wildernessShackZone(bridgeIndex, si);
+      let dtx = sh.door[0] * S;
+      let dty = sh.door[1] * S;
+      // Prefer open doorstep; else snap south of footprint
+      if (isWall(this.zoneGrid[dty]?.[dtx])) {
+        dtx = fx + Math.floor(fw / 2);
+        dty = fy + fh;
+        while (dty < this.zoneGrid.length - 1 && isWall(this.zoneGrid[dty]?.[dtx])) dty++;
+      }
+      if (isWall(this.zoneGrid[dty]?.[dtx])) continue;
+      this.makeDoor({
+        dest,
+        label: sh.label,
+        tile: [dtx, dty],
+        color: 0xffb13c,
+        flat: true,
+      });
+      const wx = dtx * TILE;
+      const wy = (dty - 1) * TILE;
+      const dg = this.add.graphics().setDepth(4.5);
+      dg.fillStyle(0x05060f, 0.96).fillRect(wx + 6, wy + 8, TILE - 12, TILE - 8);
+      dg.fillStyle(0xffb13c, 0.9).fillRect(wx + 4, wy + 5, TILE - 8, 3);
+      this.add
+        .image(wx + TILE / 2, wy + TILE / 2, GLOW_KEY)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setTint(0xffb13c)
+        .setDepth(4.4)
+        .setScale(0.35)
+        .setAlpha(0.28);
+      this.districtDoors.push({ tx: dtx, ty: dty, dest });
+    }
+  }
+
+  /** Talk-only shack interior — one occupant, exit mat, H returns to the corridor. */
+  private buildWildernessShackInterior(ref: { bridge: number; index: number }) {
+    const sh = wildernessShackDef(ref.bridge, ref.index);
+    const bridge = getBridge(ref.bridge);
+    const accent = bridge.accent;
+    const L = venueLayoutFor(this.zone);
+    this.add
+      .text(this.worldW / 2, 4 * TILE, `▣ ${sh?.label ?? "TRAIL SHACK"}`, {
+        fontFamily: "Courier New, monospace",
+        fontSize: "18px",
+        color: "#ffb13c",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5)
+      .setDepth(6);
+    this.add
+      .text(this.worldW / 2, 4 * TILE + 24, `${bridge.name} · talk: E · door mat / H to leave`, {
+        fontFamily: "Courier New, monospace",
+        fontSize: "11px",
+        color: "#9aa3b2",
+      })
+      .setOrigin(0.5)
+      .setDepth(6);
+
+    // Dim shack floor wash
+    const bg = this.add.graphics().setDepth(2.2);
+    bg.fillStyle(0x1a120c, 0.35).fillRect(TILE, TILE, (L.w - 2) * TILE, (L.h - 2) * TILE);
+    bg.fillStyle(accent, 0.08).fillRect(TILE * 2, TILE * 2, (L.w - 4) * TILE, (L.h - 4) * TILE);
+
+    if (sh) {
+      const [stx, sty] = L.seats[0] ?? [Math.floor(L.w / 2), 3];
+      this.makeTalkNpc(
+        sh.occupant.name,
+        sh.occupant.look,
+        sh.occupant.lines,
+        stx * TILE + TILE / 2,
+        sty * TILE + TILE / 2,
+        sh.occupant.id ?? `wild_${ref.bridge}_${ref.index}`,
+      );
+    }
+
+    // Exit mat south (same as venues)
+    const [matTx, matTy] = L.mat;
+    const matX = matTx * TILE;
+    const matY = matTy * TILE;
+    const mg = this.add.graphics().setDepth(2.5);
+    mg.fillStyle(0x0a0e18, 0.9).fillRect(matX + 3, matY + 2, TILE - 6, TILE - 4);
+    mg.lineStyle(2, 0xffb13c, 0.85).strokeRect(matX + 3, matY + 2, TILE - 6, TILE - 4);
+    mg.fillStyle(0xffb13c, 0.35).fillRect(matX + 7, matY + TILE - 9, TILE - 14, 3);
+    this.add
+      .text(matX + TILE / 2, matY + TILE / 2 - 2, "▼", {
+        fontFamily: "Courier New, monospace",
+        fontSize: "13px",
+        color: "#eafdff",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5)
+      .setDepth(2.6);
   }
 
   /** The wilds between districts get LIVED-IN: a wayfarer camp with a fire, seated
@@ -3069,8 +3578,11 @@ export default class OnlineScene extends Phaser.Scene {
   private talkNpc(npc: { npcId?: string; name: string; lines?: string[]; lineIdx?: number; x: number; y: number }) {
     if (npc.npcId) noteNpcTalk(npc.npcId);
     const mem = npc.npcId ? npcMemoryLine(npc.npcId, npc.name) : null;
-    const line = mem ?? `${npc.name}: ${this.advanceLine(npc)}`;
-    this.showBubble(npc.x, npc.y, line.startsWith(npc.name) ? line : `${npc.name}: ${line}`, this.bubblePortrait(npc.npcId, npc.name));
+    // One advance per talk — bubble + service menu share the same line (was double-advance).
+    const spoken = mem ?? this.advanceLine(npc);
+    const prefix = `${npc.name}: `;
+    const bare = spoken.startsWith(prefix) ? spoken.slice(prefix.length) : spoken.startsWith(npc.name) ? spoken.slice(npc.name.length).replace(/^:\s*/, "") : spoken;
+    this.showBubble(npc.x, npc.y, `${npc.name}: ${bare}`, this.bubblePortrait(npc.npcId, npc.name));
 
     if (!npc.npcId) return;
     const hasBounty = !!bountyForNpc(npc.npcId);
@@ -3080,7 +3592,7 @@ export default class OnlineScene extends Phaser.Scene {
     this.npcTalk.show({
       npcId: npc.npcId,
       name: npc.name,
-      line: mem ?? this.advanceLine(npc),
+      line: bare,
       credits: this.net.credits,
       cores: this.net.cores,
       hasBountyActive: !!this.net.bounty,
@@ -3089,10 +3601,10 @@ export default class OnlineScene extends Phaser.Scene {
   }
 
   private advanceLine(npc: { lines?: string[]; lineIdx?: number }): string {
-    if (!npc.lines || npc.lines.length === 0) return "…";
-    const line = npc.lines[(npc.lineIdx ?? 0) % npc.lines.length];
-    npc.lineIdx = (npc.lineIdx ?? 0) + 1;
-    return line;
+    const idx = npc.lineIdx ?? 0;
+    const line = locationAwareLine(npc.lines, this.zone, idx);
+    npc.lineIdx = idx + 1;
+    return line || "…";
   }
 
   /**
@@ -3257,10 +3769,18 @@ export default class OnlineScene extends Phaser.Scene {
         objective: story.objective,
       });
     }
-    // Short toast as secondary cue.
-    this.storyHoldUntil = performance.now() + 8_000;
+    // Personal meltdown victory — VFX only for THIS client; server already
+    // redirected (or will) to CITY START. Never a shared world wipe.
+    if (story.meltdown || story.stage === "meltdown") {
+      this.playPersonalMeltdownVictory();
+    }
+    // Short toast as secondary cue (tighter clip so it stays on-screen).
+    this.storyHoldUntil = performance.now() + (story.meltdown ? 12_000 : 8_000);
     const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
-    const body = `◢ ${clip(story.quest, 28)} · ${clip(story.title, 36)}\n${clip(story.text.replace(/\n+/g, " "), 120)}\n▸ ${clip(story.objective, 42)}`;
+    const mobile = this.mobileUx();
+    const body = story.meltdown
+      ? `◈ MELTDOWN · PERSONAL VICTORY\n${clip(story.text.replace(/\n+/g, " "), mobile ? 100 : 140)}\n▸ CITY START · bag kept · others still run`
+      : `◢ ${clip(story.quest, mobile ? 20 : 28)} · ${clip(story.title, mobile ? 24 : 32)}\n${clip(story.text.replace(/\n+/g, " "), mobile ? 80 : 110)}\n▸ ${clip(story.objective, mobile ? 32 : 40)}`;
     this.storyPanel
       .setText(body)
       .setVisible(true)
@@ -3268,6 +3788,49 @@ export default class OnlineScene extends Phaser.Scene {
       .setDepth(1900);
     this.hudRefreshAcc = OnlineScene.HUD_REFRESH_MS;
     this.refreshAllyLines();
+  }
+
+  /**
+   * Personal campaign meltdown — screen juice + VO for the victor only.
+   * Does not touch other players or server state (server already preserved progress
+   * and queued a CITY START redirect for this runner alone).
+   */
+  private playPersonalMeltdownVictory() {
+    this.synth?.meltdown();
+    this.synth?.cast();
+    try {
+      if (this.cache.audio.exists(VO_MELTDOWN_KEY)) {
+        this.sound.play(VO_MELTDOWN_KEY, { volume: 0.85 });
+      }
+    } catch {
+      /* optional VO */
+    }
+    try {
+      MusicDirector.for(this)?.play("meltdown", this);
+    } catch {
+      /* optional bed */
+    }
+    juiceShake(this, 280, 0.008);
+    juiceFlash(this, 320, 255, 59, 107);
+    juiceNeonPulse(this, 0.45, 900);
+    const neon = this.neon;
+    if (neon) {
+      this.tweens.add({
+        targets: neon,
+        glitch: 0.72,
+        duration: 900,
+        yoyo: true,
+        hold: 700,
+        ease: "Sine.inOut",
+        onComplete: () => {
+          neon.glitch = 0;
+        },
+      });
+    }
+    if (this.me) {
+      this.particles?.burst(this.me.x, this.me.y, 2.4);
+      this.particles?.spark(this.me.x, this.me.y, 0xff3b6b, 2.2);
+    }
   }
 
   /** Painted bust for a bubble speaker; sex from the NPC def keeps the face on-sprite. */
@@ -3285,22 +3848,51 @@ export default class OnlineScene extends Phaser.Scene {
   /** Show a floating speech bubble above a world point (auto-fades). */
   private showBubble(x: number, y: number, text: string, portrait?: PortraitRef) {
     if (!this.speechBubble) return;
-    this.speechBubble.setText(text).setPosition(x, y - 34).setVisible(true).setAlpha(1);
+    // Keep copy short so the world-space bubble stays on camera.
+    const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
+    const line = clip(text.replace(/\s+/g, " ").trim(), 110);
+    this.speechBubble.setText(line).setVisible(true).setAlpha(1);
+    // Anchor above the speaker, then clamp into the world camera so tall bubbles
+    // never render off the top/sides of the view.
+    const cam = this.cameras.main;
+    const pad = 10;
+    const halfW = this.speechBubble.displayWidth / 2;
+    const bubbleH = this.speechBubble.displayHeight;
+    let bx = x;
+    let by = y - 28;
+    const viewL = cam.worldView.x + pad + halfW;
+    const viewR = cam.worldView.right - pad - halfW;
+    const viewT = cam.worldView.y + pad + bubbleH;
+    const viewB = cam.worldView.bottom - pad;
+    if (viewR > viewL) bx = Math.min(viewR, Math.max(viewL, bx));
+    if (viewB > viewT) by = Math.min(viewB, Math.max(viewT, by));
+    this.speechBubble.setPosition(bx, by);
     this.tweens.killTweensOf(this.speechBubble);
     const fading: Phaser.GameObjects.GameObject[] = [this.speechBubble];
     if (this.speechPortrait && this.speechPortraitRing) {
       this.tweens.killTweensOf([this.speechPortrait, this.speechPortraitRing]);
-      if (portrait && this.textures.exists(portrait.key)) {
-        const ps = uiDim(56);
-        const bx = x - this.speechBubble.displayWidth / 2 - ps / 2 - uiDim(6);
-        const by = y - 34 - this.speechBubble.displayHeight / 2;
+      const port =
+        portrait && this.textures.exists(portrait.key)
+          ? portrait
+          : portrait
+            ? portraitSheetFallback(portrait)
+            : undefined;
+      if (port && this.textures.exists(port.key)) {
+        const ps = 28;
+        const px = bx - halfW - ps / 2 - 6;
+        const py = by - bubbleH / 2;
+        // Singles are plain images (no frame); sheets need the cell index.
+        if (port.frame > 0 || this.textures.get(port.key).frameTotal > 1) {
+          this.speechPortrait.setTexture(port.key, port.frame);
+        } else {
+          this.speechPortrait.setTexture(port.key);
+        }
         this.speechPortrait
-          .setTexture(portrait.key, portrait.frame)
           .setDisplaySize(ps, ps)
-          .setPosition(bx, by)
+          .setPosition(px, py)
           .setVisible(true)
           .setAlpha(1);
-        this.speechPortraitRing.setPosition(bx, by).setVisible(true).setAlpha(1);
+        this.speechPortraitRing.setPosition(px, py).setVisible(true).setAlpha(1);
         fading.push(this.speechPortrait, this.speechPortraitRing);
       } else {
         this.speechPortrait.setVisible(false);
@@ -3559,30 +4151,151 @@ export default class OnlineScene extends Phaser.Scene {
     }
   }
 
-  /** THE UNDERLINE: an express train screams down a random platform row every so
-   *  often — a light streak + head lamp + a kiss of camera shake as it passes. */
+  /**
+   * THE UNDERLINE — 2D metro map: station signs + surface exits (organic unlock)
+   * + ambient express trains on hub corridors. Enemies come from the server.
+   */
+  private buildSubwayStations() {
+    const mono = "Courier New, monospace";
+    // Floating help near hub station (not screen-fixed — world is huge).
+    const hub = SUBWAY_STATIONS.find((s) => s.zone === "safe") ?? SUBWAY_STATIONS[0];
+    const hx = hub.tx * TILE + TILE / 2;
+    const hy = (hub.ty - 7) * TILE;
+    this.add
+      .text(hx, hy, "▼ THE UNDERLINE", {
+        fontFamily: mono,
+        fontSize: "18px",
+        color: "#ff3b6b",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5)
+      .setDepth(6)
+      .setScrollFactor(1);
+    this.add
+      .text(hx, hy + 20, "branching lines · districts in every direction · exits unlock travel · H surfaces", {
+        fontFamily: mono,
+        fontSize: "10px",
+        color: "#9aa3b2",
+      })
+      .setOrigin(0.5)
+      .setDepth(6)
+      .setScrollFactor(1);
+
+    for (const st of SUBWAY_STATIONS) {
+      const px = st.tx * TILE + TILE / 2;
+      const py = st.ty * TILE + TILE / 2;
+      // Station plate above the platform
+      this.add
+        .text(px, py - 52, `▲ ${st.label}`, {
+          fontFamily: mono,
+          fontSize: st.major ? "12px" : "10px",
+          color: "#" + (st.accent & 0xffffff).toString(16).padStart(6, "0"),
+          fontStyle: "bold",
+        })
+        .setOrigin(0.5)
+        .setDepth(6)
+        .setShadow(0, 0, "#000000", 4, true, true);
+      this.add
+        .text(px, py - 36, st.zone === "safe" ? "CITY CENTER · all lines" : "EXIT TO SURFACE", {
+          fontFamily: mono,
+          fontSize: "9px",
+          color: "#cfe8ff",
+        })
+        .setOrigin(0.5)
+        .setDepth(6);
+
+      // Surface exit door (organic handoff unlocks that zone for map TRAVEL)
+      const doorTy = st.ty + (st.major ? 3 : 2);
+      this.makeDoor({
+        dest: st.zone,
+        label: st.zone === "safe" ? "▲ CITY" : `▲ ${st.short}`,
+        tile: [st.tx, doorTy],
+        color: st.accent,
+        flat: false,
+      });
+
+      // Campaign threat wayfinding — which surface district this line serves
+      const tier = subwayStationTier(st);
+      if (st.zone !== "safe") {
+        const di = /^d(\d+)$/.exec(st.zone);
+        const lvl = di ? recLevelLabel(parseInt(di[1], 10)) : "";
+        this.add
+          .text(px, py + 30, lvl ? `threat ${tier} · ${lvl}` : `threat ${tier}`, {
+            fontFamily: mono,
+            fontSize: "9px",
+            color: "#5a6478",
+          })
+          .setOrigin(0.5)
+          .setDepth(5);
+      }
+      // Story standing reads before raw threat: "you're early" is more useful to
+      // a runner reading a platform sign than "this is dangerous".
+      const acc = zoneAccess(st.zone, {
+        completed: this.net.campaignCompleted ?? [],
+        level: this.net.level,
+      });
+      const early = !this.net.godMode && acc.story === "ahead";
+      const line = early
+        ? `AHEAD OF STORY${acc.requiredQuestName ? ` · ${acc.requiredQuestName} FIRST` : ""}`
+        : tier >= 3
+          ? "KERNEL LINE"
+          : tier >= 2
+            ? "HIGH THREAT"
+            : "";
+      if (line) {
+        this.add
+          .text(px, py + 42, line, {
+            fontFamily: mono,
+            fontSize: "9px",
+            color: early ? "#ff7a3c" : "#ff3b6b",
+          })
+          .setOrigin(0.5)
+          .setDepth(5);
+      }
+    }
+
+    this.dressSubwayLife();
+    dressSubwayWishlistArt(this, SUBWAY_STATIONS);
+  }
+
+  /** THE UNDERLINE: ghost trains on the hub corridor. */
   private dressSubwayLife() {
-    const rows = [7.5, 15.5, 23.5]; // centres of the carved platform row pairs
+    const hub = SUBWAY_STATIONS.find((s) => s.zone === "safe") ?? SUBWAY_STATIONS[0];
+    const midY = hub.ty * TILE + TILE / 2;
     const run = () => {
-      if (!this.scene.isActive()) return;
-      const y = rows[(Math.random() * rows.length) | 0] * TILE;
+      if (!this.scene.isActive() || !this.isSubway) return;
       const ltr = Math.random() < 0.5;
-      const body = this.add.image(ltr ? -140 : this.worldW + 140, y, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(0x8dfff0).setDepth(2.5).setScale(3.2, 0.35).setAlpha(0.3);
-      const lamp = this.add.image(body.x + (ltr ? 90 : -90), y, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(0xffffff).setDepth(2.6).setScale(0.5).setAlpha(0.5);
+      const y = midY + (Math.random() < 0.5 ? -TILE : TILE);
+      const body = this.add
+        .image(ltr ? -200 : this.worldW + 200, y, GLOW_KEY)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setTint(0x8dfff0)
+        .setDepth(2.5)
+        .setScale(4.2, 0.28)
+        .setAlpha(0.28);
+      const lamp = this.add
+        .image(body.x + (ltr ? 110 : -110), y, GLOW_KEY)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setTint(0xffffff)
+        .setDepth(2.6)
+        .setScale(0.55)
+        .setAlpha(0.45);
       this.tweens.add({
         targets: [body, lamp],
-        x: `+=${(ltr ? 1 : -1) * (this.worldW + 280)}`,
-        duration: 1400,
+        x: `+=${(ltr ? 1 : -1) * (this.worldW + 400)}`,
+        duration: 2800 + Math.random() * 800,
         ease: "Cubic.in",
         onComplete: () => {
           body.destroy();
           lamp.destroy();
         },
       });
-      juiceShake(this, 240, 0.0022);
-      this.time.delayedCall(7000 + Math.random() * 6000, run);
+      // Only shake if the camera is near the train path
+      const cam = this.cameras.main;
+      if (Math.abs(cam.scrollY + cam.height / 2 - y) < 220) juiceShake(this, 200, 0.0016);
+      this.time.delayedCall(9000 + Math.random() * 8000, run);
     };
-    this.time.delayedCall(2500, run);
+    this.time.delayedCall(2800, run);
   }
 
   /** Faint aircar silhouettes drifting high over the plaza — four sprites on slow
@@ -3659,7 +4372,7 @@ export default class OnlineScene extends Phaser.Scene {
     ring.lineStyle(1, 0x29e7ff, 0.07).strokeEllipse(cx, cy, 410, 205);
     for (let i = 0; i < 5; i++) ring.fillStyle(0x39ff88, 0.05).fillRect(cx - 24 + i * 11, cy + 120, 6, 96); // guide stripes → deploy gate
 
-    // ── central fountain ──
+    // ── central fountain (procedural + optional HF landmark overlay) ──
     const [fx, fy] = w(0, -8);
     const f = this.add.graphics().setDepth(4);
     f.fillStyle(0x0d1220, 1).fillEllipse(fx, fy + 5, 104, 56);
@@ -3673,6 +4386,10 @@ export default class OnlineScene extends Phaser.Scene {
       const gl = glow(fx + (i - 2) * 18, fy + ((i % 2) - 0.5) * 16, 0x8dfff0, 0.28, 0.28, 0.18, 5);
       this.tweens.add({ targets: gl, alpha: 0.42, scale: 0.42, duration: 1300 + i * 260, yoyo: true, repeat: -1, ease: "sine.inout" });
     }
+    // Wishlist HF landmarks (fountain / crucible / subway kiosk) when textures exist.
+    const subDoor = ONLINE_CITY.buildings.find((b) => b.kind === "subway")?.door;
+    const stadDoor = ONLINE_CITY.buildings.find((b) => b.kind === "stadium")?.door;
+    dressHubWishlistArt(this, fx, fy, subDoor, stadDoor);
 
     // ── streetlights ringing the plaza (warm ground pools) ──
     const streetlight = (x: number, y: number) => {
@@ -3775,6 +4492,7 @@ export default class OnlineScene extends Phaser.Scene {
       .text(this.worldW / 2, 3 * TILE + 24, "residential district · buy a home, then furnish it · H returns to METRO CITY", bodyFont(11, { color: "#9aa3b2" }))
       .setOrigin(0.5)
       .setDepth(6);
+    dressEstateFacades(this, ESTATES.plots);
     for (const plot of ESTATES.plots) {
       const [dtx, dty] = plot.door;
       const color = 0xffb13c;
@@ -3836,7 +4554,7 @@ export default class OnlineScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(6);
     this.add
-      .text(this.worldW / 2, 2.4 * TILE + 20, "no combat · door mat (▼) to leave · owners: F to furnish, your LOCKBOX works here", bodyFont(10, { color: "#9aa3b2" }))
+      .text(this.worldW / 2, 2.4 * TILE + 20, "no combat · door mat (▼) to leave · owners: U to furnish, your LOCKBOX works here", bodyFont(10, { color: "#9aa3b2" }))
       .setOrigin(0.5)
       .setDepth(6);
     // exit mat → returns to THE ESTATES street
@@ -4505,7 +5223,16 @@ export default class OnlineScene extends Phaser.Scene {
       this.showTravelDenied(zone);
       return;
     }
-    this.travelFast(zone);
+    // Named destinations need `from` for correct door/station spawn (subway + hub rooms).
+    const needsFrom =
+      zone === "subway" ||
+      zone === "clinic" ||
+      zone === "shop" ||
+      zone === "bar" ||
+      zone === "den" ||
+      zone === "vault" ||
+      zone === "estates";
+    this.travelFast(zone, needsFrom ? { from: this.zone } : undefined);
   }
 
   /** Walk/deploy — unlocks fast travel to this zone. */
@@ -4514,9 +5241,13 @@ export default class OnlineScene extends Phaser.Scene {
     this.travelTo(zone, extra);
   }
 
-  /** Map / number-key teleport — requires prior organic visit. */
+  /** Map / number-key teleport — requires prior organic visit (subway is always open). */
   private travelFast(zone: string, extra?: { from?: string; tutorialMode?: TutorialMode }) {
     this.registry.set("fastTravel", true);
+    // Fast-track into named rooms/subway still needs entry context (`from`).
+    if ((zone === "subway" || zone === "clinic" || zone === "shop" || zone === "bar" || zone === "den") && !extra?.from) {
+      extra = { ...extra, from: this.zone || "safe" };
+    }
     this.travelTo(zone, extra);
   }
 
@@ -4540,6 +5271,7 @@ export default class OnlineScene extends Phaser.Scene {
     const bldgInt = parseBuildingInterior(zone);
     const hubInt = parseHubInterior(zone);
     const estateInt = parseEstateInterior(zone);
+    const wildShack = parseWildernessShack(zone);
     const destDive = parseDiveZone(zone);
     const destNamed =
       !!INTERIOR_TITLES[zone] ||
@@ -4550,8 +5282,17 @@ export default class OnlineScene extends Phaser.Scene {
       destDive >= 0 ||
       !!bldgInt ||
       hubInt !== null ||
-      estateInt !== null;
-    const di = bldgInt ? bldgInt.district : destNamed && destBridge < 0 ? 0 : destBridge >= 0 ? destBridge : this.parseZone(zone);
+      estateInt !== null ||
+      !!wildShack;
+    const di = bldgInt
+      ? bldgInt.district
+      : wildShack
+        ? getBridge(wildShack.bridge).fromDistrict
+        : destNamed && destBridge < 0
+          ? 0
+          : destBridge >= 0
+            ? destBridge
+            : this.parseZone(zone);
     const accent =
       isTutorialZone(zone)
         ? 0x29e7ff
@@ -4561,8 +5302,13 @@ export default class OnlineScene extends Phaser.Scene {
             ? 0x39ff88
             : destBridge >= 0
               ? getBridge(destBridge).accent
-              : (DISTRICTS[di]?.accent ?? 0x29e7ff);
-    const style = zone === "safe" || this.interior || bldgInt || hubInt !== null || estateInt !== null ? "fade" : "deploy";
+              : wildShack
+                ? getBridge(wildShack.bridge).accent
+                : (DISTRICTS[di]?.accent ?? 0x29e7ff);
+    const style =
+      zone === "safe" || this.interior || bldgInt || hubInt !== null || estateInt !== null || wildShack
+        ? "fade"
+        : "deploy";
     transitionTo(this, "Online", { zone, ...extra }, {
       style,
       accent,
@@ -4573,7 +5319,21 @@ export default class OnlineScene extends Phaser.Scene {
 
   private zoneUnlocked(zone: string): boolean {
     if (this.net.godMode) return true;
-    return zone === this.zone || zone === "safe" || this.net.unlocked.includes(zone);
+    // Trail shacks are always open once you're on the corridor (or already inside).
+    if (parseWildernessShack(zone)) return true;
+    // Free routes: hub, subway, and hub service rooms once the city is known.
+    if (zone === this.zone || zone === "safe" || zone === "subway") return true;
+    const hubRooms = new Set(["clinic", "shop", "bar", "den"]);
+    if (hubRooms.has(zone)) {
+      return (
+        this.net.unlocked.includes("safe") ||
+        this.net.discovered.includes("safe") ||
+        this.zone === "safe" ||
+        this.net.unlocked.includes(zone) ||
+        this.net.discovered.includes(zone)
+      );
+    }
+    return this.net.unlocked.includes(zone) || this.net.discovered.includes(zone);
   }
 
   /** Client-side melee arc — server still resolves hits. */
@@ -4962,7 +5722,13 @@ export default class OnlineScene extends Phaser.Scene {
           this.doorTransit = true;
           this.enterZone(d.dest);
         }
-      } else if (this.interior && (parseBuildingInterior(this.zone) || parseHubInterior(this.zone) !== null || parseEstateInterior(this.zone) !== null)) {
+      } else if (
+        this.interior &&
+        (parseBuildingInterior(this.zone) ||
+          parseHubInterior(this.zone) !== null ||
+          parseEstateInterior(this.zone) !== null ||
+          parseWildernessShack(this.zone))
+      ) {
         const p = this.playerPos();
         const [matTx, matTy] = venueLayoutFor(this.zone).mat; // est homes resolve to the classic [7,9]
         if (Math.floor(p.x / TILE) === matTx && Math.floor(p.y / TILE) === matTy) {
@@ -5008,8 +5774,9 @@ export default class OnlineScene extends Phaser.Scene {
     this.trackNodeCaptures();
     if (this.neon && this.net.connected) {
       const combat = Math.min(1, this.net.enemies.size / 14);
-      // the city glow answers both the district (enemy density) and the runner's HEAT
-      this.neon.heat = 0.05 + combat * 0.42 + (this.net.heat / HEAT.max) * 0.3;
+      // Ambient district heat + combat density + runner HEAT.
+      const base = this.districtEnvTheme?.baseHeat ?? 0.05;
+      this.neon.heat = base + combat * 0.42 + (this.net.heat / HEAT.max) * 0.3;
     }
     this.atmosphere?.update(this.time.now, dt, Math.min(1, this.net.enemies.size / 16));
     this.updateBossLocator();
@@ -5129,73 +5896,91 @@ export default class OnlineScene extends Phaser.Scene {
       }
     }
 
-    // FIRE — RS auto-attacks locked target; action mode hold-click / F / Ctrl; mobile ATK.
+    // FIRE — F / Ctrl ALWAYS attack outside the safe hub (hold or tap).
+    // Not gated on map/inv/shop overlays, locked targets, or RS mode — only chat
+    // (typing) and the safe zone suppress keyboard fire.
     const ptr = this.input.activePointer;
     const mobileFire = !!this.mobilePad?.isFireHeld();
-    // Keyboard fire (F / Ctrl) — works even when panels aren't stealing focus; never in chat.
+    const inSafeZone = this.isCityHub || this.zone === "safe";
     const keyFire =
+      !inSafeZone &&
       !this.chatOpen &&
-      !this.emoteWheelOpen &&
-      !this.options?.isOpen &&
-      !this.blockRsInput() &&
+      !this.net.dead &&
       keyDown(this, "fire");
-    // Mobile ATK always works (even in RS/tap mode). Desktop action uses hold-click + keys.
-    const rsFire = rs && this.attackTargetId !== null && !mobileFire && !keyFire;
-    const mouseFire = !rs && ptr.isDown && !this.mobilePad?.containsScreen(ptr.x, ptr.y) && !this.blockRsInput();
+    // RS auto-attack only when not already keyboard/mobile-firing.
+    const rsFire = rs && this.attackTargetId !== null && !mobileFire && !keyFire && !inSafeZone;
+    // Mouse hold-fire in action mode (not while finger is on the mobile pad / menus).
+    const mouseFire =
+      !inSafeZone &&
+      !rs &&
+      ptr.isDown &&
+      !this.mobilePad?.containsScreen(ptr.x, ptr.y) &&
+      !this.blockRsInput() &&
+      !this.homeEditing &&
+      !this.chatOpen;
+    // F always counts as attack intent (even in RS mode / with HUD panels open).
     const actionFire = mouseFire || mobileFire || keyFire;
     let aim: number | null = null;
+    const origin = this.playerPos();
+    /** Nearest living enemy within `range` (world px). */
+    const nearestEnemy = (range: number) => {
+      let bestId: number | null = null;
+      let best: { x: number; y: number } | null = null;
+      let bestD = range;
+      for (const [id, e] of this.net.enemies) {
+        if (e.hp <= 0) continue;
+        const d = Math.hypot(e.x - origin.x, e.y - origin.y);
+        if (d < bestD) {
+          bestD = d;
+          best = e;
+          bestId = id;
+        }
+      }
+      return best && bestId !== null ? { id: bestId, e: best } : null;
+    };
     if (rsFire) {
       const tgt = this.net.enemies.get(this.attackTargetId!);
-      if (!tgt) this.attackTargetId = null;
+      if (!tgt || tgt.hp <= 0) this.attackTargetId = null;
       else {
-        const origin = this.playerPos();
         const dist = Math.hypot(tgt.x - origin.x, tgt.y - origin.y);
-        if (dist <= this.attackRange) aim = Math.atan2(tgt.y - origin.y, tgt.x - origin.x);
+        if (dist <= this.attackRange * 1.2) aim = Math.atan2(tgt.y - origin.y, tgt.x - origin.x);
       }
     } else if (actionFire) {
-      if (mobileFire) {
-        // Hold ATK: aim at nearest enemy in range, else face walk direction.
-        let bestId: number | null = null;
-        let best: { x: number; y: number } | null = null;
-        let bestD = this.attackRange * 1.35;
-        const origin = this.playerPos();
-        for (const [id, e] of this.net.enemies) {
-          if (e.hp <= 0) continue;
-          const d = Math.hypot(e.x - origin.x, e.y - origin.y);
-          if (d < bestD) {
-            bestD = d;
-            best = e;
-            bestId = id;
-          }
-        }
-        if (best && bestId !== null) {
-          this.attackTargetId = bestId;
-          aim = Math.atan2(best.y - origin.y, best.x - origin.x);
-        } else {
+      // Prefer nearest enemy so F always swings at something useful when foes are close.
+      const near = nearestEnemy(this.attackRange * 1.35);
+      if (near) {
+        this.attackTargetId = near.id;
+        aim = Math.atan2(near.e.y - origin.y, near.e.x - origin.x);
+      } else if (mobileFire) {
+        const fx = this.meDir.x || (mx !== 0 ? mx : 1);
+        const fy = this.meDir.y || my;
+        aim = Math.atan2(fy, fx);
+      } else if (keyFire) {
+        // Keyboard: face mouse if available, else walk direction / last facing.
+        const wp = this.cameras.main.getWorldPoint(ptr.x, ptr.y);
+        const md = Math.hypot(wp.x - origin.x, wp.y - origin.y);
+        if (md > 8) aim = Math.atan2(wp.y - origin.y, wp.x - origin.x);
+        else {
           const fx = this.meDir.x || (mx !== 0 ? mx : 1);
           const fy = this.meDir.y || my;
           aim = Math.atan2(fy, fx);
         }
       } else {
-        const origin = this.playerPos();
+        // Mouse hold-click: aim at cursor.
         const wp = this.cameras.main.getWorldPoint(ptr.x, ptr.y);
         aim = Math.atan2(wp.y - origin.y, wp.x - origin.x);
       }
     }
-    if (
-      aim !== null &&
-      this.net.connected &&
-      !this.net.dead &&
-      !this.chatOpen &&
-      !this.emoteWheelOpen &&
-      !this.options?.isOpen
-    ) {
-      this.net.fire(aim);
+    // Fire when we have an aim and aren't in the safe hub / dead / typing chat.
+    // F deliberately ignores open panels (map, bag, etc.) so combat never soft-locks.
+    if (aim !== null && this.net.connected && !this.net.dead && !this.chatOpen && !inSafeZone) {
       const now = this.time.now;
       const weapon = this.net.equipped.find((it) => it.slot === "weapon");
       const prim = weapon?.weaponId ? getWeapon(weapon.weaponId)?.primary : undefined;
       const melee = prim?.kind === "melee";
       const fireMs = prim?.fireRateMs ?? 280;
+      // Always send attack intent first — VFX must never block the server fire path.
+      this.net.fire(aim, fireMs);
       if (melee && now - this.lastMeleeSlashAt > fireMs * 0.85) {
         this.lastMeleeSlashAt = now;
         this.drawMeleeSlash(aim, prim as Extract<PrimaryDef, { kind: "melee" }>);
@@ -5649,9 +6434,10 @@ export default class OnlineScene extends Phaser.Scene {
           : [
               this.connectionState === "reconnecting" ? "⏳ RECONNECTING…" : "⏳ LINKING…",
               "Server waking — usually under 10s. Walk freely.",
-              "R retry · ESC menu",
+              this.mobileUx() ? "TAP LINK to force retry" : "TAP LINK or R · ESC menu",
             ],
       );
+      this.syncLinkRetryUi();
       return;
     }
     if (!st.connected && (this.connectionState === "offline" || waitMs > 18000)) {
@@ -5659,15 +6445,19 @@ export default class OnlineScene extends Phaser.Scene {
       if (this.isTutorial) {
         this.hud.setText([
           "⚠  STILL OFFLINE — preview only",
-          "SKIP TO CITY (top-right) · or R to retry link",
-          "ESC menu",
+          this.mobileUx()
+            ? "SKIP TO CITY · or TAP LINK to retry"
+            : "SKIP TO CITY · TAP LINK or R · ESC",
+          "auto-retrying in background…",
         ]);
       } else {
         this.hud.setText([
           "⚠  LINK LOST",
-          "R retry · ESC menu · check connection",
+          this.mobileUx() ? "TAP LINK above to retry" : "TAP LINK or press R · ESC menu",
+          "auto-retrying in background…",
         ]);
       }
+      this.syncLinkRetryUi();
     } else if (this.isTutorial) {
       this.hud.setColor(this.net.godMode ? "#f7ff3c" : "#39ff88");
       const lesson = this.net.tutorialStep + 1;
@@ -5704,7 +6494,9 @@ export default class OnlineScene extends Phaser.Scene {
               ? `${t("online.reconnecting")}${dots}`
               : `${t("online.connecting")}${dots}`,
         soloWander && !st.connected
-          ? "walk the city while the server links · R retry · ESC menu"
+          ? this.mobileUx()
+            ? "walk while linking · TAP LINK to force"
+            : "walk while linking · TAP LINK or R · ESC"
           : `LV ${this.net.level}  XP ${xpIntoLevel(this.net.xp)}/100   ₵ ${this.net.credits}  ◈ ${this.net.cores}${this.net.godMode ? "  ·  invuln" : ""}`,
       ].filter(Boolean));
     }
@@ -6373,6 +7165,7 @@ export default class OnlineScene extends Phaser.Scene {
   /** R — the class ultimate. HEAT is the gate and the cost; the server holds the meter,
    *  so a cold press is silently ignored (we mirror the threshold to skip dead FX). */
   private tryUlt() {
+    if (this.chatOpen || this.net?.dead || this.isCityHub || this.zone === "safe") return;
     const aim = this.combatAim();
     const gate = this.ultThresholdNow();
     if (!this.net.ult(aim, gate)) {
@@ -6515,6 +7308,8 @@ export default class OnlineScene extends Phaser.Scene {
 
   /** SPACE/SHIFT — dash along current move intent (or combat aim when standing still). */
   private tryDash() {
+    // Combat movement always available outside chat (panels may stay open).
+    if (this.chatOpen || this.net?.dead) return;
     let dx = 0;
     let dy = 0;
     if (this.keys.A?.isDown || this.keys.LEFT?.isDown) dx -= 1;
@@ -6550,6 +7345,7 @@ export default class OnlineScene extends Phaser.Scene {
 
   /** Q — the class signature. The server resolves the effect; we sell the moment. */
   private tryAbility() {
+    if (this.chatOpen || this.net?.dead || this.isCityHub || this.zone === "safe") return;
     const aim = this.combatAim();
     if (!this.net.ability(aim, this.abilityCooldownMs())) return;
     this.synth?.cast();
@@ -6642,9 +7438,34 @@ export default class OnlineScene extends Phaser.Scene {
     }
   }
 
+  /** Hard-kill any in-flight boss title card (portrait/letterbox/name). */
+  private clearBossIntro() {
+    if (this.bossIntroFadeTimer) {
+      this.bossIntroFadeTimer.remove(false);
+      this.bossIntroFadeTimer = undefined;
+    }
+    if (this.bossIntroFailsafe != null) {
+      clearTimeout(this.bossIntroFailsafe);
+      this.bossIntroFailsafe = undefined;
+    }
+    this.bossIntroFading = false;
+    for (const n of this.bossIntroNodes) {
+      try {
+        this.tweens.killTweensOf(n);
+        n.destroy();
+      } catch {
+        /* already gone */
+      }
+    }
+    this.bossIntroNodes = [];
+  }
+
   /** Boss title card — letterbox bars sweep in, splash portrait + name land with a
-   *  sting, holds a beat, and sweeps out. Once per boss per zone visit. */
+   *  sting, holds a beat, and sweeps out. Once per boss per zone visit.
+   *  Cleanup is dual-path (scene timer + wall-clock failsafe) so combat hit-stop
+   *  timeScale stalls can never leave the portrait stuck on screen. */
   private playBossIntro(name: string) {
+    this.clearBossIntro();
     noteSecondBossTouch();
     const script = raidScriptFor(name);
     const phase0 = script.phases[0]?.name ?? "ASSAULT";
@@ -6652,13 +7473,22 @@ export default class OnlineScene extends Phaser.Scene {
     const h = this.scale.height;
     const barH = uiDim(52);
     const D = 1600;
+    const HOLD_MS = 2300;
+    const FADE_MS = 320;
     const top = this.add.rectangle(0, -barH, w, barH, 0x02030a, 0.92).setOrigin(0).setScrollFactor(0).setDepth(D);
     const bot = this.add.rectangle(0, h, w, barH, 0x02030a, 0.92).setOrigin(0).setScrollFactor(0).setDepth(D);
-    const bossPort = portraitForBoss(name);
+    const bossPortRaw = portraitForBoss(name);
+    const bossPort =
+      bossPortRaw && this.textures.exists(bossPortRaw.key)
+        ? bossPortRaw
+        : bossPortRaw
+          ? portraitSheetFallback(bossPortRaw)
+          : undefined;
     let portrait: Phaser.GameObjects.Image | undefined;
     if (bossPort && this.textures.exists(bossPort.key)) {
+      const useFrame = bossPort.frame > 0 || this.textures.get(bossPort.key).frameTotal > 1;
       portrait = this.add
-        .image(w / 2, h / 2 - uiDim(36), bossPort.key, bossPort.frame)
+        .image(w / 2, h / 2 - uiDim(36), bossPort.key, useFrame ? bossPort.frame : undefined)
         .setDisplaySize(uiDim(148), uiDim(148))
         .setScrollFactor(0)
         .setDepth(D + 1)
@@ -6684,6 +7514,7 @@ export default class OnlineScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(D + 1)
       .setAlpha(0);
+    this.bossIntroNodes = portrait ? [top, bot, title, tag, portrait] : [top, bot, title, tag];
     this.synth?.kill();
     // Seed Audio boss stinger when present; otherwise Synth.kill() covers the hit.
     if (this.cache.audio.exists(STINGER_BOSS_KEY)) {
@@ -6702,24 +7533,39 @@ export default class OnlineScene extends Phaser.Scene {
     }
     this.tweens.add({ targets: title, alpha: 1, scale: 1, duration: 320, delay: 140, ease: "Back.Out" });
     this.tweens.add({ targets: tag, alpha: 1, duration: 260, delay: 320 });
-    this.time.delayedCall(2300, () => {
+
+    const beginFade = () => {
+      if (this.bossIntroFading || this.bossIntroNodes.length === 0) return;
+      this.bossIntroFading = true;
+      if (this.bossIntroFadeTimer) {
+        this.bossIntroFadeTimer.remove(false);
+        this.bossIntroFadeTimer = undefined;
+      }
+      if (this.bossIntroFailsafe != null) {
+        clearTimeout(this.bossIntroFailsafe);
+        this.bossIntroFailsafe = undefined;
+      }
+      // Combat hit-stop can leave timeScale near 0; force normal so fade tweens run.
+      if (this.time.timeScale < 0.5) this.time.timeScale = 1;
       const fade = portrait ? [title, tag, portrait] : [title, tag];
-      this.tweens.add({ targets: fade, alpha: 0, duration: 260 });
-      this.tweens.add({ targets: top, y: -barH, duration: 300, ease: "Quad.In" });
+      this.tweens.killTweensOf(fade);
+      this.tweens.killTweensOf([top, bot]);
+      this.tweens.add({ targets: fade, alpha: 0, duration: FADE_MS });
+      this.tweens.add({ targets: top, y: -barH, duration: FADE_MS, ease: "Quad.In" });
       this.tweens.add({
         targets: bot,
         y: h,
-        duration: 300,
+        duration: FADE_MS,
         ease: "Quad.In",
-        onComplete: () => {
-          top.destroy();
-          bot.destroy();
-          title.destroy();
-          tag.destroy();
-          portrait?.destroy();
-        },
+        onComplete: () => this.clearBossIntro(),
       });
-    });
+      // Absolute hard destroy after fade should finish (covers killed/stalled tweens).
+      this.bossIntroFailsafe = setTimeout(() => this.clearBossIntro(), FADE_MS + 250);
+    };
+
+    this.bossIntroFadeTimer = this.time.delayedCall(HOLD_MS, beginFade);
+    // Wall-clock failsafe: scene.time can stall under hit-stop; still tear down the card.
+    this.bossIntroFailsafe = setTimeout(beginFade, HOLD_MS + 500);
   }
 
   /** Undo death/hit combat poses so the runner is fully solid again. */
@@ -6729,7 +7575,8 @@ export default class OnlineScene extends Phaser.Scene {
   }
 
   /** Death is a MOMENT: hit-stop + blood-dark wash + SIGNAL LOST / REPRINT + reboot countdown,
-   *  then a white rebirth flash when the server respawns you. */
+   *  then a white rebirth flash when the server respawns you.
+   *  Default reprint = last position; CITY START option = METRO CITY hub pad. */
   private updateDeathSequence() {
     const dead = this.net.dead;
     if (dead && !this.wasDead) {
@@ -6748,6 +7595,7 @@ export default class OnlineScene extends Phaser.Scene {
       this.tweens.add({ targets: this.deathOverlay, alpha: 0, duration: 300 });
       this.deadText.setVisible(false);
       this.deathSub.setVisible(false);
+      this.deathExtractBtn?.setVisible(false);
       // Death pose leaves alpha 0.25 + crushed scale + tilted angle — reset or you
       // respawn as a permanent ghost (the "body disappeared" bug).
       this.restoreLocalBody();
@@ -6758,14 +7606,43 @@ export default class OnlineScene extends Phaser.Scene {
     }
     if (dead) {
       const left = Math.max(0, RESPAWN_MS - (performance.now() - this.deathStartedAt));
-      const taxBit = this.lastDeathTaxLine
-        ? this.lastDeathTaxLine.replace(/^DEATH ·\s*/, "").split(" · ")[0]
-        : "ledger check";
-      this.deathSub.setText(
-        left > 0
-          ? `reprint ${(left / 1000).toFixed(1)}s · ${taxBit}\nrespawn at zone spawn · bag kept · open Map (M) for a path`
-          : "printing… · hold position",
-      );
+      const deathLine = this.lastDeathTaxLine || "";
+      const isPvp = /PvP/i.test(deathLine);
+      const taxBit = deathLine
+        ? deathLine.replace(/^DEATH ·\s*/, "").split(" · ").slice(0, 2).join(" · ")
+        : "no credit loss";
+      const extract = this.net.deathExtract;
+      const cityLabel = this.net.deathExtractLabel || "RESPAWN AT CITY START";
+      const hHint = this.mobileUx() ? "tap CITY START below" : "H or tap CITY START";
+      let sub: string;
+      if (isPvp) {
+        sub =
+          left > 0
+            ? `reprint ${(left / 1000).toFixed(1)}s · ${taxBit}\noutside arena · bag kept${extract ? ` · ${hHint}` : ""}`
+            : "printing outside THE CRUCIBLE…";
+      } else if (extract) {
+        sub =
+          left > 0
+            ? `reprint ${(left / 1000).toFixed(1)}s at last position · ${taxBit}\n${hHint} · ${cityLabel} · bag kept`
+            : `printing at last position… or ${this.mobileUx() ? "tap" : "press H for"} CITY START`;
+      } else {
+        sub =
+          left > 0
+            ? `reprint ${(left / 1000).toFixed(1)}s · no credit loss\nrespawn at last position · bag kept`
+            : "printing… · last position";
+      }
+      this.deathSub.setText(sub);
+
+      if (this.deathExtractBtn) {
+        if (extract) {
+          this.deathExtractBtn
+            .setText(this.mobileUx() ? `▸ ${cityLabel}` : `▸ ${cityLabel}  [H]`)
+            .setVisible(true)
+            .setPosition(this.scale.width / 2, this.scale.height / 2 + uiDim(this.mobileUx() ? 88 : 78));
+        } else {
+          this.deathExtractBtn.setVisible(false);
+        }
+      }
     }
     this.wasDead = dead;
   }
@@ -7064,6 +7941,11 @@ export default class OnlineScene extends Phaser.Scene {
 
   private controlHint() {
     const fire = fireControlLabel(); // "HOLD CLICK or F"
+    if (this.isCityHub || this.zone === "safe") {
+      return prefersMobileUx() || this.mobileUx()
+        ? "SAFE ZONE · no combat · TAP walk · E/◆ talk · M map · H stay · DEPLOY south"
+        : "SAFE ZONE · no combat · WASD · E talk · M map · B shop · K market · DEPLOY south";
+    }
     if (this.isTutorial) {
       return prefersMobileUx() || this.mobileUx()
         ? "touch LEFT to move · hold ATK to fire · Q/E/R/⇢ · ◆ use · SKIP TO CITY"
@@ -7363,13 +8245,18 @@ export default class OnlineScene extends Phaser.Scene {
     const p = cam.getPostPipeline("Neon");
     this.neon = (Array.isArray(p) ? p[0] : p) as NeonPipeline | undefined;
     if (this.neon) {
-      const a = this.zoneAccent;
-      this.neon.heat = 0.05;
-      this.neon.tint = [((a >> 16) & 0xff) / 255, ((a >> 8) & 0xff) / 255, (a & 0xff) / 255];
-      // lighter signature wash — 0.24 flattened whole districts to one hue and buried
-      // the per-building colour-coding + tile variation; a subtle tint still reads
-      // Weaker district wash so tile variety + building colour read through the accent.
-      this.neon.tintAmt = this.isCityHub ? 0.08 : this.interior ? 0.06 : 0.07;
+      const theme = this.districtEnvTheme;
+      if (theme) {
+        this.neon.heat = theme.baseHeat;
+        this.neon.tint = theme.tint;
+        // Districts own a stronger signature wash; hub/interiors stay subtle.
+        this.neon.tintAmt = theme.tintAmt;
+      } else {
+        const a = this.zoneAccent;
+        this.neon.heat = 0.05;
+        this.neon.tint = [((a >> 16) & 0xff) / 255, ((a >> 8) & 0xff) / 255, (a & 0xff) / 255];
+        this.neon.tintAmt = this.isCityHub ? 0.08 : this.interior ? 0.06 : 0.07;
+      }
     }
   }
 }

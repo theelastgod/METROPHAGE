@@ -263,3 +263,117 @@ export function installLandscapeGate(): void {
     { passive: true },
   );
 }
+
+// ── Browser fullscreen (Android Chrome / Chromium; limited on iOS Safari) ──
+
+type FsDoc = Document & {
+  webkitFullscreenElement?: Element | null;
+  webkitExitFullscreen?: () => void;
+};
+type FsEl = HTMLElement & {
+  webkitRequestFullscreen?: () => void;
+  requestFullscreen?: (opts?: FullscreenOptions) => Promise<void>;
+};
+
+/** True when the page (or #game-root) is in browser fullscreen. */
+export function isBrowserFullscreen(): boolean {
+  if (typeof document === "undefined") return false;
+  const d = document as FsDoc;
+  return !!(document.fullscreenElement || d.webkitFullscreenElement);
+}
+
+/** Whether the browser exposes element Fullscreen API (often false on iOS Safari). */
+export function canBrowserFullscreen(): boolean {
+  if (typeof document === "undefined") return false;
+  const el = document.documentElement as FsEl;
+  return typeof el.requestFullscreen === "function" || typeof el.webkitRequestFullscreen === "function";
+}
+
+/**
+ * Enter/exit browser fullscreen on the whole page (documentElement).
+ * Using #game-root alone left browser chrome / sibling UI unfilled on phones.
+ */
+export async function toggleBrowserFullscreen(): Promise<boolean> {
+  if (typeof document === "undefined") return false;
+  const d = document as FsDoc;
+  try {
+    if (isBrowserFullscreen()) {
+      if (document.exitFullscreen) await document.exitFullscreen();
+      else d.webkitExitFullscreen?.();
+      return false;
+    }
+    // Full document → phone display; navigationUI:hide removes browser chrome on Android.
+    const root = document.documentElement as FsEl;
+    if (typeof root.requestFullscreen === "function") {
+      await root.requestFullscreen({ navigationUI: "hide" });
+      return true;
+    }
+    if (typeof root.webkitRequestFullscreen === "function") {
+      root.webkitRequestFullscreen();
+      return true;
+    }
+    // Fallback: try the game root if documentElement is blocked.
+    const gameRoot = document.getElementById("game-root") as FsEl | null;
+    if (gameRoot?.requestFullscreen) {
+      await gameRoot.requestFullscreen({ navigationUI: "hide" });
+      return true;
+    }
+    if (gameRoot?.webkitRequestFullscreen) {
+      gameRoot.webkitRequestFullscreen();
+      return true;
+    }
+  } catch {
+    /* user denied / unsupported (common on iOS Safari) */
+  }
+  return isBrowserFullscreen();
+}
+
+/**
+ * Floating FULL / EXIT for phones that support the Fullscreen API (Android Chrome).
+ * iOS Safari cannot fullscreen a web game — button is omitted; FIT max-width is the path.
+ */
+export function installMobileFullscreenButton(opts?: { onChange?: () => void }): void {
+  if (typeof document === "undefined" || !prefersMobileUx()) return;
+  if (document.getElementById("mp-fs-btn")) return;
+
+  // No fake FULL button on browsers that cannot actually fullscreen (iOS Safari).
+  if (!canBrowserFullscreen()) return;
+
+  const btn = document.createElement("button");
+  btn.id = "mp-fs-btn";
+  btn.type = "button";
+  btn.setAttribute("aria-label", "Toggle fullscreen");
+  btn.title = "Fullscreen — use the whole phone display";
+
+  const paint = () => {
+    const fs = isBrowserFullscreen();
+    btn.classList.toggle("on", fs);
+    btn.textContent = fs ? "EXIT" : "FULL";
+    document.documentElement.classList.toggle("mp-fs", fs);
+    document.body.classList.toggle("mp-fs", fs);
+  };
+  paint();
+
+  btn.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    void (async () => {
+      await toggleBrowserFullscreen();
+      paint();
+      opts?.onChange?.();
+      // Browser chrome / visualViewport settle after FS enter/exit.
+      window.setTimeout(() => {
+        paint();
+        opts?.onChange?.();
+      }, 120);
+      window.setTimeout(() => {
+        paint();
+        opts?.onChange?.();
+      }, 400);
+    })();
+  });
+
+  document.addEventListener("fullscreenchange", paint);
+  document.addEventListener("webkitfullscreenchange", paint);
+  document.body.appendChild(btn);
+}
