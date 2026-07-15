@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  canRebalanceZone,
   doName,
   hardCapFor,
   isShardableZone,
@@ -9,6 +10,75 @@ import {
   pickInstance,
   softCapFor,
 } from "./zoneRouting";
+
+describe("canRebalanceZone — never reject a player with nowhere to go", () => {
+  // A DO that rejects on a zone it cannot shard sends the player to a front door
+  // that routes them straight back — a closed door dressed as a rebalance.
+  it.each(["w0", "w6", "tutorial", "estates", "d0i2", "h4", "vault"])(
+    "refuses to rebalance non-shardable %s",
+    (zone) => {
+      expect(maxInstancesFor(zone)).toBe(1);
+      expect(canRebalanceZone(zone)).toBe(false);
+    },
+  );
+
+  it("allows rebalance on hot zones that really do shard", () => {
+    for (const zone of ["safe", "subway", "d0", "d7"]) {
+      expect(canRebalanceZone(zone)).toBe(true);
+    }
+  });
+
+  it("refuses when sharding is configured down to a single instance", () => {
+    // METRO_MAX_INSTANCES=1 makes even d0 a one-slice zone — bouncing is a loop.
+    const env = { METRO_MAX_INSTANCES: "1" };
+    expect(maxInstancesFor("d0", env)).toBe(1);
+    expect(canRebalanceZone("d0", env)).toBe(false);
+    expect(canRebalanceZone("safe", env)).toBe(false);
+  });
+
+  it("agrees with maxInstancesFor for every zone shape", () => {
+    for (const zone of ["safe", "subway", "d0", "d7", "w0", "estates", "d0i2", "tutorial"]) {
+      expect(canRebalanceZone(zone), zone).toBe(maxInstancesFor(zone) > 1);
+    }
+  });
+});
+
+describe("pickInstance — a failed probe is not an empty room", () => {
+  it("never routes into an errored instance while a healthy one exists", () => {
+    // The bug: error rows report players:0, score best, and win the sort — so one
+    // timed-out probe drains every joiner into an instance that may be full.
+    const loads = [
+      { inst: 0, players: 30, tickMsAvg: 5 },
+      { inst: 1, players: 0, tickMsAvg: 0, error: true },
+      { inst: 2, players: 12, tickMsAvg: 5 },
+    ];
+    expect(pickInstance(loads, { softCap: 40, hardCap: 48, maxInst: 3 })).toBe(2);
+  });
+
+  it("prefers a busy known room over an unknown one", () => {
+    const loads = [
+      { inst: 0, players: 47, tickMsAvg: 9 },
+      { inst: 1, players: 0, tickMsAvg: 0, error: true },
+    ];
+    // 47 is over soft (40) but under hard (48) — still better than flying blind.
+    expect(pickInstance(loads, { softCap: 40, hardCap: 48, maxInst: 2 })).toBe(0);
+  });
+
+  it("falls back to errored instances when nothing answered", () => {
+    const loads = [
+      { inst: 0, players: 0, tickMsAvg: 0, error: true },
+      { inst: 1, players: 0, tickMsAvg: 0, error: true },
+    ];
+    // A blind pick still beats no pick — must return a valid instance, not throw.
+    expect([0, 1]).toContain(pickInstance(loads, { softCap: 40, hardCap: 48, maxInst: 2 }));
+  });
+
+  it("still treats a genuinely cold room as empty", () => {
+    // Unprobed instances are padded as cold — that must keep working.
+    const loads = [{ inst: 0, players: 39, tickMsAvg: 9 }];
+    expect(pickInstance(loads, { softCap: 40, hardCap: 48, maxInst: 3 })).toBe(1);
+  });
+});
 
 describe("zoneRouting", () => {
   it("doName keeps instance 0 as legacy zone id", () => {

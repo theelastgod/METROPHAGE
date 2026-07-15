@@ -1,4 +1,4 @@
-import { loginMessage, type PlayerLook } from "../net/protocol";
+import { loginMessage, retireMessage, type PlayerLook } from "../net/protocol";
 import {
   connectWallet,
   connectedWallet,
@@ -31,6 +31,25 @@ export async function signIdentityProof(
   if (!addr) return null;
   const ts = Date.now();
   const signed = await signWalletLogin(loginMessage(addr, ts), addr);
+  if (!signed) return null;
+  return { wallet: signed.address, sig: signed.signature, ts };
+}
+
+/**
+ * Sign a proof authorizing PERMANENT deletion of this wallet's character.
+ *
+ * Separate from signIdentityProof on purpose. The server will not retire on a
+ * login proof (those are reusable and end up in logs), and this also means the
+ * wallet actually shows "permanently delete this character" instead of
+ * "METROPHAGE login" while asking someone to approve an irreversible purge.
+ */
+export async function signRetireProof(
+  wallet?: string,
+): Promise<{ wallet: string; sig: string; ts: number } | null> {
+  const addr = wallet ?? connectedWallet();
+  if (!addr) return null;
+  const ts = Date.now();
+  const signed = await signWalletLogin(retireMessage(addr, ts), addr);
   if (!signed) return null;
   return { wallet: signed.address, sig: signed.signature, ts };
 }

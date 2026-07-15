@@ -59,6 +59,43 @@ export function loginMessage(wallet: string, ts: number): string {
   return `METROPHAGE login\nwallet: ${wallet}\nts: ${ts}`;
 }
 
+/**
+ * The message a client signs to PERMANENTLY DELETE a character.
+ *
+ * Deliberately NOT loginMessage. A login signature is long-lived by design (the
+ * client reuses one for ~90s of zone hops) and travels widely — it has ridden in
+ * a URL query string, so it lands in access logs and browser history. If retire
+ * accepted a login signature, anyone who read one inside the freshness window
+ * could irreversibly purge that player: character, credits, guild rows, estate.
+ *
+ * Scoping the signature to the action means a captured login proof cannot
+ * authorize destruction — the signer had to be shown, and agree to, this text.
+ */
+export function retireMessage(wallet: string, ts: number): string {
+  return `METROPHAGE RETIRE\nPermanently delete this character and all its progress.\nwallet: ${wallet}\nts: ${ts}`;
+}
+
+/**
+ * Stable, opaque key for a player id — safe to publish.
+ *
+ * The leaderboard is unauthenticated, and player ids for wallet runners ARE the
+ * on-chain address ("w:0x…"). Publishing them maps public callsigns → wallets →
+ * balances and transaction history: a targeting list for the top holders of a
+ * real-value token. The board only needs a key to highlight "you", so it gets a
+ * digest instead of the address — the client hashes its own id and compares.
+ *
+ * Not a secrecy guarantee: anyone holding a list of candidate addresses can hash
+ * them and match. It removes passive disclosure, which is the actual leak.
+ */
+export async function publicPlayerKey(id: string): Promise<string> {
+  const data = new TextEncoder().encode("metrophage:leaderboard:" + id);
+  const buf = await crypto.subtle.digest("SHA-256", data);
+  return [...new Uint8Array(buf)]
+    .slice(0, 8)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 // client -> server
 export type ClientMsg =
   // login: a signed wallet (wallet+sig+ts) is a durable identity; without one the

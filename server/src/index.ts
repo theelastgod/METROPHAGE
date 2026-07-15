@@ -1,7 +1,7 @@
 import { WorldDO, parseZone, isNamedZone, type Env } from "./world";
 import { getAccount, quote, withdraw, confirmWithdraw, deposit, poolInfo, simSettlement, type Settlement } from "./metro";
 import { verifyWalletLogin } from "./auth";
-import { loginMessage, PROTOCOL_VERSION } from "../../src/net/protocol";
+import { loginMessage, PROTOCOL_VERSION, publicPlayerKey } from "../../src/net/protocol";
 import { simulatedSettlementLocked } from "./bridgePolicy";
 import { resolveSettlementFamily, settlementFamilyLabel } from "./settlementFamily";
 import { launchFlagsFromEnv } from "../../src/game/featureFlags";
@@ -20,13 +20,16 @@ export { WorldDO };
 
 // ── Load-aware zone instance router (per-isolate cache; fine for sticky-ish picks) ──
 const LOAD_CACHE_MS = 2500;
-const loadCache = new Map<string, { players: number; tickMsAvg: number; at: number }>();
+// `error` must survive the cache: a failed probe reports 0 players, and without
+// the flag a cached failure is indistinguishable from a healthy empty room —
+// which then wins the least-loaded sort and drains every joiner into it.
+const loadCache = new Map<string, { players: number; tickMsAvg: number; at: number; error?: boolean }>();
 
 async function probeInstanceLoad(env: Env, zone: string, inst: number): Promise<InstanceLoad> {
   const key = doName(zone, inst);
   const hit = loadCache.get(key);
   if (hit && Date.now() - hit.at < LOAD_CACHE_MS) {
-    return { inst, players: hit.players, tickMsAvg: hit.tickMsAvg };
+    return { inst, players: hit.players, tickMsAvg: hit.tickMsAvg, error: hit.error };
   }
   try {
     const stub = env.WORLD.get(env.WORLD.idFromName(key));
@@ -34,7 +37,7 @@ async function probeInstanceLoad(env: Env, zone: string, inst: number): Promise<
       new Request(`https://world/stats?zone=${encodeURIComponent(zone)}&inst=${inst}`),
     );
     if (!res.ok) {
-      loadCache.set(key, { players: 0, tickMsAvg: 0, at: Date.now() });
+      loadCache.set(key, { players: 0, tickMsAvg: 0, at: Date.now(), error: true });
       return { inst, players: 0, tickMsAvg: 0, error: true };
     }
     const s = (await res.json()) as { players?: number; tickMsAvg?: number };
@@ -43,7 +46,7 @@ async function probeInstanceLoad(env: Env, zone: string, inst: number): Promise<
     loadCache.set(key, { players, tickMsAvg, at: Date.now() });
     return { inst, players, tickMsAvg };
   } catch {
-    loadCache.set(key, { players: 0, tickMsAvg: 0, at: Date.now() });
+    loadCache.set(key, { players: 0, tickMsAvg: 0, at: Date.now(), error: true });
     return { inst, players: 0, tickMsAvg: 0, error: true };
   }
 }
@@ -378,13 +381,24 @@ async function handleLeaderboard(url: URL, env: Env): Promise<Response> {
   const stat = (url.searchParams.get("stat") || "kills").replace(/[^a-z0-9]/g, "").slice(0, 24);
   const n = Math.min(50, Math.max(1, parseInt(url.searchParams.get("n") || "10", 10)));
   try {
+    // Never select the raw id into `name`: for wallet runners the id IS the
+    // on-chain address, and this endpoint is public.
     const { results } = await env.DB.prepare(
-      "SELECT s.player AS player, COALESCE(p.name, s.player) AS name, s.v AS v " +
+      "SELECT s.player AS player, p.name AS name, s.v AS v " +
         "FROM player_stats s LEFT JOIN players p ON p.id = s.player WHERE s.stat = ? AND s.v > 0 ORDER BY s.v DESC LIMIT ?",
     )
       .bind(stat, n)
-      .all<{ player: string; name: string; v: number }>();
-    return json({ ok: true, stat, rows: results ?? [] });
+      .all<{ player: string; name: string | null; v: number }>();
+    // Publish an opaque digest instead of the id — the board only needs a stable
+    // key to highlight "you", not an address book of everyone's wallet.
+    const rows = await Promise.all(
+      (results ?? []).map(async (r) => ({
+        key: await publicPlayerKey(r.player),
+        name: r.name || "unknown runner",
+        v: r.v,
+      })),
+    );
+    return json({ ok: true, stat, rows });
   } catch (e) {
     return json({ ok: false, reason: String((e as Error)?.message ?? e), rows: [] }, 200);
   }
@@ -435,23 +449,42 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
   };
 
   try {
-    if (url.pathname === "/metro/account" && req.method === "GET") {
-      // Private balances: wallet proof on live; sim+METRO_ALLOW_SIM may use player id only.
-      const qPlayer = url.searchParams.get("player") ?? "";
-      const qWallet = url.searchParams.get("wallet") ?? "";
-      const qSig = url.searchParams.get("sig") ?? "";
-      const qTs = Number(url.searchParams.get("ts"));
-      if (kind === "sim" && allowSim && qPlayer && !qSig) {
-        // Local smoke: account by player id without MetaMask (never on live settlement).
-        return json(await getAccount(env.DB, qPlayer, settlement, priceEnv));
+    // Wallet-proofed account read. POST ONLY when a signature is involved: a proof
+    // in a query string lands in CDN/proxy access logs and browser history, where
+    // anyone who reads one inside the freshness window can replay it. Bodies are
+    // not logged that way.
+    if (url.pathname === "/metro/account" && req.method === "POST") {
+      const b = (await req.json().catch(() => ({}))) as {
+        player?: string;
+        wallet?: string;
+        sig?: string;
+        ts?: number;
+      };
+      // Local smoke / dev: account by player id without MetaMask. Never on live
+      // settlement — mirrors the GET path this replaced.
+      if (kind === "sim" && allowSim && b.player && !b.sig) {
+        return json(await getAccount(env.DB, b.player, settlement, priceEnv));
       }
       const auth = await authorizeBridgeActor(
-        { player: qPlayer, wallet: qWallet, sig: qSig, ts: qTs },
+        { player: b.player ?? "", wallet: b.wallet ?? "", sig: b.sig ?? "", ts: Number(b.ts) },
         kind,
         allowSim,
       );
       if (!auth.ok) return json(auth, 401);
       return json(await getAccount(env.DB, auth.player, settlement, priceEnv));
+    }
+    if (url.pathname === "/metro/account" && req.method === "GET") {
+      const qPlayer = url.searchParams.get("player") ?? "";
+      // Refuse, loudly, rather than quietly accepting a proof someone just wrote
+      // into a log line by calling this endpoint.
+      if (url.searchParams.get("sig")) {
+        return json({ ok: false, reason: "send the wallet proof as a POST body, not a query string" }, 400);
+      }
+      if (kind === "sim" && allowSim && qPlayer) {
+        // Local smoke: account by player id without MetaMask (never on live settlement).
+        return json(await getAccount(env.DB, qPlayer, settlement, priceEnv));
+      }
+      return json({ ok: false, reason: "wallet proof required — POST /metro/account" }, 401);
     }
     if (url.pathname === "/metro/pool" && req.method === "GET") {
       const info = (await poolInfo(env.DB, priceEnv)) as Record<string, unknown>;
@@ -684,6 +717,8 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
         metro?: number;
         sig?: string;
         ts?: number;
+        /** "credits" (default) or "metro" — what the deposit is converted into. */
+        as?: string;
       };
       const auth = await authorizeBridgeActor(b, kind, allowSim);
       if (!auth.ok) return json(auth, 401);
@@ -700,6 +735,9 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
             wallet: auth.wallet,
             txSig: b.txSig ?? "",
             metro: Number(b.metro) || 0,
+            // Which side of the house this deposit funds. Omitted → credits, so
+            // an un-updated client keeps the behaviour its UI promises.
+            as: b.as === "metro" ? "metro" : "credits",
           },
           priceEnv,
         ),

@@ -40,6 +40,21 @@ export interface MoveState {
 const clampUnit = (n: number) => (n > 1 ? 1 : n < -1 ? -1 : Number.isFinite(n) ? n : 0);
 const clamp = (n: number, lo: number, hi: number) => (n < lo ? lo : n > hi ? hi : n);
 
+/**
+ * Wrap ANY number into a real angle in [-π, π]. Non-finite → 0.
+ *
+ * Every aim that arrives from a client must pass through this. `Number.isFinite`
+ * alone is not enough: at |aim| ≥ ~1e16 the classic `while (diff > π) diff -= 2π`
+ * normalizer stops converging (2π is below the float64 ulp at that magnitude, so
+ * `diff - 2π === diff`) and spins forever — one crafted message would wedge a
+ * whole zone. Trig-wrapping is O(1) and exact for sane angles.
+ */
+export function normAngle(a: number): number {
+  if (!Number.isFinite(a)) return 0;
+  if (a >= -Math.PI && a <= Math.PI) return a; // common case: already normal
+  return Math.atan2(Math.sin(a), Math.cos(a));
+}
+
 /** True if a PLAYER_RADIUS box centred at (x,y) overlaps any wall tile or the edge. */
 export function collides(x: number, y: number, grid: TileGrid): boolean {
   const { w: gw, h: gh } = gridDims(grid);

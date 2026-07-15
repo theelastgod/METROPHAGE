@@ -3,7 +3,7 @@
 // character until the player explicitly chooses NEW RUNNER (wallet retire).
 
 import type { D1Database } from "@cloudflare/workers-types";
-import { verifyWalletLogin, walletPlayerId } from "./auth";
+import { verifyWalletLogin, verifyWalletRetire, walletPlayerId } from "./auth";
 
 export type LinkResult =
   | { ok: true; playerId: string; name: string; alreadyLinked?: boolean }
@@ -181,7 +181,6 @@ async function rekeyPlayerRefs(db: D1Database, fromId: string, toId: string) {
     "guild_members",
     "guild_invites",
     "mailbox",
-    "pvp_escrow",
   ];
   for (const t of tables) {
     try {
@@ -192,6 +191,25 @@ async function rekeyPlayerRefs(db: D1Database, fromId: string, toId: string) {
       } catch {
         /* ignore */
       }
+    }
+  }
+
+  // Money and its audit trail move separately, and NEVER fall back to DELETE.
+  //
+  // These were previously left behind entirely (`pvp_escrow` was also a typo for
+  // `pvp_escrows`, so it silently did nothing). The old id is deleted right after
+  // this, so anything left here is destroyed: a staked CRUCIBLE escrow cascades
+  // away (0030 has ON DELETE CASCADE), and a pending withdrawal refunds to an id
+  // that no longer exists — the credits are simply gone.
+  //
+  // pvp_escrows and player_treasury key on `player`, so an UPDATE can collide if
+  // the wallet id already holds a row. Failing and leaving the row is bad, but
+  // deleting it burns real balance — so on conflict we leave it for a human.
+  for (const t of ["pvp_escrows", "metro_withdrawals", "metro_deposits", "player_treasury", "player_treasury_events"]) {
+    try {
+      await db.prepare(`UPDATE ${t} SET player = ? WHERE player = ?`).bind(toId, fromId).run();
+    } catch (e) {
+      console.error(`[link] could not move ${t} ${fromId} → ${toId}:`, (e as Error)?.message);
     }
   }
 }
@@ -206,7 +224,7 @@ async function purgePlayerId(db: D1Database, id: string) {
   await run(db, "DELETE FROM guild_members WHERE player = ?", id);
   await run(db, "DELETE FROM guild_invites WHERE player = ?", id);
   await run(db, "DELETE FROM mailbox WHERE player = ?", id);
-  await run(db, "DELETE FROM pvp_escrow WHERE player = ?", id);
+  await run(db, "DELETE FROM pvp_escrows WHERE player = ?", id);
   await run(db, "UPDATE estates SET owner = NULL, owner_name = NULL, for_sale = 1 WHERE owner = ?", id);
   await run(db, "DELETE FROM players WHERE id = ?", id);
 }
@@ -219,13 +237,15 @@ export async function retireWalletPlayer(
   db: D1Database,
   args: { wallet: string; sig: string; ts: number },
 ): Promise<LinkResult | { ok: true; retired: true; playerId: string }> {
-  const walletId = verifyWalletLogin({
+  // Must be a signature over retireMessage, NOT a login proof: this purge is
+  // irreversible, and login proofs are reusable and log-exposed by design.
+  const walletId = verifyWalletRetire({
     wallet: args.wallet,
     sig: args.sig,
     ts: args.ts,
   });
   if (!walletId || !walletId.startsWith("w:")) {
-    return { ok: false, reason: "wallet sign-in failed — bad or stale signature" };
+    return { ok: false, reason: "retire sign-in failed — sign the RETIRE message with this wallet" };
   }
   await purgePlayerId(db, walletId);
   return { ok: true, retired: true, playerId: walletId };

@@ -59,6 +59,18 @@ export function maxInstancesFor(zone: string, env: InstanceEnv = {}): number {
 }
 
 /**
+ * Whether bouncing a full instance can actually land the player somewhere else.
+ *
+ * A zone with a single instance has no other slice — the front door would route
+ * a "rebalance" straight back to the same DO, so rejecting there is a closed
+ * door, not a rebalance. Callers must admit (spill) instead of rejecting when
+ * this is false, matching pickInstance's "better than rejecting the player".
+ */
+export function canRebalanceZone(zone: string, env: InstanceEnv = {}): boolean {
+  return isShardableZone(zone) && maxInstancesFor(zone, env) > 1;
+}
+
+/**
  * Soft concurrent target per instance — balancer prefers instances under this.
  * Hub uses METRO_HUB_CAP; combat/subway use METRO_INSTANCE_CAP (default 40).
  */
@@ -126,20 +138,27 @@ export function pickInstance(
     return (L.players ?? 0) * 1000 + t;
   };
 
-  const underSoft = all.filter((L) => (L.players ?? 0) < soft);
+  // A failed probe reports 0 players — which would SCORE BEST and drain every
+  // joiner into an instance we know nothing about (it may be full, or down).
+  // An unknown room is not an empty room: only consider these if nothing else
+  // answered, where a blind pick still beats no pick.
+  const known = all.filter((L) => !L.error);
+  const pool = known.length ? known : all;
+
+  const underSoft = pool.filter((L) => (L.players ?? 0) < soft);
   if (underSoft.length) {
     underSoft.sort((a, b) => score(a) - score(b) || a.inst - b.inst);
     return underSoft[0].inst;
   }
 
-  const underHard = all.filter((L) => (L.players ?? 0) < hard);
+  const underHard = pool.filter((L) => (L.players ?? 0) < hard);
   if (underHard.length) {
     underHard.sort((a, b) => score(a) - score(b) || a.inst - b.inst);
     return underHard[0].inst;
   }
 
-  all.sort((a, b) => score(a) - score(b) || a.inst - b.inst);
-  return all[0].inst;
+  const spill = [...pool].sort((a, b) => score(a) - score(b) || a.inst - b.inst);
+  return spill[0].inst;
 }
 
 /** Parse ?inst= query (undefined if absent / invalid). */

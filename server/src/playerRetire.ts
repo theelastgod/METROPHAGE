@@ -59,7 +59,7 @@ export async function retireGuestPlayer(
   await run("DELETE FROM guild_members WHERE player = ?", id);
   await run("DELETE FROM guild_invites WHERE player = ?", id);
   await run("DELETE FROM mailbox WHERE player = ?", id);
-  await run("DELETE FROM pvp_escrow WHERE player = ?", id);
+  await run("DELETE FROM pvp_escrows WHERE player = ?", id);
   // Free any owned estate so homes don't stay locked forever.
   await run("UPDATE estates SET owner = NULL, owner_name = NULL, for_sale = 1 WHERE owner = ?", id);
   // Keep metro deposit/withdraw history for ledger integrity — only clear player row.

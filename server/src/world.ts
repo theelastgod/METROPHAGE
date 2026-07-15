@@ -27,6 +27,7 @@ import {
   RESPAWN_MS,
   XP_PER_KILL,
   levelForXp,
+  normAngle,
   CREDITS_PER_KILL,
   LOOT_DROP_CHANCE,
   PICKUP_RADIUS,
@@ -142,7 +143,7 @@ import { maybeNamedLoot } from "../../src/game/namedLoot";
 import { weeklyGuildGoal, currentGuildWeek } from "../../src/game/guildGoals";
 import { currentDistrictWar, warMetaKey } from "../../src/game/districtWar";
 import { launchFlagsFromEnv, emitDayKey, type LaunchFlags } from "../../src/game/featureFlags";
-import { doName, hardCapFor, parseInstParam } from "./zoneRouting";
+import { canRebalanceZone, doName, hardCapFor, parseInstParam } from "./zoneRouting";
 
 import {
   BLESS_IFRAME_TICKS,
@@ -690,6 +691,14 @@ interface Shot {
  */
 export class WorldDO {
   private sessions = new Map<WebSocket, string>();
+  /**
+   * Players this instance has bounced for being full (id → ms). A bounce is only
+   * worth it if the front door can land them somewhere else; bouncing the same
+   * player twice means every slice is full, so the second try is admitted (spill)
+   * rather than volleyed forever. Mirrors pickInstance's "better than rejecting".
+   */
+  private bouncedAt = new Map<string, number>();
+  private static readonly BOUNCE_GRACE_MS = 30_000;
   /** Exactly one controlling socket per player id in this zone (hard dual-tab lock). */
   private ownerSocket = new Map<string, WebSocket>();
   private players = new Map<string, PlayerState>();
@@ -1565,7 +1574,11 @@ export class WorldDO {
         dieTick: this.tick + ticks(ENEMY_PROJ_TTL_MS),
         team: 1,
         owner: String(e.id),
-        dmg: Math.round(arch.dmg * BOSS_DMG_MULT * dmgMult),
+        // dmgMult is the raid PHASE mult; the zone/per-enemy factor is separate.
+        // Without it a boss ignored district scaling entirely — the d0 GUTTER KING
+        // and the d7 WARDEN hit for exactly the same, despite bossHpMult ramping
+        // 0.85 → 1.55 across the same spine.
+        dmg: Math.round(arch.dmg * BOSS_DMG_MULT * dmgMult * this.zoneEnemyDmgMult * (e.dmgMult ?? 1)),
       });
     }
   }
@@ -3149,7 +3162,13 @@ export class WorldDO {
         return reject("guest save requires a device key — enable storage / cookies for this site, then retry");
       }
       // Harness leftovers: smoke.mjs binds `smk-<name>` — not real device keys; allow reclaim.
-      const harnessSecret = !!p.secret && (p.secret.startsWith("smk-") || p.secret.length < 16);
+      //
+      // Deliberately keyed on the `smk-` prefix ALONE. This used to also reclaim any
+      // secret shorter than 16 chars, which made those rows claimable by anyone
+      // presenting an arbitrary key: `{"t":"login","name":"<victim>","secret":"x"}`
+      // rebound the row to the attacker — the exact takeover the secret prevents.
+      // A short secret is still a secret; it just has to match.
+      const harnessSecret = !!p.secret && p.secret.startsWith("smk-");
       const mismatch = !!p.secret && p.secret !== presented && !harnessSecret;
       if (mismatch) {
         // PERMANENT guest memory: never rebind over an existing device secret.
@@ -3200,9 +3219,22 @@ export class WorldDO {
     p.faction = fac;
     // Instance hard-cap (race with Worker balancer): rebalance within the same zone
     // so the front door can pick a less-loaded shard. Existing residents stay put.
+    //
+    // Only bounce when a bounce can actually resolve. A zone with one instance
+    // (every non-shardable zone: bridges, tutorial, estates, interiors) has
+    // nowhere to send them — the front door would route them straight back here,
+    // so rejecting is a closed door, not a rebalance. Same if we already bounced
+    // this player: the slices are full, and admitting beats an endless volley.
     {
       const hard = hardCapFor(this.zoneName, this.env, this.flags);
-      if (this.sessions.size >= hard && !this.players.has(id)) {
+      const canRebalance = canRebalanceZone(this.zoneName, this.env);
+      const now = Date.now();
+      for (const [pid, at] of this.bouncedAt) {
+        if (now - at > WorldDO.BOUNCE_GRACE_MS) this.bouncedAt.delete(pid);
+      }
+      const alreadyBounced = this.bouncedAt.has(id);
+      if (canRebalance && !alreadyBounced && this.sessions.size >= hard && !this.players.has(id)) {
+        this.bouncedAt.set(id, now);
         this.send(ws, {
           t: "sys",
           text: `${this.zoneName.toUpperCase()} instance full (${hard}) — finding another slice…`,
@@ -5678,7 +5710,9 @@ export class WorldDO {
       this.send(ws, { t: "kit_ack", slot: "q", ok: false });
       return;
     }
-    const aim = Number.isFinite(msg.aim) ? msg.aim : p.aim;
+    // normAngle, not just isFinite: a finite-but-huge aim (1e308) makes the
+    // angle-difference normalizers below spin forever and wedge the whole zone.
+    const aim = Number.isFinite(msg.aim) ? normAngle(msg.aim) : p.aim;
     p.aim = aim;
     if (this.inTutorial()) this.tutorialEvent(p, "kit");
     // DASH-STRIKE moves on the PRIMARY cast only (an echo re-blinking you would be chaos)
@@ -5735,9 +5769,7 @@ export class WorldDO {
           const dx = e.x - p.x;
           const dy = e.y - p.y;
           if (Math.hypot(dx, dy) > 270) continue;
-          let diff = Math.atan2(dy, dx) - aim;
-          while (diff > Math.PI) diff -= 2 * Math.PI;
-          while (diff < -Math.PI) diff += 2 * Math.PI;
+          const diff = normAngle(Math.atan2(dy, dx) - aim);
           if (Math.abs(diff) > halfArc) continue;
           e.stunUntilTick = this.tick + this.statusTicks(e, Math.round((e.boss ? 900 : 2000) * scale));
           this.applyPlayerHitToEnemy(e, p, dmg);
@@ -5773,7 +5805,9 @@ export class WorldDO {
       this.send(ws, { t: "kit_ack", slot: "e", ok: false });
       return;
     }
-    const aim = Number.isFinite(msg.aim) ? msg.aim : p.aim;
+    // normAngle, not just isFinite: a finite-but-huge aim (1e308) makes the
+    // angle-difference normalizers below spin forever and wedge the whole zone.
+    const aim = Number.isFinite(msg.aim) ? normAngle(msg.aim) : p.aim;
     p.aim = aim;
     if (this.inTutorial()) this.tutorialEvent(p, "kit");
     const lvl = 1 + (p.mods.dmgPct || 0);
@@ -5845,7 +5879,9 @@ export class WorldDO {
     }
     p.heat = Math.max(0, p.heat - HEAT.ultHeatCost);
     this.send(ws, { t: "kit_ack", slot: "r", ok: true });
-    const aim = Number.isFinite(msg.aim) ? msg.aim : p.aim;
+    // normAngle, not just isFinite: a finite-but-huge aim (1e308) makes the
+    // angle-difference normalizers below spin forever and wedge the whole zone.
+    const aim = Number.isFinite(msg.aim) ? normAngle(msg.aim) : p.aim;
     p.aim = aim;
     const lvl = 1 + (p.mods.dmgPct || 0);
     switch (p.classId) {
@@ -5907,7 +5943,7 @@ export class WorldDO {
   private onFire(ws: WebSocket, msg: Extract<ClientMsg, { t: "fire" }>) {
     const p = this.playerFor(ws);
     if (!p || p.dead || !p.sessionValid) return;
-    if (Number.isFinite(msg.aim)) p.aim = msg.aim;
+    if (Number.isFinite(msg.aim)) p.aim = normAngle(msg.aim);
     const weapon = p.equipped.weapon;
     const wdef = weapon?.weaponId ? getWeapon(weapon.weaponId) : undefined;
     const prim = wdef?.primary;
@@ -5929,9 +5965,7 @@ export class WorldDO {
         const dx = e.x - p.x;
         const dy = e.y - p.y;
         if (Math.hypot(dx, dy) > prim.range) continue;
-        let diff = Math.atan2(dy, dx) - p.aim;
-        while (diff > Math.PI) diff -= 2 * Math.PI;
-        while (diff < -Math.PI) diff += 2 * Math.PI;
+        const diff = normAngle(Math.atan2(dy, dx) - p.aim);
         if (Math.abs(diff) <= halfArc) this.applyPlayerHitToEnemy(e, p, dmg);
       }
       // Melee can hit players only inside an active PvP arena (same rules as projectiles).
@@ -6416,10 +6450,9 @@ export class WorldDO {
         const projSpeed = arch.projSpeed * (this.provingVault ? WorldDO.weeklyAffix().shotSpeedMult : 1);
         // e.dmgMult carries per-enemy scaling (subway tunnel threat); zone mult is
         // the district-wide factor. Unset dmgMult leaves district behaviour at 1×.
-        const zoneDmg = this.zoneEnemyDmgMult * (e.dmgMult ?? 1);
-        const dmg = e.boss
-          ? Math.round(arch.dmg * BOSS_DMG_MULT * zoneDmg)
-          : Math.round(arch.dmg * zoneDmg);
+        // Bosses never reach here — they `continue` into updateBoss above, which
+        // applies BOSS_DMG_MULT itself.
+        const dmg = Math.round(arch.dmg * this.zoneEnemyDmgMult * (e.dmgMult ?? 1));
         const fire = (a: number, dmgOverride?: number) =>
           this.shots.push({
             id: this.nextShotId++,
@@ -6478,7 +6511,9 @@ export class WorldDO {
             const owner = this.players.get(s.owner);
             const dmg = s.dmg;
             if (owner) {
-              const lifesteal = Math.min(owner.level * 0.004, 0.08) + (owner.mods.lifestealPct || 0);
+              // Level's share of lifesteal already arrives via mods (levelCurve) —
+              // adding the old inline term here healed ranged hits twice.
+              const lifesteal = owner.mods.lifestealPct || 0;
               if (lifesteal > 0 && !owner.dead && owner.hp > 0) {
                 owner.hp = Math.min(owner.maxHp, owner.hp + dmg * lifesteal);
               }
@@ -7021,9 +7056,7 @@ export class WorldDO {
       const dx = v.x - attacker.x;
       const dy = v.y - attacker.y;
       if (Math.hypot(dx, dy) > range) continue;
-      let diff = Math.atan2(dy, dx) - attacker.aim;
-      while (diff > Math.PI) diff -= 2 * Math.PI;
-      while (diff < -Math.PI) diff += 2 * Math.PI;
+      const diff = normAngle(Math.atan2(dy, dx) - attacker.aim);
       if (Math.abs(diff) <= halfArc) this.applyPvpDamage(attacker, v, dmg);
     }
   }

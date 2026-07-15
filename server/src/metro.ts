@@ -290,6 +290,12 @@ export interface SettleResult {
   claimTx?: string;
   /** EVM treasury nonce used for a pre-signed claim (burned on TTL reclaim). */
   nonce?: number;
+  /**
+   * Hash the pre-signed claim WILL have once broadcast (deterministic from the
+   * signed tx). Lets the TTL sweep ask the chain whether the player actually
+   * broadcast it, instead of assuming abandonment and refunding blind.
+   */
+  claimTxHash?: string;
 }
 
 export interface Settlement {
@@ -529,10 +535,34 @@ export async function withdraw(
     return { ok: false, reason: poolish ? POOL_EMPTY_USER_MSG : raw };
   }
   if (typeof settle.nonce === "number" && Number.isFinite(settle.nonce)) {
+    // This write is NOT optional. reclaimExpired burns the nonce only when
+    // claim_nonce is set; if it's NULL the TTL path refunds the credits while the
+    // player still holds a valid, broadcastable pre-signed transfer — they keep
+    // the credits AND take the tokens, repeatably. (The old `catch {}` here was
+    // for pre-0031 DBs; 0031 is long applied.)
+    let recorded = false;
     try {
-      await db.prepare("UPDATE metro_withdrawals SET claim_nonce = ? WHERE id = ?").bind(settle.nonce, wid).run();
+      // nonce + hash in one write: the sweep needs the hash to tell "landed" from
+      // "abandoned", and the nonce to burn it. Splitting them risks having one.
+      const w = await db
+        .prepare("UPDATE metro_withdrawals SET claim_nonce = ?, claim_tx_hash = ? WHERE id = ?")
+        .bind(settle.nonce, settle.claimTxHash ?? null, wid)
+        .run();
+      recorded = (w.meta.changes ?? 0) > 0;
     } catch {
-      /* pre-migration */
+      recorded = false;
+    }
+    if (!recorded) {
+      // Never hand out a claim we can't reclaim. Refund, fail the row, and burn
+      // the nonce so the tx we just signed can never land.
+      await db.prepare("UPDATE players SET credits = credits + ? WHERE id = ?").bind(credits, id).run();
+      await db.prepare("UPDATE metro_withdrawals SET status = 'failed' WHERE id = ?").bind(wid).run();
+      try {
+        await settlement.invalidateNonce?.(settle.nonce);
+      } catch {
+        /* burn failed — the claimTx was never returned, so it can't be broadcast */
+      }
+      return { ok: false, reason: "cash-out ledger unavailable — credits refunded, please retry" };
     }
   }
   try {
@@ -623,22 +653,78 @@ export async function confirmWithdraw(
  *  so we can burn the treasury nonce and invalidate the abandoned claimTx. */
 export async function reclaimExpired(db: D1Database, settlement?: Settlement): Promise<number> {
   const cutoff = Date.now() - BRIDGE.claimTtlMs;
-  let results: Array<{ id: number; player: string; credits: number; claim_nonce: number | null }>;
+  type Row = {
+    id: number;
+    player: string;
+    credits: number;
+    claim_nonce: number | null;
+    claim_tx_hash: string | null;
+    wallet: string | null;
+    metro: number | null;
+  };
+  let results: Row[];
   try {
     const q = await db
-      .prepare("SELECT id, player, credits, claim_nonce FROM metro_withdrawals WHERE status = 'pending' AND created_at < ?")
+      .prepare(
+        "SELECT id, player, credits, claim_nonce, claim_tx_hash, wallet, metro FROM metro_withdrawals WHERE status = 'pending' AND created_at < ?",
+      )
       .bind(cutoff)
-      .all<{ id: number; player: string; credits: number; claim_nonce: number | null }>();
+      .all<Row>();
     results = q.results ?? [];
   } catch {
     const q = await db
       .prepare("SELECT id, player, credits FROM metro_withdrawals WHERE status = 'pending' AND created_at < ?")
       .bind(cutoff)
       .all<{ id: number; player: string; credits: number }>();
-    results = (q.results ?? []).map((r) => ({ ...r, claim_nonce: null }));
+    results = (q.results ?? []).map((r) => ({
+      ...r,
+      claim_nonce: null,
+      claim_tx_hash: null,
+      wallet: null,
+      metro: null,
+    }));
   }
   let reclaimed = 0;
   for (const r of results) {
+    // Did the player actually broadcast it? Ask the chain BEFORE trying to burn
+    // the nonce — a landed claim has already consumed that nonce, so the burn
+    // would throw and `continue` below would strand the row as 'pending' forever
+    // (credits debited, tokens delivered, pool permanently shrunk).
+    if (r.claim_tx_hash && r.wallet && r.metro != null && settlement?.verifyClaim) {
+      let landed = false;
+      try {
+        const v = await settlement.verifyClaim(r.claim_tx_hash, r.wallet, r.metro);
+        landed = !!v.ok;
+      } catch {
+        landed = false; // can't reach the chain — fall through and retry next sweep
+      }
+      if (landed) {
+        // It paid out. Finalize like confirmWithdraw would have, exactly once.
+        const fin = await db
+          .prepare(
+            `UPDATE metro_withdrawals SET status = 'done', tx_sig = ?
+             WHERE id = ? AND status = 'pending'
+               AND NOT EXISTS (SELECT 1 FROM metro_withdrawals WHERE tx_sig = ?)`,
+          )
+          .bind(r.claim_tx_hash, r.id, r.claim_tx_hash)
+          .run();
+        if ((fin.meta.changes ?? 0) > 0) {
+          try {
+            const { recordTreasuryEvent } = await import("./playerTreasury");
+            await recordTreasuryEvent(db, {
+              player: r.player,
+              kind: "withdraw_done",
+              credits: r.credits,
+              metro: r.metro,
+              ref: r.claim_tx_hash,
+            });
+          } catch {
+            /* pre-migration */
+          }
+        }
+        continue; // never refund a claim that paid
+      }
+    }
     // EVM: burn treasury nonce BEFORE flipping status / refunding. If burn fails, leave
     // the row pending so we retry — never refund while a pre-signed claimTx may still land.
     if (r.claim_nonce != null && settlement?.invalidateNonce) {
@@ -680,12 +766,18 @@ export async function reclaimExpired(db: D1Database, settlement?: Settlement): P
 export async function deposit(
   db: D1Database,
   settlement: Settlement,
-  args: { player: string; wallet: string; txSig: string; metro: number },
+  args: { player: string; wallet: string; txSig: string; metro: number; as?: "credits" | "metro" },
   priceEnv?: BridgePriceEnv,
 ): Promise<BridgeResponse> {
   const id = normId(args.player);
   const wallet = (args.wallet || "").trim();
   const txSig = (args.txSig || "").trim();
+  // One token, one claim. Deposits used to grant credits AND spendable ◈ for the
+  // same tokens, so 100 $METRO became 10,000₵ *and* 100◈ — the pool backed both.
+  // The runner now picks which side of the house their deposit lands in.
+  // Defaults to credits: that's what the deposit UI and the bridge have always
+  // promised, and what an un-updated client expects.
+  const want: "credits" | "metro" = args.as === "metro" ? "metro" : "credits";
   if (!txSig) return { ok: false, reason: "missing tx signature" };
   if (!isValidWallet(wallet)) return { ok: false, reason: "invalid wallet address" };
   const exists = await db.prepare("SELECT 1 FROM players WHERE id = ?").bind(id).first();
@@ -701,25 +793,30 @@ export async function deposit(
   // Reject dust that would grant 0 credits (don't inflate metro ledger with Math.max(1,…)).
   if (credits < 1) return { ok: false, reason: "deposit too small — need more $METRO for 1 credit at current rate" };
 
+  // Exactly one side is funded — see `want` above. ◈ tracks whole units so a
+  // sub-1 deposit can't invent one.
+  const grantedCredits = want === "credits" ? credits : 0;
+  const grantedMetro = want === "metro" ? Math.max(0, Math.round(metro)) : 0;
+
   // CLAIM-ONCE: tx_sig is the PRIMARY KEY, so a transfer can only ever credit once.
+  // Record what was actually GRANTED, not what it would have been worth as credits —
+  // player_treasury bootstraps lifetime totals from this row.
   const claim = await db
     .prepare("INSERT OR IGNORE INTO metro_deposits (tx_sig, player, wallet, metro, credits, created_at) VALUES (?,?,?,?,?,?)")
-    .bind(txSig, id, wallet, metro, credits, Date.now())
+    .bind(txSig, id, wallet, metro, grantedCredits, Date.now())
     .run();
   if (claim.meta.changes === 0) return { ok: false, reason: "deposit already claimed" };
 
-  // Ledger metro counter tracks whole units without inventing 1 metro for sub-1 deposits.
-  const metroUnits = Math.max(0, Math.round(metro));
   await db
     .prepare("UPDATE players SET credits = credits + ?, metro = metro + ? WHERE id = ?")
-    .bind(credits, metroUnits, id)
+    .bind(grantedCredits, grantedMetro, id)
     .run();
   try {
     const { recordTreasuryEvent } = await import("./playerTreasury");
     await recordTreasuryEvent(db, {
       player: id,
       kind: "deposit",
-      credits,
+      credits: grantedCredits,
       metro,
       rate: live.depositCreditsPerMetro,
       ref: txSig,
@@ -727,5 +824,5 @@ export async function deposit(
   } catch {
     /* pre-migration */
   }
-  return { ok: true, player: id, txSig, metro, metroGranted: metroUnits, credits };
+  return { ok: true, player: id, txSig, metro, metroGranted: grantedMetro, credits: grantedCredits, granted: want };
 }

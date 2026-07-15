@@ -2918,19 +2918,58 @@ async function kit() {
   let dronesWorked = false;
   {
     const totalHp = () => s2.enemies.reduce((a, e) => a + Math.max(0, e.hp), 0);
+    // Needs a target healthy enough for the escort's 12-per-shot chip to be
+    // MEASURABLE. A near-dead leftover from the hack cone above just evaporates
+    // on the first drone hit, and dead units drop out of the snapshot entirely —
+    // so the kill would be invisible here and read as "drones never fired".
+    const MEASURABLE_HP = 30;
+    const nearestLive = () => {
+      let best = null;
+      let bd = Infinity;
+      for (const e of s2.enemies) {
+        if (e.hp < MEASURABLE_HP) continue;
+        const d = Math.hypot(e.x - s2.x, e.y - s2.y);
+        if (d < bd) {
+          bd = d;
+          best = e;
+        }
+      }
+      return { best, bd };
+    };
+    // Close on a LIVING target BEFORE deploying: the escort only fires inside
+    // 320px and expires after 6s, and the hack cone above tends to kill whoever
+    // was next to us — leaving the nearest survivor most of a district away.
+    const tApproach = Date.now();
+    let seq2 = 900;
+    while (Date.now() - tApproach < 14000) {
+      const { best, bd } = nearestLive();
+      if (best && bd < 140) break;
+      if (best) ws2.send(JSON.stringify({ t: "input", seq: ++seq2, mx: (best.x - s2.x) / bd, my: (best.y - s2.y) / bd }));
+      await sleep(50);
+    }
     const before = totalHp();
     if (before > 0) {
-      ws2.send(JSON.stringify({ t: "ability2", seq: 950, aim: 0 }));
-      // Can't compare start vs end: RESPAWN_MS (2600) is shorter than this
-      // window, so enemies killed earlier come back at full hp and the total
-      // climbs. Poll instead — with our gun silent, only the escort can make
-      // the total DROP, while a respawn only ever adds.
-      let prev = before;
+      ws2.send(JSON.stringify({ t: "ability2", seq: ++seq2, aim: 0 }));
+      // Watch each enemy individually rather than the sum. RESPAWN_MS (2600) is
+      // shorter than this window, so enemies killed earlier come back at full hp
+      // mid-measurement; on the total, one respawn (+hp) hides several escort
+      // hits (-hp). Per enemy the signal is clean: with our gun silent, only the
+      // escort lowers an id's hp, while a respawn only ever raises it.
+      const snap = () => new Map(s2.enemies.map((e) => [e.id, e.hp]));
+      let prevHp = snap();
       for (let i = 0; i < 18; i++) {
+        // Stay in escort range — whoever we closed on may die mid-window.
+        const { best: near, bd: nd } = nearestLive();
+        if (near && nd > 90) {
+          ws2.send(JSON.stringify({ t: "input", seq: ++seq2, mx: (near.x - s2.x) / nd, my: (near.y - s2.y) / nd }));
+        }
         await sleep(250);
-        const cur = totalHp();
-        if (cur < prev) dronesWorked = true;
-        prev = cur;
+        const cur = snap();
+        for (const [id, hp] of cur) {
+          const was = prevHp.get(id);
+          if (was !== undefined && hp < was) dronesWorked = true;
+        }
+        prevHp = cur;
       }
     }
   }

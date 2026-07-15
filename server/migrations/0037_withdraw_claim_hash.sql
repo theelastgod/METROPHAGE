@@ -1,0 +1,12 @@
+-- Remember the hash of the pre-signed claim tx we hand to the client.
+--
+-- Without it, an expired-but-LANDED claim is indistinguishable from an abandoned
+-- one: reclaimExpired tries to burn the nonce, the chain rejects it (already
+-- consumed by the player's own payout), the burn throws, and the row is stuck
+-- 'pending' forever. Since POOL_SQL counts everything that isn't 'failed', each
+-- such zombie permanently shrinks the payable pool for every player.
+--
+-- The hash is deterministic from the signed tx, so recording it at build time
+-- lets the TTL sweep ask the chain "did this actually land?" (verifyClaim) and
+-- finalize it as 'done' instead of refunding or spinning.
+ALTER TABLE metro_withdrawals ADD COLUMN claim_tx_hash TEXT;

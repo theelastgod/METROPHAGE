@@ -13,6 +13,7 @@ import {
   id,
   verifyMessage,
   getAddress,
+  Transaction,
 } from "ethers";
 import type { D1Database } from "@cloudflare/workers-types";
 import type { Settlement } from "./metro";
@@ -119,6 +120,30 @@ async function withWithdrawLock<T>(db: D1Database | undefined, fn: () => Promise
   throw new Error("treasury withdraw busy — retry in a few seconds");
 }
 
+/**
+ * Next treasury nonce for a pre-signed claim.
+ *
+ * `getTransactionCount(addr, "pending")` only counts txs the mempool has SEEN.
+ * We hand the client a signed tx and never broadcast it ourselves, so between
+ * build and broadcast the chain still reports the old count — every claim built
+ * in that window would otherwise reuse the same nonce. Only the first to land
+ * can ever confirm; the rest are permanently "nonce too low" with the player's
+ * credits already debited.
+ *
+ * So the allocator remembers what it handed out (metro_bridge_lock.last_nonce,
+ * added in migration 0027 for exactly this and never wired up) and takes
+ * whichever is further ahead: the chain, or our own last issue + 1. Both must be
+ * read and written inside the withdraw lock to stay serialized.
+ */
+export function nextTreasuryNonce(chainPending: number, lastIssued: number | null | undefined): number {
+  const chain = Math.max(0, Math.floor(Number(chainPending) || 0));
+  const last = Number(lastIssued);
+  if (!Number.isFinite(last) || lastIssued == null) return chain;
+  // last+1 wins while claims sit un-broadcast; the chain wins once they land
+  // (or once a nonce is burned), which keeps us from drifting into a gap.
+  return Math.max(chain, Math.floor(last) + 1);
+}
+
 export function makeEvmSettlement(cfg: EvmConfig): Settlement {
   const provider = makeProvider(cfg.rpcs);
   const wallet = new Wallet(normalizePk(cfg.treasuryPrivateKey), provider as JsonRpcProvider);
@@ -155,7 +180,26 @@ export function makeEvmSettlement(cfg: EvmConfig): Settlement {
           }
           const data = iface.encodeFunctionData("transfer", [getAddress(toWallet), amount]);
           const fee = await provider.getFeeData();
-          const nonce = await provider.getTransactionCount(wallet.address, "pending");
+          // Inside withWithdrawLock — read-modify-write of last_nonce is serialized.
+          // Prod always wires db (index.ts); without it there is no lock either,
+          // so chain-only allocation is all that's possible and nothing is worse.
+          const ledger = cfg.db;
+          const chainPending = await provider.getTransactionCount(wallet.address, "pending");
+          let lastIssued: number | null = null;
+          if (ledger) {
+            try {
+              const row = await ledger
+                .prepare("SELECT last_nonce FROM metro_bridge_lock WHERE id = 1")
+                .first<{ last_nonce: number | null }>();
+              lastIssued = row?.last_nonce ?? null;
+            } catch {
+              // Can't read the ledger (pre-0027): fail closed on the write below
+              // rather than reverting to chain-only — a blocked cash-out is
+              // recoverable, a reused nonce destroys credits.
+              lastIssued = null;
+            }
+          }
+          const nonce = nextTreasuryNonce(chainPending, lastIssued);
           const network = await provider.getNetwork();
           const chainId = cfg.chainId ?? Number(network.chainId);
           const maxFee = fee.maxFeePerGas ?? fee.gasPrice ?? 1_000_000_000n;
@@ -181,7 +225,35 @@ export function makeEvmSettlement(cfg: EvmConfig): Settlement {
             gasLimit,
           };
           const signed = await wallet.signTransaction(tx);
-          return { ok: true, claimTx: signed, nonce };
+          // Record BEFORE handing the tx out: an issued-but-unrecorded nonce is
+          // exactly the reuse bug. If we can't remember it, don't issue it —
+          // failing a cash-out is recoverable, double-issuing a nonce is not.
+          if (ledger) {
+            try {
+              const w = await ledger
+                .prepare("UPDATE metro_bridge_lock SET last_nonce = ? WHERE id = 1")
+                .bind(nonce)
+                .run();
+              if ((w.meta.changes ?? 0) === 0) {
+                return { ok: false, reason: "bridge nonce ledger unavailable — retry in a moment" };
+              }
+            } catch (e) {
+              return {
+                ok: false,
+                reason: `bridge nonce ledger write failed — retry in a moment (${String((e as Error)?.message ?? e).slice(0, 60)})`,
+              };
+            }
+          }
+          // Deterministic from the signed tx — this is the hash it will have IF the
+          // player broadcasts it, so the TTL sweep can check the chain rather than
+          // assume abandonment.
+          let claimTxHash: string | undefined;
+          try {
+            claimTxHash = Transaction.from(signed).hash ?? undefined;
+          } catch {
+            claimTxHash = undefined; // non-fatal: sweep falls back to nonce burn
+          }
+          return { ok: true, claimTx: signed, nonce, claimTxHash };
         });
       } catch (e) {
         return { ok: false, reason: String((e as Error)?.message ?? e).slice(0, 160) };
