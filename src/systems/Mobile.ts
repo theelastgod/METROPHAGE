@@ -376,4 +376,9 @@ export function installMobileFullscreenButton(opts?: { onChange?: () => void }):
   document.addEventListener("fullscreenchange", paint);
   document.addEventListener("webkitfullscreenchange", paint);
   document.body.appendChild(btn);
+  // FULL owns the top-right corner, but only on browsers that can actually fullscreen —
+  // so the $METRO chip can't just hardcode an offset or it floats in a gap on iOS.
+  // This flag lets the chip stack under FULL exactly when FULL is there.
+  document.documentElement.classList.add("mp-has-fs");
+  document.body.classList.add("mp-has-fs");
 }

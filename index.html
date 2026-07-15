@@ -182,16 +182,25 @@
       #mp-fs-btn:active {
         transform: scale(0.97);
       }
-      /* Compact $METRO corner chip on phones (panel CSS also targets this). */
+      /* Compact $METRO chip on phones, TOP-right (MetroPanel's CSS matches this).
+         Must not be bottom-anchored: the bottom-right corner is the ATK pad, whose
+         touch radius reaches past the corner, and this chip is fixed HTML above the
+         canvas — so a bottom chip swallows fire taps. Bottom-left is the move stick,
+         bottom-centre the hotbar; the top-right lane is display-only intel text. */
       body.mp-mobile #metro-fab {
         right: max(6px, env(safe-area-inset-right, 0px)) !important;
-        bottom: max(6px, env(safe-area-inset-bottom, 0px)) !important;
+        top: max(6px, env(safe-area-inset-top, 0px)) !important;
+        bottom: auto !important;
         min-width: 0 !important;
         min-height: 0 !important;
         padding: 5px 7px !important;
         font-size: 8px !important;
         letter-spacing: 0.06em !important;
         border-radius: 6px !important;
+      }
+      /* FULL (Android only) already owns the very top-right; stack the chip under it. */
+      body.mp-mobile.mp-has-fs #metro-fab {
+        top: calc(max(6px, env(safe-area-inset-top, 0px)) + 30px) !important;
       }
       /* Full landscape gate — phone must be on its side to play. */
       #mp-landscape-gate {

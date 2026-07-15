@@ -36,6 +36,21 @@ import { SOLANA_DEVNET, SOLANA_MAINNET } from "../economy/solanaChain";
 
 const short = (a: string) => (a.length > 10 ? `${a.slice(0, 4)}…${a.slice(-4)}` : a);
 
+/**
+ * Which side of the house a deposit funds. One deposit funds exactly one — it
+ * used to mint credits AND ◈ for the same tokens. Defaults to credits, matching
+ * what the panel has always promised.
+ */
+function depositAs(): "credits" | "metro" {
+  const el = document.querySelector<HTMLSelectElement>("#m-dep-as");
+  return el?.value === "metro" ? "metro" : "credits";
+}
+
+/** Report what actually landed, not what the deposit could have been worth. */
+function grantedLabel(r: { granted?: string; credits?: number; metroGranted?: number }): string {
+  return r.granted === "metro" ? `+◈ ${r.metroGranted ?? 0}` : `+${r.credits ?? 0}₵`;
+}
+
 const STYLE = `
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&family=Orbitron:wght@500;700;900&display=swap');
 /* FAB sits bottom-right; panel opens as a viewport-clamped card above it. */
@@ -50,15 +65,23 @@ const STYLE = `
 #metro-fab.warn{border-color:#f7ff3c;color:#f7ff3c;box-shadow:0 0 20px rgba(247,255,60,.28)}
 #metro-fab.linked{border-color:#39ff88;color:#7dffb0;box-shadow:0 0 20px rgba(57,255,136,.3),inset 0 0 14px rgba(57,255,136,.08)}
 #metro-fab .fab-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:currentColor;margin-right:6px;vertical-align:middle;box-shadow:0 0 8px currentColor}
-/* Phones: tiny corner chip — does not block the stick / action cluster. */
+/* Phones: tiny chip in the TOP-right — the bottom-right corner is the ATK pad.
+   MobileControls puts ATK at (W-uiDim(18)-atkR, H-uiDim(18)-atkR) with a touch radius of
+   atkR+uiDim(9) and a dead zone of +uiDim(4) beyond that, which reaches past the corner —
+   so a bottom-anchored chip sits inside the fire button's hit circle and, being fixed HTML
+   at z-index 9999, swallows the tap. There's no nudge that fixes it: the chip is already
+   in the corner, so it can't gain distance from the pad. Bottom-left is the move stick and
+   bottom-centre is the hotbar; the top-right lane is display-only intel text. */
 .mp-mobile #metro-fab{
   right:max(6px,env(safe-area-inset-right,0px));
-  bottom:max(6px,env(safe-area-inset-bottom,0px));
-  top:auto;left:auto;
+  top:max(6px,env(safe-area-inset-top,0px));
+  bottom:auto;left:auto;
   min-width:0;min-height:0;width:auto;max-width:none;
   padding:5px 7px;font-size:8px;letter-spacing:.06em;border-radius:6px;
   box-shadow:0 0 10px rgba(255,43,214,.22),inset 0 0 8px rgba(255,43,214,.06);
   opacity:.92}
+/* FULL (Android only) already owns the very top-right; stack the chip under it. */
+.mp-mobile.mp-has-fs #metro-fab{top:calc(max(6px,env(safe-area-inset-top,0px)) + 30px)}
 .mp-mobile #metro-fab.warn{box-shadow:0 0 10px rgba(247,255,60,.22)}
 .mp-mobile #metro-fab.linked{box-shadow:0 0 10px rgba(57,255,136,.22)}
 .mp-mobile #metro-fab .fab-dot{width:4px;height:4px;margin-right:3px}
@@ -324,6 +347,10 @@ function mountStandbyMetroPanel(getPlayerId: () => string | null): void {
           <button id="m-send" class="accent">${sendLabel}</button>
         </div>
         <div class="field-row"><input id="m-txsig" placeholder="tx signature after send"/></div>
+        <div class="field-row"><select id="m-dep-as">
+          <option value="credits">receive ₵ credits — spend in game, cash out later</option>
+          <option value="metro">receive ◈ METRO — market listings + CRUCIBLE buy-ins</option>
+        </select></div>
         <div class="action-row">
           <button id="m-deposit" class="accent">Claim deposit</button>
           <button id="m-refresh" class="secondary">Refresh</button>
@@ -460,19 +487,25 @@ function mountStandbyMetroPanel(getPlayerId: () => string | null): void {
     }
     try {
       const wallet = currentWallet();
-      const qs = new URLSearchParams({ player });
+      // POST, never a query string: a signature in a URL is written to access logs
+      // and browser history, where it can be replayed inside its freshness window.
+      const body: Record<string, unknown> = { player };
       if (wallet && pool?.settlement && pool.settlement !== "sim" && walletAvailable()) {
         const ts = Date.now();
         const signed = await signWalletLogin(loginMessage(wallet, ts), wallet);
         if (signed) {
-          qs.set("wallet", wallet);
-          qs.set("sig", signed.signature);
-          qs.set("ts", String(ts));
+          body.wallet = wallet;
+          body.sig = signed.signature;
+          body.ts = ts;
         }
       } else if (wallet) {
-        qs.set("wallet", wallet);
+        body.wallet = wallet;
       }
-      const r = await fetch(`${metroApiBase()}/metro/account?${qs}`).then((x) => x.json());
+      const r = await fetch(`${metroApiBase()}/metro/account`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }).then((x) => x.json());
       if (r.ok) $("m-credits").textContent = `₵ ${r.credits}`;
       else $("m-credits").textContent = "—";
     } catch {
@@ -625,11 +658,12 @@ function mountStandbyMetroPanel(getPlayerId: () => string | null): void {
           wallet,
           txSig,
           metro: metro || 0,
+          as: depositAs(),
           sig: auth.sig,
           ts: auth.ts,
         }),
       }).then((x) => x.json());
-      status(r.ok ? `✓ deposited ◈ ${fmtMetro(r.metro)} → +${r.credits}₵` : `✗ ${r.reason}`);
+      status(r.ok ? `✓ deposited ◈ ${fmtMetro(r.metro)} → ${grantedLabel(r)}` : `✗ ${r.reason}`);
       void refresh();
     } catch {
       status("deposit failed (server unreachable)");
@@ -749,6 +783,10 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
         <div class="field-row two"><input id="m-dep-amt" type="number" min="0" step="any" inputmode="decimal" placeholder="$METRO amount"/>
           <button id="m-send" class="accent">${sendLabel}</button></div>
         <div class="field-row"><input id="m-txsig" placeholder="tx signature (auto-filled after send)"/></div>
+        <div class="field-row"><select id="m-dep-as">
+          <option value="credits">receive ₵ credits — spend in game, cash out later</option>
+          <option value="metro">receive ◈ METRO — market listings + CRUCIBLE buy-ins</option>
+        </select></div>
         <div class="action-row"><button id="m-deposit" class="accent">Claim deposit</button><button id="m-refresh" class="secondary">Refresh</button></div>
       </div>
 
@@ -982,7 +1020,8 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
     try {
       // Live: signed wallet. Sim harness: player id alone (server allows under ALLOW_SIM).
       const wallet = currentWallet();
-      const qs = new URLSearchParams({ player });
+      // POST, never a query string — see the note on the other account read.
+      const body: Record<string, unknown> = { player };
       if (pool?.settlement && pool.settlement !== "sim" && wallet && walletAvailable()) {
         const ts = Date.now();
         const signed = await signWalletLogin(loginMessage(wallet, ts), wallet);
@@ -990,13 +1029,17 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
           status("sign-in cancelled — balance hidden");
           return;
         }
-        qs.set("wallet", wallet);
-        qs.set("sig", signed.signature);
-        qs.set("ts", String(ts));
+        body.wallet = wallet;
+        body.sig = signed.signature;
+        body.ts = ts;
       } else if (wallet) {
-        qs.set("wallet", wallet);
+        body.wallet = wallet;
       }
-      const r = await fetch(`${metroApiBase()}/metro/account?${qs}`).then((x) => x.json());
+      const r = await fetch(`${metroApiBase()}/metro/account`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }).then((x) => x.json());
       if (r.ok) {
         acct = r;
         const credits = Math.round(Number(r.balances?.credits ?? r.credits) || 0);
@@ -1214,9 +1257,9 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
       const r = await fetch(`${metroApiBase()}/metro/deposit`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ player, wallet, txSig, metro: metro || 0, sig: auth.sig, ts: auth.ts }),
+        body: JSON.stringify({ player, wallet, txSig, metro: metro || 0, as: depositAs(), sig: auth.sig, ts: auth.ts }),
       }).then((x) => x.json());
-      status(r.ok ? `✓ deposited ◈ ${fmtMetro(r.metro)} → +${r.credits}₵` : `✗ ${r.reason}`);
+      status(r.ok ? `✓ deposited ◈ ${fmtMetro(r.metro)} → ${grantedLabel(r)}` : `✗ ${r.reason}`);
       void refresh();
     } catch {
       status("deposit failed (server unreachable)");
