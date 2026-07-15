@@ -454,6 +454,9 @@ function tunnelPathSamples(
  * Enemy posts: `depth` field stores **campaign threat** (0..7+) for scaling —
  * not pure graph distance. Tunnels toward higher districts are denser + harder.
  */
+/** Radius (tiles) around hub boarding kept clear — just the platform you arrive on. */
+export const HUB_BOARDING_PAD = 6;
+
 export function subwayEnemyPosts(): Array<{ tx: number; ty: number; depth: number }> {
   const posts: Array<{ tx: number; ty: number; depth: number }> = [];
   const hub = SUBWAY_STATIONS.find((s) => s.zone === "safe") ?? SUBWAY_STATIONS[0];
@@ -462,8 +465,11 @@ export function subwayEnemyPosts(): Array<{ tx: number; ty: number; depth: numbe
     const key = `${tx},${ty}`;
     if (seen.has(key)) return;
     seen.add(key);
-    // Clear pad around hub boarding — first steps underground stay safe
-    if (Math.hypot(tx - hub.tx, ty - hub.ty) < 16) return;
+    // Boarding pad — you must never materialise inside a fight. This used to be 16
+    // tiles, which swallowed the hub's own station guards AND every tunnel post on the
+    // approach, leaving the station you actually arrive at completely dead. Keep it to
+    // the platform you land on; the rest of the station is fair game at tier 0.
+    if (Math.hypot(tx - hub.tx, ty - hub.ty) < HUB_BOARDING_PAD) return;
     posts.push({ tx, ty, depth: campaignThreat });
   };
 
@@ -483,14 +489,21 @@ export function subwayEnemyPosts(): Array<{ tx: number; ty: number; depth: numbe
 
   // Station guards — campaign threat of that station's surface district
   for (const st of SUBWAY_STATIONS) {
-    if (st.zone === "safe") continue;
     const ct = st.campaignThreat ?? campaignThreatForZone(st.zone);
     const tier = subwayStationTier(st);
-    push(st.tx - 4, st.ty, ct);
-    push(st.tx + 4, st.ty, ct);
-    push(st.tx, st.ty - 3, ct);
-    push(st.tx, st.ty + 3, ct);
-    if (st.major && tier >= 1) {
+    // The hub is the one station you ARRIVE at rather than fight into, so it gets no
+    // guards hugging the platform (those sit inside the boarding pad anyway) — only the
+    // far ends below. campaignThreat 0 => tier 0 => SUBWAY_TIER_KINDS[0], patrols and a
+    // wasp: the softest rung of the same progression every other station uses.
+    const boarding = st.zone === "safe";
+    if (!boarding) {
+      push(st.tx - 4, st.ty, ct);
+      push(st.tx + 4, st.ty, ct);
+      push(st.tx, st.ty - 3, ct);
+      push(st.tx, st.ty + 3, ct);
+    }
+    // Platform ends / track bay. The hub joins in at tier 0 so its station isn't dead.
+    if (st.major && (tier >= 1 || boarding)) {
       push(st.tx - 1, st.ty - 8, ct);
       push(st.tx + 1, st.ty + 8, ct);
       push(st.tx - 8, st.ty, ct);

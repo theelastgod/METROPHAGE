@@ -9,6 +9,7 @@ import {
   SUBWAY_END_TO_END_SEC,
   subwaySpawnForEntry,
   subwayEnemyPosts,
+  HUB_BOARDING_PAD,
   subwayBossTile,
   subwayThreatTier,
   resolveSubwayOpen,
@@ -86,6 +87,36 @@ describe("THE UNDERLINE subway network", () => {
     expect(open).toBeGreaterThan(posts.length * 0.85);
     const boss = subwayBossTile();
     expect(isWall(g[boss.ty]?.[boss.tx])).toBe(false);
+  });
+
+  it("populates the boarding station — it is the one you arrive at, not a dead room", () => {
+    // Regression: the hub was skipped by the station-guard loop AND smothered by a
+    // 16-tile clear pad, so the first station a player ever sees had zero enemies
+    // while every other station had 4-26.
+    const posts = subwayEnemyPosts();
+    const hub = SUBWAY_STATIONS.find((s) => s.zone === "safe")!;
+    const near = posts.filter((p) => Math.hypot(p.tx - hub.tx, p.ty - hub.ty) <= 12);
+    expect(near.length).toBeGreaterThan(0);
+    // Same rung as the other tier-0 stations — patrols, not a difficulty spike.
+    for (const p of near) expect(subwayThreatTier(p.depth)).toBe(0);
+  });
+
+  it("keeps the boarding pad itself clear so you never arrive inside a fight", () => {
+    const posts = subwayEnemyPosts();
+    const hub = SUBWAY_STATIONS.find((s) => s.zone === "safe")!;
+    for (const p of posts) {
+      expect(Math.hypot(p.tx - hub.tx, p.ty - hub.ty)).toBeGreaterThanOrEqual(HUB_BOARDING_PAD);
+    }
+  });
+
+  it("leaves every other station's population untouched", () => {
+    // The fix must add the hub only — not re-tune the whole line.
+    const posts = subwayEnemyPosts();
+    for (const st of SUBWAY_STATIONS) {
+      if (st.zone === "safe") continue;
+      const near = posts.filter((p) => Math.hypot(p.tx - st.tx, p.ty - st.ty) <= 10);
+      expect(near.length, `${st.zone} lost its guards`).toBeGreaterThanOrEqual(4);
+    }
   });
 });
 
