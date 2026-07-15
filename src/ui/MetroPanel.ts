@@ -126,7 +126,12 @@ const STYLE = `
   box-shadow:0 0 34px rgba(0,229,255,.24),0 0 58px rgba(255,43,214,.13),inset 0 0 42px rgba(0,229,255,.04)}
 #metro-panel *{box-sizing:border-box}
 #metro-panel.open{display:flex;animation:metroIn .24s ease-out}
-/* Hide FAB under the open panel so it doesn't peek past the card edge. */
+/* Hide the FAB while the panel is open. On phones the chip sits top-right, which is
+   exactly where the panel's close button lands — so if this hide fails the chip eats the
+   tap and the panel cannot be closed. metro-open is toggled in JS; :has() alone is a
+   silent single point of failure on engines that don't resolve it. The :has() rule stays
+   as a progressive belt-and-braces for the no-JS-class case. */
+body.metro-open #metro-fab{opacity:0;pointer-events:none;transform:none}
 body:has(#metro-panel.open) #metro-fab{opacity:0;pointer-events:none;transform:none}
 @keyframes metroIn{from{opacity:0;transform:translateY(10px) scale(.985)}to{opacity:1;transform:none}}
 #metro-panel .head{flex:0 0 auto;z-index:2;background:linear-gradient(95deg,rgba(18,10,36,.98),rgba(5,20,32,.96));
@@ -278,6 +283,26 @@ body:has(#metro-panel.open) #metro-fab{opacity:0;pointer-events:none;transform:n
 `;
 
 /** Standby panel when client has no CA — still offer deposit via server treasury/mint. */
+/**
+ * Single place that opens/closes the panel. Mirrors `.open` onto <body> so the FAB hide
+ * never depends on :has() resolving — the chip overlaps the panel's close button on
+ * phones, so a missed hide means the panel can't be exited.
+ */
+function setMetroPanelOpen(panel: HTMLElement, open: boolean): void {
+  panel.classList.toggle("open", open);
+  try {
+    document.body.classList.toggle("metro-open", open);
+    // Take the chip out of the layout outright rather than rely on the cascade. On
+    // phones it sits top-right — the same corner as the panel's close button — and the
+    // CSS hide loses opacity to `.mp-mobile #metro-fab{opacity:.92}`, leaving a visible
+    // chip sitting on the ×. `display` from JS cannot be out-specified.
+    const fab = document.getElementById("metro-fab");
+    if (fab) fab.style.display = open ? "none" : "";
+  } catch {
+    /* SSR / detached */
+  }
+}
+
 function mountStandbyMetroPanel(getPlayerId: () => string | null): void {
   const style = document.createElement("style");
   style.textContent = STYLE;
@@ -523,7 +548,7 @@ function mountStandbyMetroPanel(getPlayerId: () => string | null): void {
   };
 
   const openPanel = () => {
-    panel.classList.add("open");
+    setMetroPanelOpen(panel, true);
     const body = panel.querySelector<HTMLElement>(".body");
     if (body) body.scrollTop = 0;
     // Keep deposit controls on-screen after layout (mobile keyboard / safe-area).
@@ -533,10 +558,10 @@ function mountStandbyMetroPanel(getPlayerId: () => string | null): void {
     void refresh();
   };
   fab.onclick = () => {
-    if (panel.classList.contains("open")) panel.classList.remove("open");
+    if (panel.classList.contains("open")) setMetroPanelOpen(panel, false);
     else openPanel();
   };
-  $("m-x").onclick = () => panel.classList.remove("open");
+  $("m-x").onclick = () => setMetroPanelOpen(panel, false);
   $("m-refresh").onclick = () => void refresh();
   for (const id of ["m-dep-amt", "m-txsig"] as const) {
     $(id).addEventListener("focus", () => {
@@ -1102,10 +1127,10 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
 
   fab.onclick = () => {
     if (panel.classList.contains("open")) {
-      panel.classList.remove("open");
+      setMetroPanelOpen(panel, false);
       return;
     }
-    panel.classList.add("open");
+    setMetroPanelOpen(panel, true);
     const body = panel.querySelector<HTMLElement>(".body");
     if (body) body.scrollTop = 0;
     requestAnimationFrame(() => {
@@ -1113,7 +1138,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
     });
     void refresh();
   };
-  $("m-x").onclick = () => panel.classList.remove("open");
+  $("m-x").onclick = () => setMetroPanelOpen(panel, false);
   $("m-refresh").onclick = () => void refresh();
   $("m-refresh-bottom").onclick = () => void refresh();
   for (const id of ["m-dep-amt", "m-txsig", "m-amt"] as const) {
