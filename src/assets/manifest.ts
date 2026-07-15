@@ -45,6 +45,10 @@ export const PICKUP_CORE_KEY = "pickup_core";
 export const BULLET_PLAYER_KEY = "bullet_player";
 export const BULLET_ENEMY_KEY = "bullet_enemy";
 export const GUARDIAN_WRAITH_KEY = "guardian_wraith";
+/** Wraith sheet is 16×(32×32): 0-7 float loop, 8-14 attack pose, 15 empty. Idle cycles
+ *  the float loop only — `frameTotal` can't be used (Phaser counts its __BASE frame, and
+ *  cycling to the end would blink on the empty frame and swing the attack pose). */
+export const WRAITH_FLOAT_FRAMES = 8;
 
 // Real top-down street props (sliced from the CyberPunk environment pack) — scattered as
 // non-colliding decals in the online districts (see OnlineScene).
@@ -380,7 +384,10 @@ export const ASSETS: Record<string, AssetEntry[]> = {
     { key: BULLET_KEY, file: null }, // procedural (fallback; real art via BULLET_PLAYER/ENEMY_KEY)
     { key: AGENT_KEY, file: null }, // procedural light figure (tinted crowd)
     // Real floating ICE-dive guardian wraith (Resources pack) — 64px frames, frame-driven.
-    { key: GUARDIAN_WRAITH_KEY, file: "assets/sprites/guardian_wraith.png", frameWidth: 64, frameHeight: 64 },
+    // 256×64 sheet = 8×2 grid of 32×32 (16 frames: 0-7 float, 8-14 attack, 15 empty).
+    // Framed at 64 this sliced into 4 frames that each showed a 2×2 block of four wraiths;
+    // OnlineScene's `frameTotal - 1` cycle only makes sense against the 16-frame read.
+    { key: GUARDIAN_WRAITH_KEY, file: "assets/sprites/guardian_wraith.png", ...CHAR },
   ],
   objects: [
     // Authored neon-noir infection nodes + hazard crate + streetlight (AI/pixel packs).

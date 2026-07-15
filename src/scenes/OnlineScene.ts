@@ -35,6 +35,7 @@ import {
   BULLET_PLAYER_KEY,
   BULLET_ENEMY_KEY,
   GUARDIAN_WRAITH_KEY,
+  WRAITH_FLOAT_FRAMES,
   PORTRAIT_CAST_KEY,
   PORTRAIT_KEEPERS_KEY,
   PORTRAIT_RESIDENTS_KEY,
@@ -6177,7 +6178,7 @@ export default class OnlineScene extends Phaser.Scene {
         // spectre, not an HSS trooper. Non-boss dive enemies only; falls back to COP_KEY.
         const wraith = this.isDive && !e.boss && this.textures.exists(GUARDIAN_WRAITH_KEY);
         s = this.add.sprite(e.x, e.y, wraith ? GUARDIAN_WRAITH_KEY : COP_KEY, 0).setDepth(8).setAlpha(0).setScale(wraith ? 0.95 : 1.15);
-        if (wraith) s.setData("wraith", this.textures.get(GUARDIAN_WRAITH_KEY).frameTotal - 1);
+        if (wraith) s.setData("wraith", WRAITH_FLOAT_FRAMES);
         this.tweens.add({ targets: s, alpha: 1, duration: 260 }); // AOI arrivals fade in
         s.setData("shadow", this.groundShadow(e.x, e.y, 0.48));
         this.enemySprites.set(id, s);
