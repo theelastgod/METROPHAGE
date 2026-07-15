@@ -44,7 +44,7 @@ import {
   loadLocalRunner,
   writeLocalRunner,
 } from "../systems/LocalRunner";
-import { ensureGuestDeviceSecret } from "../net/NetClient";
+import { ensureGuestDeviceSecret, readGuestDeviceSecret } from "../net/NetClient";
 import { metroApiBase, isEvmAddress } from "../economy/metro";
 import { prefersMobileUx } from "../systems/Mobile";
 
@@ -778,7 +778,34 @@ export default class SelectScene extends Phaser.Scene {
     if (opts.mode === "guest") {
       const local = loadLocalRunner();
       if (local?.callsign) {
-        const secret = ensureGuestDeviceSecret(local.callsign);
+        // READ, never mint. ensureGuestDeviceSecret() fabricates a fresh UUID when this
+        // device holds no key — which the server can only ever answer with "device key
+        // does not match this runner", so NEW RUNNER failed with a mismatch that was
+        // really "no key here". Without a key there is nothing to prove ownership with.
+        const secret = readGuestDeviceSecret(local.callsign);
+        if (!secret) {
+          this.walletPanel.show({
+            step: "connect",
+            status: "error",
+            statusText: "no device key",
+            headline: "Could not delete runner",
+            body:
+              `This device holds no key for ${local.callsign}, so the server can't be told the ` +
+              `delete is really yours. Guest runners can only be deleted from the device that ` +
+              `created them. Start a fresh callsign instead, or link a wallet for a portable runner.`,
+            wallet: connectedWallet(),
+            actions: this.walletActions([
+              {
+                label: "▸ NEW CALLSIGN",
+                sub: "leave the old runner on the server",
+                color: COLORS.neonGreen,
+                primary: true,
+                fn: () => void this.commitNewGuestRunner({ mode: "local_only" }),
+              },
+            ]),
+          });
+          return;
+        }
         try {
           const res = await fetch(`${metroApiBase()}/player/retire`, {
             method: "POST",
