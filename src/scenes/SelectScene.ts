@@ -66,6 +66,7 @@ export default class SelectScene extends Phaser.Scene {
   private walletPanel!: WalletSignInPanel;
   private walletLabel!: Phaser.GameObjects.Text;
   private bodyText!: Phaser.GameObjects.Text;
+  private tagline!: Phaser.GameObjects.Text;
   private actionLayer!: Phaser.GameObjects.Container;
   private classLayer!: Phaser.GameObjects.Container;
   private preview?: Phaser.GameObjects.Image;
@@ -119,7 +120,7 @@ export default class SelectScene extends Phaser.Scene {
       },
     });
 
-    this.add
+    this.tagline = this.add
       .text(
         VIEW_W / 2,
         mobile ? uiDim(48) : MENU_SUB_Y - uiDim(8),
@@ -232,6 +233,7 @@ export default class SelectScene extends Phaser.Scene {
     this.classLayer.setVisible(false);
     this.clearActionLayer();
     this.bodyText.setVisible(false);
+    this.tagline?.setVisible(true); // caption borrowed the tagline's slot
     this.preview?.destroy();
     this.preview = undefined;
     const hasWallet = walletAvailable();
@@ -345,6 +347,7 @@ export default class SelectScene extends Phaser.Scene {
     this.preview = undefined;
     this.clearActionLayer();
     this.bodyText.setVisible(false);
+    this.tagline?.setVisible(true); // caption borrowed the tagline's slot
     // Wallet is the key / recommended path; guest multiplayer remains available.
     // walletAvailable() is true for inject, WalletConnect, and mobile deep-links.
     const mobile = prefersMobileUx();
@@ -410,15 +413,11 @@ export default class SelectScene extends Phaser.Scene {
     this.registry.remove("characterLocked");
     this.walletPanel.hide();
     this.enterCreate();
-    const cardTop = this.cardRects[0]?.y ?? VIEW_H * 0.38;
-    this.bodyText
-      .setVisible(true)
-      .setY(cardTop - uiGap("lg"))
-      .setText(
-        hasLocalRunner()
-          ? "new runner replaces the multiplayer save on this device"
-          : "pick a class · multiplayer progress saves online · no wallet",
-      );
+    this.setClassCaption(
+      hasLocalRunner()
+        ? "new runner replaces the multiplayer save on this device"
+        : "pick a class · multiplayer progress saves online · no wallet",
+    );
   }
 
   /**
@@ -464,6 +463,7 @@ export default class SelectScene extends Phaser.Scene {
     this.classLayer.setVisible(false);
     this.clearActionLayer();
     this.bodyText.setVisible(false);
+    this.tagline?.setVisible(true); // caption borrowed the tagline's slot
     this.walletPanel.hide();
 
     bakeCustomPlayer(this, cust);
@@ -724,6 +724,7 @@ export default class SelectScene extends Phaser.Scene {
     this.classLayer.setVisible(false);
     this.clearActionLayer();
     this.bodyText.setVisible(false);
+    this.tagline?.setVisible(true); // caption borrowed the tagline's slot
     this.preview?.destroy();
     this.preview = undefined;
 
@@ -950,6 +951,7 @@ export default class SelectScene extends Phaser.Scene {
     this.preview = undefined;
     this.clearActionLayer();
     this.bodyText.setVisible(false);
+    this.tagline?.setVisible(true); // caption borrowed the tagline's slot
     this.walletPanel.show({
       step: opts?.step ?? "sign",
       status: opts?.status ?? "ready",
@@ -1142,6 +1144,7 @@ export default class SelectScene extends Phaser.Scene {
     });
 
     this.bodyText.setVisible(false);
+    this.tagline?.setVisible(true); // caption borrowed the tagline's slot
 
     const drillLbl = () => (getSettings().tutorialMode === "full" ? "FULL TRAINING" : "QUICK");
     this.walletPanel.show({
@@ -1191,17 +1194,33 @@ export default class SelectScene extends Phaser.Scene {
     this.preview?.destroy();
     this.preview = undefined;
     this.classLayer.setVisible(true);
-    const cardTop = this.cardRects[0]?.y ?? VIEW_H * 0.38;
     const guest = !wallet && (!!this.registry.get("guestPlay") || !!this.registry.get("offlinePlay"));
+    this.setClassCaption(
+      guest
+        ? "choose your class · multiplayer save · no wallet"
+        : "choose your class · one-time wallet creation",
+    );
+    this.drawFrames();
+  }
+
+
+  /**
+   * Caption above the class tray. Anchored to the TRAY's top edge, bottom-aligned:
+   * both callers used to centre it on `cardTop - uiGap("lg")`, i.e. 16px above the
+   * cards — but the tray panel starts 12px above them, so a 14px centred line put its
+   * lower half inside the panel, which paints over it (tray depth 25, text depth 0).
+   * The caption read as clipped by the UI sitting on top of it.
+   */
+  private setClassCaption(text: string) {
+    // The caption IS the header line while you're picking a class, so it takes the
+    // tagline's slot rather than being squeezed between it and the tray — there is no
+    // room for both above a tray this tall, which is what caused the overlap.
+    this.tagline.setVisible(false);
     this.bodyText
       .setVisible(true)
-      .setY(cardTop - uiGap("lg"))
-      .setText(
-        guest
-          ? "choose your class · multiplayer save · no wallet"
-          : "choose your class · one-time wallet creation",
-      );
-    this.drawFrames();
+      .setOrigin(0.5, 0.5)
+      .setY(MENU_SUB_Y - uiDim(8))
+      .setText(text);
   }
 
   private buildClassCards() {
@@ -1209,8 +1228,13 @@ export default class SelectScene extends Phaser.Scene {
     const margin = MENU_PAD;
     const gap = uiGap("xl");
     const cardW = (VIEW_W - margin * 2 - gap * (n - 1)) / n;
-    const cardH = uiDim(332);
-    const cardY = Math.round(VIEW_H * 0.48 - cardH / 2);
+    // The tray used to centre on VIEW_H*0.48 with no regard for the header, which put
+    // its top edge at 108 while the tagline ran 119..137 — the cards painted straight
+    // over it. Stack it under the header band instead: title, then the caption slot
+    // (which the tagline yields during class select), then the tray.
+    const captionSlotY = MENU_SUB_Y - uiDim(8);
+    const cardY = Math.round(captionSlotY + uiDim(14) + uiGap("md"));
+    const cardH = Math.round(MENU_FOOTER_Y - uiGap("xxl") - cardY - uiGap("xl"));
 
     const trayX = margin - uiGap("sm");
     const trayY = cardY - uiGap("md");
