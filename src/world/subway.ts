@@ -473,17 +473,21 @@ export function subwayEnemyPosts(): Array<{ tx: number; ty: number; depth: numbe
     posts.push({ tx, ty, depth: campaignThreat });
   };
 
-  // Tunnel samples — density scales with destination hardness
+  // Tunnel samples — density scales with destination hardness.
+  // Each sample can stack up to three posts, so the multipliers compound: a kernel line
+  // was 11 steps x3 = 33 bodies per edge and the whole line read as a wall of enemies.
+  // Thinned by ~a third — the soft->lethal SHAPE is what matters, not the raw count.
   for (const [a, b] of stationEdges()) {
     const hard = Math.max(a.campaignThreat ?? 0, b.campaignThreat ?? 0);
     // Soft lines (hub↔plaza/stacks): fewer posts. Kernel lines: denser.
-    const steps = hard < 1.5 ? 5 : hard < 3.5 ? 7 : hard < 5.5 ? 9 : 11;
+    const steps = hard < 1.5 ? 4 : hard < 3.5 ? 5 : hard < 5.5 ? 7 : 8;
     for (const p of tunnelPathSamples(a.tx, a.ty, b.tx, b.ty, steps)) {
       const threat = tunnelCampaignThreat(a.zone, b.zone, p.t);
       push(p.tx, p.ty, threat);
       // Side post only on mid+ lines (keeps early corridors readable)
-      if (threat >= 1.5) push(p.tx + 1, p.ty, threat);
-      if (threat >= 4) push(p.tx, p.ty + (p.tx % 2 === 0 ? 1 : -1), threat);
+      if (threat >= 2.5) push(p.tx + 1, p.ty, threat);
+      // Third body only on the deepest lines — this is what tripled the kernel run
+      if (threat >= 5) push(p.tx, p.ty + (p.tx % 2 === 0 ? 1 : -1), threat);
     }
   }
 
