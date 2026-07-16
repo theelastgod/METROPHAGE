@@ -157,8 +157,9 @@ ring, aspect tracks the art.
 
 ## 4. Higgsfield art pipeline — traps that cost real credits
 
-Budget remaining: **~177 credits** (~1.1/asset). CLI: `higgsfield` (authenticated).
-`tools/hf-sharpen-env.mjs <key>...` implements the pipeline; read its header.
+Budget: **~400 credits, possibly 600** (~1.1/asset ⇒ ~360 assets, ~545 at 600).
+CLI: `higgsfield` (authenticated). `tools/hf-sharpen-env.mjs <key>...` implements the
+upscale pipeline; read its header. The generation plan is §4b.
 
 **The blur problem:** source art is tiny and the world stretches it hard —
 `hf_building_dist_core` is **141×224** but a district scenery block renders at
@@ -185,13 +186,115 @@ Four traps, each learned the hard way:
    silhouette bbox and size to ~1.4× the on-screen footprint (a hub building renders ~320px).
 
 Done: all 11 `hf_int_*_room` sharpened to 3× RGBA (e.g. bar 178×180 → 534×540, ~4.3 MB total
-for 11). `hf_building_den_c` generated as a sibling den.
+for 11). `hf_building_den_c` generated as a sibling den. Manifest coverage is 262/262.
 
-**Queue, in blur-severity order** (only after §1 is fixed — sharper art still renders black):
-district kits + `_b` + `_inf` (27, the ~5.4× offenders) → building kinds + variants (24) →
-layout plates / env kits / estates / wild biomes (20) ≈ 78 credits. Then estate furniture
-sprites (24) — footprints are already declared in the `FURNITURE` catalogue in `estates.ts`,
-so they carry no collision risk.
+---
+
+## 4b. Generation plan — make the world feel big, on ~400 (or 600) credits
+
+**GATE: do §1 first.** Every asset below renders through the same path that is currently
+producing black buildings. Sharper, more plentiful art still renders black. Fixing §1 costs
+0 credits and unblocks the entire spend. Do not generate ahead of it.
+
+### The rule that decides how fast you can spend
+
+Sort every asset by **whether the art structures collision**:
+
+| Class | Collision comes from | Can you free-generate? |
+|---|---|---|
+| Building exteriors, district kits, env kits, estate façades | the footprint **rect** in the layout data | **YES** — art is pure skin |
+| Props, decals, scatter, wilderness dressing | nothing (`InteriorProp` is documented non-colliding; `propScatter` never collides) | **YES** |
+| Ground/floor plates, biome plates | the tile grid | **YES** |
+| Estate furniture | `FURNITURE[].w/h` already declared in `estates.ts` | **YES** — art fills a known box |
+| **Interior room art (`hf_int_*_room`)** | **the picture itself** (`rooms.ts` traces it) | **NO** — upscale only |
+
+So ~90% of the budget can be spent on free-generation, in parallel, with no tracing.
+The bottleneck for room variety is **hand-tracing a plan per image**, not credits — budget
+roughly an hour of careful work per new room plan, and let `rooms.test.ts` enforce the
+invariants (mat/spawn walkable, seats reachable, **no sealed pockets**, aspect tracks art).
+
+### Priority order (each tier is independently shippable)
+
+**T1 — Sharpen what exists · ~80 assets · ~88 cr · zero risk**
+The single best credit-per-"feels real" ratio, because it fixes the *whole* world at once
+and cannot desync anything. District kits are the worst (141px → 768px, ~5.4×).
+`node tools/hf-sharpen-env.mjs <key>...` — already built and proven.
+- 9 `hf_building_dist_*` + 9 `_b` + 9 `_inf` (27)
+- 10 `hf_building_*` kinds + 14 variants (24)
+- 5 `hf_int_layout_*`, 5 `HF_ENV_KIT_KEYS`, 3 `HF_ESTATE_KEYS`, 7 `HF_WILD_BIOME_KEYS` (20)
+- ~9 remaining landmark/subway/dungeon plates
+
+**T2 — Building variety · ~60 assets · ~66 cr · zero risk · biggest "big world" win**
+Right now every bar on every block is the same picture, and each district has ONE kit.
+`pickHfVariant(exists, base, salt, 3)` (`manifest.ts`) *already* hash-picks `base`/`_b`/`_c`
+per building — the variants simply don't exist. Generating them needs **no code change
+beyond adding keys** to `HF_BUILDING_VARIANT_KEYS` / `HF_DIST_BUILDING_VARIANT_KEYS`.
+- `_b`/`_c` for every kind missing them (~6 kinds × 2 = 12)
+- `_c` for all 9 district kits (9), and `_b`/`_c` for the 5 env kits (10)
+- 2–3 fresh siblings per district kit so a street reads as a street, not a tiling (~27)
+Recipe: `nano_banana_2 --image <sibling>.png` with the den_c prompt shape (see git log of
+`hf_building_den_c`): *same projection/palette/framing, different mass and roofline.*
+Then `image_background_remover` → crop to bbox → size ~1.4× the on-screen footprint.
+
+**T3 — Ground density · ~70 assets · ~77 cr · zero risk**
+This is what "the assets are gone from the ground" is really about once §1 is fixed:
+the pool is thin. `propScatter.ts` has `PROPS`/`BIAS_KEYS` (`car`/`industrial`/`neon`/…);
+`scatterWorldProps` takes `propBias` per district, so more props per bias = more identity.
+- ~40 street props across the biases, ~20 wilderness (`HF_WILD_PROP_KEYS`), ~10 landmarks
+- Hub density is deliberately low for perf (`0.003` vs district `0.006`, and the `city`
+  terrain profile disables per-tile passes at 450×360) — add variety, not count.
+
+**T4 — Subway as modules · ~30 assets · ~33 cr · needs layout work**
+The explicit ask: tunnels/stations built *around* the art. `subway.ts` already carves
+chambers "sized for hf_subway_ticket_hall + booth" and picks tunnel props by neighbour
+count — but it is still art placed onto a procedurally carved grid. Invert it: author
+tunnel/station **modules** whose tile footprint equals the art's, then tile them.
+Straight/junction/cross/curve rails, platform ends, escalator halls, service bays.
+`CORRIDOR_HALF = 2`, `STATION_HALF = 6` are the constants the art must land on.
+
+**T5 — Estate furniture · 24 assets · ~26 cr · zero risk**
+Footprints already declared; today they render as procedural glyph cards
+(`render/furnitureArt.ts` returns false → glyph fallback). Directly serves the
+hand-decorating pillar. **Pair with the free-furniture bug in §5** or it stays a non-sink.
+
+**T6 — Interior variety · tracing-gated · ~20–40 cr**
+Only *after* T1–T5. Each new room = 1 upscaled image + a hand-traced plan + tests.
+Cheaper alternatives that need **no** new art and cannot desync:
+- **Runtime tint** for contagion interiors (green wash on the existing room art) instead of
+  `_inf` room images.
+- **Per-district accent tint** on the same room art so a WASTES bar reads different from an
+  ARGUS SPIRE bar, without a second traced plan.
+Prefer these until the black-building fix is verified in-game.
+
+### Budget
+
+| Tier | Assets | Credits |
+|---|---|---|
+| T1 sharpen | ~80 | 88 |
+| T2 building variety | ~60 | 66 |
+| T3 ground density | ~70 | 77 |
+| T4 subway modules | ~30 | 33 |
+| T5 estate furniture | 24 | 26 |
+| **subtotal** | **~264** | **~290** |
+| retries @ ~10% (1 of 11 failed in the last batch) | | ~29 |
+| **total** | | **~320** |
+
+That leaves ~80 of 400 for T6 and iteration. **At 600**, spend the extra ~200 on: 3rd/4th
+building variants per kit (~60), a second full prop pass (~50), per-district wilderness
+dressing (~40), and the traced work in T6 (~50).
+
+### Non-negotiables when generating
+
+1. Batch in the background and **eyeball every batch** — open the PNGs, don't trust the log.
+   Both traps below passed automated checks and were only caught by looking.
+2. Re-composite alpha after any upscale; run `image_background_remover` on anything
+   generated fresh; never palette-quantise full-bleed art.
+3. Size to ~1.4× the on-screen footprint, not to 2048. Bytes matter: the client queues
+   ~600 files in one load. A room at 3× RGBA is ~400 KB; a raw 4× is ~600 KB for no gain.
+4. Keep `tools/hf-sharpen-env.mjs`'s backup behaviour — originals land in `tmp-art-backup/`
+   (gitignored) and are git-tracked, so `git checkout` always restores.
+5. After each batch: `npx tsc --noEmit` (root **and** server), `npx vitest run`, then
+   `node tools/art-probe.mjs <url>` to confirm coverage is still N/N with 0 failures.
 
 ---
 
