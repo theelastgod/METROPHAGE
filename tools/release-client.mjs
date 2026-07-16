@@ -59,8 +59,16 @@ if (wcProjectId) {
     "⚠ VITE_WALLETCONNECT_PROJECT_ID unset — mobile WalletConnect modal disabled (injected wallets + MetaMask deep-link only). Free id: https://dashboard.reown.com",
   );
 }
+// Honest local build id: git SHA, +dirty when the tree doesn't match it. CI overrides
+// (CF_PAGES_COMMIT_SHA / GITHUB_SHA) still win inside vite.config.ts.
+const gitSha = spawnSync("git", ["rev-parse", "--short", "HEAD"], { cwd: root, encoding: "utf8" }).stdout?.trim();
+const gitDirty = (spawnSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" }).stdout || "").trim().length > 0;
+const localBuildId = gitSha ? `${gitSha}${gitDirty ? "+dirty" : ""}` : "";
+if (gitDirty) console.warn("⚠ deploying from a DIRTY tree — build id will carry +dirty; commit first for a reproducible release");
+
 run(process.execPath, [npmCli, "run", "build"], {
   ...process.env,
+  ...(localBuildId && !process.env.VITE_BUILD_ID ? { VITE_BUILD_ID: localBuildId } : {}),
   VITE_SERVER_URL: LIVE_SERVER_URL,
   VITE_METRO_CLUSTER: metroCluster,
   VITE_METRO_SETTLEMENT: metroSettlement,

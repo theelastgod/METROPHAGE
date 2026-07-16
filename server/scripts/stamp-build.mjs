@@ -9,8 +9,13 @@ const root = dirname(fileURLToPath(import.meta.url));
 const toml = join(root, "..", "wrangler.toml");
 const sha =
   spawnSync("git", ["rev-parse", "--short", "HEAD"], { encoding: "utf8" }).stdout?.trim() || "local";
+// A stamp must never claim a SHA whose tree it wasn't built from. Ignore wrangler.toml
+// itself — this script rewrites it, so it would otherwise read as always-dirty.
+const dirty = (spawnSync("git", ["status", "--porcelain"], { encoding: "utf8" }).stdout || "")
+  .split("\n")
+  .some((l) => l.trim() && !l.includes("wrangler.toml"));
 const day = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-const stamp = `${sha}-${day}`;
+const stamp = `${sha}${dirty ? "+dirty" : ""}-${day}`;
 
 let text = readFileSync(toml, "utf8");
 if (/METRO_BUILD\s*=/.test(text)) {
