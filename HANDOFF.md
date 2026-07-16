@@ -4,6 +4,25 @@ You are picking up work on **METROPHAGE**, a top-down neon-noir cyberpunk action
 in the browser. Phaser 3 + Vite + TypeScript client; **server-authoritative** world on
 Cloudflare (Worker + per-zone Durable Objects at 20Hz + D1).
 
+## 2026-07-16 authorized reset + Solana/subway follow-through
+
+- Player-facing wallet identity is Solana-only: intro chrome reads `SOL · MAINNET`
+  and `PHANTOM · SOLANA`. Robinhood/EVM compatibility code is not a launch path.
+- The sole god/operator wallet is
+  `9Z9uZJXdnyTE7gkFfrepJ3BWDTNA3ZeteDkpgT6cxkve`; old EVM operators were removed.
+- `tools/reset-live-world.sql` is the user's explicitly authorized one-time exception
+  to the normal no-wipe rule. It clears players, progression, inventory-bearing rows,
+  market/mail/guild state, and estate ownership/furniture. Bridge transaction ids remain
+  for replay protection, with prior player and wallet identity redacted.
+- UNDERLINE tunnels now consist of continuous overlapping authored art modules.
+  `subwayTunnelArtModules()` drives both server collision footprints and client plates;
+  fixtures, debris, lighting, and encounters are layered above that structure.
+- Mobile wallet login is Phantom-first end to end. A phone without an injector opens the
+  exact live URL in Phantom's in-app browser, then uses its Solana provider to connect and
+  sign the free login message. It no longer falls through to the EVM/MetaMask deep link.
+- Generated service icons now appear in NPC menus, and city/subway/hotel loading art is
+  displayed during real deferred zone handoffs rather than merely being registered.
+
 **Read `AGENTS.md` first** — it is the canonical engineering brief (deploy, smoke, economy,
 art constraints). `CLAUDE.md` points at it. Non-negotiables from it:
 
@@ -18,8 +37,8 @@ art constraints). `CLAUDE.md` points at it. Non-negotiables from it:
 - Typecheck root and server **separately**: `npx tsc --noEmit` and `cd server && npx tsc --noEmit`.
 - `export PATH="$HOME/.local/node/bin:$PATH"` before node/npm.
 
-Everything below is already **committed to the working tree and deployed live**.
-326 tests pass (`npx vitest run`), both typechecks clean.
+Treat the live build stamp and `git status` as authoritative; this branch may contain
+verified work that is not deployed yet. The full test suite and both typechecks are the gate.
 
 > **If you are touching $METRO / the chain layer, read §7 first — specifically the ⚠ price-oracle
 > note.** Settlement is back on **Solana SPL**; Robinhood/ERC-20 is a dormant alternate. The
@@ -30,7 +49,7 @@ Everything below is already **committed to the working tree and deployed live**.
 
 ---
 
-## 1. THE OPEN BUG — start here
+## 1. RESOLVED — black-building render path
 
 **Symptom (user-reported, visually confirmed):** buildings in the city-center hub render as
 **black rectangles** with no exterior art, and **no props are scattered on the ground
@@ -304,23 +323,20 @@ This tier list is the *existing* world. **§6b supersedes it with the full 600-c
 
 ---
 
-## 5. Known-broken / worth fixing
+## 5. Resolved hardening notes / worth monitoring
 
 - **`npm run smoke:panels` is RED and was red before any of this work** (verified by stashing
   everything and running on a clean tree — identical failure). `page.goto` times out waiting
   for `domcontentloaded` on a heavy boot. `tools/art-probe.mjs` shows `waitUntil: "commit"`
   works. This means `npm run verify:ship` cannot pass as-is.
-- **Repeatable boss bounties are unbounded.** `bounties.ts` `marek_grudge` pays **₵900 for one
-  boss kill**, no cooldown, 30s respawn, TTK 3–6s ⇒ **~₵80k/hr**, which reduces the new ₵60k
-  estate to under an hour. The HVT path was explicitly hardened against farming
-  (`world.ts`: "no farmable 25× loop"); this one wasn't.
+- **Resolved: boss-bounty faucet.** Every boss job now has a durable per-player 24-hour
+  completion gate (`bounty_completions`). The conditional D1 claim must succeed before the
+  reward is granted, so reconnects, zone races, and failed writes cannot duplicate payouts.
 - **`enemies.ts` `EnemyTierDef.credits` is dead** — the server uses its own `ENEMY_ARCHES`.
   Anyone tuning the economy there will see no effect.
-- **Furniture placement is free.** `FurnitureKind.price` is commented "credits to place (a
-  light sink)" but **no code path ever debits credits** — the server `furnish` handler
-  validates and persists without touching `p.credits`. Any owner can instantly place 40 free
-  pieces and take the maxed buff stack. Must be fixed server-side (diff draft vs saved), not
-  in the client editor.
+- **Resolved: free furniture/buffs.** The server prices the sanitized draft against the saved
+  layout, durably charges positive catalogue value before persisting the layout, makes moves
+  free, and gives no refund for removals. Failed ledger/estate writes restore state.
 - **XP curve untouched, deliberately.** `levelForXp = 1 + xp/100` (`src/net/sim.ts`) is applied
   to stored XP on every load, so steepening it **retroactively de-levels every existing
   player** (a L20 wakes at L8 with less HP/damage). Needs a one-time grandfathering migration
@@ -566,21 +582,14 @@ withdraw cap** (`BASE_DAILY_*` are `0` = unlimited). Do not "restore" any daily 
 The constants were never the risk — the **price oracle** was, and that is the one real bug
 this work found and fixed. See the ⚠ section above before changing anything here.
 
-### ▶ TASK: update the GitBook — commit to GitHub, GitSync publishes (not done)
+### ✓ GitBook updated — GitSync branch is authoritative
 
-**You update the GitBook by committing to GitHub — GitSync publishes it.** Do not edit
-anything in the GitBook web UI: the space is GitSync-bound to the **`docs/gitbook`** branch
-of `github.com/theelastgod/METROPHAGE`, so a push to that branch *is* the publish step, and
-UI edits just race the sync and create conflicting commits.
+The remote `docs/gitbook` branch already contains the restored Solana copy and current
+100-in / 150-out, unlimited-daily policy (`6355cf1`). Pull before future edits because
+GitBook sync remains bidirectional.
 
-The manual is **not on this branch** (`gitbook/` on `feat/hf-environment-art` is an empty
-stray dir — ignore it). `.gitbook.yaml` on `docs/gitbook` sets `root: ./gitbook/`, so only
-paths under `gitbook/` render.
-
-**Sync is bidirectional — GitBook commits back.** `docs/gitbook` was already **1 commit
-behind `origin/docs/gitbook`** when this was written (GitBook's own `GITBOOK-*` commits, e.g.
-`e3822e5 GITBOOK-3: Update public game link`). **Always pull before you touch it**, or your
-push is rejected and you risk clobbering an editor's change:
+GitBook is GitSync-bound to `docs/gitbook`; do not edit the web UI. For future changes,
+use a clean worktree and fast-forward before editing:
 
 ```sh
 git checkout docs/gitbook && git pull --ff-only origin docs/gitbook
@@ -589,58 +598,9 @@ git add gitbook/ && git commit && git push origin docs/gitbook   # GitSync publi
 git checkout feat/hf-environment-art        # don't leave the tree on the docs branch
 ```
 
-Commit `024525c` *"docs: describe $METRO as a Robinhood Chain (ERC-20) token"* is what put
-Robinhood into the manual. It tells you the full blast radius — these are the pages to fix:
-
-```
-gitbook/README.md            gitbook/economy.md        gitbook/glossary.md
-gitbook/getting-started.md   gitbook/assets/economy-flow.svg
-gitbook/.gitbook/assets/economy-flow.svg     ← keep both SVG copies in sync
-```
-
-`git show 024525c` gives you the verbatim pre-Robinhood Solana prose. Use it as a **reference,
-not a patch** — **do not `git revert`**, for two independent reasons:
-
-- GitBook's own `e3822e5` sits **on top of** it and edits `gitbook/README.md`, the same file,
-  so a revert conflicts — and resolving it carelessly undoes GitBook's live-link fix.
-- Its parent is **itself stale on the rates**, so a clean revert would faithfully restore
-  numbers that were already wrong (see 2 below).
-
-Hand-apply these three things:
-
-1. **Chain wording → Solana.** `$METRO` is an **SPL token on Solana**, wallet is **Phantom**,
-   sign-up is a free message (no gas). Robinhood/ERC-20/MetaMask is a dormant alternate and
-   should not appear in the manual. The settlement row in `gitbook/economy.md` becomes
-   `Solana SPL (primary)`. Both `economy-flow.svg` copies say Solana too.
-2. **Fix the rates — do NOT copy them from either side of `024525c`.** The manual says
-   `125 ₵ → 1 ◈`, min `250 ₵`, and a `50,000 ₵ daily cap`. All three are wrong. Ground truth
-   is `src/game/economyPolicy.ts`: **100 ₵ in / 150 ₵ out**, min **300 ₵**, and **no daily
-   cap at all** (`BASE_DAILY_*` are `0` = unlimited). **Delete the daily-cap row** — it
-   describes a mechanic that no longer exists. `economyPolicy.ts` is the source of truth.
-3. **Claims wording → the Solana security model**, which is accurate to `server/src/solana.ts`:
-   the **player pays the SOL fee** (they are the fee payer on their own withdrawal), and the
-   **treasury only partially signs — it never holds or spends SOL**, so it cannot be drained
-   of gas. The Robinhood version's "deposits cost a little ETH gas" is EVM-only and must go.
-
-Separately, **back on the working branch** (these are repo runbooks, not GitBook pages —
-`.gitbook.yaml` only renders `gitbook/`): `ROBINHOOD_GO_LIVE.md` still reads as a live
-runbook, so add a "DORMANT — not the launch path" banner. `MAINNET_GO_LIVE.md` is the
-Solana one and is already correct.
-
-### ▶ TASK: the treasury secret (human-only)
-
-`METRO_TREASURY_SECRET` is a **wrangler secret**, currently an EVM `0x` private key. Solana
-needs a **base64 64-byte keypair**. An agent must not handle it. The owner runs:
-
-```sh
-cd server && node scripts/mainnet-prepare.mjs          # default (no --evm) = Solana keypair
-# then pipe .solana-treasury.json's treasurySecret into:
-npx wrangler secret put METRO_TREASURY_SECRET
-```
-
-Until that is rotated, a leftover `0x` secret makes `pickSettlement` return **sim** — which
-is the safe state, and `/metro/pool` now reports it as a misconfiguration rather than
-showing a bogus EVM treasury.
+Current live `/metro/pool` reports the Solana treasury configured and `readyForCa: true`.
+The remaining bridge gates are external by design: mint CA, devnet rehearsal, and counsel
+approval before `METRO_MAINNET_ARMED=1`. Never weaken those gates in code.
 
 ## 8. Housekeeping
 

@@ -31,7 +31,7 @@ unlock. Run this on at least one iPhone (Safari) and one Android (Chrome);
 
 ## Session & performance
 - [ ] Guest login persists across a full browser kill + relaunch (device secret)
-- [ ] MetaMask mobile browser: sign-in + session resume works
+- [ ] Phantom mobile browser: sign-in + session resume works
 - [ ] 10 min in the hub: FPS acceptable, no thermal runaway, no memory crash
 - [ ] Lock screen / switch app / return: WebSocket reconnects, runner where you left it
 - [ ] Audio: music starts after first tap (autoplay policy); volume sliders apply live

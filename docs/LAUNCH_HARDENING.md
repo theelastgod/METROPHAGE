@@ -19,7 +19,6 @@ Capacity / anti-farm:
 | Var | Default | Meaning |
 |-----|---------|---------|
 | `METRO_HUB_CAP` | 48 | Soft max concurrent in hub (`safe`); over → redirect to `d0` |
-| `METRO_DAILY_EMIT_CAP` | 2500 | Max emit credits per player per UTC day |
 | `METRO_BUILD` | string | Shown on `/health` for ops |
 
 ```sh
@@ -117,4 +116,5 @@ Set kill switch vars → `wrangler deploy` (server only; client can stay).
 
 - Stress is **per-zone DO**, not global N.
 - Hub soft-cap redirects to `d0` — players still play.
-- Daily emit cap stops farms; sinks still work after cap.
+- Earnings are never daily-capped; anti-farm protection comes from authoritative validation,
+  replay protection, per-activity cooldowns, and closing exploitable payout loops.
