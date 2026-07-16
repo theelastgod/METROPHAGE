@@ -23,12 +23,21 @@ let before = 0;
 let after = 0;
 let changed = 0;
 
+const skipped = [];
 for (const file of files) {
   const original = await readFile(file);
   before += original.length;
-  const optimized = await sharp(original, { failOn: "error" })
-    .png({ compressionLevel: 9, adaptiveFiltering: true, palette: false, effort: 10 })
-    .toBuffer();
+  let optimized;
+  try {
+    optimized = await sharp(original, { failOn: "error" })
+      .png({ compressionLevel: 9, adaptiveFiltering: true, palette: false, effort: 10 })
+      .toBuffer();
+  } catch (e) {
+    // One damaged file must not abort the whole batch — keep the original byte-for-byte.
+    skipped.push(`${file} — ${String(e?.message ?? e).slice(0, 120)}`);
+    after += original.length;
+    continue;
+  }
   if (optimized.length < original.length) {
     const tmp = `${file}.opt-${process.pid}`;
     try {
@@ -50,3 +59,7 @@ for (const file of files) {
 
 const mib = (n) => (n / 1048576).toFixed(2);
 console.log(`PNG optimize: ${changed}/${files.length} changed · ${mib(before)} → ${mib(after)} MiB · saved ${mib(before - after)} MiB`);
+if (skipped.length) {
+  console.warn(`skipped ${skipped.length} damaged file(s) — inspect these by hand:`);
+  for (const s of skipped) console.warn(`  ${s}`);
+}
