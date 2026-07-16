@@ -12,29 +12,54 @@
 
 import { chromium } from "playwright";
 
-const url = process.argv.find((a) => a.startsWith("http")) ?? "https://metrophagev1.pages.dev";
+const base = process.argv.find((a) => a.startsWith("http")) ?? "https://metrophagev1.pages.dev";
+// skipIntro: entering during the ColdOpen/Prologue handoff races the scene queue
+// (panel-smoke learned the same lesson) — the probe photographs the WORLD.
+const url = base + (base.includes("?") ? "&" : "?") + "skipIntro=1";
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
 page.setDefaultTimeout(180_000);
+page.on("pageerror", (e) => console.log(`  pageerror: ${String(e?.message ?? e).slice(0, 300)}\n${String(e?.stack ?? "").slice(0, 400)}`));
 page.on("console", (m) => {
   const t = m.text();
   if (t.includes("[boot]") || t.includes("[hf-") || m.type() === "error") console.log(`  console(${m.type()}): ${t.slice(0, 240)}`);
 });
 
 console.log(`booting ${url} …`);
+await page.addInitScript(() => {
+  // The probe photographs the WORLD — pre-acknowledge the beta notice overlay.
+  try { localStorage.setItem("metrophage_beta_notice_v1", "1"); } catch { /* fine */ }
+});
 await page.goto(url, { waitUntil: "commit", timeout: 180_000 });
 await page.waitForFunction(() => typeof window.__enterCity === "function", { timeout: 60_000 });
 // Wait for the loader to finish rather than a fixed sleep — a cold CDN boot is slow.
 await page.waitForFunction(() => !document.getElementById("boot"), { timeout: 240_000 });
+// Enter only from a SETTLED title menu — mid-transition entry strands zombie scenes.
+await page.waitForFunction(
+  () => {
+    const actives = window.__game?.scene?.getScenes?.(true) ?? [];
+    return actives.length === 1 && actives[0].scene.key === "Select";
+  },
+  { timeout: 120_000 },
+);
 console.log("booted; entering city …");
 await page.evaluate(() => window.__enterCity());
 
+// The Online scene PRELOADS the zone's deferred art before create() runs — on a cold
+// dev serve that dwarfs any fixed sleep. Wait for the scene to have actually built
+// (display list populated), then give the connect a real window.
+await page
+  .waitForFunction(
+    () => (window.__game?.scene?.getScene?.("Online")?.children?.list?.length ?? 0) > 50,
+    { timeout: 240_000 },
+  )
+  .catch(() => console.log("warn: Online scene never populated — dumping anyway"));
 const connected = await page
-  .waitForFunction(() => window.__game?.scene?.getScene?.("Online")?.net?.connected === true, { timeout: 12_000 })
+  .waitForFunction(() => window.__game?.scene?.getScene?.("Online")?.net?.connected === true, { timeout: 60_000 })
   .then(() => true)
   .catch(() => false);
 console.log("online connected:", connected);
-await page.waitForTimeout(6000); // let the zone build + dress
+await page.waitForTimeout(4000); // dressing settles
 
 const report = await page.evaluate(() => {
   const g = window.__game;
