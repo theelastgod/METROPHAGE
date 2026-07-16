@@ -4,9 +4,9 @@
 import { DISTRICTS } from "../../src/game/districts";
 import { BRIDGES } from "../../src/game/bridges";
 import { DIVE_ZONE_IDS } from "../../src/world/district";
-import { isGodAccount, normalizeWalletHex } from "../../src/net/godAccounts";
+import { isGodAccount, normalizeWalletAddress } from "../../src/net/godAccounts";
 
-export { isGodAccount as isGodPlayerId, normalizeWalletHex };
+export { isGodAccount as isGodPlayerId, normalizeWalletAddress };
 
 /**
  * Zones the map graph cares about for fast travel.

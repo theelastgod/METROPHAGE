@@ -128,7 +128,10 @@ export function pickInstance(
     const s = Math.floor(sticky);
     if (s >= 0 && s < maxInst) {
       const row = all[s];
-      if ((row.players ?? 0) < hard) return s;
+      // A failed probe is not proof that the sticky room is empty. The general
+      // picker below already excludes errored rows; apply the same rule here or
+      // reconnects repeatedly target the one shard we could not reach.
+      if (!row.error && (row.players ?? 0) < hard) return s;
     }
   }
 
@@ -167,4 +170,11 @@ export function parseInstParam(raw: string | null | undefined): number | undefin
   const n = Math.floor(Number(raw));
   if (!Number.isFinite(n) || n < 0 || n > 64) return undefined;
   return n;
+}
+
+/** Reconcile persisted shard metadata with an explicit routed request. */
+export function reconcileInstanceId(stored: number, requested?: number): number {
+  const current = Math.max(0, Math.floor(Number(stored) || 0));
+  if (requested == null || !Number.isFinite(requested)) return current;
+  return Math.max(0, Math.floor(requested));
 }

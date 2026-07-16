@@ -8,8 +8,17 @@ import {
   parseDoName,
   parseInstParam,
   pickInstance,
+  reconcileInstanceId,
   softCapFor,
 } from "./zoneRouting";
+
+describe("persisted shard identity", () => {
+  it("repairs stale ids only when routing supplies an explicit instance", () => {
+    expect(reconcileInstanceId(0, 1)).toBe(1);
+    expect(reconcileInstanceId(2, undefined)).toBe(2);
+    expect(reconcileInstanceId(2, Number.NaN)).toBe(2);
+  });
+});
 
 describe("canRebalanceZone — never reject a player with nowhere to go", () => {
   // A DO that rejects on a zone it cannot shard sends the player to a front door
@@ -62,6 +71,14 @@ describe("pickInstance — a failed probe is not an empty room", () => {
     ];
     // 47 is over soft (40) but under hard (48) — still better than flying blind.
     expect(pickInstance(loads, { softCap: 40, hardCap: 48, maxInst: 2 })).toBe(0);
+  });
+
+  it("abandons a sticky instance whose probe failed", () => {
+    const loads = [
+      { inst: 0, players: 9, tickMsAvg: 4 },
+      { inst: 1, players: 0, tickMsAvg: 0, error: true },
+    ];
+    expect(pickInstance(loads, { sticky: 1, softCap: 40, hardCap: 48, maxInst: 2 })).toBe(0);
   });
 
   it("falls back to errored instances when nothing answered", () => {

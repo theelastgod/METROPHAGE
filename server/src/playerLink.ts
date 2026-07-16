@@ -177,6 +177,10 @@ async function rekeyPlayerRefs(db: D1Database, fromId: string, toId: string) {
     "player_dailies",
     "player_cosmetics",
     "player_bounties",
+    // Must be re-pointed, not left behind: it is declared ON DELETE CASCADE, so the
+    // guest-row delete below would wipe the boss-bounty cooldowns and let the freshly
+    // linked wallet re-claim every job at once — the faucet 0038 exists to close.
+    "bounty_completions",
     "player_discovered",
     "guild_members",
     "guild_invites",

@@ -298,6 +298,16 @@ export interface SettleResult {
   claimTxHash?: string;
 }
 
+/**
+ * `solana-sent:<sig>` marks a claim the Worker already broadcast. The bare signature is
+ * the canonical identity — strip the marker before matching or storing a `tx_sig`, or the
+ * same payout occupies two distinct spellings of the single-use guard.
+ */
+export function stripClaimPrefix(raw: string | null | undefined): string {
+  const s = (typeof raw === "string" ? raw : "").trim();
+  return s.startsWith("solana-sent:") ? s.slice("solana-sent:".length).trim() : s;
+}
+
 export interface Settlement {
   /** Build a payout claim the client can broadcast (or that the server already sent).
    *  - Solana: treasury-paid when SOL available; else player fee-payer partial sign
@@ -564,6 +574,21 @@ export async function withdraw(
       }
       return { ok: false, reason: "cash-out ledger unavailable — credits refunded, please retry" };
     }
+  } else if (settle.claimTxHash) {
+    // Solana has no nonce to burn: buildClaim already signed — and usually broadcast —
+    // the transfer, so the payout can land whether or not the player ever confirms.
+    // The signature is the only thing that lets reclaimExpired tell a landed payout from
+    // an abandoned claim, so it must be recorded outside the nonce branch above. While it
+    // lived inside that branch every Solana cash-out stayed {nonce:NULL, hash:NULL}, and
+    // the TTL sweep refunded credits for tokens the treasury had already delivered.
+    try {
+      await db
+        .prepare("UPDATE metro_withdrawals SET claim_tx_hash = ? WHERE id = ?")
+        .bind(settle.claimTxHash, wid)
+        .run();
+    } catch {
+      /* best effort — confirmWithdraw can still finalize this row by signature */
+    }
   }
   try {
     const { recordTreasuryEvent } = await import("./playerTreasury");
@@ -603,7 +628,11 @@ export async function confirmWithdraw(
 ): Promise<BridgeResponse> {
   const id = normId(args.player);
   const wid = Math.floor(args.withdrawId);
-  const txSig = (args.txSig || "").trim();
+  // Normalize the helper prefix away before it is matched or stored. verifyClaim strips
+  // it for the chain lookup, so `sig` and `solana-sent:sig` both verify — but they are
+  // different strings to the single-use `tx_sig` guard below, which would let one on-chain
+  // payout be recorded twice under two spellings.
+  const txSig = stripClaimPrefix(args.txSig);
   if (!Number.isFinite(wid) || wid <= 0) return { ok: false, reason: "bad withdrawal id" };
   if (!txSig) return { ok: false, reason: "missing tx signature" };
 
@@ -796,21 +825,26 @@ export async function deposit(
   // Exactly one side is funded — see `want` above. ◈ tracks whole units so a
   // sub-1 deposit can't invent one.
   const grantedCredits = want === "credits" ? credits : 0;
-  const grantedMetro = want === "metro" ? Math.max(0, Math.round(metro)) : 0;
+  // floor, not round: rounding up handed out a ◈ that was never deposited (100.5 → 101).
+  const grantedMetro = want === "metro" ? Math.max(0, Math.floor(metro)) : 0;
 
   // CLAIM-ONCE: tx_sig is the PRIMARY KEY, so a transfer can only ever credit once.
   // Record what was actually GRANTED, not what it would have been worth as credits —
   // player_treasury bootstraps lifetime totals from this row.
-  const claim = await db
-    .prepare("INSERT OR IGNORE INTO metro_deposits (tx_sig, player, wallet, metro, credits, created_at) VALUES (?,?,?,?,?,?)")
-    .bind(txSig, id, wallet, metro, grantedCredits, Date.now())
-    .run();
+  // One transaction: D1 batches are transactional and sequential, so changes() gates the
+  // payout on the claim insert (same idiom as lockPvpEscrow). As two auto-committed
+  // statements, an isolate death between them burned the tx_sig while crediting nothing —
+  // the player's real on-chain deposit was lost, and every retry answered "already
+  // claimed". changes()=0 on a replayed tx_sig keeps the credit from being granted twice.
+  const [claim] = await db.batch([
+    db
+      .prepare("INSERT OR IGNORE INTO metro_deposits (tx_sig, player, wallet, metro, credits, created_at) VALUES (?,?,?,?,?,?)")
+      .bind(txSig, id, wallet, metro, grantedCredits, Date.now()),
+    db
+      .prepare("UPDATE players SET credits = credits + ?, metro = metro + ? WHERE id = ? AND changes()=1")
+      .bind(grantedCredits, grantedMetro, id),
+  ]);
   if (claim.meta.changes === 0) return { ok: false, reason: "deposit already claimed" };
-
-  await db
-    .prepare("UPDATE players SET credits = credits + ?, metro = metro + ? WHERE id = ?")
-    .bind(grantedCredits, grantedMetro, id)
-    .run();
   try {
     const { recordTreasuryEvent } = await import("./playerTreasury");
     await recordTreasuryEvent(db, {

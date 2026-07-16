@@ -22,6 +22,7 @@ import {
   getMint,
   getAccount,
 } from "@solana/spl-token";
+import bs58 from "bs58";
 import type { Settlement } from "./metro";
 
 export interface SolanaConfig {
@@ -119,6 +120,13 @@ export function makeSolanaSettlement(cfg: SolanaConfig): Settlement {
           tx.add(createTransferCheckedInstruction(from, mint, to, treasury.publicKey, amount, d));
           tx.sign(treasury); // fully signed — only treasury signature required
 
+          // The treasury is fee-payer here, so the txid IS its own signature and is known
+          // before broadcast. metro.ts persists this as `claim_tx_hash`, and that is the
+          // only handle reclaimExpired has to tell a payout that landed from a claim the
+          // player abandoned. Without it the TTL sweep refunds the credits for tokens the
+          // treasury already sent — the player keeps both, repeatably.
+          const claimTxHash = tx.signature ? bs58.encode(tx.signature) : undefined;
+
           // Broadcast from the Worker so cash-out completes without the player holding SOL.
           try {
             const raw = tx.serialize();
@@ -132,19 +140,27 @@ export function makeSolanaSettlement(cfg: SolanaConfig): Settlement {
             } catch {
               /* confirm may lag; confirmClaim will re-check by sig */
             }
-            return { ok: true, claimTx: `solana-sent:${sig}`, ref: sig };
+            return { ok: true, claimTx: `solana-sent:${sig}`, ref: sig, claimTxHash: sig };
           } catch (sendErr) {
             // RPC send failed — hand the fully-signed tx to the client to broadcast.
+            // Same signature either way: the bytes (and thus the txid) are already fixed.
             const claimTx = bytesToB64(tx.serialize({ requireAllSignatures: true, verifySignatures: false }));
             return {
               ok: true,
               claimTx,
+              claimTxHash,
               reason: `treasury-paid tx ready (server broadcast failed: ${String((sendErr as Error)?.message ?? sendErr).slice(0, 80)})`,
             };
           }
         }
 
         // ── Fallback: player pays SOL (treasury only signs the transfer) ──
+        // No claimTxHash is possible here: the player is fee-payer, so the txid is THEIR
+        // signature and does not exist until they sign. A player who broadcasts this and
+        // then withholds /withdraw/confirm still gets refunded by reclaimExpired at TTL
+        // while keeping the tokens. Only reachable when treasury SOL is empty (ops should
+        // keep it funded); closing it needs the client to report its signature on
+        // broadcast, or this fallback to be dropped in favour of "Check back later."
         const tx = new Transaction({ feePayer: owner, recentBlockhash: blockhash });
         tx.add(createAssociatedTokenAccountIdempotentInstruction(owner, to, owner, mint));
         tx.add(createTransferCheckedInstruction(from, mint, to, treasury.publicKey, amount, d));

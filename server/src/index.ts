@@ -24,11 +24,13 @@ const LOAD_CACHE_MS = 2500;
 // the flag a cached failure is indistinguishable from a healthy empty room —
 // which then wins the least-loaded sort and drains every joiner into it.
 const loadCache = new Map<string, { players: number; tickMsAvg: number; at: number; error?: boolean }>();
+const loadRefreshAt = new Map<string, number>();
+const loadRefreshInFlight = new Map<string, Promise<void>>();
 
-async function probeInstanceLoad(env: Env, zone: string, inst: number): Promise<InstanceLoad> {
+async function probeInstanceLoad(env: Env, zone: string, inst: number, force = false): Promise<InstanceLoad> {
   const key = doName(zone, inst);
   const hit = loadCache.get(key);
-  if (hit && Date.now() - hit.at < LOAD_CACHE_MS) {
+  if (!force && hit && Date.now() - hit.at < LOAD_CACHE_MS) {
     return { inst, players: hit.players, tickMsAvg: hit.tickMsAvg, error: hit.error };
   }
   try {
@@ -51,34 +53,86 @@ async function probeInstanceLoad(env: Env, zone: string, inst: number): Promise<
   }
 }
 
+/** Refresh shard telemetry without putting cold Durable Objects on the WS critical path. */
+function refreshZoneLoads(env: Env, zone: string, maxInst: number): Promise<void> {
+  const existing = loadRefreshInFlight.get(zone);
+  if (existing) return existing;
+  const now = Date.now();
+  if (now - (loadRefreshAt.get(zone) ?? 0) < LOAD_CACHE_MS) return Promise.resolve();
+  loadRefreshAt.set(zone, now);
+  // Probe only rooms that are already known active (plus legacy instance 0).
+  // Probing every possible shard turns a cold room into a known empty winner and
+  // spreads a small party across all instances before any room reaches soft cap.
+  const warm = Array.from({ length: maxInst }, (_, i) => i).filter((i) => {
+    if (i === 0) return true;
+    const hit = loadCache.get(doName(zone, i));
+    return !!hit && hit.players > 0;
+  });
+  const work = Promise.all(warm.map((i) => probeInstanceLoad(env, zone, i, true)))
+    .then(() => undefined)
+    .finally(() => loadRefreshInFlight.delete(zone));
+  loadRefreshInFlight.set(zone, work);
+  return work;
+}
+
 /**
  * Resolve which DO shard hosts this logical zone for a new / reconnecting client.
  * Sticky `inst` is honored while under hard cap; otherwise least-loaded under soft.
  */
-async function resolveZoneInstance(
+function resolveZoneInstance(
   env: Env,
   zone: string,
   stickyInst?: number,
-): Promise<{ inst: number; doKey: string }> {
+): { inst: number; doKey: string; maxInst: number } {
   const maxInst = maxInstancesFor(zone, env);
   if (!isShardableZone(zone) || maxInst <= 1) {
-    return { inst: 0, doKey: doName(zone, 0) };
+    return { inst: 0, doKey: doName(zone, 0), maxInst };
   }
   const flags = launchFlagsFromEnv(env);
   const soft = softCapFor(zone, env, flags);
   const hard = hardCapFor(zone, env, flags);
+  const now = Date.now();
 
-  // Probe in parallel — cold DOs report 0 players cheaply enough for join path.
-  const loads = await Promise.all(
-    Array.from({ length: maxInst }, (_, i) => probeInstanceLoad(env, zone, i)),
-  );
+  // Sticky reconnect is the overwhelmingly common path on phones. Route it
+  // immediately unless fresh telemetry explicitly says the shard is bad/full;
+  // the DO still has the authoritative hard-cap bounce as a final guard.
+  if (stickyInst != null && stickyInst >= 0 && stickyInst < maxInst) {
+    const hit = loadCache.get(doName(zone, stickyInst));
+    const fresh = !!hit && now - hit.at < LOAD_CACHE_MS * 4;
+    if (!fresh || (!hit!.error && hit!.players < hard)) {
+      return { inst: stickyInst, doKey: doName(zone, stickyInst), maxInst };
+    }
+  }
+
+  // Use only telemetry already in memory. Missing shards are marked unknown so a
+  // single player does not wake all four rooms; open a new slice only after every
+  // known slice reaches the soft target.
+  const loads: InstanceLoad[] = [];
+  let known = 0;
+  let allKnownSoftFull = true;
+  for (let i = 0; i < maxInst; i++) {
+    const hit = loadCache.get(doName(zone, i));
+    if (hit && now - hit.at < LOAD_CACHE_MS * 4 && !hit.error) {
+      known++;
+      if (hit.players < soft) allKnownSoftFull = false;
+      loads.push({ inst: i, players: hit.players, tickMsAvg: hit.tickMsAvg });
+    } else {
+      loads.push({ inst: i, players: 0, tickMsAvg: 0, error: true });
+    }
+  }
+  if (known === 0) {
+    return { inst: 0, doKey: doName(zone, 0), maxInst };
+  }
+  if (allKnownSoftFull && known < maxInst) {
+    const cold = loads.find((row) => row.error)!;
+    cold.error = false;
+  }
   const inst = pickInstance(loads, {
-    sticky: stickyInst,
     softCap: soft,
     hardCap: hard,
     maxInst,
   });
-  return { inst, doKey: doName(zone, inst) };
+  return { inst, doKey: doName(zone, inst), maxInst };
 }
 
 function canonicalZone(raw: string | null): string {
@@ -737,7 +791,7 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
  * binds itself to that district. Players hand off by reconnecting with a new zone.
  */
 export default {
-  async fetch(req: Request, env: Env): Promise<Response> {
+  async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(req.url);
 
     // CORS preflight — the browser client POSTs JSON (identity, metro bridge) from the
@@ -908,6 +962,8 @@ export default {
         (s, r) => s + (Number((r as { players?: number }).players) || 0),
         0,
       );
+      const healthy = loads.filter((r) => !(r as { error?: boolean }).error);
+      const maxMetric = (key: string) => healthy.reduce((m, r) => Math.max(m, Number(r[key]) || 0), 0);
       return new Response(
         JSON.stringify({
           zone,
@@ -915,7 +971,14 @@ export default {
           maxInstances: maxInst,
           softCap: softCapFor(zone, env, launchFlagsFromEnv(env)),
           hardCap: hardCapFor(zone, env, launchFlagsFromEnv(env)),
+          // Compatibility aggregates used by load gates and simple dashboards.
+          players: playersTotal,
           playersTotal,
+          tick: maxMetric("tick"),
+          tickMsAvg: maxMetric("tickMsAvg"),
+          tickMsMax: maxMetric("tickMsMax"),
+          snapBytesPerTick: healthy.reduce((n, r) => n + (Number(r.snapBytesPerTick) || 0), 0),
+          running: healthy.some((r) => !!r.running),
           instances: loads,
         }),
         {
@@ -950,13 +1013,25 @@ export default {
       // Client may pass ?inst=N for sticky reconnect (honored under hard cap).
       const zone = canonicalZone(url.searchParams.get("zone"));
       const sticky = parseInstParam(url.searchParams.get("inst"));
-      const { inst, doKey } = await resolveZoneInstance(env, zone, sticky);
+      // Never block the WebSocket upgrade on N cold `/stats` probes. Cached load
+      // data chooses immediately; telemetry refreshes after the route is committed.
+      const { inst, doKey, maxInst } = resolveZoneInstance(env, zone, sticky);
       // Touch cache after join intent so back-to-back connects see fresh-ish counts.
       // (Actual count updates when DO /stats is probed again.)
-      const cached = loadCache.get(doKey);
-      if (cached) {
-        loadCache.set(doKey, { ...cached, players: cached.players + 1, at: Date.now() });
+      // Only real upgrades count: the DO 426s everything else, so letting plain GET /ws
+      // inflate the count let a bot fake a full shard and divert joiners off it.
+      if (req.headers.get("Upgrade")?.toLowerCase() === "websocket") {
+        const cached = loadCache.get(doKey);
+        loadCache.set(doKey, {
+          players: Math.max(0, cached?.players ?? 0) + 1,
+          tickMsAvg: cached?.tickMsAvg ?? 0,
+          at: Date.now(),
+          // Keep a known-bad marker: rebuilding the entry without it made an unreachable
+          // shard read as a healthy 1-player room for the rest of the cache window.
+          ...(cached?.error ? { error: true } : {}),
+        });
       }
+      if (maxInst > 1) ctx.waitUntil(refreshZoneLoads(env, zone, maxInst));
       return forwardToWorld(env, req, zone, inst);
     }
 

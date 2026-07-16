@@ -135,13 +135,19 @@ import { fmtMetro } from "../../src/economy/metro";
 import { dailyContracts, getDaily, currentDay, repTier, type DailyObjective } from "../../src/game/dailies";
 import { phaseForHp, raidHpScale, raidScriptFor } from "../../src/game/raid";
 import { getCosmetic, applyCosmetic } from "../../src/game/cosmetics";
-import { bountyById, bountyForNpc, type BountyObjective } from "../../src/game/bounties";
+import {
+  BOSS_BOUNTY_COOLDOWN_MS,
+  bossBountyCooldownRemaining,
+  bountyById,
+  bountyForNpc,
+  type BountyObjective,
+} from "../../src/game/bounties";
 import { rollBossSignature, bossLootBlurb } from "../../src/game/bossLoot";
 import { maybeNamedLoot } from "../../src/game/namedLoot";
 import { weeklyGuildGoal, currentGuildWeek } from "../../src/game/guildGoals";
 import { currentDistrictWar, warMetaKey } from "../../src/game/districtWar";
 import { launchFlagsFromEnv, emitDayKey, type LaunchFlags } from "../../src/game/featureFlags";
-import { canRebalanceZone, doName, hardCapFor, parseInstParam } from "./zoneRouting";
+import { canRebalanceZone, doName, hardCapFor, parseInstParam, reconcileInstanceId } from "./zoneRouting";
 
 import {
   BLESS_IFRAME_TICKS,
@@ -230,6 +236,7 @@ import {
   CAMPAIGN_DONE_TEXT,
   MELTDOWN_VICTORY_TEXT,
   MELTDOWN_VICTORY_FLAG,
+  STARTER_FLOOR_FLAG,
 } from "../../src/net/campaign";
 import type { QuestTriggerType, QuestReward } from "../../src/game/quests";
 import { rollElite, type EliteModifier } from "../../src/game/elites";
@@ -278,6 +285,7 @@ import {
   sanitizeFurniture,
   sanitizeGuestbook,
   furnitureHomeBuffs,
+  furnitureUpgradeCost,
   GUEST_STAMPS,
   ESTATE_BASE_PRICE,
   type FurniturePiece,
@@ -374,8 +382,6 @@ export interface Env {
   METRO_INSTANCE_CAP?: string;
   /** Max horizontal instances per shardable zone (default 4, max 16). */
   METRO_MAX_INSTANCES?: string;
-  /** Per-player daily emit ceiling in credits (policy may tighten under pool stress). */
-  METRO_DAILY_EMIT_CAP?: string;
   /** Optional build/version stamp for /health (set in wrangler vars on deploy). */
   METRO_BUILD?: string;
 }
@@ -493,6 +499,8 @@ interface PlayerState {
   // authored NPC bounty — one active at a time, persisted cross-zone in D1
   bounty: { id: string; progress: number } | null;
   bountyDirty: boolean;
+  /** Completion timestamps learned this session; durable source is bounty_completions. */
+  bountyCompletedAt: Map<string, number>;
   /** Session cooldowns for NPC services (`npcId:service` → last use ms). Not persisted. */
   npcCd: Map<string, number>;
   // appearance (relayed to other clients so they render this player's customization)
@@ -826,8 +834,20 @@ export class WorldDO {
   }
 
   /** A DO instance handles exactly one zone — bind it to its district on first hit. */
-  private initZone(zone: string | null, inst: number | null | undefined = 0) {
-    if (this.zoneReady) return;
+  private initZone(zone: string | null, inst: number | null | undefined) {
+    if (this.zoneReady) {
+      // Self-heal objects created by older code that persisted `inst=0` inside a
+      // `zone#N` DO. Only an explicit routed ?inst may change stored identity;
+      // internal requests without it must preserve the current shard.
+      if (zone === this.zoneName && inst != null) {
+        const repaired = reconcileInstanceId(this.instanceId, inst);
+        if (repaired !== this.instanceId) {
+          this.instanceId = repaired;
+          void this.state.storage.put("inst", repaired);
+        }
+      }
+      return;
+    }
     this.zoneReady = true;
     this.instanceId = Math.max(0, Math.floor(Number(inst) || 0));
     void this.state.storage.put("inst", this.instanceId);
@@ -1819,7 +1839,14 @@ export class WorldDO {
   private onChat(ws: WebSocket, msg: Extract<ClientMsg, { t: "chat" }>) {
     const p = this.playerFor(ws);
     if (!p) return;
-    const text = (msg.text || "").slice(0, 200).trim();
+    // Whitespace collapses to single spaces before the length clamp. The composer only
+    // emits printable keys, but `text` is off the wire: a crafted line of 200 newlines
+    // was relayed verbatim and rendered as ~2800px of text over every viewport in the
+    // zone, unclearable without leaving. Chat is one line by definition.
+    const text = (typeof msg.text === "string" ? msg.text : "")
+      .replace(/\s+/g, " ")
+      .slice(0, 200)
+      .trim();
     if (!text) return;
     if ((this.tick - p.lastChatTick) * NET_TICK_MS < 300) return; // rate-limit ~3/s
     p.lastChatTick = this.tick;
@@ -1897,7 +1924,17 @@ export class WorldDO {
         return;
       }
       this.leaveParty(p);
-      this.parties.get(pid)!.add(p.id);
+      // Re-fetch: leaveParty can disband the very party we're joining. Accepting a
+      // re-invite from your own 2-person party drops it to size 1, which deletes it,
+      // and the old non-null assertion then threw on undefined.add — ejecting both
+      // members and leaving the invite stuck.
+      const set = this.parties.get(pid);
+      if (!set) {
+        this.pendingInvites.delete(p.id);
+        this.send(ws, { t: "sys", text: "that party broke up" });
+        return;
+      }
+      set.add(p.id);
       p.party = pid;
       this.pendingInvites.delete(p.id);
       this.broadcastParty(pid);
@@ -2474,7 +2511,9 @@ export class WorldDO {
    * Guest ids are lowercase names; wallet ids are `w:0x…` checksummed.
    */
   private resolvePlayer(token: string | undefined | null): PlayerState | undefined {
-    const raw = (token || "").trim();
+    // Coerce before trimming: `to` is untrusted, and a non-string like {"to":123} made
+    // `123 || ""` evaluate to 123, so .trim() threw out of chat/party/mute/trade.
+    const raw = (typeof token === "string" ? token : "").trim();
     if (!raw) return undefined;
     const direct = this.players.get(raw) ?? this.players.get(raw.toLowerCase());
     if (direct) return direct;
@@ -3784,6 +3823,7 @@ export class WorldDO {
       cosmeticEquipped,
       bounty,
       bountyDirty,
+      bountyCompletedAt: new Map(),
       npcCd: new Map(),
       look,
     };
@@ -4141,7 +4181,11 @@ export class WorldDO {
         const kind = kinds[Math.floor(Math.random() * kinds.length)];
         const id = this.nextEnemyId++;
         const hp = ENEMY_ARCHES[kind].hp;
-        this.enemies.set(id, { id, x, y, ox: x, oy: y, hp, maxHp: hp, respawnTick: 0, lastFireTick: 0, kind });
+        // `add: true` marks these as event spawns so zone cleanup can reap them. Without
+        // it every purge wave permanently bolted up to 10 respawning enemies onto the
+        // zone roster — an unbounded entity leak, a standing extra kill→credit faucet,
+        // and rising enemies.size heat that biased future event rolls.
+        this.enemies.set(id, { id, x, y, ox: x, oy: y, hp, maxHp: hp, respawnTick: 0, lastFireTick: 0, kind, add: true });
         spawned++;
       }
     }
@@ -4924,9 +4968,15 @@ export class WorldDO {
       while (p.inventory.length < 2) p.inventory.push(rollItem(Math.max(1, p.level), 0.35));
       changed = true;
     }
-    // Floor only for brand-new runners (no XP yet). Veterans who spent to 0 stay broke.
-    const brandNew = (p.xp | 0) === 0 && p.level <= 1;
+    // Floor only for brand-new runners. Veterans who spent to 0 stay broke.
+    // The gate is a persisted claim-once flag, not "no XP yet": nothing that spends the
+    // floor grants XP (sell_core/meal/vent/vendor are all XP-free), so an account could
+    // sit at xp=0 forever and every reconnect refilled cores to 5. Fencing them at the
+    // den and reconnecting was an unbounded ₵ faucet — into a bridge that pays real tokens.
+    const brandNew = !p.campaign.hasFlag(STARTER_FLOOR_FLAG) && (p.xp | 0) === 0 && p.level <= 1;
     if (brandNew) {
+      p.campaign.flags.add(STARTER_FLOOR_FLAG);
+      changed = true;
       if (p.cores < 5) {
         p.cores = Math.max(p.cores, 5);
         changed = true;
@@ -4962,6 +5012,26 @@ export class WorldDO {
       if (p.bounty) {
         this.send(ws, { t: "sys", text: "finish your current job first" });
         return;
+      }
+      // Boss jobs are character moments, not a 30-second respawn faucet. Persist the
+      // per-job daily gate so zone travel and isolate eviction cannot reset it.
+      if (b.objective === "boss") {
+        let completedAt = p.bountyCompletedAt.get(b.id) ?? 0;
+        if (!completedAt) {
+          const row = await this.env.DB.prepare(
+            "SELECT completed_at FROM bounty_completions WHERE player=? AND bounty_id=?",
+          )
+            .bind(p.id, b.id)
+            .first<{ completed_at: number }>();
+          completedAt = Number(row?.completed_at ?? 0);
+          if (completedAt > 0) p.bountyCompletedAt.set(b.id, completedAt);
+        }
+        const remaining = bossBountyCooldownRemaining(completedAt);
+        if (remaining > 0) {
+          const hours = Math.max(1, Math.ceil(remaining / (60 * 60 * 1000)));
+          this.send(ws, { t: "sys", text: `${b.name} is settled — check back in ${hours}h` });
+          return;
+        }
       }
       p.bounty = { id: b.id, progress: 0 };
       p.bountyDirty = true;
@@ -5068,6 +5138,18 @@ export class WorldDO {
         line = `meal ₵${cost} — belly full, HEAT down`;
         break;
       }
+      case "rest": {
+        if (p.hp >= p.maxHp && p.heat <= 0) {
+          this.send(ws, { t: "sys", text: "you're already fully rested" });
+          return;
+        }
+        p.credits -= cost;
+        this.eco("burn", "npc_hotel_rest", cost);
+        p.hp = p.maxHp;
+        p.heat = 0;
+        line = `slept safely for ₵${cost} — health full, HEAT clear`;
+        break;
+      }
       case "cool_down": {
         if (p.heat <= 0) {
           this.send(ws, { t: "sys", text: "HEAT's already cold" });
@@ -5148,17 +5230,58 @@ export class WorldDO {
     p.bounty.progress += n;
     p.bountyDirty = true;
     if (p.bounty.progress >= b.count) {
-      const paid = this.grantEmit(p, "bounty", b.rewardCredits);
-      if (paid > 0) this.bumpStat(p, "credits", paid);
-      this.bumpStat(p, "rep", b.rewardRep);
-      this.sendTo(p.id, { t: "sys", text: `✔ BOUNTY — ${b.name} (+₵${paid} +${b.rewardRep} rep)` });
-      p.bounty = null;
+      if (b.objective === "boss") {
+        // Clear the in-memory job before starting IO so two boss deaths in adjacent
+        // ticks cannot launch two completion claims. The D1 conditional upsert below
+        // is the cross-zone/reconnect authority and must win before any payout occurs.
+        p.bounty = null;
+        void this.completeBossBounty(p, b);
+      } else {
+        this.payBountyReward(p, b);
+        p.bounty = null;
+      }
     } else {
       // Completion waits for persistDirty/onClose so its reward saves before the
       // tracker row is deleted; ordinary progress has no coupled currency mutation.
       void this.flushBounty(p);
     }
     this.pushBounty(p);
+  }
+
+  private payBountyReward(p: PlayerState, b: NonNullable<ReturnType<typeof bountyById>>) {
+    const paid = this.grantEmit(p, "bounty", b.rewardCredits);
+    if (paid > 0) this.bumpStat(p, "credits", paid);
+    this.bumpStat(p, "rep", b.rewardRep);
+    this.sendTo(p.id, { t: "sys", text: `✔ BOUNTY — ${b.name} (+₵${paid} +${b.rewardRep} rep)` });
+  }
+
+  /** Atomically claim the per-job cooldown before paying a world-boss bounty. */
+  private async completeBossBounty(p: PlayerState, b: NonNullable<ReturnType<typeof bountyById>>) {
+    const completedAt = Date.now();
+    try {
+      const r = await this.env.DB.prepare(
+        "INSERT INTO bounty_completions (player,bounty_id,completed_at) VALUES (?,?,?) " +
+          "ON CONFLICT(player,bounty_id) DO UPDATE SET completed_at=excluded.completed_at " +
+          "WHERE bounty_completions.completed_at <= ?",
+      )
+        .bind(p.id, b.id, completedAt, completedAt - BOSS_BOUNTY_COOLDOWN_MS)
+        .run();
+      if (Number(r.meta.changes ?? 0) < 1) {
+        this.sendTo(p.id, { t: "sys", text: `${b.name} was already settled — no duplicate payout` });
+        return;
+      }
+      p.bountyCompletedAt.set(b.id, completedAt);
+      this.payBountyReward(p, b);
+      p.bountyDirty = true;
+      this.pushBounty(p);
+    } catch {
+      // Fail closed: no durable cooldown means no reward. Restore the job just below
+      // completion so the player can retry on the next boss instead of losing it.
+      if (!p.bounty) p.bounty = { id: b.id, progress: Math.max(0, b.count - 1) };
+      p.bountyDirty = true;
+      this.sendTo(p.id, { t: "sys", text: "bounty registry unavailable — payout held, job restored" });
+      this.pushBounty(p);
+    }
   }
 
   /** TENEMENT lockbox — move an item between bag and personal stash. Server-authoritative:
@@ -5383,9 +5506,38 @@ export class WorldDO {
       this.broadcastEstate();
     } else if (msg.action === "furnish") {
       if (e.owner !== p.id) return sys("only the owner can decorate this home");
-      e.furniture = sanitizeFurniture(msg.furniture ?? []);
-      this.estateBuffs = furnitureHomeBuffs(e.furniture);
-      await this.persistEstate();
+      const previous = e.furniture;
+      const next = sanitizeFurniture(msg.furniture ?? []);
+      const cost = furnitureUpgradeCost(previous, next);
+      if (p.credits < cost) return sys(`not enough credits — these furnishings cost ₵${cost}`);
+      p.credits -= cost;
+      p.dirty = true;
+      e.furniture = next;
+      this.estateBuffs = furnitureHomeBuffs(next);
+      // Persist the debit before the layout. A Worker crash can never leave the
+      // furniture/buffs saved while silently dropping their charge.
+      if (cost > 0 && !(await this.upsertPlayer(p))) {
+        p.credits += cost;
+        e.furniture = previous;
+        this.estateBuffs = furnitureHomeBuffs(previous);
+        return sys("credit ledger unavailable — your layout was not charged or saved");
+      }
+      try {
+        await this.persistEstate();
+      } catch {
+        p.credits += cost;
+        p.dirty = true;
+        e.furniture = previous;
+        this.estateBuffs = furnitureHomeBuffs(previous);
+        if (cost > 0) void this.upsertPlayer(p);
+        return sys("estate registry unavailable — your layout was not charged or saved");
+      }
+      if (cost > 0) {
+        this.eco("burn", "estate_furniture", cost);
+        sys(`◈ furnishings saved — ₵${cost}`);
+      } else {
+        sys("◈ furnishings rearranged — no charge");
+      }
       this.broadcastEstate();
     } else if (msg.action === "sign") {
       // visitors sign the book; the stamp is server-chosen so nothing player-written persists.
@@ -5477,6 +5629,11 @@ export class WorldDO {
     const p = this.playerFor(ws);
     if (!p) return;
     const slot = msg.slot as Slot;
+    // `slot` is untrusted. Without this guard `{slot:"__proto__"}` reads Object.prototype
+    // (truthy, so the !it check passes) and pushes it into the bag as a junk item with no
+    // id — unequippable, unsalvageable, and persisted; "constructor" pushes a function that
+    // serializes to null and can NPE any consumer that walks the inventory.
+    if (!Object.prototype.hasOwnProperty.call(p.equipped, slot)) return;
     const it = p.equipped[slot];
     if (!it) return;
     if (p.inventory.length >= INVENTORY_CAP) {
@@ -6235,7 +6392,6 @@ export class WorldDO {
         claimGoal: this.flags.claimGoal,
         districtWar: this.flags.districtWar,
         hubCap: this.flags.hubCap,
-        dailyEmitCap: this.flags.dailyEmitCap,
       },
       hardCap: hard,
       hubFull: this.zoneName === "safe" && this.sessions.size >= this.flags.hubCap,
@@ -7553,6 +7709,11 @@ export class WorldDO {
     // Final race check: a new login may have claimed ownership while we flushed.
     if (!stillSoleOwner()) return;
     // Only drop the in-memory player if this close still owns it.
-    if (this.players.get(id) === p) this.players.delete(id);
+    if (this.players.get(id) === p) {
+      this.players.delete(id);
+      // Beat-dedup state is per-session and was never reaped, so a long-lived hub DO
+      // kept one entry per distinct visitor forever.
+      this.lastStoryBeatKey.delete(id);
+    }
   }
 }
