@@ -7,13 +7,13 @@
   </defs>
   <rect width="1040" height="560" fill="url(#ec-bg)"/>
   <text x="40" y="52" font-size="24" font-weight="700" letter-spacing="6" fill="#eafaff">THE $METRO ECONOMY</text>
-  <text x="40" y="76" font-size="11" letter-spacing="3" fill="#7fd4e0">TRADEABLE ROBINHOOD CHAIN ERC-20 ◈ BRIDGED TO OFF-CHAIN CREDITS ₵ · POOL IS 100% PLAYER-FUNDED</text>
+  <text x="40" y="76" font-size="11" letter-spacing="3" fill="#7fd4e0">TRADEABLE SOLANA SPL ◈ BRIDGED TO OFF-CHAIN CREDITS ₵ · POOL IS 100% PLAYER-FUNDED</text>
 
   <!-- WALLET -->
   <g transform="translate(60,150)">
     <rect x="0" y="0" width="240" height="150" rx="12" fill="#0d0820" stroke="#9b5cff" stroke-width="1.8"/>
     <text x="20" y="34" font-size="16" font-weight="700" letter-spacing="2" fill="#bf95ff" filter="url(#ec-glow)">◈ YOUR WALLET</text>
-    <text x="20" y="58" font-size="10" letter-spacing="1.5" fill="#b7a7e0">METAMASK · ROBINHOOD CHAIN</text>
+    <text x="20" y="58" font-size="10" letter-spacing="1.5" fill="#b7a7e0">PHANTOM · SOLANA</text>
     <line x1="20" y1="72" x2="220" y2="72" stroke="#2e2440"/>
     <text x="20" y="96" font-size="11" fill="#e9dcff">$METRO — on-chain,</text>
     <text x="20" y="114" font-size="11" fill="#e9dcff">tradeable, real value</text>
@@ -28,7 +28,7 @@
     <line x1="20" y1="70" x2="220" y2="70" stroke="#3a2038"/>
     <text x="120" y="94" text-anchor="middle" font-size="10.5" fill="#ffd9ee">Starts EMPTY.</text>
     <text x="120" y="112" text-anchor="middle" font-size="10.5" fill="#ffd9ee">Deposits fill it.</text>
-    <text x="120" y="134" text-anchor="middle" font-size="10.5" fill="#ff8ad0">~20% spread stays in pool</text>
+    <text x="120" y="134" text-anchor="middle" font-size="10.5" fill="#ff8ad0">50 ₵ spread stays in pool</text>
     <text x="120" y="156" text-anchor="middle" font-size="9.5" fill="#c98fb5">empty / short → "Check back later."</text>
   </g>
 
@@ -53,7 +53,7 @@
   <path d="M732,280 L642,280" fill="none" stroke="#ff2bd6" stroke-width="2.5" marker-end="url(#ec-out)"/>
   <path d="M398,280 L308,280" fill="none" stroke="#ff2bd6" stroke-width="2.5" marker-end="url(#ec-out)"/>
   <text x="688" y="266" text-anchor="middle" font-size="11" font-weight="700" letter-spacing="1" fill="#ff5cae">WITHDRAW</text>
-  <text x="688" y="300" text-anchor="middle" font-size="10" fill="#e08ac8">125 ₵ → 1 ◈</text>
+  <text x="688" y="300" text-anchor="middle" font-size="10" fill="#e08ac8">150 ₵ → 1 ◈</text>
 
   <!-- rules strip -->
   <g transform="translate(60,372)">
@@ -61,11 +61,11 @@
     <text x="24" y="30" font-size="12" font-weight="700" letter-spacing="3" fill="#9fb4c8">THE RULES</text>
     <g font-size="11" fill="#c4d2e0">
       <text x="24" y="60">◈  Deposit rate  1 ◈ → 100 ₵</text>
-      <text x="24" y="84">◈  Withdraw rate  125 ₵ → 1 ◈  (the spread refills the pool)</text>
-      <text x="24" y="108">◈  Minimum cash-out  250 ₵  (2 ◈)</text>
-      <text x="24" y="132">◈  Daily cap  50,000 ₵ per player</text>
-      <text x="500" y="60">▸  Cash-outs are CLAIMS — treasury-signed on Robinhood Chain</text>
-      <text x="500" y="84">▸  Deposits cost a little ETH gas, paid via MetaMask</text>
+      <text x="24" y="84">◈  Withdraw rate  150 ₵ → 1 ◈  (the spread refills the pool)</text>
+      <text x="24" y="108">◈  Minimum cash-out  300 ₵  (2 ◈)</text>
+      <text x="24" y="132">◈  No daily earn or withdrawal cap</text>
+      <text x="500" y="60">▸  Cash-outs are treasury-signed Solana transfers</text>
+      <text x="500" y="84">▸  Treasury pays fees when funded; player fallback if empty</text>
       <text x="500" y="108">▸  Mainnet stays DISARMED until counsel signs off</text>
       <text x="500" y="132">▸  Testnet rehearsal first; server secrets before client mint</text>
     </g>

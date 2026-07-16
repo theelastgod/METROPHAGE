@@ -9,7 +9,7 @@ Quick definitions for the terms you'll see across Metro City.
 | **REISSUE** | The conspiracy/protocol that turns minds back into inventory; the campaign's central mystery. |
 | **THE FIXER** | Your handler in Metro City; opens the campaign and daily contracts. |
 | **Credits (₵)** | Off-chain, server-authoritative in-game currency. Earned by playing. |
-| **$METRO (◈)** | Tradeable ERC-20 token on Robinhood Chain (Ethereum L2), bridged to credits. |
+| **$METRO (◈)** | Tradeable SPL token on Solana, bridged to credits. |
 | **Bridge / Pool** | The player-funded treasury that converts $METRO ↔ credits. Starts empty. |
 | **HEAT** | The resource that charges your **E** ultimate; built by fighting, decays out of combat. |
 | **Primary** | Your always-available weapon (Q is the ability, E is the ultimate). |
