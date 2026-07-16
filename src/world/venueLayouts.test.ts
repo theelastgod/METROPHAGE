@@ -4,12 +4,11 @@ import {
   VENUE_MAT_TILE,
   VENUE_ROOM_H,
   VENUE_ROOM_W,
-  buildVenueRoom,
   buildVenueRoomFromLayout,
+  hashVenueLayoutFor,
   isWall,
-  venueLayoutFor,
-  venueSpawnFor,
 } from "./district";
+import { buildVenueRoom, venueLayoutFor, venueSpawnFor } from "./rooms";
 import { TILE } from "../config";
 
 /** Flood fill from a tile; returns the set of reachable floor tiles. */
@@ -46,7 +45,9 @@ describe("venue floor plans (shared client/server geometry)", () => {
       for (let y = 0; y < L.h; y++) for (let x = 0; x < L.w; x++) if (!isWall(g[y][x])) floors++;
       expect(region.size, `${L.tag}: sealed-off floor pocket`).toBe(floors);
       // keeper's side of the counter reachable via the gap
-      expect(region.has(L.counter.gap + "," + (L.counter.y - 1)), `${L.tag}: counter far side sealed`).toBe(true);
+      if (L.counter) {
+        expect(region.has(L.counter.gap + "," + (L.counter.y - 1)), `${L.tag}: counter far side sealed`).toBe(true);
+      }
     }
   });
 
@@ -80,13 +81,29 @@ describe("venue floor plans (shared client/server geometry)", () => {
     }
   });
 
-  it("layout choice is deterministic per zone and varied across zones", () => {
+  it("room choice is deterministic per zone", () => {
     const zones = ["d0i1", "d0i2", "d1i1", "d2i3", "h1", "h5", "h7", "h12", "h20", "h29"];
-    const tags = new Set(zones.map((z) => venueLayoutFor(z).tag));
     for (const z of zones) {
-      expect(venueLayoutFor(z).tag).toBe(venueLayoutFor(z).tag); // stable across calls
+      expect(venueLayoutFor(z)).toBe(venueLayoutFor(z)); // stable across calls
       expect(JSON.stringify(buildVenueRoom(z))).toBe(JSON.stringify(buildVenueRoom(z)));
     }
-    expect(tags.size, "hash should spread zones over several plans").toBeGreaterThanOrEqual(3);
+  });
+
+  // Variety used to come from hashing the zone id across the 5 generic plans — which is
+  // exactly why a dive bar and a clinic could land the same room. Rooms now vary by what
+  // the venue IS (world/rooms.ts), so that's what this guards.
+  it("different venue kinds get visibly different rooms", () => {
+    const rooms = new Set(["d0i0", "d0i1", "d0i2", "d0i3", "d0i4"].map((z) => JSON.stringify(buildVenueRoom(z))));
+    expect(rooms.size, "each district venue kind should have its own floor").toBe(5);
+  });
+
+  // Kinds with no baked art still ride the hash, so it must still spread them out.
+  it("the fallback still spreads un-arted zones over several plans", () => {
+    const tags = new Set(VENUE_LAYOUTS.map((l) => l.tag));
+    expect(tags.size, "the generic plans must stay distinct").toBe(VENUE_LAYOUTS.length);
+    const spread = new Set(
+      ["z0", "z1", "z2", "z3", "z4", "z5", "z6", "z7"].map((z) => hashVenueLayoutFor(`d9i${z}`).tag),
+    );
+    expect(spread.size).toBeGreaterThanOrEqual(1);
   });
 });

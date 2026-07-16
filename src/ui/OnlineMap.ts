@@ -94,7 +94,9 @@ export default class OnlineMap extends Modal {
   onExamine?: (text: string) => void;
   private contextMenu: ContextMenu;
   private nodes: MapNode[];
-  private discovered = new Set<string>();
+  /** Zones actually stood in (organic arrival) — the fast-travel gate. The wire also
+   *  carries a `discovered` fog set, but every location is on the map now, so nothing
+   *  reads it here. The server still tracks it (world.ts markDiscovered). */
   private unlocked = new Set<string>();
   private current = "";
 
@@ -123,8 +125,7 @@ export default class OnlineMap extends Modal {
     ];
   }
 
-  setState(discovered: string[], unlocked: string[], current: string) {
-    this.discovered = new Set(discovered);
+  setState(_discovered: string[], unlocked: string[], current: string) {
     this.unlocked = new Set(unlocked);
     this.current = current;
     this.pendingTravel = null; // a fresh open never carries an armed warning
@@ -158,39 +159,31 @@ export default class OnlineMap extends Modal {
   }
 
   /**
-   * Fast-travel allowed once a zone is on your map (discovered / organic unlock).
-   * City spawn (safe) and the subway station are always free routes.
+   * Fast travel needs a zone you have actually STOOD IN — `unlocked` (organic arrival),
+   * not `discovered` (fog). The two sets have always been distinct (see protocol.ts:
+   * "organic = walked/deployed in; fast = map/teleport (fog only, no fast-travel
+   * unlock)"), but this used to accept `discovered || unlocked`, so merely seeing a zone
+   * on the map was enough to jump to it — the organic-only rule the comments described
+   * was never actually enforced. Now the map shows everywhere and the gate is the visit.
+   *
+   * City spawn and the subway station stay free — they're the transit anchors every
+   * runner needs to get home. Arriving at `safe` organically also unlocks the hub
+   * service rooms server-side (world.ts markDiscovered), so those need no special case.
    */
   private canFastTravel(zone: string): boolean {
     if (this.godMode) return true;
-    // Free routes: hub pad, subway station, and hub service rooms once you've
-    // touched the city (or are standing in any known zone). Cuts "walk via
-    // deploy gate" dead-ends for clinic/shop/bar/den.
     if (zone === "safe" || zone === "subway") return true;
-    if (HUB_INTERIORS.some((h) => h.zone === zone)) {
-      return (
-        this.discovered.has("safe") ||
-        this.unlocked.has("safe") ||
-        this.current === "safe" ||
-        this.discovered.has(zone) ||
-        this.unlocked.has(zone)
-      );
-    }
-    return this.discovered.has(zone) || this.unlocked.has(zone);
+    if (zone === this.current) return true;
+    return this.unlocked.has(zone);
   }
 
-  private isKnown(zone: string) {
-    if (this.godMode) return true;
-    // City spawn + subway always show — transit anchors every runner can reach.
-    if (zone === "safe" || zone === "subway") return true;
-    // Hub interiors show as soon as the player has seen Metro City.
-    if (
-      HUB_INTERIORS.some((h) => h.zone === zone) &&
-      (this.discovered.has("safe") || this.unlocked.has("safe") || this.current === "safe")
-    ) {
-      return true;
-    }
-    return this.discovered.has(zone) || zone === this.current;
+  /**
+   * Every location is on every runner's map from the start — the world is public
+   * knowledge; reaching it is the part you earn. Kept as a seam so callers still read
+   * intent (and god mode / future hidden zones have somewhere to hook).
+   */
+  private isKnown(_zone: string) {
+    return true;
   }
 
   private zoneBlurb(zone: string, label: string): string {
@@ -351,7 +344,6 @@ export default class OnlineMap extends Modal {
       return t;
     };
 
-    const found = this.nodes.filter((n) => this.isKnown(n.zone)).length;
     const routes = this.nodes.filter((n) => this.canFastTravel(n.zone)).length;
     tx("◇ WORLD MAP", x + uiDim(22), y + uiDim(14), 17, STUDIO.ink, true);
     add(
@@ -359,14 +351,16 @@ export default class OnlineMap extends Modal {
         .text(
           x + uiDim(22),
           y + uiDim(32),
-          rs ? "TRAVEL jumps · shift-walk via menu · right-click options" : "TRAVEL = fast travel to discovered places",
+          rs ? "TRAVEL jumps · shift-walk via menu · right-click options" : "TRAVEL = fast travel to places you've visited",
           bodyFont(10, { color: STUDIO.dim }),
         )
         .setScrollFactor(0)
         .setDepth(D + 3),
     );
+    // Every location is visible now, so "seen X/Y" would always read N/N. What varies —
+    // and what the runner is actually working toward — is how many they can jump to.
     tx(
-      `seen ${found}/${this.nodes.length}  ·  travel ${routes}  ·  M / ESC`,
+      `visited ${routes}/${this.nodes.length}  ·  M / ESC`,
       x + w - uiDim(20),
       y + uiDim(16),
       11,

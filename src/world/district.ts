@@ -4,13 +4,12 @@
 
 import { GRID_W, GRID_H, DISTRICT_SCALE, DISTRICT_GRID_W, DISTRICT_GRID_H, TILE } from "../config";
 import { DISTRICTS, type DistrictDef, type Rect } from "../game/districts";
-import { DISTRICT_VENUE_COUNT, wildernessShackDef } from "../game/districtVenues";
+import { DISTRICT_VENUE_COUNT } from "../game/districtVenues";
 import { envForDistrict } from "../game/districtEnv";
 import {
   type BridgeDef,
   type PathSegment,
   type WildernessBiome,
-  travelSpawnTile,
   bridgeWestTile,
   bridgeEastTile,
   getBridge,
@@ -108,10 +107,10 @@ export const COLLIDING_TILES: number[] = [...WALL_TILES, ...WALL_VARIANTS, ...IN
 
 export type TileGrid = number[][];
 
-function gridW(grid: TileGrid) {
+export function gridW(grid: TileGrid) {
   return grid[0]?.length ?? GRID_W;
 }
-function gridH(grid: TileGrid) {
+export function gridH(grid: TileGrid) {
   return grid.length;
 }
 
@@ -153,7 +152,7 @@ function carve(grid: TileGrid, tx: number, ty: number, tile = TILE_FLOOR) {
  *  instead of carving a one-tile pocket that traps the runner on top of the building.
  *
  *  Prefers tiles with at least one walkable neighbour (not a 1-tile pocket). */
-function nearestWalkable(grid: TileGrid, tx: number, ty: number, maxR = 20): [number, number] | undefined {
+export function nearestWalkable(grid: TileGrid, tx: number, ty: number, maxR = 20): [number, number] | undefined {
   const gw = gridW(grid);
   const gh = gridH(grid);
   const open = (x: number, y: number) =>
@@ -459,12 +458,25 @@ export interface VenueLayout {
   mat: [number, number];
   /** Walkable spots for occupants + service NPCs, spread around the plan. */
   seats: Array<[number, number]>;
-  /** Service counter: wall run along row `y`, x0..x1, with a pass-through gap. */
-  counter: { x0: number; x1: number; y: number; gap: number };
+  /**
+   * Service counter: wall run along row `y`, x0..x1, with a pass-through gap.
+   * Optional: art-traced room plans (see world/rooms.ts) model their counter as a
+   * `blocks` rect at the position it occupies in the baked art instead, so the
+   * collision matches the picture rather than a generic wall run.
+   */
+  counter?: { x0: number; x1: number; y: number; gap: number };
   /** Extra interior wall blocks (inclusive tile rects): pillars, partitions, islands. */
   blocks?: Array<[number, number, number, number]>;
   /** Flavor tag for the client dresser — also selects the floor plate. */
   tag: VenueLayoutTag;
+  /**
+   * Baked room art this plan was traced from (e.g. "hf_int_bar_room"). When set, the
+   * client draws this texture as the room itself — full-bleed and opaque — and skips
+   * the generic layout plate + scattered furniture, because the furniture is already
+   * painted into the art and mirrored here as `blocks`. The plan's aspect must match
+   * the texture's or the art will stretch.
+   */
+  art?: string;
 }
 
 /** Index 0 MUST stay byte-identical to the original 15×11 room (est homes use it). */
@@ -526,18 +538,25 @@ function venueHash(zone: string): number {
   return h;
 }
 
-/** The floor plan for a venue-sized zone. est{K} homes are pinned to STUDIO. */
-export function venueLayoutFor(zone?: string | null): VenueLayout {
+/**
+ * Zone-hashed floor plan — the FALLBACK plan, for venue zones whose kind has no
+ * art-traced room yet. est{K} homes are pinned to STUDIO.
+ *
+ * ⚠ Not the public API. Call `venueLayoutFor` from world/rooms.ts instead: it resolves
+ * the venue's KIND first and only falls back here. Client and server must agree on the
+ * grid, so both sides have to go through the same resolver.
+ */
+export function hashVenueLayoutFor(zone?: string | null): VenueLayout {
   if (zone && /^(d\d+i\d+|h\d+)$/.test(zone)) {
     return VENUE_LAYOUTS[venueHash(zone) % VENUE_LAYOUTS.length];
   }
   return VENUE_LAYOUTS[0];
 }
 
-/** Arrival point for a venue zone — one step above that plan's exit mat.
- *  When `grid` is provided, snaps off any wall/furniture that would trap the runner. */
-export function venueSpawnFor(zone?: string | null, grid?: TileGrid): { x: number; y: number } {
-  const L = venueLayoutFor(zone);
+/** Arrival point for an already-resolved plan — one step above that plan's exit mat.
+ *  When `grid` is provided, snaps off any wall/furniture that would trap the runner.
+ *  Zone-level entry points (`venueSpawnFor`) live in world/rooms.ts. */
+export function venueSpawnForLayout(L: VenueLayout, grid?: TileGrid): { x: number; y: number } {
   // Prefer one step *north* of the exit mat (into the room), then around the mat.
   const candidates: Array<[number, number]> = [
     [L.mat[0], L.mat[1] - 1],
@@ -571,19 +590,18 @@ export function buildVenueRoomFromLayout(L: VenueLayout): TileGrid {
     }
     g.push(row);
   }
-  // service counter — the keeper stands behind it, customers in front
-  for (let x = L.counter.x0; x <= L.counter.x1; x++) g[L.counter.y][x] = TILE_INNER_WALL;
-  g[L.counter.y][L.counter.gap] = TILE_INNER_FLOOR; // pass-through keeps the far side reachable
+  // service counter — the keeper stands behind it, customers in front. Art-traced plans
+  // carry no counter: their fixtures are `blocks` matched to the baked room art.
+  if (L.counter) {
+    for (let x = L.counter.x0; x <= L.counter.x1; x++) g[L.counter.y][x] = TILE_INNER_WALL;
+    g[L.counter.y][L.counter.gap] = TILE_INNER_FLOOR; // pass-through keeps the far side reachable
+  }
   for (const [x0, y0, x1, y1] of L.blocks ?? []) {
     for (let y = y0; y <= y1; y++) {
       for (let x = x0; x <= x1; x++) g[y][x] = TILE_INNER_WALL;
     }
   }
   return g;
-}
-
-export function buildVenueRoom(zone?: string): TileGrid {
-  return buildVenueRoomFromLayout(venueLayoutFor(zone));
 }
 
 /**
@@ -690,162 +708,32 @@ export function spawnPoint(grid: TileGrid, def: DistrictDef = DISTRICTS[0]): { x
   return { x: TILE * 1.5, y: TILE * 1.5 };
 }
 
+/**
+ * The hub's named service venues — THE FERAL CAT (bar), the clinic, the market stall,
+ * the den. They map 1:1 onto a venue KIND, so world/rooms.ts gives them the same
+ * art-traced room their district counterparts get.
+ *
+ * They used to run on the 40×30 buildSafehouse plan while being dressed with a 20×13
+ * floor plate — the art covered the top-left quadrant and INTERIOR_NPC_TILES sat outside
+ * it, so the furniture was literally off the picture.
+ */
+export const HUB_SERVICE_ROOMS: ReadonlySet<string> = new Set(["clinic", "bar", "den", "shop"]);
+
 /** True for FRLG-scale one-screen rooms (15×11 venue / home). */
 export function isVenueSizedZone(zone: string | null | undefined): boolean {
   if (!zone) return false;
-  // District venues, hub buildings, estate homes, and wilderness trail shacks.
-  return /^d\d+i\d+$/.test(zone) || /^h\d+$/.test(zone) || /^est\d+$/.test(zone) || /^w\d+s\d+$/.test(zone);
+  // District venues, hub buildings, estate homes, wilderness trail shacks, and the
+  // hub's named service venues.
+  return (
+    /^d\d+i\d+$/.test(zone) ||
+    /^h\d+$/.test(zone) ||
+    /^est\d+$/.test(zone) ||
+    /^w\d+s\d+$/.test(zone) ||
+    HUB_SERVICE_ROOMS.has(zone)
+  );
 }
 
-/** Hub service rooms that reuse the full safehouse floor plan. */
+/** Zones that still use the full safehouse floor plan. */
 export function isSafehouseSizedInterior(zone: string | null | undefined): boolean {
-  return zone === "clinic" || zone === "bar" || zone === "den" || zone === "shop" || zone === "vault";
-}
-
-/** Spawn at a trail gate when entering from another zone; falls back to the zone's
- *  canonical spawn (when the caller knows it), then the district spawn.
- *  Always returns a candidate — callers MUST run resolveOpenSpawn (net/sim) for
- *  player-radius safety; server login does this as a hard guarantee. */
-export function spawnPointForTravel(
-  grid: TileGrid,
-  zone: string,
-  fromZone: string | undefined,
-  def?: DistrictDef,
-  zoneSpawn?: { x: number; y: number },
-): { x: number; y: number } {
-  let raw: { x: number; y: number };
-
-  // Compact venue rooms (district buildings, hub buildings, estate homes) — always the
-  // mat-adjacent entry tile OF THAT ZONE'S FLOOR PLAN. Using district/safehouse coords
-  // here put runners outside the walls after walking in.
-  if (isVenueSizedZone(zone)) {
-    raw = venueSpawnFor(zone, grid);
-  } else if (isSafehouseSizedInterior(zone)) {
-    // Named hub service interiors (clinic/bar/den/shop/vault) use the large safehouse plan.
-    const open = nearestWalkable(
-      grid,
-      Math.floor(SAFEHOUSE_SPAWN.x / TILE),
-      Math.floor(SAFEHOUSE_SPAWN.y / TILE),
-      16,
-    );
-    raw = open
-      ? { x: open[0] * TILE + TILE / 2, y: open[1] * TILE + TILE / 2 }
-      : { x: SAFEHOUSE_SPAWN.x, y: SAFEHOUSE_SPAWN.y };
-  } else {
-    raw = { x: TILE * 1.5, y: TILE * 1.5 };
-    let found = false;
-    // stepping OUT of a district building interior ("d{N}i{K}") — arrive at that building's
-    // doorstep, the same street tile its door portal occupies (mirrors the client's door math)
-    const bm = fromZone ? /^d(\d+)i(\d+)$/.exec(fromZone) : null;
-    if (bm && def && zone === `d${bm[1]}`) {
-      const b = def.layout.buildings[parseInt(bm[2], 10)];
-      if (b) {
-        const tx = Math.round((b.x1 + b.x2) / 2) * S;
-        const ty = b.y2 * S + 1;
-        // Prefer a walkable tile SOUTH of the building — never inside the footprint.
-        const candidates: Array<[number, number]> = [
-          [tx, ty + 1],
-          [tx, ty + 2],
-          [tx - 1, ty + 1],
-          [tx + 1, ty + 1],
-          [tx, ty],
-          [tx, ty + 3],
-        ];
-        for (const [cx, cy] of candidates) {
-          if (grid[cy]?.[cx] !== undefined && !isWall(grid[cy][cx])) {
-            raw = { x: cx * TILE + TILE / 2, y: cy * TILE + TILE / 2 };
-            found = true;
-            break;
-          }
-        }
-        if (!found) {
-          const near = nearestWalkable(grid, tx, ty + 1, 16);
-          if (near) {
-            raw = { x: near[0] * TILE + TILE / 2, y: near[1] * TILE + TILE / 2 };
-            found = true;
-          }
-        }
-      }
-    }
-    // Leaving a wilderness trail shack ("w{N}s{K}") — land on that shack's doorstep.
-    const wsm = fromZone ? /^w(\d+)s(\d+)$/.exec(fromZone) : null;
-    if (!found && wsm && zone === `w${wsm[1]}`) {
-      const sh = wildernessShackDef(parseInt(wsm[1], 10), parseInt(wsm[2], 10));
-      if (sh) {
-        const tx = sh.door[0] * S;
-        const ty = sh.door[1] * S;
-        const candidates: Array<[number, number]> = [
-          [tx, ty],
-          [tx, ty + 1],
-          [tx - 1, ty],
-          [tx + 1, ty],
-          [tx, ty + 2],
-        ];
-        for (const [cx, cy] of candidates) {
-          if (grid[cy]?.[cx] !== undefined && !isWall(grid[cy][cx])) {
-            raw = { x: cx * TILE + TILE / 2, y: cy * TILE + TILE / 2 };
-            found = true;
-            break;
-          }
-        }
-        if (!found) {
-          const near = nearestWalkable(grid, tx, ty, 16);
-          if (near) {
-            raw = { x: near[0] * TILE + TILE / 2, y: near[1] * TILE + TILE / 2 };
-            found = true;
-          }
-        }
-      }
-    }
-    if (!found) {
-      const tile = travelSpawnTile(zone, fromZone);
-      if (tile) {
-        // Authored entry can land on a building roof — snap to nearest open street.
-        const open = nearestWalkable(grid, tile[0], tile[1], 28);
-        if (open) {
-          raw = { x: open[0] * TILE + TILE / 2, y: open[1] * TILE + TILE / 2 };
-          found = true;
-        }
-      }
-    }
-    if (!found && zoneSpawn) {
-      const tx = Math.floor(zoneSpawn.x / TILE);
-      const ty = Math.floor(zoneSpawn.y / TILE);
-      const open = nearestWalkable(grid, tx, ty, 28);
-      if (open) {
-        raw = { x: open[0] * TILE + TILE / 2, y: open[1] * TILE + TILE / 2 };
-        found = true;
-      } else {
-        raw = { x: zoneSpawn.x, y: zoneSpawn.y };
-        found = true;
-      }
-    }
-    if (!found && def) {
-      raw = spawnPoint(grid, def);
-      found = true;
-    }
-    if (!found) {
-      // Last resort: first walkable tile on this grid.
-      const gw = gridW(grid);
-      const gh = gridH(grid);
-      outer: for (let y = 1; y < gh - 1; y++) {
-        for (let x = 1; x < gw - 1; x++) {
-          if (!isWall(grid[y][x])) {
-            raw = { x: x * TILE + TILE / 2, y: y * TILE + TILE / 2 };
-            found = true;
-            break outer;
-          }
-        }
-      }
-    }
-    if (!found) {
-      const [wx, wy] = bridgeWestTile(getBridge(0));
-      const open = nearestWalkable(grid, wx, wy, 12);
-      raw = open
-        ? { x: open[0] * TILE + TILE / 2, y: open[1] * TILE + TILE / 2 }
-        : { x: wx * TILE + TILE / 2, y: wy * TILE + TILE / 2 };
-    }
-  }
-
-  return raw;
+  return zone === "vault";
 }

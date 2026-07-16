@@ -48,12 +48,7 @@ import {
   buildGrid,
   buildBridgeGrid,
   spawnPoint,
-  spawnPointForTravel,
   isWall,
-  buildSafehouse,
-  SAFEHOUSE_SPAWN,
-  buildVenueRoom,
-  venueSpawnFor,
   VENUE_SPAWN,
   buildSubway,
   SUBWAY_SPAWN,
@@ -71,6 +66,9 @@ import {
   tutorialPortalPos,
   type TileGrid,
 } from "../../src/world/district";
+// Interior collision resolves by venue KIND (art-traced room plans). The client mirrors
+// this grid locally from the same resolver — both sides must go through world/rooms.
+import { buildVenueRoom, spawnPointForTravel, venueSpawnFor } from "../../src/world/rooms";
 import {
   subwaySpawnForEntry,
   subwayEnemyPosts,
@@ -362,7 +360,7 @@ export interface Env {
   METRO_MAINNET_ARMED?: string;
   /** Harness only: allow deposit/withdraw while settlement is sim with a mint set. */
   METRO_ALLOW_SIM?: string;
-  /** Force settlement family: robinhood | solana | auto (default auto = detect from mint shape). */
+  /** Force settlement family: solana (default) | robinhood | auto (detect from mint shape). */
   METRO_SETTLEMENT?: string;
   /** "1" when Workers Paid is provisioned — ops /health only (tuning is compile-time). */
   METRO_PAID_TIER?: string;
@@ -935,8 +933,11 @@ export class WorldDO {
       this.interior = true;
       this.zoneName = zone;
       this.districtIndex = 0;
-      this.grid = buildSafehouse();
-      this.spawn = SAFEHOUSE_SPAWN;
+      // Named hub venues (THE FERAL CAT / clinic / market / den) resolve their KIND and
+      // build the same art-traced room their district counterparts get. They were 40×30
+      // safehouses dressed with a 20×13 plate, so the art never matched the room.
+      this.grid = buildVenueRoom(zone!);
+      this.spawn = venueSpawnFor(zone, this.grid);
       this.nodes = [];
       void this.state.storage.put("zone", zone);
       this.finalizeZoneSpawn();

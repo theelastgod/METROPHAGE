@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { TILE } from "../config";
+import { DISTRICT_SCALE, TILE } from "../config";
 import { DISTRICTS } from "../game/districts";
 import { collides, resolveOpenSpawn } from "../net/sim";
+import { buildVenueRoom, spawnPointForTravel, venueSpawnFor } from "./rooms";
 import {
   buildGrid,
-  buildVenueRoom,
   buildSafehouse,
   buildSubway,
   buildDive,
@@ -12,8 +12,6 @@ import {
   buildBridgeGrid,
   isWall,
   spawnPoint,
-  spawnPointForTravel,
-  venueSpawnFor,
   SAFEHOUSE_SPAWN,
   SUBWAY_SPAWN,
   DIVE_SPAWN,
@@ -84,6 +82,56 @@ describe("resolveOpenSpawn never places inside walls", () => {
       if (buildings.length) {
         const p = spawnPointForTravel(grid, `d${di}`, `d${di}i0`, def, undefined);
         assertOpen(grid, resolveOpenSpawn(grid, p), `exit building d${di}`);
+      }
+    });
+  });
+
+  /**
+   * "Not a wall" is NOT enough. ARGUS SPIRE and ORBITAL RELAY both shipped a spawnTile
+   * sitting inside a building footprint: buildGrid filled the tower, carve() opened the
+   * spawn tile and its 4 neighbours, and the runner arrived boxed in a 5-tile pocket
+   * inside the building. Every open-tile assertion passed — the pocket centre is open,
+   * has open neighbours, and clears the player radius. Only reachability catches it.
+   */
+  it("every district spawn can actually reach its plaza", () => {
+    DISTRICTS.forEach((def) => {
+      const grid = buildGrid(def);
+      const s = resolveOpenSpawn(grid, spawnPoint(grid, def));
+      const sx = Math.floor(s.x / TILE);
+      const sy = Math.floor(s.y / TILE);
+
+      const seen = new Set<string>();
+      const stack: Array<[number, number]> = [[sx, sy]];
+      while (stack.length) {
+        const [x, y] = stack.pop()!;
+        const k = x + "," + y;
+        if (seen.has(k)) continue;
+        if (grid[y]?.[x] === undefined || isWall(grid[y][x])) continue;
+        seen.add(k);
+        stack.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]);
+      }
+
+      const plaza = def.layout.plaza;
+      if (plaza) {
+        const px = Math.round((plaza.x1 + plaza.x2) / 2) * DISTRICT_SCALE;
+        const py = Math.round((plaza.y1 + plaza.y2) / 2) * DISTRICT_SCALE;
+        expect(seen.has(px + "," + py), `${def.id}: spawn is sealed off from the plaza`).toBe(true);
+      }
+      // A pocket is tiny; a real district floor is thousands of tiles.
+      expect(seen.size, `${def.id}: spawn region is a pocket (${seen.size} tiles)`).toBeGreaterThan(500);
+    });
+  });
+
+  it("no district's authored key tiles sit inside a building footprint", () => {
+    DISTRICTS.forEach((def) => {
+      const inside = (t: [number, number]) =>
+        def.layout.buildings.findIndex((b) => t[0] >= b.x1 && t[0] <= b.x2 && t[1] >= b.y1 && t[1] <= b.y2);
+      for (const [name, tile] of [
+        ["spawnTile", def.spawnTile],
+        ["diveTile", def.diveTile],
+      ] as Array<[string, [number, number]]>) {
+        const i = inside(tile);
+        expect(i, `${def.id}: ${name} ${tile} is inside building #${i}`).toBe(-1);
       }
     });
   });

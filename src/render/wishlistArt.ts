@@ -277,6 +277,41 @@ export function dressRoomPlate(
     .setAlpha(0.55);
 }
 
+/**
+ * Draw an art-traced room: the baked `hf_int_*_room` texture IS the room.
+ *
+ * Full-bleed and opaque over the whole plan rect (wall ring included — the art paints its
+ * own frame), so nothing procedural is layered on top: the fixtures in the picture are
+ * already mirrored as collision `blocks` by the plan in world/rooms.ts. Contrast with
+ * dressRoomPlate, which stretches a generic layout plate at 55% alpha and then scatters
+ * furniture sprites that have no relationship to the floor beneath them.
+ *
+ * Returns false when the texture is missing so the caller can fall back to the
+ * procedural dresser — art must never be a hard boot dependency.
+ */
+export function dressArtRoom(
+  scene: Phaser.Scene,
+  art: string,
+  roomW: number,
+  roomH: number,
+  depth = 2.0,
+): boolean {
+  if (!exists(scene, art)) return false;
+  scene.add
+    .image((roomW * TILE) / 2, (roomH * TILE) / 2, art)
+    .setDisplaySize(roomW * TILE, roomH * TILE)
+    .setOrigin(0.5)
+    .setDepth(depth)
+    .setAlpha(1);
+  // Painted art stretched across a room reads soft, not blocky.
+  try {
+    scene.textures.get(art).setFilter(Phaser.Textures.FilterMode.LINEAR);
+  } catch {
+    /* ignore */
+  }
+  return true;
+}
+
 export function dressInteriorWishlistArt(
   scene: Phaser.Scene,
   kind: string,

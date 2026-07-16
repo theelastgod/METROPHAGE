@@ -70,13 +70,10 @@ import {
   buildGrid,
   buildBridgeGrid,
   buildSafehouse,
-  buildVenueRoom,
   districtBuildings,
   VENUE_MAT_TILE,
   VENUE_ROOM_W,
   VENUE_ROOM_H,
-  venueLayoutFor,
-  venueSpawnFor,
   buildSubway,
   buildDive,
   parseDiveZone,
@@ -90,6 +87,11 @@ import {
   isWall,
   type TileGrid,
 } from "../world/district";
+// Interior rooms resolve by venue KIND (art-traced plans) — the server builds the same
+// grid from the same resolver, so both sides must import from world/rooms, never from
+// world/district's hash-picked fallback.
+import { buildVenueRoom, venueLayoutFor, venueSpawnFor } from "../world/rooms";
+import { HUB_SERVICE_ROOMS } from "../world/district";
 import {
   parseBridgeZone,
   getBridge,
@@ -192,6 +194,7 @@ import {
   dressHubWishlistArt,
   dressSubwayWishlistArt,
   dressInteriorWishlistArt,
+  dressArtRoom,
   dressRoomPlate,
   dressEstateFacades,
   dressWildernessWishlistArt,
@@ -662,9 +665,7 @@ export default class OnlineScene extends Phaser.Scene {
                 ? ESTATES.grid
                 : parseEstateInterior(this.zone) !== null
                   ? buildHomeRoom()
-                  : parseBuildingInterior(this.zone) ||
-                      parseHubInterior(this.zone) !== null ||
-                      parseWildernessShack(this.zone)
+                  : isVenueSizedZone(this.zone)
                     ? buildVenueRoom(this.zone)
                     : buildSafehouse()
               : this.isBridge
@@ -703,8 +704,14 @@ export default class OnlineScene extends Phaser.Scene {
               : "district";
     const cityW = grid[0]?.length ?? 0;
     const cityH = grid.length;
+    // An art-traced room (world/rooms.ts) paints its own floor AND walls, so the
+    // procedural polish passes have nothing to add and would only fight it: the
+    // "interior" profile shades walls at depth 2.5 and pools ambient light on the floor,
+    // both of which land on top of the room art. Opt out and let the picture stand.
+    const artRoom = !!venueLayoutFor(this.zone).art && isVenueSizedZone(this.zone);
     const { hfBuildingRects } = createTerrainLayer(this, grid, {
       profile: terrainProfile,
+      ...(artRoom ? { wallShade: false, floorDetail: false, ambientFloors: false } : {}),
       accent: zoneAccent,
       accentAt: this.isCityHub
         ? (tx, ty) => ENV_IDENTITY[envAt(tx, ty, cityW, cityH)].accent
@@ -953,7 +960,6 @@ export default class OnlineScene extends Phaser.Scene {
         this.drawHubProps();
         this.spawnSkyTraffic();
         this.spawnHubWanderers();
-        this.spawnTrainingYard(); // clickable drill targets near deploy — first combat without leaving hub
       } else if (this.isEstates) {
         this.buildEstatesZone();
       } else if (parseEstateInterior(this.zone) !== null) {
@@ -967,7 +973,10 @@ export default class OnlineScene extends Phaser.Scene {
       } else {
         const bi = parseBuildingInterior(this.zone);
         const hb = bi ? null : parseHubInterior(this.zone);
-        const isBldg = !!bi || hb !== null;
+        // The hub's named service venues (THE FERAL CAT / clinic / market / den) are
+        // venue rooms too now — same art-traced plan their district counterparts get, so
+        // they take the venue seats/mat/dressing path rather than the 40×30 safehouse one.
+        const isBldg = !!bi || hb !== null || HUB_SERVICE_ROOMS.has(this.zone);
         const kindRaw = bi ? districtBuildingKind(bi.index) : hb !== null ? ONLINE_CITY.buildings[hb].kind : this.zone;
         const kind = kindRaw ?? "home";
         const accent = bi
@@ -1048,12 +1057,17 @@ export default class OnlineScene extends Phaser.Scene {
             .text(matX + TILE / 2, matY + TILE / 2 - 2, "▼", { fontFamily: "Courier New, monospace", fontSize: "13px", color: "#eafdff", fontStyle: "bold" })
             .setOrigin(0.5)
             .setDepth(2.6);
-          this.dressVenueRoom(kind, accent);
           const VL = venueLayoutFor(this.zone);
-          let vh = 5381;
-          for (let i = 0; i < this.zone.length; i++) vh = ((vh << 5) + vh + this.zone.charCodeAt(i)) >>> 0;
-          // Floor follows the zone's actual plan; furniture follows the venue kind.
-          dressInteriorWishlistArt(this, String(kind), VL.w, VL.h, VL.seats, vh, undefined, VL.tag);
+          // Art-traced room (world/rooms.ts): the baked picture IS the room, and its
+          // fixtures are already collision blocks — so skip the procedural counter/rug
+          // pass and the scattered furniture that would paint over it.
+          if (!dressArtRoom(this, VL.art ?? "", VL.w, VL.h)) {
+            this.dressVenueRoom(kind, accent);
+            let vh = 5381;
+            for (let i = 0; i < this.zone.length; i++) vh = ((vh << 5) + vh + this.zone.charCodeAt(i)) >>> 0;
+            // Floor follows the zone's actual plan; furniture follows the venue kind.
+            dressInteriorWishlistArt(this, String(kind), VL.w, VL.h, VL.seats, vh, undefined, VL.tag);
+          }
         } else {
           this.dressServiceRoom(kind, accent);
           // Named service interiors (clinic/bar/…) use the safehouse-sized grid — they
@@ -4007,11 +4021,14 @@ export default class OnlineScene extends Phaser.Scene {
     const g = this.add.graphics().setDepth(2.4);
     const t = (n: number) => n * TILE;
     const L = venueLayoutFor(this.zone);
-    // counter surface — the plan's counter wall run reads as furniture
-    for (let x = L.counter.x0; x <= L.counter.x1; x++) {
-      if (x === L.counter.gap) continue;
-      g.fillStyle(0x1a2234, 0.9).fillRect(t(x) + 1, t(L.counter.y) + TILE - 9, TILE - 2, 8);
-      g.fillStyle(accent, 0.5).fillRect(t(x) + 1, t(L.counter.y) + TILE - 10, TILE - 2, 2);
+    // counter surface — the plan's counter wall run reads as furniture. Art-traced plans
+    // carry no counter (their fixtures are painted into the room art).
+    if (L.counter) {
+      for (let x = L.counter.x0; x <= L.counter.x1; x++) {
+        if (x === L.counter.gap) continue;
+        g.fillStyle(0x1a2234, 0.9).fillRect(t(x) + 1, t(L.counter.y) + TILE - 9, TILE - 2, 8);
+        g.fillStyle(accent, 0.5).fillRect(t(x) + 1, t(L.counter.y) + TILE - 10, TILE - 2, 2);
+      }
     }
     // interior wall blocks (pillars / partitions / islands) get a top surface too
     for (const [bx0, by0, bx1] of L.blocks ?? []) {
@@ -4027,7 +4044,9 @@ export default class OnlineScene extends Phaser.Scene {
     g.fillStyle(accent, 0.1).fillRect(rugX, rugY, rugW, t(2) + TILE - 8);
     g.lineStyle(1, accent, 0.3).strokeRect(rugX, rugY, rugW, t(2) + TILE - 8);
     // warm light pooling at the counter gap + room centre
-    this.add.image(t(L.counter.gap) + TILE / 2, t(L.counter.y) + TILE, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(0xffb86a).setDepth(2.5).setScale(0.9).setAlpha(0.14);
+    if (L.counter) {
+      this.add.image(t(L.counter.gap) + TILE / 2, t(L.counter.y) + TILE, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(0xffb86a).setDepth(2.5).setScale(0.9).setAlpha(0.14);
+    }
     this.add.image(t(Math.floor(L.w / 2)) + TILE / 2, t(Math.floor(L.h / 2)), GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(accent).setDepth(2.5).setScale(1.3).setAlpha(0.08);
 
     const crate = (cx: number, cy: number, c = 0x3a3020) => {
@@ -4718,71 +4737,6 @@ export default class OnlineScene extends Phaser.Scene {
     this.phantomOnline = 8 + Math.floor(Math.random() * 14);
   }
 
-  /**
-   * South-plaza training yard — three clickable HSS holograms so a new runner can
-   * get their first "kill" without leaving the safe hub. Pure client set dressing;
-   * grants first-session kill credit + combat XP whisper.
-   */
-  private spawnTrainingYard() {
-    const gate = CITY_HUB_DOORS.find((d) => d.dest === "d0");
-    if (!gate) return;
-    const gx = gate.tile[0] * TILE + TILE / 2;
-    const gy = gate.tile[1] * TILE + TILE / 2;
-    const offsets: [number, number][] = [
-      [-48, -28],
-      [0, -40],
-      [48, -28],
-    ];
-    offsets.forEach(([ox, oy], i) => {
-      const x = gx + ox;
-      const y = gy + oy;
-      const tint = ENEMY_KIND_TINT[i % ENEMY_KIND_TINT.length] ?? 0xff5a6e;
-      const spr = this.add
-        .sprite(x, y, COP_KEY, 0)
-        .setTint(tint)
-        .setAlpha(0.72)
-        .setDepth(8)
-        .setScale(1.1)
-        .setInteractive({ useHandCursor: true });
-      this.add
-        .text(x, y - 28, "DRILL", bodyFont(8, { color: "#ff8a9a", fontStyle: "bold" }))
-        .setOrigin(0.5)
-        .setDepth(9)
-        .setAlpha(0.7);
-      const glow = this.add
-        .image(x, y + 4, GLOW_KEY)
-        .setBlendMode(Phaser.BlendModes.ADD)
-        .setTint(tint)
-        .setScale(0.55)
-        .setAlpha(0.28)
-        .setDepth(7);
-      let hp = 3;
-      spr.on("pointerdown", () => {
-        hp--;
-        this.particles?.spark(x, y, tint, 1.6);
-        this.pops?.pop(x, y - 18, "-1", "#ff8a9a");
-        this.synth?.hit();
-        juiceShake(this, 40, 0.002);
-        spr.setTint(0xffffff);
-        this.time.delayedCall(50, () => {
-          if (spr.active && hp > 0) spr.setTint(tint);
-        });
-        if (hp <= 0) {
-          noteKill();
-          this.pushKillFeed("drill target purged");
-          this.synth?.kill();
-          this.particles?.burst(x, y, 0.9);
-          this.pops?.popCrit(x, y - 24, "DRILL CLEAR");
-          spr.destroy();
-          glow.destroy();
-          const r = grantSkillXp(this.rsSkills, "combat", 18);
-          this.rsSkillsPanel.setSkills(this.rsSkills);
-          if (r.leveled) this.pops?.popHeal(this.me.x, this.me.y - 36, `Combat ${r.level}!`);
-        }
-      });
-    });
-  }
-
   private spawnWanderers(grid: TileGrid, cx: number, cy: number, count: number) {
     this.wandererGrid = grid;
     let seed = 90210 + cx * 31 + cy;
@@ -5330,23 +5284,24 @@ export default class OnlineScene extends Phaser.Scene {
     });
   }
 
+  /**
+   * Fast travel needs a zone you have STOOD IN — `unlocked` (organic arrival), not
+   * `discovered` (fog of war). Must stay in lockstep with OnlineMap.canFastTravel, or
+   * the map offers a jump this refuses and the runner just gets a denial toast.
+   *
+   * This used to accept `unlocked || discovered`, which meant seeing a place on the map
+   * was as good as walking there. Every location is visible now, so that disjunction
+   * would hand out free travel to the entire world.
+   */
   private zoneUnlocked(zone: string): boolean {
     if (this.net.godMode) return true;
     // Trail shacks are always open once you're on the corridor (or already inside).
     if (parseWildernessShack(zone)) return true;
-    // Free routes: hub, subway, and hub service rooms once the city is known.
+    // Free routes: where you already are, the hub pad, and the subway — transit anchors.
     if (zone === this.zone || zone === "safe" || zone === "subway") return true;
-    const hubRooms = new Set(["clinic", "shop", "bar", "den"]);
-    if (hubRooms.has(zone)) {
-      return (
-        this.net.unlocked.includes("safe") ||
-        this.net.discovered.includes("safe") ||
-        this.zone === "safe" ||
-        this.net.unlocked.includes(zone) ||
-        this.net.discovered.includes(zone)
-      );
-    }
-    return this.net.unlocked.includes(zone) || this.net.discovered.includes(zone);
+    // Hub service rooms need no special case: arriving at `safe` organically force-
+    // unlocks clinic/shop/bar/den server-side (world.ts markDiscovered).
+    return this.net.unlocked.includes(zone);
   }
 
   /** Client-side melee arc — server still resolves hits. */

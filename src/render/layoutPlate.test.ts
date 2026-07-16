@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   layoutTagForRoom,
   VENUE_LAYOUTS,
-  venueLayoutFor,
   VENUE_ROOM_W,
   VENUE_ROOM_H,
 } from "../world/district";
+import { venueLayoutFor } from "../world/rooms";
 import { HF_LAYOUT_PLATE_TAGS, layoutPlateKey } from "../assets/manifest";
 
 describe("layout floor plates", () => {

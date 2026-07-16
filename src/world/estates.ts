@@ -191,8 +191,28 @@ export interface FurniturePiece {
   y: number; // tile y within the room
 }
 
-/** Default asking price for a never-owned estate (credits). */
-export const ESTATE_BASE_PRICE = 3800;
+/**
+ * Default asking price for a never-owned estate (credits).
+ *
+ * Priced as a capital asset — roughly 5–7 hours of play for an engaged runner, and the
+ * largest credit sink in the game by an order of magnitude (next is the vendor's SINGULAR
+ * CACHE at ₵3,200). It was ₵3,800, which was ~20 minutes: cheaper than a stat cache.
+ *
+ * The arithmetic, from the live constants:
+ *   kills          ~300/hr × CREDITS_PER_KILL 10 (net/sim.ts)      ≈  3,000/hr
+ *   × daily creditMult (0.9–1.5, mean 1.28, districtMods.ts)       ≈  3,840/hr
+ *   × guild perk (+10% typical, cap +20%, guilds.ts)               ≈  4,220/hr
+ *   + bounty loop, dailies, core pickups, bosses                   ≈ 10,000/hr
+ * Call it ₵8–12k/hr engaged, ~₵4k/hr for a casual runner with no guild or bounties.
+ * 60,000 ⇒ ~5–7.5h engaged, ~15h casual. Raising this needs no migration: an unowned
+ * plot always quotes the constant (`e.owner ? e.price : ESTATE_BASE_PRICE`), never a
+ * stale D1 row, so all 20 plots reprice the moment this lands.
+ *
+ * ⚠ Repeatable boss bounties (bounties.ts `marek_grudge` ₵900/boss, 30s respawn, no
+ * cooldown) can clear ~₵80k/hr and would reduce this to well under an hour. That loop
+ * has to be capped for this price to mean what it says.
+ */
+export const ESTATE_BASE_PRICE = 60_000;
 
 // ── guestbook ────────────────────────────────────────────────────────────────
 /** One signature in a home's visitor book. */
