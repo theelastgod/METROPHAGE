@@ -18,7 +18,7 @@ const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
 page.setDefaultTimeout(180_000);
 page.on("console", (m) => {
   const t = m.text();
-  if (t.includes("[boot]") || m.type() === "error") console.log(`  console(${m.type()}): ${t.slice(0, 160)}`);
+  if (t.includes("[boot]") || t.includes("[hf-") || m.type() === "error") console.log(`  console(${m.type()}): ${t.slice(0, 240)}`);
 });
 
 console.log(`booting ${url} …`);
@@ -30,7 +30,7 @@ console.log("booted; entering city …");
 await page.evaluate(() => window.__enterCity());
 
 const connected = await page
-  .waitForFunction(() => window.__game?.scene?.getScene?.("Online")?.net?.connected === true, { timeout: 60_000 })
+  .waitForFunction(() => window.__game?.scene?.getScene?.("Online")?.net?.connected === true, { timeout: 12_000 })
   .then(() => true)
   .catch(() => false);
 console.log("online connected:", connected);
@@ -48,13 +48,15 @@ const report = await page.evaluate(() => {
   const list = s.children?.list ?? [];
   const byType = {};
   const images = [];
-  for (const o of list) {
+  const visit = (o) => {
     const ty = o.type ?? "?";
     byType[ty] = (byType[ty] ?? 0) + 1;
     if (ty === "Image" && o.texture?.key && o.texture.key.startsWith("hf_")) {
       images.push({ key: o.texture.key, d: o.depth, a: o.alpha, w: Math.round(o.displayWidth), v: o.visible });
     }
-  }
+    if (ty === "Container") for (const child of o.list ?? []) visit(child);
+  };
+  for (const o of list) visit(o);
   // Histogram every image key actually drawn, plus the flags that gate the façade pass.
   const keyHist = {};
   for (const o of list) if (o.type === "Image" && o.texture?.key) keyHist[o.texture.key] = (keyHist[o.texture.key] ?? 0) + 1;

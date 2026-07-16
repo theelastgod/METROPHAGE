@@ -29,7 +29,7 @@ const check = (ok, what) => {
 function spawnServer(name, cmd, args, cwd, readyMatch) {
   const child = spawn(cmd, args, { cwd, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env } });
   const ready = new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`${name} not ready in 60s`)), 60000);
+    const timer = setTimeout(() => reject(new Error(`${name} not ready in 120s`)), 120000);
     const onData = (buf) => {
       if (String(buf).match(readyMatch)) {
         clearTimeout(timer);
@@ -58,6 +58,12 @@ async function httpUp(url, tries = 30) {
 
 /** Boot the game to the connected Online scene. Returns the canvas bounding box. */
 async function enterCity(page, base) {
+  log(`booting ${base.includes("mobile=1") ? "mobile landscape" : "desktop"} client…`);
+  page.on("pageerror", (err) => console.error(`[panel-smoke] page error: ${err.message}`));
+  page.on("console", (msg) => {
+    if (msg.type() === "error") console.error(`[panel-smoke] console: ${msg.text()}`);
+  });
+  page.on("requestfailed", (req) => console.error(`[panel-smoke] request failed: ${req.url()} · ${req.failure()?.errorText}`));
   await page.addInitScript(() => {
     // Lift the first-hour funnel locks (the smoke exercises panels, not onboarding)
     localStorage.setItem(
@@ -75,33 +81,74 @@ async function enterCity(page, base) {
       }),
     );
   });
-  await page.goto(base, { waitUntil: "domcontentloaded", timeout: 30000 });
+  // Heavy environment packs can keep DOMContentLoaded behind asset work for longer than
+  // the smoke's old 30s navigation cap. Navigation commit is the reliable readiness gate;
+  // the explicit canvas / dev-hook waits below prove the game itself has actually booted.
+  await page.goto(base, { waitUntil: "commit", timeout: 120000 });
   await page.waitForFunction(
     () => {
       const c = document.querySelector("#game-root canvas");
       return c && c.width > 0;
     },
-    { timeout: 20000 },
+    null,
+    { timeout: 120000 },
   );
-  await page.waitForFunction(() => typeof window.__enterCity === "function", { timeout: 20000 });
+  await page.waitForFunction(() => typeof window.__enterCity === "function", null, { timeout: 120000 });
   await page.waitForTimeout(2500); // let Boot finish asset load
-  await page.evaluate(() => window.__enterCity());
+  await page.evaluate(() => {
+    // The smoke is a real local multiplayer client, so give it an explicit guest
+    // identity instead of relying on whatever random callsign the dev shortcut picked.
+    // Reusing one of the small production callsign pool can hit a D1-bound identity and
+    // correctly close with auth code 4001, which looks like a panel boot failure.
+    const g = window.__game;
+    const current = g.registry.get("customization") || {};
+    const suffix = Math.random().toString(36).slice(2, 8).toUpperCase();
+    g.registry.set("customization", { ...current, callsign: `SMK-${suffix}`.slice(0, 12) });
+    g.registry.set("guestPlay", true);
+    g.registry.remove("walletAddress");
+    window.__enterCity();
+  });
   const connected = await page
     .waitForFunction(
       () => {
         const s = window.__game?.scene?.getScene?.("Online");
         return s?.net?.connected === true && !!window.__panelProbe;
       },
-      { timeout: 20000 },
+      null,
+      { timeout: 120000 },
     )
     .then(() => true)
     .catch(() => false);
-  if (!connected) throw new Error("Online scene never connected — is wrangler dev healthy?");
+  if (!connected) {
+    const diag = await page.evaluate(() => {
+      const s = window.__game?.scene?.getScene?.("Online");
+      return {
+        activeScenes: window.__game?.scene?.getScenes?.(true)?.map?.((x) => x.scene?.key),
+        zone: s?.zone,
+        connected: s?.net?.connected,
+        socketState: s?.net?.ws?.readyState,
+        socketUrl: s?.net?.ws?.url,
+        protocolBlocked: s?.net?.protocolBlocked,
+        manualClose: s?.net?.manualClose,
+      };
+    });
+    throw new Error(`Online scene never connected — ${JSON.stringify(diag)}`);
+  }
   await page.waitForTimeout(1000);
   return await (await page.$("#game-root canvas")).boundingBox();
 }
 
 const anyOpen = (page) => page.evaluate(() => window.__panelProbe.anyOpen());
+
+// A timed story toast deliberately owns the first ESC so narrative text is dismissed
+// before a modal. Allow that documented priority, but still require the panel to close.
+async function closeWithEscape(page) {
+  for (let attempt = 0; attempt < 3 && (await anyOpen(page)); attempt++) {
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(350);
+  }
+  return !(await anyOpen(page));
+}
 
 /** Convert game-canvas coords → CSS page coords (canvas is FIT-scaled). */
 async function gameToPage(page, box, gx, gy) {
@@ -132,9 +179,7 @@ async function desktopPass(browser, base) {
     const opened = await anyOpen(page);
     check(opened, `${name} opens on '${key}'`);
     if (opened) {
-      await page.keyboard.press("Escape");
-      await page.waitForTimeout(350);
-      check(!(await anyOpen(page)), `${name} closes on ESC`);
+      check(await closeWithEscape(page), `${name} closes on ESC`);
     }
     await page.waitForTimeout(150);
   }
@@ -146,9 +191,12 @@ async function desktopPass(browser, base) {
     const hdr = await page.evaluate(() => {
       const g = window.__game;
       const s = g.scale.height / 540; // uiDim scale (height-derived)
-      const w = 580 * s;
-      const h = (88 + 8 * 56) * s;
-      return { x: (g.scale.width - w) / 2 + w / 2, y: (g.scale.height - h) / 2 + 12 * s };
+      const margin = 24 * s;
+      const w = Math.min(520 * s, g.scale.width - margin * 2);
+      const h = Math.min((92 + 9 * 50) * s, g.scale.height - margin * 2);
+      const x = (g.scale.width - w) / 2;
+      const y = Math.max(margin, (g.scale.height - h) / 2);
+      return { x: x + w / 2, y: y + 28 * s };
     });
     const hp = await gameToPage(page, box, hdr.x, hdr.y);
     await page.mouse.click(hp.x, hp.y);
@@ -189,7 +237,9 @@ async function mobilePass(browser, base) {
   await page.keyboard.press("b");
   await page.waitForTimeout(450);
   if (await anyOpen(page)) {
-    const p = await gameToPage(page, box, 40, 700);
+    // Mobile sheets are near-full-bleed (6 design px inset), so use the actual
+    // canvas edge rather than the desktop dim-area coordinate.
+    const p = await gameToPage(page, box, 1, 700);
     await page.mouse.click(p.x, p.y);
     await page.waitForTimeout(350);
     check(!(await anyOpen(page)), "tap-outside closes on mobile");
