@@ -347,12 +347,14 @@ export const HF_LAYOUT_PLATE_TAGS = ["studio", "loft", "hall", "backroom", "atri
 export const layoutPlateKey = (tag: string) => "hf_int_layout_" + tag;
 export const HF_LAYOUT_PLATE_KEYS = HF_LAYOUT_PLATE_TAGS.map(layoutPlateKey);
 
-/** Interior room floor plates (structure matched to venue kind). */
+/** Interior room floor plates (structure matched to venue kind). Every key here is
+ *  fetched on EVERY venue entry — only rooms a ROOM_PLAN actually draws belong.
+ *  Reserve art that exists on disk but has no traced plan yet (hf_int_subway_room,
+ *  hf_int_estate_room, hf_int_home_room_b) stays out until it's wired. */
 export const HF_INT_ROOM_KEYS = [
   "hf_int_bar_room", "hf_int_noodle_room", "hf_int_clinic_room", "hf_int_shop_room", "hf_int_guild_room",
-  "hf_int_den_room", "hf_int_home_room", "hf_int_home_room_b",
-  "hf_int_subway_room", "hf_int_stadium_room",
-  "hf_int_citycenter_room", "hf_int_estate_room",
+  "hf_int_den_room", "hf_int_home_room",
+  "hf_int_stadium_room", "hf_int_citycenter_room",
   "hf_int_ripperdoc_room", "hf_int_pawn_room", "hf_int_arcade_room",
   "hf_int_garage_room", "hf_int_radio_room", "hf_int_hotel_room",
 ] as const;

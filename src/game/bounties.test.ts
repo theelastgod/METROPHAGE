@@ -1,5 +1,34 @@
 import { describe, expect, it } from "vitest";
-import { BOSS_BOUNTY_COOLDOWN_MS, bossBountyCooldownRemaining } from "./bounties";
+import { BOSS_BOUNTY_COOLDOWN_MS, BOUNTIES, LATE_BOUNTIES, bossBountyCooldownRemaining, bountyById, bountyForNpc } from "./bounties";
+import { servicesForNpc } from "./npcServices";
+
+describe("bounty ↔ service-menu coherence", () => {
+  it("every NPC whose menu shows Job actually has a job to give", () => {
+    for (const npc of Object.keys(BOUNTIES)) {
+      expect(servicesForNpc(npc, true), npc).toContain("bounty");
+    }
+  });
+
+  it("bounty ids are unique across base and late-act tables", () => {
+    const ids = [...Object.values(BOUNTIES), ...Object.values(LATE_BOUNTIES)].map((b) => b.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("story allies escalate in the late act, and completion can find both variants", () => {
+    for (const ally of ["rin", "doc", "vex", "marek"]) {
+      const base = bountyForNpc(ally, "pre");
+      const late = bountyForNpc(ally, "late");
+      expect(base, ally).toBeTruthy();
+      expect(late, ally).toBeTruthy();
+      expect(late!.id, ally).not.toBe(base!.id);
+      expect(late!.rewardCredits, ally).toBeGreaterThan(base!.rewardCredits);
+      expect(bountyById(late!.id), ally).toEqual(late);
+      expect(bountyById(base!.id), ally).toEqual(base);
+    }
+    // Non-allies never change jobs with the act.
+    expect(bountyForNpc("keep_noodle", "late")).toEqual(bountyForNpc("keep_noodle", "pre"));
+  });
+});
 
 describe("boss bounty cooldown", () => {
   it("blocks the same boss job for 24 hours", () => {

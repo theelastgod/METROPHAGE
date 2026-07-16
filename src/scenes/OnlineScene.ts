@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { pumpLoaderWhileHidden } from "../systems/loaderPump";
 import { installUiCamera } from "../render/cameras";
 import { installRoofParallax, type RoofParallax } from "../render/roofParallax";
 import { createTerrainLayer, type TerrainProfile } from "../render/terrainLayer";
@@ -248,7 +249,8 @@ import {
   wildernessShacks,
 } from "../game/districtVenues";
 import { applyCosmetic } from "../game/cosmetics";
-import { npcDef, AMBIENT_NPCS, INTERIOR_PLAN, keeperFor, districtResident, districtFieldMedic, hubResident, campaignAllyLines, STORY_ALLIES, locationAwareLine } from "../game/cityNpcs";
+import { npcDef, AMBIENT_NPCS, INTERIOR_PLAN, keeperFor, districtResident, districtFieldMedic, hubResident, themedHubOccupants, campaignAllyLines, marekReprintGreeting, STORY_ALLIES, locationAwareLine } from "../game/cityNpcs";
+import { localReprintCount, recordLocalReprint } from "../systems/reprintMemory";
 import { portraitFor, portraitForName, portraitForBoss, portraitSheetFallback, type PortraitRef } from "../game/portraits";
 import { bountyForNpc } from "../game/bounties";
 import { noteRecentPlayer, listRecentPlayers, pinRecentPlayer } from "../game/recentPlayers";
@@ -522,6 +524,8 @@ export default class OnlineScene extends Phaser.Scene {
   }
 
   preload() {
+    // Zone travel with the tab backgrounded (mobile app-switch) must keep loading.
+    pumpLoaderWhileHidden(this);
     for (const a of deferredWorldAssetsForZone(this.preloadZone)) {
       if (!a.file || this.textures.exists(a.key)) continue;
       if (a.frameWidth && a.frameHeight) {
@@ -969,7 +973,12 @@ export default class OnlineScene extends Phaser.Scene {
           const py = c.tile[1] * TILE + TILE / 2;
           // story allies react to the player's questline act; ambient citizens keep static lines
           const isAlly = (STORY_ALLIES as readonly string[]).includes(c.id);
-          const lines = isAlly ? campaignAllyLines(c.id, this.net?.campaignQuest) : cdef.lines;
+          let lines = isAlly ? campaignAllyLines(c.id, this.net?.campaignQuest) : cdef.lines;
+          // MAREK counts your reprints — enough of them and his greeting changes.
+          if (c.id === "marek") {
+            const g = marekReprintGreeting(localReprintCount());
+            if (g) lines = [g, ...lines];
+          }
           // No permanent floating name tags — hover reveals them (see makeTalkNpc).
           this.makeTalkNpc(cdef.name, cdef.look, lines, px, py, cdef.id, isAlly);
         }
@@ -1060,13 +1069,17 @@ export default class OnlineScene extends Phaser.Scene {
         });
         // Named talk residents (distinct face per door / authored room plan).
         const residents = INTERIOR_PLAN[this.zone]?.[0] ?? [];
+        // Expansion venues carry an authored occupant (TALLOW slurping in the noodle
+        // bar, MERCY in the ripperdoc…) — hub zones are h{K}, so look the plan up by
+        // KIND here; the rotating generic resident is only the fallback.
+        const themed = hb !== null ? themedHubOccupants(String(kind)) : [];
         const talkers = bi
           ? [districtResident(bi.district, bi.index)]
           : hb !== null
-            ? [hubResident(hb)]
+            ? (themed.length ? themed : [hubResident(hb)])
             : [keeperFor(kind), ...residents.map((id) => npcDef(id)).filter((d): d is NonNullable<typeof d> => !!d)];
         // Skip talker if staff already filled the seat count for small rooms — still show up to 2 talkers.
-        talkers.slice(0, isBldg ? 1 : 3).forEach((o, i) => {
+        talkers.slice(0, isBldg ? Math.max(1, Math.min(2, themed.length)) : 3).forEach((o, i) => {
           const seat = seats[(staff.length + i) % seats.length];
           const [tx, ty] = seat;
           this.makeTalkNpc(o.name, o.look, o.lines, tx * TILE + TILE / 2, ty * TILE + TILE / 2, o.id);
@@ -2384,7 +2397,16 @@ export default class OnlineScene extends Phaser.Scene {
     // Generation token: ignore auth completion if the scene was shut down mid-await
     // (Esc to title / zone travel) so we never open a zombie socket.
     const gen = (this.sceneConnectGen = (this.sceneConnectGen ?? 0) + 1);
-    const stillHere = () => this.sceneConnectGen === gen && this.sys?.isActive?.() !== false && !!this.net;
+    // NOT isActive(): the guest path runs synchronously INSIDE create(), where the
+    // scene status is still CREATING and isActive() is false — that guard made every
+    // guest client return before ever opening a socket (wallet paths survived only
+    // because their awaits resumed after create finished). The guard's real job is
+    // catching shutdown/restart mid-await, so only SHUTDOWN/DESTROYED count as gone.
+    const stillHere = () => {
+      if (this.sceneConnectGen !== gen || !this.net) return false;
+      const status = this.sys?.settings?.status;
+      return status === undefined || status < Phaser.Scenes.SHUTDOWN;
+    };
 
     const guest = this.isGuestRun();
     const addr = guest
@@ -3761,6 +3783,7 @@ export default class OnlineScene extends Phaser.Scene {
       cores: this.net.cores,
       hasBountyActive: !!this.net.bounty,
       activeBountyId: this.net.bounty?.id ?? null,
+      campaignQuest: this.net.campaignQuest ?? null,
     });
   }
 
@@ -4711,6 +4734,10 @@ export default class OnlineScene extends Phaser.Scene {
     for (const n of this.npcs) {
       if (n.kind === "talk" && n.npcId && (STORY_ALLIES as readonly string[]).includes(n.npcId)) {
         n.lines = campaignAllyLines(n.npcId, this.net.campaignQuest);
+        if (n.npcId === "marek") {
+          const g = marekReprintGreeting(localReprintCount());
+          if (g) n.lines = [g, ...n.lines];
+        }
         n.lineIdx = 0;
       }
     }
@@ -7677,6 +7704,7 @@ export default class OnlineScene extends Phaser.Scene {
   private updateDeathSequence() {
     const dead = this.net.dead;
     if (dead && !this.wasDead) {
+      recordLocalReprint(); // MAREK's counting (device-local flavour, never authoritative)
       this.deathStartedAt = performance.now();
       this.synth?.kill();
       juiceHitStop(this, 120);

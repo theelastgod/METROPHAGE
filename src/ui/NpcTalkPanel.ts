@@ -13,6 +13,7 @@ import {
   type NpcServiceId,
 } from "../game/npcServices";
 import { bountyForNpc } from "../game/bounties";
+import { storyPhase } from "../game/cityNpcs";
 import { prefersMobileUx } from "../systems/Mobile";
 
 export interface NpcTalkOption {
@@ -54,20 +55,23 @@ export default class NpcTalkPanel {
     cores: number;
     hasBountyActive: boolean;
     activeBountyId: string | null;
+    /** Active campaign quest id — story allies escalate their jobs in the late act. */
+    campaignQuest?: string | null;
   }) {
     this.clear();
     this.open = true;
     this.npcId = opts.npcId;
     this.npcName = opts.name;
 
-    const hasBountyDef = !!bountyForNpc(opts.npcId);
+    const phase = storyPhase(opts.campaignQuest ?? null);
+    const hasBountyDef = !!bountyForNpc(opts.npcId, phase);
     const services = servicesForNpc(opts.npcId, hasBountyDef);
     const options: NpcTalkOption[] = [];
     for (const id of services) {
       const def = NPC_SERVICES[id];
       if (!def) continue;
       if (id === "bounty") {
-        const b = bountyForNpc(opts.npcId);
+        const b = bountyForNpc(opts.npcId, phase);
         if (!b) continue;
         if (opts.hasBountyActive && opts.activeBountyId !== b.id) {
           options.push({

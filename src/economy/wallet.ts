@@ -5,6 +5,12 @@
 // Phantom / Solana remains available when settlement is forced to SPL.
 
 import {
+  beginPhantomConnect,
+  handlePhantomRedirect,
+  phantomDeeplinkSession,
+  phantomDeeplinkUsable,
+} from "./phantomDeeplink";
+import {
   type RobinhoodCluster,
   robinhoodNetwork,
   walletAddEthereumChainParams,
@@ -446,8 +452,19 @@ export async function ensureRobinhoodNetwork(
 async function connectSolana(): Promise<string | null> {
   const sol = getSolana();
   if (!sol) {
-    // Normal mobile Safari/Chrome has no injector. Prefer the generic Solana
-    // wallet picker; deep-link directly to Phantom only when AppKit is unavailable.
+    // Normal mobile Safari/Chrome has no injector. Phantom deeplinks FIRST: the
+    // approval round-trips through the Phantom app and the game stays in this
+    // browser. The old `ul/browse` handoff loaded the whole game inside Phantom's
+    // portrait-locked in-app browser, where the landscape gate makes it unplayable.
+    if (isLikelyMobile() && phantomDeeplinkUsable()) {
+      const dl = phantomDeeplinkSession();
+      if (dl) {
+        persistConnection(dl.wallet, "solana", "solana");
+        return dl.wallet;
+      }
+      beginPhantomConnect(); // page navigates to the Phantom app and back
+      return null;
+    }
     if (isLikelyMobile() && walletConnectEnabled()) {
       const address = await connectViaSolanaWalletModal();
       if (address) persistConnection(address, "solana", "solana");
@@ -683,4 +700,21 @@ export function connectWalletLabel(): string {
   if (walletConnectEnabled() || isLikelyMobile()) return "Connect Wallet";
   if (getInjectedEvm()?.isMetaMask) return "Connect MetaMask";
   return "Connect Wallet";
+}
+
+/** True when a browser-injected Solana provider exists (in-app browsers, extensions). */
+export function hasInjectedSolana(): boolean {
+  return !!getSolana();
+}
+
+// A Phantom deeplink return lands as a full page reload with `?phantom_action=…` —
+// consume it BEFORE any UI reads connection state, so the title screen simply shows
+// the wallet as connected when the player lands back from the Phantom app.
+if (typeof window !== "undefined") {
+  const back = handlePhantomRedirect();
+  if (back && back.kind !== "error") {
+    persistConnection(back.wallet, "solana", "solana");
+  } else if (back?.kind === "error") {
+    console.warn("[wallet] phantom deeplink:", back.detail);
+  }
 }

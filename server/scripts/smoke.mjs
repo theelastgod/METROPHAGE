@@ -210,6 +210,98 @@ async function check() {
   );
 }
 
+// ── hotel rest: authoritative sleep — ₵35 debits, full heal, HEAT clear, 120s cd ──
+async function rest() {
+  const ws = await connect();
+  const w = await login(ws, "rh" + String(Date.now() % 1_000_000)); // fresh identity
+  const store = { x: w.x, y: w.y, ack: 0, hp: 100, credits: 0, heat: 0, enemies: [], shots: [], sys: [] };
+  trackState(ws, w.id, store);
+  ws.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "sys") store.sys.push(m.text);
+  });
+  await sleep(500);
+  const hpFull = store.hp;
+  const svc = () => ws.send(JSON.stringify({ t: "npc", action: "service", npcId: "keep_hotel", service: "rest" }));
+  const sysSince = (n) => store.sys.slice(n).join(" | ");
+
+  // 1) fully rested → refusal, and no charge
+  const s0 = store.sys.length;
+  const c0 = store.credits;
+  svc();
+  await sleep(800);
+  const refusedAtFull = /fully rested/i.test(sysSince(s0));
+  const noChargeAtFull = store.credits === c0;
+
+  // 2) take a hit: walk into the nearest enemy WITHOUT firing (no kill credits skew)
+  let seq = 0;
+  const t0 = Date.now();
+  while (Date.now() - t0 < 30000 && store.hp >= hpFull && !store.dead) {
+    const e = store.enemies.reduce(
+      (best, en) => {
+        const d = Math.hypot(en.x - store.x, en.y - store.y);
+        return d < best.d ? { d, en } : best;
+      },
+      { d: Infinity, en: null },
+    ).en;
+    seq++;
+    if (e) {
+      const dx = e.x - store.x;
+      const dy = e.y - store.y;
+      const d = Math.hypot(dx, dy) || 1;
+      ws.send(JSON.stringify({ t: "input", seq, mx: dx / d, my: dy / d }));
+    } else {
+      const a = (Date.now() - t0) / 1200;
+      ws.send(JSON.stringify({ t: "input", seq, mx: Math.cos(a), my: Math.sin(a) * 0.7 }));
+    }
+    await sleep(60);
+  }
+  // retreat so the enemy isn't still chewing on us while we measure the heal
+  for (let i = 0; i < 25; i++) {
+    const e = store.enemies[0];
+    const dx = e ? store.x - e.x : 1;
+    const dy = e ? store.y - e.y : 0;
+    const d = Math.hypot(dx, dy) || 1;
+    ws.send(JSON.stringify({ t: "input", seq: ++seq, mx: dx / d, my: dy / d }));
+    await sleep(60);
+  }
+  ws.send(JSON.stringify({ t: "input", seq: ++seq, mx: 0, my: 0 }));
+  await sleep(300);
+  const damaged = store.hp < hpFull && !store.dead;
+
+  // 3) rest while hurt → ₵35 debit, hp back to full, HEAT clear, authored sys line
+  const s1 = store.sys.length;
+  const cBefore = store.credits;
+  const hpBefore = store.hp;
+  svc();
+  let hpPeak = store.hp;
+  for (let i = 0; i < 12; i++) {
+    await sleep(100);
+    hpPeak = Math.max(hpPeak, store.hp);
+  }
+  const sleptLine = /slept safely/i.test(sysSince(s1));
+  const charged = store.credits === cBefore - 35;
+  const healed = hpPeak >= hpFull || hpPeak > hpBefore + 20;
+  const heatClear = (store.heat ?? 0) === 0;
+
+  // 4) immediate repeat → 120s cooldown refusal, no second charge
+  const s2 = store.sys.length;
+  const cAfter = store.credits;
+  svc();
+  await sleep(800);
+  const cooldownBlocked = /cooldown — try again/i.test(sysSince(s2));
+  const noDoubleCharge = store.credits === cAfter;
+
+  const checks = { refusedAtFull, noChargeAtFull, damaged, sleptLine, charged, healed, heatClear, cooldownBlocked, noDoubleCharge };
+  report(
+    "REST — hotel sleep is authoritative (refusal, debit, heal, HEAT, cooldown)",
+    { hpFull, hpBefore, hpAfter: store.hp, cBefore, cAfter: store.credits, lastSys: store.sys.slice(-4) },
+    Object.values(checks).every(Boolean),
+    checks,
+  );
+  ws.close();
+}
+
 async function combat() {
   const ws = await connect();
   const w = await login(ws, "ft" + String(Date.now() % 1_000_000)); // fresh identity — no cross-run coupling
@@ -3354,6 +3446,7 @@ try {
   else if (mode === "kit") await kit();
   else if (mode === "look") await look();
   else if (mode === "bot") await bot();
+  else if (mode === "rest") await rest();
   else if (mode === "death") await death();
   else if (mode === "stash") await stash();
   else if (mode === "reconnect") await reconnect();

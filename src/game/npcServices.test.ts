@@ -14,6 +14,14 @@ describe("NPC service art", () => {
     expect(serviceIconKey("open_forge")).toBe("hf_service_repair");
   });
 
+  it("prices hotel rest as authored: ₵35, 120s cooldown, server-authoritative", () => {
+    const rest = NPC_SERVICES.rest;
+    expect(rest).toBeTruthy();
+    expect(rest.cost).toBe(35);
+    expect(rest.cooldownSec).toBe(120);
+    expect(servicesForNpc("keep_hotel")).toContain("rest");
+  });
+
   it("gives field medics cooldown-limited charity healing, not a paid clinic menu", () => {
     for (const id of ["field_medic_patch", "field_medic_suture", "field_medic_gauze", "field_medic_needle"]) {
       expect(servicesForNpc(id, false)).toEqual(["chat", "heal_charity"]);

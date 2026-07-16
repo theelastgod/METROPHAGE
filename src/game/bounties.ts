@@ -57,11 +57,40 @@ export const BOUNTIES: Record<string, Bounty> = {
   res_nix: { id: "nix_ghost", npc: "res_nix", name: "GHOST WALK", desc: "Collect today's HIGH-VALUE TARGET bounty", objective: "hvt", count: 1, rewardCredits: 950, rewardRep: 40, offer: "Today's HVT walks my alley. End them. I'll vanish the body." },
   res_static: { id: "static_noise", npc: "res_static", name: "STATIC SWEEP", desc: "Purge 22 HSS units", objective: "kill", count: 22, rewardCredits: 560, rewardRep: 28, offer: "Noise floor's too high. Twenty-two HSS. Make it quiet." },
   res_velvet: { id: "velvet_tab", npc: "res_velvet", name: "OPEN TAB", desc: "Collect 7 data cores", objective: "collect", count: 7, rewardCredits: 450, rewardRep: 24, offer: "Seven cores covers your tab and mine. Deliver." },
+  // Expansion keepers — every venue's "Job" button leads to real, in-character work.
+  // (keep_noodle/keep_radio already SHOWED a Job button with nothing behind it —
+  // the server answered "no job on the table".)
+  keep_noodle: { id: "noodle_pantry", npc: "keep_noodle", name: "MAMA'S PANTRY", desc: "Collect 6 data cores", objective: "collect", count: 6, rewardCredits: 340, rewardRep: 18, offer: "Burners eat cores, customers eat broth. Six cores keeps both lit." },
+  keep_radio: { id: "radio_name", npc: "keep_radio", name: "NAME ON AIR", desc: "Collect today's HIGH-VALUE TARGET bounty", objective: "hvt", count: 1, rewardCredits: 1000, rewardRep: 42, offer: "I read today's name on air an hour ago. Make the follow-up segment an obituary." },
+  keep_ripperdoc: { id: "ripper_samples", npc: "keep_ripperdoc", name: "CLEAN SAMPLES", desc: "Purge 13 HSS units", objective: "kill", count: 13, rewardCredits: 390, rewardRep: 21, offer: "Corp chrome dulls my scalpels. Thirteen HSS — leave the wrists intact." },
+  keep_pawn: { id: "pawn_inventory", npc: "keep_pawn", name: "COLD INVENTORY", desc: "Collect 9 data cores", objective: "collect", count: 9, rewardCredits: 560, rewardRep: 28, offer: "Nine cores, provenance optional. My ledger forgets faster than the grid." },
+  keep_arcade: { id: "arcade_score", npc: "keep_arcade", name: "HIGH SCORE", desc: "Purge 18 HSS units", objective: "kill", count: 18, rewardCredits: 500, rewardRep: 26, offer: "Eighteen. That's the number to beat. The cabinet keeps count — so do I." },
+  keep_garage: { id: "garage_chassis", npc: "keep_garage", name: "BIG CHASSIS", desc: "Fell a world boss", objective: "boss", count: 1, rewardCredits: 860, rewardRep: 43, offer: "Something out there is wearing a chassis I want on my lift. Bring it down." },
+  keep_hotel: { id: "hotel_quiet", npc: "keep_hotel", name: "QUIET FLOORS", desc: "Purge 10 HSS units", objective: "kill", count: 10, rewardCredits: 320, rewardRep: 17, offer: "Guests don't sleep through gunfire. Ten HSS off my block and the pods stay warm." },
+  keep_citycenter: { id: "civic_erasure", npc: "keep_citycenter", name: "CIVIC ERASURE", desc: "Collect today's HIGH-VALUE TARGET bounty", objective: "hvt", count: 1, rewardCredits: 1100, rewardRep: 46, offer: "Officially, today's target doesn't exist. Unofficially, the Spire pays to keep it that way." },
 };
 
-export function bountyForNpc(npcId: string): Bounty | undefined {
+/** The player's questline act — mirrors cityNpcs.storyPhase without importing it
+ *  (bounties stay a leaf module both the Worker and the client can pull cheaply). */
+export type BountyPhase = "pre" | "early" | "mid" | "late";
+
+/** Late-campaign variants for the four story allies: when THE WAKE reaches its
+ *  final act, their jobs escalate with it — bigger asks, bigger stakes, and offer
+ *  text that knows where the story is. bountyById finds these for completion. */
+export const LATE_BOUNTIES: Record<string, Bounty> = {
+  rin: { id: "rin_last_shipment", npc: "rin", name: "RIN'S LAST SHIPMENT", desc: "Purge 25 HSS units", objective: "kill", count: 25, rewardCredits: 700, rewardRep: 36, offer: "Everything I have left is going to the Kernel push. Twenty-five HSS between my crates and the drop — clear the road." },
+  doc: { id: "doc_wake_triage", npc: "doc", name: "TRIAGE FOR THE WAKE", desc: "Collect 10 data cores", objective: "collect", count: 10, rewardCredits: 640, rewardRep: 34, offer: "When the Kernel opens, people are going to come out of it broken. Ten cores — I'm building beds for the ones you wake." },
+  vex: { id: "vex_final_ledger", npc: "vex", name: "THE FINAL LEDGER", desc: "Collect today's HIGH-VALUE TARGET bounty", objective: "hvt", count: 1, rewardCredits: 1400, rewardRep: 50, offer: "One name left on the manifest that listed people as cargo. Today the grid posted it as an HVT. Poetry. Close the ledger." },
+  marek: { id: "marek_long_watch", npc: "marek", name: "MAREK'S LONG WATCH", desc: "Fell a world boss", objective: "boss", count: 1, rewardCredits: 1100, rewardRep: 60, offer: "I held this line before you were printed. One more commander falls and I can finally sit down. Make an old man sit down." },
+};
+
+export function bountyForNpc(npcId: string, phase: BountyPhase = "pre"): Bounty | undefined {
+  if (phase === "late" && LATE_BOUNTIES[npcId]) return LATE_BOUNTIES[npcId];
   return BOUNTIES[npcId];
 }
 export function bountyById(id: string): Bounty | undefined {
-  return Object.values(BOUNTIES).find((b) => b.id === id);
+  return (
+    Object.values(BOUNTIES).find((b) => b.id === id) ??
+    Object.values(LATE_BOUNTIES).find((b) => b.id === id)
+  );
 }

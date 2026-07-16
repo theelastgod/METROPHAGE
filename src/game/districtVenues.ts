@@ -4,8 +4,12 @@
 import { BRIDGES, type BridgeDef } from "./bridges";
 import type { PlayerLook } from "../net/protocol";
 
-/** Enterable venue kinds — at most ONE of each appears as a door in a district. */
-export const DISTRICT_VENUE_KINDS = ["shop", "home", "guild", "den", "bar"] as const;
+/** Enterable venue kinds — at most ONE of each appears as a door in a district.
+ *  Order matters: building index K gets kind K, so appending kinds is additive (old
+ *  doors keep their venues); reordering would shuffle every district's rooms.
+ *  Two of the nine district buildings stay scenery so the per-district exterior
+ *  kits (hf_building_dist_*) keep carrying the street's identity. */
+export const DISTRICT_VENUE_KINDS = ["shop", "home", "guild", "den", "bar", "noodle", "ripperdoc"] as const;
 export type DistrictVenueKind = (typeof DISTRICT_VENUE_KINDS)[number];
 export const DISTRICT_VENUE_COUNT = DISTRICT_VENUE_KINDS.length;
 
@@ -15,6 +19,8 @@ export const DISTRICT_VENUE_TITLE: Record<DistrictVenueKind, string> = {
   guild: "GUILD HALL",
   den: "THE DEN",
   bar: "DIVE BAR",
+  noodle: "NOODLE COUNTER",
+  ripperdoc: "RIPPERDOC",
 };
 
 /**

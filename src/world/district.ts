@@ -255,6 +255,13 @@ export function buildGrid(def: DistrictDef = DISTRICTS[0]): TileGrid {
     }
   }
 
+  // District COMMONS — an authored centrepiece so each district's plaza reads as a
+  // deliberate town square (FRLG/RuneScape rhythm), not just another open block.
+  // Ground repaint only (collision-neutral) except the small central water feature,
+  // which sits inside the plaza with a full walkable ring; nothing is painted over
+  // walls, and the reachability tests flood-fill every district after this.
+  if (plaza) paintDistrictCommons(grid, def.id, scaleRect(plaza));
+
   // Open critical points with the district's walkable floor (not a generic concrete).
   const walk = gnd.floor;
   carve(grid, ...scaleTile(def.spawnTile), walk);
@@ -271,6 +278,77 @@ export function buildGrid(def: DistrictDef = DISTRICTS[0]): TileGrid {
   paintArrivalCourt(grid, spawnX, spawnY, TILE_FLOOR);
 
   return grid;
+}
+
+/** Paint one district's plaza centrepiece. Deterministic per district id; walkable-tile
+ *  repaints only, plus a small blocking water/slag feature kept ≥2 tiles inside the
+ *  plaza edge so the ring always stays traversable. */
+function paintDistrictCommons(grid: TileGrid, districtId: string, plaza: Rect): void {
+  const cx = Math.round((plaza.x1 + plaza.x2) / 2);
+  const cy = Math.round((plaza.y1 + plaza.y2) / 2);
+  const w = plaza.x2 - plaza.x1;
+  const h = plaza.y2 - plaza.y1;
+  if (w < 6 || h < 6) return; // too tight for a centrepiece + walkable ring
+  const soft = (x: number, y: number, tile: number) => {
+    if (grid[y]?.[x] !== undefined && !isWall(grid[y][x])) grid[y][x] = tile;
+  };
+  const softRect = (r: Rect, tile: number) => {
+    for (let y = r.y1; y <= r.y2; y++) for (let x = r.x1; x <= r.x2; x++) soft(x, y, tile);
+  };
+  const ring = (radius: number, tile: number) => {
+    for (let x = cx - radius; x <= cx + radius; x++) {
+      soft(x, cy - radius, tile);
+      soft(x, cy + radius, tile);
+    }
+    for (let y = cy - radius; y <= cy + radius; y++) {
+      soft(cx - radius, y, tile);
+      soft(cx + radius, y, tile);
+    }
+  };
+  switch (districtId) {
+    case "docks": // tide pool — a real (blocking) inlet north of the medallion,
+      // keeping the plaza centre itself walkable (travel anchors land there).
+      softRect({ x1: cx - 2, y1: cy - 2, x2: cx + 2, y2: cy - 1 }, TILE_WATER);
+      ring(3, TILE_SIDEWALK);
+      soft(cx, cy, TILE_CROSSWALK);
+      break;
+    case "wastes": // slag crater — dirt lip, glowing centre
+      ring(3, TILE_DIRT);
+      ring(2, TILE_DIRT);
+      softRect({ x1: cx - 1, y1: cy - 1, x2: cx + 1, y2: cy + 1 }, TILE_NEON);
+      break;
+    case "spire": // corporate parade ground — formal concrete cross on plaza stone
+      softRect({ x1: cx - 1, y1: plaza.y1 + 1, x2: cx + 1, y2: plaza.y2 - 1 }, TILE_SIDEWALK);
+      softRect({ x1: plaza.x1 + 1, y1: cy - 1, x2: plaza.x2 - 1, y2: cy + 1 }, TILE_SIDEWALK);
+      softRect({ x1: cx - 1, y1: cy - 1, x2: cx + 1, y2: cy + 1 }, TILE_CROSSWALK);
+      break;
+    case "stacks": // bazaar sprawl — market matting checkered across the square
+      for (let y = plaza.y1 + 1; y <= plaza.y2 - 1; y++)
+        for (let x = plaza.x1 + 1; x <= plaza.x2 - 1; x++)
+          if ((x + y) % 3 === 0) soft(x, y, TILE_MARKET);
+      break;
+    case "undercity": // drainage canal — a neon-lit runnel with grate crossings
+      for (let x = plaza.x1 + 1; x <= plaza.x2 - 1; x++) soft(x, cy, TILE_NEON);
+      soft(cx - 2, cy, TILE_GRATE);
+      soft(cx + 2, cy, TILE_GRATE);
+      break;
+    case "relay": // antenna field — grated service apron
+      for (let y = cy - 2; y <= cy + 2; y++)
+        for (let x = cx - 2; x <= cx + 2; x++)
+          if ((x + y) % 2 === 0) soft(x, y, TILE_GRATE);
+      break;
+    case "kernel": // the deep signal — concentric neon rings on dark stone
+      ring(3, TILE_NEON);
+      soft(cx, cy, TILE_NEON);
+      break;
+    case "core":
+    default: // civic medallion — clean checker + crosswalk medallion
+      for (let y = cy - 2; y <= cy + 2; y++)
+        for (let x = cx - 3; x <= cx + 3; x++)
+          soft(x, y, (x + y) % 2 === 0 ? TILE_SIDEWALK : TILE_FLOOR);
+      softRect({ x1: cx - 1, y1: cy, x2: cx + 1, y2: cy }, TILE_CROSSWALK);
+      break;
+  }
 }
 
 /** Repaint a compact, collision-neutral arrival court. Entry points should never inherit

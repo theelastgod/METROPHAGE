@@ -96,6 +96,7 @@ import {
   type TutorialMode,
 } from "../../src/net/tutorial";
 import { DISTRICTS } from "../../src/game/districts";
+import { DISTRICT_VENUE_COUNT } from "../../src/game/districtVenues";
 import {
   progressionForDistrict,
   progressionForBridge,
@@ -142,6 +143,7 @@ import {
   bountyForNpc,
   type BountyObjective,
 } from "../../src/game/bounties";
+import { storyPhase } from "../../src/game/cityNpcs";
 import { rollBossSignature, bossLootBlurb } from "../../src/game/bossLoot";
 import { maybeNamedLoot } from "../../src/game/namedLoot";
 import { weeklyGuildGoal, currentGuildWeek } from "../../src/game/guildGoals";
@@ -311,8 +313,7 @@ export const parseBuildingInterior = (z: string | null): { district: number; ind
   if (!m) return null;
   const district = parseInt(m[1], 10);
   const index = parseInt(m[2], 10);
-  // Must match DISTRICT_VENUE_COUNT (5) on the client.
-  if (district < 0 || district >= DISTRICTS.length || index < 0 || index >= 5) return null;
+  if (district < 0 || district >= DISTRICTS.length || index < 0 || index >= DISTRICT_VENUE_COUNT) return null;
   return { district, index };
 };
 
@@ -5073,7 +5074,8 @@ export class WorldDO {
     if (!def) return;
 
     if (service === "bounty") {
-      const b = bountyForNpc(npcId);
+      // Story allies escalate their jobs with the campaign's final act.
+      const b = bountyForNpc(npcId, storyPhase(p.campaign?.activeId ?? null));
       if (!b) {
         this.send(ws, { t: "sys", text: "no job on the table" });
         return;

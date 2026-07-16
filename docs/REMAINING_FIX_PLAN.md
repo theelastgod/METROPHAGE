@@ -1,5 +1,61 @@
 # Remaining problems plan (ex-mainnet)
 
+## 2026-07-16 follow-through pass
+
+- The July expansion work (art, six new venues, hotel rest, subway modules) is
+  now COMMITTED and pushed (`feat/hf-environment-art`, tag `deployed-20260716`
+  marks the tree production was serving while it was still uncommitted).
+- Build stamps append `+dirty` when the tree doesn't match HEAD, and
+  `release-client` warns loudly — git-SHA rollback is trustworthy again.
+- Boot loader no longer wedges in hidden/background tabs: Phaser only pumps its
+  load queue from the RAF loop, so a boot begun in a background tab stalled
+  forever after the first 32 files (reproduced on prod). `pumpLoaderWhileHidden`
+  (BootScene + OnlineScene zone loads) re-pumps on a timer.
+- Panel smoke waits for `__bootDone` + a settled Select scene instead of racing
+  the boot; `__enterCity` stops straggler scenes deterministically.
+- The six expansion venues now actually show their authored occupants (TALLOW,
+  MERCY, HOLLOW, ROOK, CINDER, STATIC) — the kind-keyed INTERIOR_PLAN was
+  unreachable for `h{K}` hub zones; keeper-name collisions resolved.
+- Districts gained NOODLE COUNTER + RIPPERDOC venues (7 of 9 buildings
+  enterable; two stay scenery so the district kits keep the street identity).
+  The `index >= 5` literals in server world.ts / sceneConfig now use
+  DISTRICT_VENUE_COUNT.
+- Hotel rest is covered end to end: unit tests on the service data and a
+  `smoke.mjs rest` mode (refusal at full, ₵35 debit, heal, HEAT clear, 120 s
+  cooldown, no double charge).
+- MAREK's greeting escalates with your device-local reprint count; district
+  bar patrons already leak the daily condition (`districtBarIntelLine`).
+- Noodle got an infected-art fallback; three never-drawn room images no longer
+  load on venue entry; SUBWAY_WARDEN has his own lines; a test now locks the
+  three hand-synced kind tables together.
+
+## 2026-07-16 evening pass (fix-all continuation)
+
+- **Guest login was broken in production**: `signInThenConnect`'s `stillHere()`
+  guard used `sys.isActive()`, which is FALSE during `create()` — the fully
+  synchronous guest path returned before ever opening a socket (wallet paths
+  survived only because their awaits resumed after create). Fixed to treat only
+  SHUTDOWN/DESTROYED as gone. This was also the "black screen after tutorial on
+  mobile" (first guest connect happens exactly there). `npm run smoke:panels` is
+  GREEN end to end (desktop + mobile) for the first time.
+- **Phantom mobile**: new `src/economy/phantomDeeplink.ts` implements Phantom's
+  connect/signMessage deeplink protocol (x25519 envelopes, sessionStorage
+  round-trip state). Mobile Safari/Chrome no longer hands the whole game to
+  Phantom's portrait-locked in-app browser — only the approval round-trips
+  through the app. NEEDS PHYSICAL-DEVICE QA (add to MOBILE-QA run).
+- **World design**: the inner civic ring (citycenter/hotel/hospital at 7–11
+  tiles from spawn) is gone — the centre is an open, furnished civic commons;
+  landmark promotion keeps those kinds on the nearest street blocks. Every
+  district plaza gained an authored centrepiece (docks tide pool, wastes slag
+  crater, spire parade cross, stacks bazaar matting, undercity canal, relay
+  antenna apron, kernel signal rings, core medallion) — ground-paint only,
+  reachability tests green.
+- **Quests/story**: every expansion keeper now has an authored, server-granted
+  job (the "Job" buttons with nothing behind them are gone); the four story
+  allies escalate to bigger late-act jobs (`LATE_BOUNTIES`) once THE WAKE
+  reaches its final act — offer text and rewards phase-aware on both client
+  and server.
+
 ## Status (current)
 
 | Area | Status |

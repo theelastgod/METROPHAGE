@@ -2,13 +2,31 @@ import { loginMessage, retireMessage, type PlayerLook } from "../net/protocol";
 import {
   connectWallet,
   connectedWallet,
+  hasInjectedSolana,
   signWalletLogin,
   walletAvailable,
   walletConnectAvailable,
   connectWalletLabel,
   preferSolanaWallet,
 } from "./wallet";
+import {
+  beginPhantomSign,
+  phantomDeeplinkSession,
+  phantomDeeplinkUsable,
+  takePhantomProof,
+} from "./phantomDeeplink";
 import { isLikelyMobile } from "./walletConnect";
+
+/** Mobile without an injector but WITH a Phantom deeplink session: signatures must
+ *  round-trip through the Phantom app (the page reloads in between). */
+function phantomSignRoundTrip(addr: string): boolean {
+  return (
+    isLikelyMobile() &&
+    phantomDeeplinkUsable() &&
+    !hasInjectedSolana() &&
+    phantomDeeplinkSession()?.wallet === addr
+  );
+}
 
 const HTTP_BASE =
   (import.meta.env as Record<string, string | undefined>).VITE_SERVER_URL?.replace(/^ws/, "http").replace(/\/ws$/, "") ??
@@ -30,7 +48,15 @@ export async function signIdentityProof(
 ): Promise<{ wallet: string; sig: string; ts: number } | null> {
   const addr = wallet ?? connectedWallet();
   if (!addr) return null;
+  // A Phantom app round-trip may have just landed with our signature — use it.
+  const landed = takePhantomProof("login", addr);
+  if (landed) return landed;
   const ts = Date.now();
+  if (phantomSignRoundTrip(addr)) {
+    // Page navigates to the Phantom app; the proof is picked up on return.
+    beginPhantomSign(loginMessage(addr, ts), { kind: "login", ts, wallet: addr });
+    return null;
+  }
   const signed = await signWalletLogin(loginMessage(addr, ts), addr);
   if (!signed) return null;
   return { wallet: signed.address, sig: signed.signature, ts };
@@ -49,7 +75,13 @@ export async function signRetireProof(
 ): Promise<{ wallet: string; sig: string; ts: number } | null> {
   const addr = wallet ?? connectedWallet();
   if (!addr) return null;
+  const landed = takePhantomProof("retire", addr);
+  if (landed) return landed;
   const ts = Date.now();
+  if (phantomSignRoundTrip(addr)) {
+    beginPhantomSign(retireMessage(addr, ts), { kind: "retire", ts, wallet: addr });
+    return null;
+  }
   const signed = await signWalletLogin(retireMessage(addr, ts), addr);
   if (!signed) return null;
   return { wallet: signed.address, sig: signed.signature, ts };

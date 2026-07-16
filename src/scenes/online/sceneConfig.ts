@@ -149,6 +149,7 @@ export const INTERIOR_TITLES: Record<string, string> = {
 };
 
 // One of each enterable kind per district — no cycling / no second shop.
+import { DISTRICT_VENUE_COUNT } from "../../game/districtVenues";
 export {
   DISTRICT_VENUE_KINDS as DISTRICT_BUILDING_KINDS,
   DISTRICT_VENUE_COUNT,
@@ -165,7 +166,7 @@ export const parseBuildingInterior = (zone: string): { district: number; index: 
   const district = parseInt(match[1], 10);
   const index = parseInt(match[2], 10);
   // Lazy import avoided — count is fixed (5 unique venue kinds).
-  if (index < 0 || index >= 5) return null;
+  if (index < 0 || index >= DISTRICT_VENUE_COUNT) return null;
   if (district < 0 || district >= 32) return null;
   return { district, index };
 };

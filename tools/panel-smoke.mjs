@@ -65,6 +65,12 @@ async function enterCity(page, base) {
   });
   page.on("requestfailed", (req) => console.error(`[panel-smoke] request failed: ${req.url()} · ${req.failure()?.errorText}`));
   await page.addInitScript(() => {
+    // An async throw between scene create and net.connect() dies silently otherwise
+    // (gen stays 0 and the smoke just times out with no cause in the log).
+    window.addEventListener("unhandledrejection", (e) => {
+      const r = e.reason;
+      console.error(`UNHANDLED REJECTION: ${r?.message || String(r)}\n${(r?.stack || "").slice(0, 500)}`);
+    });
     // Lift the first-hour funnel locks (the smoke exercises panels, not onboarding)
     localStorage.setItem(
       "metrophage_first_session_v4",
@@ -94,7 +100,20 @@ async function enterCity(page, base) {
     { timeout: 120000 },
   );
   await page.waitForFunction(() => typeof window.__enterCity === "function", null, { timeout: 120000 });
-  await page.waitForTimeout(2500); // let Boot finish asset load
+  // Entering mid-preload starts Online half-loaded and it never connects. Wait for the
+  // Boot scene's completion beacon instead of guessing with a sleep, then for the scene
+  // stack to SETTLE on the title menu — entering during the Boot→Select handoff races
+  // the scene queue and can strand a zombie Select above (or instead of) Online.
+  await page.waitForFunction(() => window.__bootDone === true, null, { timeout: 180000 });
+  await page.waitForFunction(
+    () => {
+      const actives = window.__game?.scene?.getScenes?.(true) ?? [];
+      return actives.length === 1 && actives[0].scene.key === "Select";
+    },
+    null,
+    { timeout: 60000 },
+  );
+  await page.waitForTimeout(300);
   await page.evaluate(() => {
     // The smoke is a real local multiplayer client, so give it an explicit guest
     // identity instead of relying on whatever random callsign the dev shortcut picked.
@@ -128,6 +147,10 @@ async function enterCity(page, base) {
         connected: s?.net?.connected,
         socketState: s?.net?.ws?.readyState,
         socketUrl: s?.net?.ws?.url,
+        netUrl: s?.net?.url,
+        attempts: s?.net?.reconnectAttempts,
+        gen: s?.net?.socketGen,
+        lastServerMessageAt: s?.net?.lastServerMessageAt,
         protocolBlocked: s?.net?.protocolBlocked,
         manualClose: s?.net?.manualClose,
       };
@@ -285,7 +308,9 @@ async function main() {
     check(await httpUp(`http://127.0.0.1:${WS_PORT}/health`), "wrangler /health answers");
     check(await httpUp(`http://127.0.0.1:${VITE_PORT}/`), "vite answers");
     const browser = await chromium.launch({ headless: true });
-    const base = `http://127.0.0.1:${VITE_PORT}/`;
+    // skipIntro: with the boot-done gate the smoke no longer enters mid-boot, so the
+    // ColdOpen trailer would otherwise start and hold the scene stack.
+    const base = `http://127.0.0.1:${VITE_PORT}/?skipIntro=1`;
     try {
       await desktopPass(browser, base);
       await mobilePass(browser, base);

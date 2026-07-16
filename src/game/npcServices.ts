@@ -187,10 +187,10 @@ const NPC_SERVICE_OVERRIDES: Record<string, NpcServiceId[]> = {
   // Keepers — job matching the room (open_* opens the real system panel)
   keep_bar: ["chat", "meal", "open_contracts", "bounty"],
   keep_noodle: ["chat", "meal", "bounty"],
-  keep_ripperdoc: ["chat", "heal_charity", "heal_paid"],
-  keep_pawn: ["chat", "open_vendor", "rumor"],
-  keep_arcade: ["chat", "open_board", "rumor"],
-  keep_garage: ["chat", "open_forge", "cool_down"],
+  keep_ripperdoc: ["chat", "heal_charity", "heal_paid", "bounty"],
+  keep_pawn: ["chat", "open_vendor", "rumor", "bounty"],
+  keep_arcade: ["chat", "open_board", "rumor", "bounty"],
+  keep_garage: ["chat", "open_forge", "cool_down", "bounty"],
   keep_radio: ["chat", "open_contracts", "rumor", "bounty"],
   keep_shop: ["chat", "open_vendor", "rumor"],
   keep_clinic: ["chat", "heal_charity", "heal_paid", "bounty"],
@@ -198,10 +198,10 @@ const NPC_SERVICE_OVERRIDES: Record<string, NpcServiceId[]> = {
   keep_den: ["chat", "open_market", "sell_core"],
   keep_home: ["chat", "open_stash"],
   keep_hospital: ["chat", "heal_paid", "heal_charity"],
-  keep_hotel: ["chat", "rest"],
+  keep_hotel: ["chat", "rest", "bounty"],
   keep_subway: ["chat", "rumor"], // enter UNDERLINE via door / CONDUCTOR service on client
   keep_stadium: ["chat", "open_board", "bounty"],
-  keep_citycenter: ["chat", "open_board", "rumor"],
+  keep_citycenter: ["chat", "open_board", "rumor", "bounty"],
   // Residents — rotate single specialties (not full kits)
   res_nix: ["chat", "rumor", "bounty"],
   res_solenne: ["chat"],

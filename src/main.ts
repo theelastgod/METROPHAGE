@@ -256,11 +256,19 @@ if (import.meta.env.DEV) {
   w.__enterCity = () => {
     if (!game.registry.get("classId")) game.registry.set("classId", "metrophage");
     if (!game.registry.get("customization")) game.registry.set("customization", randomCustomization("metrophage"));
-    // route through the ACTIVE scene's plugin so it stops (game-level start leaves the
-    // menu running behind the world — it silently halved measured FPS in profiling)
-    const cur = game.scene.getScenes(true)[0];
-    if (cur) cur.scene.start("Online", { zone: "safe" });
-    else game.scene.start("Online", { zone: "safe" });
+    // Deterministic even mid-transition: stop every active scene, start Online at the
+    // manager level, then sweep stragglers (a queued Select start can land AFTER this
+    // call and would otherwise paint + steal input over the world — or worse, a probe
+    // catches the gap between Boot stopping and Select starting).
+    const sweep = () => {
+      for (const s of game.scene.getScenes(true)) {
+        if (s.scene.key !== "Online") s.scene.stop();
+      }
+    };
+    sweep();
+    game.scene.start("Online", { zone: "safe" });
+    window.setTimeout(sweep, 400);
+    window.setTimeout(sweep, 1500);
   };
   w.__playtest = {
     offline: () => {

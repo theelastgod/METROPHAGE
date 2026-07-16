@@ -32,6 +32,7 @@ export const BUILDING_SPRITE: Partial<Record<BuildingKind, string>> = {
  *  and subject — infected swaps in on the same footprint. */
 export const BUILDING_INFECTED: Partial<Record<BuildingKind, string>> = {
   bar: "hf_building_inf_bar",
+  noodle: "hf_building_inf_bar", // counter-bar subject — nearest projection/subject match
   ripperdoc: "hf_building_inf_clinic",
   pawn: "hf_building_inf_shop",
   arcade: "hf_building_inf_den",

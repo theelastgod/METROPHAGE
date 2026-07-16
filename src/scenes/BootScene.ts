@@ -9,6 +9,7 @@ import MusicDirector from "../audio/MusicDirector";
 import Synth from "../audio/Synth";
 import { COLORS } from "../config";
 import { detectDeviceTier, hasSavedSettings, updateSettings } from "../systems/Settings";
+import { pumpLoaderWhileHidden } from "../systems/loaderPump";
 
 
 /**
@@ -20,6 +21,8 @@ export default class BootScene extends Phaser.Scene {
   }
 
   preload() {
+    // Background tabs stop the RAF pump; without this the bar freezes forever there.
+    pumpLoaderWhileHidden(this);
     const barEl = document.getElementById("boot-bar");
     const tagEl = document.querySelector("#boot .tag");
     this.load.on("progress", (v: number) => {
@@ -64,6 +67,9 @@ export default class BootScene extends Phaser.Scene {
   }
 
   create() {
+    // Boot-complete beacon: automation (panel smoke, probes) must wait for this
+    // instead of entering the city mid-preload, which starts Online half-loaded.
+    (window as { __bootDone?: boolean }).__bootDone = true;
     this.cameras.main.setBackgroundColor(COLORS.bgVoid);
     if (!hasSavedSettings()) {
       const tier = detectDeviceTier();

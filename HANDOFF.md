@@ -4,6 +4,42 @@ You are picking up work on **METROPHAGE**, a top-down neon-noir cyberpunk action
 in the browser. Phaser 3 + Vite + TypeScript client; **server-authoritative** world on
 Cloudflare (Worker + per-zone Durable Objects at 20Hz + D1).
 
+## 2026-07-16 (third pass) — guest login fixed, Phantom deeplinks, world redesign
+
+- **`smoke:panels` is GREEN (desktop + mobile) for the first time.** The blocker was
+  real and player-facing: `stillHere()` in `signInThenConnect` used `sys.isActive()`,
+  which is false during `create()` — every fully-synchronous GUEST login returned
+  before opening a socket. Prod guests could not join. Fixed (only SHUTDOWN/DESTROYED
+  count as gone). This was also the mobile "black screen after tutorial".
+- **Phantom mobile = deeplinks now** (`src/economy/phantomDeeplink.ts`): connect +
+  signMessage round-trip through the Phantom APP; the game stays in the player's
+  browser. The old `ul/browse` in-app-browser handoff remains only as a fallback.
+  Physical-device QA still required (see MOBILE-QA).
+- **World**: hub centre cleared (civic ring removed, furnished commons instead);
+  every district plaza has an authored env-keyed centrepiece; districts gained
+  noodle + ripperdoc venues. **Quests**: all keepers give real jobs; story allies
+  escalate via `LATE_BOUNTIES` in the late act (phase passed client+server).
+- **When running `panel-smoke`: NEVER edit source files while it runs** — vite HMR
+  reloads the page mid-boot and the run reports a bogus "never connected".
+
+## 2026-07-16 (second pass) — repo secured, boot wedge fixed, venues wired
+
+- **Everything is committed and pushed** (`feat/hf-environment-art`; tag
+  `deployed-20260716` = the tree production served while still uncommitted).
+  Build stamps now append `+dirty` when the tree ≠ HEAD; `deploy:safe` stays
+  progress-safe. Do not deploy from a dirty tree without expecting that suffix.
+- **Boot wedge (was: "panel smoke never connected")**: Phaser dispatches queued
+  loader files only from the scene UPDATE loop, which stops while
+  `document.hidden` — a boot in a background tab froze forever after the first
+  32 files (reproduced on production). Fixed by `src/systems/loaderPump.ts`
+  (interval re-pump; installed in BootScene + OnlineScene). Probes now wait for
+  `window.__bootDone` and a settled Select scene; `?skipIntro=1` skips ColdOpen.
+- Expansion venues show their authored occupants (kind-keyed INTERIOR_PLAN was
+  dead for `h{K}` zones); districts gained noodle + ripperdoc venues
+  (`DISTRICT_VENUE_KINDS` is append-only — index K = kind K forever);
+  hotel rest has unit + `smoke.mjs rest` E2E coverage; MAREK reacts to your
+  reprint count; three orphan room images no longer load per venue entry.
+
 ## 2026-07-16 authorized reset + Solana/subway follow-through
 
 - Player-facing wallet identity is Solana-only: intro chrome reads `SOL · MAINNET`
@@ -609,5 +645,6 @@ approval before `METRO_MAINNET_ARMED=1`. Never weaken those gates in code.
   All additive. **Another chat session shares this repo and holds ports 5188/5199** — don't
   fight it; take a fresh port.
 - Original art backed up in `tmp-art-backup/` (also git-tracked, so `git checkout` restores).
-- Nothing is committed to git — the working tree holds ~31 changed files. **Commit before
-  further large changes.**
+- ~~Nothing is committed to git~~ **Resolved 2026-07-16:** the full expansion (~960 files)
+  is committed on `feat/hf-environment-art` and pushed; tag `deployed-20260716` marks the
+  tree production was serving. Keep committing before large changes.

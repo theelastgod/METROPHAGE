@@ -121,6 +121,15 @@ export function campaignAllyLines(id: string, activeId: string | null | undefine
   return arc[storyPhase(activeId)];
 }
 
+/** OLD MAREK counts your reprints (he remembers what the city forgets). Past each
+ *  threshold his greeting changes — pure function of the device-local count. */
+export function marekReprintGreeting(count: number): string | null {
+  if (count >= 25) return "Twenty-five reprints. The printers know your weave by heart. So do I.";
+  if (count >= 10) return "Ten bodies the city owes you now. It won't remember. I will.";
+  if (count >= 3) return "Back again? Third time I've watched you walk out of the printer. Dying used to mean something.";
+  return null;
+}
+
 /** The four story allies who stand on the hub plaza and live the questline with you. */
 export const STORY_ALLIES = ["rin", "doc", "vex", "marek"] as const;
 
@@ -176,13 +185,28 @@ export const INTERIOR_PLAN: Record<string, string[][]> = {
   den: [["vex", "ghost"]], // the broker + the quiet one share a back room (dens are rare)
   guild: [["kessler"]],
   home: [["marek"]],
+  // Expansion venues: pair a flavour resident whose persona fits the room but whose
+  // NAME differs from the keeper's — res_nix/echo/wren/moth share names with the
+  // keepers of these exact venues, which read as one character standing twice.
   noodle: [["res_tallow"]],
   ripperdoc: [["res_mercy"]],
-  pawn: [["res_nix"]],
-  arcade: [["res_echo"]],
-  garage: [["res_wren"]],
-  radio: [["res_moth"]],
+  pawn: [["res_hollow"]],
+  arcade: [["res_rook"]],
+  garage: [["res_cinder"]],
+  radio: [["res_static"]],
 };
+
+/** Hub venues staffed from {@link INTERIOR_PLAN} by KIND. Hub zones are keyed `h{K}`
+ *  (building index), so the kind-keyed plan needs this explicit lookup. Only the
+ *  expansion venues resolve — key quest NPCs (SABLE, KESSLER, MAREK…) live in their
+ *  named venue zones and must not clone into same-kind hub duplicates. */
+const HUB_PLAN_KINDS = new Set(["noodle", "ripperdoc", "pawn", "arcade", "garage", "radio"]);
+export function themedHubOccupants(kind: string): CityNpcDef[] {
+  if (!HUB_PLAN_KINDS.has(kind)) return [];
+  return (INTERIOR_PLAN[kind]?.[0] ?? [])
+    .map((id) => npcDef(id))
+    .filter((d): d is CityNpcDef => !!d);
+}
 
 /** Generic keepers staff interiors with no named resident, so no room is empty. */
 const KEEPERS: Record<string, CityNpcDef> = {
@@ -347,7 +371,9 @@ export const SUBWAY_WARDEN: CityNpcDef = {
   name: "TRANSIT WARDEN",
   quest: "into_underline",
   look: look({ color: 0x29e7ff, head: "cap", skin: 0x7c4f30, hair: "buzz", hairColor: 0x1b1820, cloak: "coat", beard: "stubble" }),
-  lines: ["Mind the gap. And the things in it.", "Down the tunnels? Bring teeth."],
+  // Distinct from the generic keep_subway persona — this one has watched the UNDERLINE
+  // eat people and writes it down.
+  lines: ["Third rail's been dead ten years. The things down there aren't.", "I log every runner who goes down. The ink outlasts most of them."],
 };
 
 // ALL_RESIDENTS belongs here: res_* ids are load-bearing in INTERIOR_PLAN,

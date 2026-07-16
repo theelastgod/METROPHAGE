@@ -435,25 +435,30 @@ export function buildCity(seed = 1337, w = CITY_W, h = CITY_H): CityMap {
     }
   }
 
-  // The regular avenue grid's nearest block begins 16+ tiles from the spawn. That is
-  // acceptable on desktop, but a slightly zoomed mobile camera showed only paving and
-  // made the hub look as if its city art had failed to load. Add a restrained inner
-  // civic ring: three small, enterable structures outside the service portals. These
-  // use the exact same shared collision/building metadata as every other hub façade.
-  const innerCivicRects: Rect[] = [
-    { x1: cx - 3, y1: cy - 10, x2: cx + 3, y2: cy - 7 },
-    { x1: cx - 11, y1: cy - 3, x2: cx - 7, y2: cy + 3 },
-    { x1: cx + 7, y1: cy - 3, x2: cx + 11, y2: cy + 3 },
+  // The very centre stays BUILDING-FREE: the old inner civic ring (citycenter/hotel/
+  // hospital squeezed 7–11 tiles from spawn) crowded the plaza once the sharpened art
+  // landed — you spawned in a canyon between two megablocks. The landmark promotion
+  // below guarantees those kinds still exist once each on the nearest street blocks.
+  // Instead, dress the open plaza as a civic commons (FRLG town-square rhythm):
+  // formal planter/bench ring, lantern corners, market stalls on the Fixer approach.
+  const plazaDressing: Array<{ kind: PropKind; x: number; y: number }> = [
+    // formal planter ring around the concrete court
+    { kind: "planter", x: cx - 5, y: cy - 3 }, { kind: "planter", x: cx + 5, y: cy - 3 },
+    { kind: "planter", x: cx - 5, y: cy + 3 }, { kind: "planter", x: cx + 5, y: cy + 3 },
+    // benches face the centre on each axis
+    { kind: "bench", x: cx - 3, y: cy - 4 }, { kind: "bench", x: cx + 3, y: cy - 4 },
+    { kind: "bench", x: cx - 3, y: cy + 4 }, { kind: "bench", x: cx + 3, y: cy + 4 },
+    // lanterns mark the plaza corners; trees soften the sidewalk frame
+    { kind: "lantern", x: cx - 6, y: cy - 5 }, { kind: "lantern", x: cx + 6, y: cy - 5 },
+    { kind: "lantern", x: cx - 6, y: cy + 5 }, { kind: "lantern", x: cx + 6, y: cy + 5 },
+    { kind: "tree", x: cx - 8, y: cy - 7 }, { kind: "tree", x: cx + 8, y: cy - 7 },
+    { kind: "tree", x: cx - 8, y: cy + 7 }, { kind: "tree", x: cx + 8, y: cy + 7 },
+    // a couple of stalls along the north-east Fixer approach keep it lively
+    { kind: "stall", x: cx + 8, y: cy - 9 }, { kind: "stall", x: cx + 10, y: cy - 11 },
+    { kind: "billboard", x: cx, y: cy - 8 },
   ];
-  for (const [i, rect] of innerCivicRects.entries()) {
-    const env: Env = "downtown";
-    const kind: BuildingKind = (["citycenter", "hotel", "hospital"] as const)[i];
-    fill(grid, rect, roofTileForKind(kind, env));
-    const door: [number, number] = [Math.round((rect.x1 + rect.x2) / 2), rect.y2];
-    grid[door[1]][door[0]] = TILE_SIDEWALK;
-    if (!isWall(grid[door[1] + 1]?.[door[0]])) grid[door[1] + 1][door[0]] = TILE_SIDEWALK;
-    buildings.push({ rect, door, kind, env, id: `civic_${i}` });
-    npcSpots.push([door[0], door[1] + 1]);
+  for (const d of plazaDressing) {
+    if (!isWall(grid[d.y]?.[d.x])) decorations.push(d);
   }
 
   // Promote the nearest enterable buildings into the unique landmarks (hospital, hotel,
