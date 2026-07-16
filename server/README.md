@@ -302,7 +302,7 @@ The live in-game currency stays the off-chain, server-authoritative `credits` le
 you cannot run a 20 Hz authoritative loop on-chain. "$METRO as a P2E currency" is a
 **server-mediated convertibility bridge** that moves value across that boundary:
 
-- `GET  /metro/account?player=ID` — credits, rate, $METRO value, daily-cap + cooldown state.
+- `GET  /metro/account?player=ID` — credits, rate, $METRO value, and cooldown state.
 - `GET  /metro/quote?credits=N` — credits → $METRO at the configured rate.
 - `POST /metro/withdraw {player,wallet,credits}` — **atomically** debits credits (a
   conditional `UPDATE … WHERE credits >= ?`, so no double-spend), records the row, then
@@ -312,7 +312,8 @@ you cannot run a 20 Hz authoritative loop on-chain. "$METRO as a P2E currency" i
 
 Authority holds: the server owns every balance and authorizes every settlement; the
 client never mints, reports a balance, or double-spends. Anti-abuse (because credits now
-carry cash value): per-player withdraw minimum, cooldown, and a rolling daily cap.
+carry cash value): per-player withdraw minimum and cooldown. There is no daily earn or
+withdrawal cap.
 
 `src/metro.ts` is **step 2a — the accounting**, with the actual Solana settlement behind a
 `Settlement` seam (currently `simSettlement`, a devnet stub) so the whole ledger is

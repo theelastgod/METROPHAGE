@@ -15,7 +15,7 @@ Robinhood/EVM adapters remain in the repo as a **dormant alternate** only
 | Treasury is Solana base58 | SPL deposits + claim withdraws |
 | Treasury pays SOL on cash-outs | Keep a small SOL float for withdraw fees + player ATA rent |
 | Pool is player-funded | Deposits fill the pool; withdrawals cannot exceed it |
-| Rates stay 100 in / 125 out | Launch economics (see `economyPolicy`) |
+| Rates stay 100 in / 150 out, min 300 ₵, no daily cap | Launch economics (see `economyPolicy`) |
 
 ## 1. Pre-CA Readiness
 

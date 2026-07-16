@@ -182,7 +182,7 @@ Pre-CA: `cd server && node scripts/mainnet-prepare.mjs` then put
 5. Smoke (trusted five, standalone): `move combat kit quest abuse` with server up.
 6. `$METRO`: Solana secrets **before** `VITE_METRO_MINT` (base58). Mainnet stays counsel-gated
    (`METRO_MAINNET_ARMED` off by default). Never arm without counsel sign-off.
-7. Rates: **100 in / 125 out**, min **250 ₵**, player-funded pool (see `economyPolicy`) —
+7. Rates: **100 in / 150 out**, min **300 ₵**, no daily cap, player-funded pool (see `economyPolicy`) —
    treat as launch constants; don't redesign mid-launch without a migration note.
 8. PvP escrow rollout: apply `0030` before the Worker and deploy with arenas empty.
    Afterward, buy-ins, elimination transfers, disconnect refunds, and crash recovery

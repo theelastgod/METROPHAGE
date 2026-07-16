@@ -1,6 +1,6 @@
 # METROPHAGE — social campaign (first post + follow-ups)
 
-Tone: neon-noir, short, confident. No pump language. Play is free; $METRO is optional convertibility on Robinhood Chain.
+Tone: neon-noir, short, confident. No pump language. Play is free; $METRO is optional convertibility on Solana.
 
 **Link:** https://metrophagev1.pages.dev  
 **Each post ships with its own 10s trailer** (see `marketing/metrophage-10s-*.mp4`).
@@ -24,7 +24,7 @@ Server-authoritative. Real districts. Real runners.
 
 ▶ Play free: metrophagev1.pages.dev
 
-(MetaMask optional · Robinhood Chain for $METRO later)
+(Phantom optional · Solana for $METRO later)
 ```
 
 **Alt shorter:**
@@ -98,7 +98,7 @@ METROPHAGE — dig for what they wiped.
 
 ```
 ₵ credits run the game.
-$METRO is optional convertibility on Robinhood Chain — player-funded pool, not a faucet.
+$METRO is optional convertibility on Solana — player-funded pool, not a faucet.
 
 Earn in-world. Cash out only what the pool can cover.
 
@@ -127,14 +127,14 @@ metrophagev1.pages.dev
 
 ```
 ₵ runs the game.
-$METRO is optional convertibility on Robinhood Chain.
+$METRO is optional convertibility on Solana.
 
 Deposit → credits.
 Cash out only what the player-funded pool can cover.
 Not a faucet. Not free money.
 
-1 $METRO → 100 ₵ · 125 ₵ → 1 $METRO
-Min cash-out 250 ₵ · pool starts empty.
+1 $METRO → 100 ₵ · 150 ₵ → 1 $METRO
+Min cash-out 300 ₵ · no daily cap · pool starts empty.
 
 METROPHAGE — earn in the city.
 ▶ metrophagev1.pages.dev
@@ -145,7 +145,7 @@ METROPHAGE — earn in the city.
 ```
 In METROPHAGE, play money is server-side credits.
 
-$METRO on Robinhood Chain is a bridge — player-funded pool, honest empty at launch.
+$METRO on Solana is a bridge — player-funded pool, honest empty at launch.
 
 Earn ₵. Cash out if the pool has depth.
 

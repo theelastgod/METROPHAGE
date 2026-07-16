@@ -2,7 +2,7 @@
 
 Voice: neon-noir, short, confident. **No pump language, no price talk, no promised returns.**
 $METRO = optional convertibility on Solana. Pool is player-funded and starts honest-empty.
-Rates (from `server/src/metro.ts`): deposit 1 $METRO → 100 ₵ · cash out 125 ₵ → 1 $METRO · min 250 ₵ · 400 $METRO/day cap.
+Rates (from `src/game/economyPolicy.ts`): deposit 1 $METRO → 100 ₵ · cash out 150 ₵ → 1 $METRO · min 300 ₵ · no daily cap.
 
 **Play link:** https://metrophagev1.pages.dev
 **Assets:** `marketing/higgsfield-pack/` (this doc's filenames refer there)
@@ -187,7 +187,7 @@ the board and starts a new era — get your faction on the ledger.
 $METRO is optional convertibility on Solana.
 
 Deposit → 1 $METRO = 100 ₵.
-Cash out → 125 ₵ = 1 $METRO, min 250 ₵.
+Cash out → 150 ₵ = 1 $METRO, min 300 ₵.
 Pool is player-funded. It starts empty. Not a faucet.
 
 METROPHAGE — earn in the city.
@@ -200,7 +200,7 @@ METROPHAGE — earn in the city.
 
 • All live money in-game is server-side ₵ — no network fees, no wallet needed to play
 • $METRO (SPL on Solana) is an optional two-way bridge
-• Deposit 1 $METRO → 100 ₵ · Cash out 125 ₵ → 1 $METRO (min 250 ₵)
+• Deposit 1 $METRO → 100 ₵ · Cash out 150 ₵ → 1 $METRO (min 300 ₵)
 • Withdrawals come from a pool funded ONLY by player deposits
 • Pool can run dry — cash-outs cover only what it holds. No promises, no yield.
 
@@ -263,7 +263,7 @@ METROPHAGE.
 **Announcement:**
 ```
 🌉 The $METRO bridge in motion — 8 seconds, no fine print hidden.
-Deposit 1 $METRO → 100 ₵. Cash out 125 ₵ → 1 $METRO. Pool starts empty.
+Deposit 1 $METRO → 100 ₵. Cash out 150 ₵ → 1 $METRO. Pool starts empty.
 ▶ metrophagev1.pages.dev
 ```
 

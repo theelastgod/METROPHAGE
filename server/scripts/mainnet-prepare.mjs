@@ -90,7 +90,7 @@ function makeSolanaRecord(kp) {
     createdAt: new Date().toISOString(),
     note:
       "AUTHORITATIVE Solana treasury for $METRO. Never commit. Receives SPL deposits; " +
-      "partially signs claims (player pays SOL). Treasury never spends SOL. " +
+      "pays cash-out fees when funded, with a player-fee partial-sign fallback. " +
       "Dormant EVM alternate: node scripts/mainnet-prepare.mjs --evm --replace",
     mint: null,
     mainnetArmed: false,
@@ -134,7 +134,7 @@ function printSolanaSteps(record) {
 ── Until then ────────────────────────────────────────────────────────────
   • Do NOT set METRO_MINT / VITE_METRO_MINT until the CA is real
   • METRO_MAINNET_ARMED stays OFF until counsel
-  • Treasury never needs SOL (players pay fees)
+  • Fund the treasury with a small SOL float for cash-out fees + ATA rent
 
 Treasury (Solana — AUTHORITATIVE):
   address: ${record.treasuryAddress}

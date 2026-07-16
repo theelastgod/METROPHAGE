@@ -53,8 +53,8 @@ tree as a dormant alternate (`METRO_SETTLEMENT=robinhood`), not the launch path.
 - Sign-up: Phantom + free message (no gas).
 - Cash-out pool is **100% player-funded** (starts empty). Empty/short pool →
   **"Check back later."**
-- **Rate spread**: deposit 1 ◈ → **100 ₵**, withdraw **125 ₵** → 1 ◈
-  (~20% stays in the pool). Min cash-out **250 ₵** (2 ◈). Daily cap **50k ₵** / player.
+- **Rate spread**: deposit 1 ◈ → **100 ₵**, withdraw **150 ₵** → 1 ◈.
+  Min cash-out **300 ₵** (2 ◈). There is no daily earn or withdrawal cap.
 - Cash-outs: treasury preferably pays SOL and sends $METRO; player-pays only if treasury SOL is empty.
 - Go-live: server `METRO_MINT` + `METRO_TREASURY_SECRET` (base64 keypair) first, then
   client `VITE_METRO_MINT`. Mainnet stays disarmed (`METRO_MAINNET_ARMED`) until counsel

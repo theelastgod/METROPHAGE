@@ -523,7 +523,7 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
       info.authoritativeChain = "solana";
       info.note = wantRobinhood
         ? "Robinhood Chain $METRO (dormant alternate) — MetaMask deposits; treasury pays gas on cash-outs when funded."
-        : "Solana SPL $METRO — Phantom deposits; treasury partially signs cash-outs (player pays the SOL fee).";
+        : "Solana SPL $METRO — Phantom deposits; treasury pays cash-out fees when funded, with a player-paid fallback.";
       info.getMetroHint = wantRobinhood
         ? "Dormant ERC-20 path — Send via MetaMask to treasury, then Claim deposit."
         : "Get $METRO (SPL), Send via Phantom to treasury, then Claim deposit.";

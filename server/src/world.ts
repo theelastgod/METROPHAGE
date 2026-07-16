@@ -4934,8 +4934,8 @@ export class WorldDO {
       if (p.credits < 60) {
         const need = 60 - p.credits;
         const got = this.grantEmit(p, "floor", need);
-        // Floor is a soft guarantee for brand-new shells; if daily cap is already hit
-        // (edge: recreated accounts), still lift them to 60 without double-counting emit.
+        // Floor is a soft guarantee for brand-new shells. Keep the fallback so a future
+        // finite emit policy cannot prevent a recreated account from reaching 60.
         if (got < need) p.credits = Math.max(p.credits, 60);
         changed = true;
       }

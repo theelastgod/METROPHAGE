@@ -1,5 +1,5 @@
-// METROPHAGE — $METRO bridge panel (Robinhood Chain ERC-20 primary; Solana alternate).
-// One-click MetaMask deposit, empty-pool "Check back later.", sim-lock fail-loud.
+// METROPHAGE — $METRO bridge panel (Solana SPL primary; Robinhood ERC-20 dormant alternate).
+// Wallet deposit, empty-pool "Check back later.", sim-lock fail-loud.
 
 import {
   metroEnabled,

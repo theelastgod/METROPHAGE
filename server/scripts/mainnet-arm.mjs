@@ -160,7 +160,7 @@ state = {
   mainnetArmed: withArm,
   authoritative: true,
   alternate: false,
-  note: "AUTHORITATIVE Solana treasury + mint. Never commit. Players pay SOL on claims.",
+  note: "AUTHORITATIVE Solana treasury + mint. Never commit. Treasury pays cash-out fees when funded; player fallback if empty.",
 };
 writeState(state);
 
@@ -193,5 +193,6 @@ ${withArm ? "  echo -n '1' | npx wrangler secret put METRO_MAINNET_ARMED\n" : " 
   VITE_METRO_SETTLEMENT=solana \\
 ${withArm ? "  VITE_METRO_MAINNET_ARMED=1 \\\\\n" : ""}  npm run deploy:client
 
-Treasury never spends SOL — players pay fees on deposit + claim withdraw.
+Fund the treasury with a small SOL float for cash-out fees + ATA rent.
+Deposits remain player-paid; cash-outs fall back to player-paid if treasury SOL is empty.
 `);
