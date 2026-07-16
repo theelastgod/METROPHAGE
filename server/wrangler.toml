@@ -38,7 +38,7 @@ migrations_dir = "migrations"
 # Signals Paid-tier tuning paths (snapshot headroom, faster persist). Harmless if free.
 METRO_PAID_TIER = "1"
 # Launch ops: build stamp for /health (update on release). Kill switches default OFF.
-METRO_BUILD = "47a264d-20260716"
+METRO_BUILD = "89adcef-20260716"
 # Soft hub capacity (see src/game/featureFlags.ts).
 METRO_HUB_CAP = "48"
 # Horizontal zone shards (safe / dN / subway). Instance 0 keeps legacy DO name.
