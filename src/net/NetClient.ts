@@ -75,6 +75,20 @@ export function buildZoneWsUrl(
   return url;
 }
 
+/** Drop a stale shard pin while preserving zone and any future query fields. */
+export function withoutStickyInstance(wsUrl: string): string {
+  try {
+    const base = typeof location !== "undefined" ? location.href : "http://local";
+    const u = new URL(wsUrl, base);
+    u.searchParams.delete("inst");
+    return u.toString().replace(/^http:/, "ws:").replace(/^https:/, "wss:");
+  } catch {
+    return wsUrl
+      .replace(/([?&])inst=[^&]*&?/i, (_m, lead: string) => lead)
+      .replace(/[?&]$/, "");
+  }
+}
+
 /** Guest id form of a callsign (must match server `onLoginInner` sanitization). */
 export function guestIdFromCallsign(name: string): string {
   return (name || "").toLowerCase().replace(/[^a-z0-9_-]/g, "");
@@ -482,12 +496,20 @@ export default class NetClient {
   private socketGen = 0;
   /** Wall time when the current socket was opened (debounce supersede). */
   private socketOpenedAt = 0;
+  /** Last server traffic. Mobile browsers can leave a dead radio socket OPEN. */
+  private lastServerMessageAt = 0;
+  /** Periodic zombie-link detector, installed once with the lifecycle hooks. */
+  private linkWatchdog: ReturnType<typeof setInterval> | null = null;
+  /** Removes the window/document lifecycle listeners installed by hookUnloadFlush. */
+  private unhookLifecycle: (() => void) | null = null;
   /** Timer: OPEN but no welcome → re-login / reopen. */
   private welcomeTimer: ReturnType<typeof setTimeout> | null = null;
   /** Min ms a CONNECTING/OPEN socket is protected from spam-retry supersede. */
   private static readonly SOCKET_GRACE_MS = 4500;
   /** If no welcome after open, force re-login. */
   private static readonly WELCOME_TIMEOUT_MS = 9000;
+  /** No snapshots/messages for this long while visible means the OPEN socket is dead. */
+  private static readonly STALE_LINK_MS = 12_000;
 
   constructor(
     private grid: TileGrid,
@@ -550,20 +572,59 @@ export default class NetClient {
     // pagehide on wallet app-switch and notifications; leave → bye → stuck offline
     // was the dominant "never connect on mobile" loop. Server heartbeat + DO
     // eviction still persist x/y/inventory; visibility resume reopens a dead socket.
-    window.addEventListener("beforeunload", flush);
     // Resume after phone sleep / wallet app — reconnect if the socket died.
-    document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState !== "visible") return;
-      if (this.protocolBlocked) return;
+    /**
+     * @param fromResume true for an explicit resume signal (tab visible again, network
+     *   back). Only those may jump an already-scheduled backoff; the periodic tick may
+     *   not — see the `dead` branch below.
+     */
+    const recoverIfStale = (fromResume: boolean) => {
+      if (this.protocolBlocked || this.manualClose) return;
       const ws = this.ws;
       const dead = !ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING;
-      if (dead && !this.connected) {
-        // Zone-travel sets manualClose intentionally; only resume if we didn't.
-        // Soft kills (DO eviction, network) leave manualClose false.
-        if (this.manualClose) return;
-        this.retryConnect(false);
+      const stale =
+        !!ws &&
+        ws.readyState === WebSocket.OPEN &&
+        this.lastServerMessageAt > 0 &&
+        Date.now() - this.lastServerMessageAt > NetClient.STALE_LINK_MS;
+      const stalled =
+        !!ws &&
+        !this.connected &&
+        Date.now() - this.socketOpenedAt > NetClient.WELCOME_TIMEOUT_MS * 2;
+      // Zombie link: the socket claims OPEN/CONNECTING but nothing is coming back.
+      // onclose will never fire for these, so the watchdog is the only way out.
+      if (stale || stalled) {
+        this.retryConnect(false, true);
+        return;
       }
-    });
+      // A genuinely closed socket already has onclose's backoff ladder scheduled.
+      // Letting the 4s tick reopen it here reset `reconnectAttempts` to 0 every tick,
+      // which abolished backoff during an outage (~100 attempts/min/client against a
+      // cold DO) and meant the ladder never reached the "offline" notice at 20.
+      if (dead && fromResume) this.retryConnect(false);
+    };
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      recoverIfStale(true);
+    };
+    const onOnline = () => recoverIfStale(true);
+    window.addEventListener("beforeunload", flush);
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("online", onOnline);
+    // Kept so disconnect() can unhook them. The scene builds a fresh NetClient per zone
+    // hop, and anonymous listeners pinned every dead client (plus its grid and entity
+    // maps) for the page's life, re-running recovery across all of them on each refocus.
+    this.unhookLifecycle = () => {
+      window.removeEventListener("beforeunload", flush);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("online", onOnline);
+    };
+    // iOS often reports an OPEN WebSocket after sleep even though the TCP path is
+    // gone. Server snapshots arrive many times per second, so 12s of silence while
+    // visible is a safe, conservative reconnect signal.
+    this.linkWatchdog = setInterval(() => {
+      if (document.visibilityState === "visible") recoverIfStale(false);
+    }, 4_000);
   }
 
   private clearWelcomeTimer() {
@@ -677,6 +738,9 @@ export default class NetClient {
    * window (spam-tapping LINK used to kill every attempt before welcome arrived).
    */
   private openSocket(force = false) {
+    // Idempotent: re-arms the lifecycle hooks that disconnect() tore down, so a LINK tap
+    // after a manual close still gets phone-sleep resume and zombie-link detection.
+    this.hookUnloadFlush();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -718,13 +782,24 @@ export default class NetClient {
       return;
     }
     this.ws = ws;
+    this.lastServerMessageAt = 0;
     this.armWelcomeTimeout(gen);
     ws.onopen = () => {
       if (this.ws !== ws || this.socketGen !== gen) return;
-      this.sendLogin(ws);
+      try {
+        this.sendLogin(ws);
+      } catch {
+        try {
+          ws.close();
+        } catch {
+          /* ignore */
+        }
+        this.scheduleReconnect(100);
+      }
     };
     ws.onmessage = (e) => {
       if (this.ws !== ws || this.socketGen !== gen) return;
+      this.lastServerMessageAt = Date.now();
       this.onMessage(e.data);
     };
     ws.onclose = (ev) => {
@@ -855,6 +930,13 @@ export default class NetClient {
   disconnect() {
     this.manualClose = true;
     this.clearWelcomeTimer();
+    this.unhookLifecycle?.();
+    this.unhookLifecycle = null;
+    this.unloadHooked = false;
+    if (this.linkWatchdog) {
+      clearInterval(this.linkWatchdog);
+      this.linkWatchdog = null;
+    }
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -873,6 +955,13 @@ export default class NetClient {
    */
   disconnectAwait(timeoutMs = 2500): Promise<void> {
     this.manualClose = true;
+    this.unhookLifecycle?.();
+    this.unhookLifecycle = null;
+    this.unloadHooked = false;
+    if (this.linkWatchdog) {
+      clearInterval(this.linkWatchdog);
+      this.linkWatchdog = null;
+    }
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -950,12 +1039,17 @@ export default class NetClient {
    * @param userInitiated when true (LINK/R), reset the wallet 4001 recovery budget
    *   so the user gets another silent+prompt cycle. Silent auth recovery must pass false.
    */
-  retryConnect(userInitiated = false) {
+  retryConnect(userInitiated = false, forceStale = false) {
     if (this.protocolBlocked) return;
     this.manualClose = false;
     if (userInitiated) {
       this.walletAuthFailures = 0;
       this.reconnectAttempts = 0;
+      // LINK must escape a bad shard. Previously every tap reused `?inst=N`, so
+      // a stale/unreachable instance was retried forever even though other slices
+      // were healthy.
+      if (this.zone) clearStickyInst(this.zone);
+      this.url = withoutStickyInstance(this.url);
       // User tap: force a fresh socket even if one is mid-handshake (but only after
       // grace has elapsed — openSocket enforces that unless force=true after grace).
       const age = Date.now() - this.socketOpenedAt;
@@ -972,7 +1066,7 @@ export default class NetClient {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    this.openSocket(false);
+    this.openSocket(forceStale);
   }
 
   /** Set the local movement intent (called every render frame by the scene). */

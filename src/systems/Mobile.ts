@@ -106,6 +106,24 @@ export function touchTargetDesign(px = 48): number {
 /** True when the viewport is portrait (taller than wide). */
 export function isPortrait(): boolean {
   if (typeof window === "undefined") return false;
+  // Wallet in-app browsers (notably Phantom on iOS) can leave innerWidth/
+  // innerHeight stale after the host app rotates. visualViewport follows the
+  // actually visible webview and is therefore the primary signal.
+  try {
+    const vv = window.visualViewport;
+    if (vv && vv.width > 1 && vv.height > 1 && Math.abs(vv.width - vv.height) > 2) {
+      return vv.height > vv.width;
+    }
+  } catch {
+    /* privacy modes */
+  }
+  try {
+    const portrait = window.matchMedia("(orientation: portrait)");
+    const landscape = window.matchMedia("(orientation: landscape)");
+    if (portrait.matches !== landscape.matches) return portrait.matches;
+  } catch {
+    /* old wallet webviews */
+  }
   return window.innerHeight > window.innerWidth;
 }
 
@@ -254,6 +272,13 @@ export function installLandscapeGate(): void {
     /* very old engines lack addEventListener on MediaQueryList */
   }
   window.visualViewport?.addEventListener("resize", () => sync());
+  window.visualViewport?.addEventListener("scroll", () => sync());
+  // Wallet apps commonly background and restore their webview during approval;
+  // re-read its orientation when it becomes visible again.
+  window.addEventListener("pageshow", () => sync());
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") window.setTimeout(sync, 50);
+  });
   // Orientation lock usually requires a user gesture.
   document.addEventListener(
     "pointerdown",

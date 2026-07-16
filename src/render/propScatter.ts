@@ -17,10 +17,14 @@ import {
   HF_PROP_KEYS,
   HF_DIST_PROP_KEYS,
   HF_WORLD_PROP_KEYS,
+  HF_EARLY_WORLD_PROP_KEYS,
+  HF_WEB_CITY_PROP_KEYS,
   GLOW_KEY,
 } from "../assets/manifest";
 import { isWall, type TileGrid } from "../world/district";
 import type { PropBias } from "../game/districtEnv";
+import { generatedAssetScale } from "./generatedAssetSizing";
+import { hasPropWallClearance } from "./propClearance";
 
 const hash = (x: number, y: number) => ((x * 9283711) ^ (y * 6892871)) >>> 0;
 
@@ -83,23 +87,39 @@ const PROPS: PropSpec[] = [
     weight: 1,
     glow: key.includes("drone") || key.includes("core") || key.includes("grow"),
   })),
+  ...HF_EARLY_WORLD_PROP_KEYS.map((key) => ({
+    key,
+    originY: 0.86,
+    scale: key.includes("landmark") ? 0.64 : 0.49,
+    yOff: 2,
+    weight: key.includes("market") || key.includes("neon") ? 2 : 1,
+    glow: key.includes("neon") || key.includes("vendor") || key.includes("storyprop"),
+  })),
+  ...HF_WEB_CITY_PROP_KEYS.map((key) => ({
+    key,
+    originY: 0.86,
+    scale: key.includes("fountain") || key.includes("arch") ? 0.68 : 0.52,
+    yOff: 2,
+    weight: key.includes("terminal") || key.includes("stall") || key.includes("cart") ? 2 : 1,
+    glow: key.includes("marker") || key.includes("fountain") || key.includes("terminal") || key.includes("stall"),
+  })),
 ];
 
 const POOL = PROPS.flatMap((p) => Array.from({ length: p.weight }, () => p));
 
 /** Map district PropBias tags → texture keys used in the scatter pool. */
 const BIAS_KEYS: Record<PropBias, string[]> = {
-  streetlight: [PROP_STREETLIGHT_KEY, HF_PROP_KEYS[0]],
-  vending: [PROP_VENDING_KEY, HF_PROP_KEYS[1]],
-  ac: [PROP_AC_KEY],
-  bin: [PROP_BIN_KEY],
+  streetlight: [PROP_STREETLIGHT_KEY, HF_PROP_KEYS[0], ...HF_EARLY_WORLD_PROP_KEYS.filter((k) => k.includes("city_neon"))],
+  vending: [PROP_VENDING_KEY, HF_PROP_KEYS[1], ...HF_EARLY_WORLD_PROP_KEYS.filter((k) => k.includes("vendor") || k.includes("market")), ...HF_WEB_CITY_PROP_KEYS.filter((k) => k.includes("stall") || k.includes("cart"))],
+  ac: [PROP_AC_KEY, ...HF_EARLY_WORLD_PROP_KEYS.filter((k) => k.includes("industrial")), ...HF_WEB_CITY_PROP_KEYS.filter((k) => k.includes("transformer") || k.includes("generator"))],
+  bin: [PROP_BIN_KEY, ...HF_EARLY_WORLD_PROP_KEYS.filter((k) => k.includes("slum"))],
   hydrant: [PROP_HYDRANT_KEY],
-  planter: [PROP_PLANTER_KEY],
-  barrier: [PROP_BARRIER_KEY],
-  dumpster: [PROP_DUMPSTER_KEY],
+  planter: [PROP_PLANTER_KEY, ...HF_EARLY_WORLD_PROP_KEYS.filter((k) => k.includes("residential") || k.includes("corporate"))],
+  barrier: [PROP_BARRIER_KEY, ...HF_EARLY_WORLD_PROP_KEYS.filter((k) => k.includes("industrial"))],
+  dumpster: [PROP_DUMPSTER_KEY, ...HF_EARLY_WORLD_PROP_KEYS.filter((k) => k.includes("slum"))],
   car: [PROP_CAR_BLUE_KEY, PROP_CAR_RED_KEY, PROP_CAR_GREEN_KEY, PROP_PICKUP_KEY, PROP_VAN_KEY, HF_PROP_KEYS[6], HF_PROP_KEYS[7]],
-  industrial: [PROP_AC_KEY, PROP_DUMPSTER_KEY, PROP_BARRIER_KEY, HF_PROP_KEYS[2], HF_PROP_KEYS[3], HF_PROP_KEYS[8], HF_PROP_KEYS[11]],
-  neon: [PROP_STREETLIGHT_KEY, PROP_VENDING_KEY, HF_PROP_KEYS[0], HF_PROP_KEYS[1], HF_PROP_KEYS[9], HF_PROP_KEYS[10]],
+  industrial: [PROP_AC_KEY, PROP_DUMPSTER_KEY, PROP_BARRIER_KEY, HF_PROP_KEYS[2], HF_PROP_KEYS[3], HF_PROP_KEYS[8], HF_PROP_KEYS[11], ...HF_EARLY_WORLD_PROP_KEYS.filter((k) => k.includes("industrial")), ...HF_WEB_CITY_PROP_KEYS.filter((k) => k.includes("transformer") || k.includes("generator") || k.includes("water"))],
+  neon: [PROP_STREETLIGHT_KEY, PROP_VENDING_KEY, HF_PROP_KEYS[0], HF_PROP_KEYS[1], HF_PROP_KEYS[9], HF_PROP_KEYS[10], ...HF_EARLY_WORLD_PROP_KEYS.filter((k) => k.includes("neon") || k.includes("storyprop")), ...HF_WEB_CITY_PROP_KEYS.filter((k) => k.includes("marker") || k.includes("fountain") || k.includes("terminal"))],
 };
 
 function groundShadow(scene: Phaser.Scene, x: number, y: number, depth: number, rw: number, rh: number) {
@@ -130,7 +150,12 @@ export function scatterWorldProps(
   grid: TileGrid,
   depth = 5,
   density = 0.078,
-  opts?: { propBias?: PropBias[]; accent?: number },
+  opts?: {
+    propBias?: PropBias[];
+    accent?: number;
+    /** Keep arrival plazas and main interaction lanes free of decorative clutter. */
+    clearCenter?: { tx: number; ty: number; radius: number };
+  },
 ) {
   const H = grid.length;
   const W = grid[0]?.length ?? 0;
@@ -145,6 +170,8 @@ export function scatterWorldProps(
     for (let tx = 2; tx < W - 2; tx++) {
       const t = row[tx];
       if (isWall(t)) continue;
+      if (!hasPropWallClearance(grid, tx, ty)) continue;
+      if (opts?.clearCenter && Math.hypot(tx - opts.clearCenter.tx, ty - opts.clearCenter.ty) <= opts.clearCenter.radius) continue;
       const h = hash(tx, ty);
       if ((h % 1000) / 1000 > density) continue;
       // keep plaza lanes clear — skip tiles with wall on 2+ sides
@@ -167,8 +194,8 @@ export function scatterWorldProps(
         .image(x, y, spec.key)
         .setOrigin(0.5, spec.originY)
         .setDepth(depth)
-        .setAlpha(0.9 + (h % 10) / 100)
-        .setScale(scale);
+        .setAlpha(0.9 + (h % 10) / 100);
+      spr.setScale(generatedAssetScale(spec.key, spr.width, spr.height, scale));
       if (spec.glow) {
         scene.add
           .image(x, y - 10, GLOW_KEY)

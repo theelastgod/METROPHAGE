@@ -198,3 +198,6 @@ export const MELTDOWN_VICTORY_TEXT =
 
 /** Campaign flag set after the personal meltdown victory fires once. */
 export const MELTDOWN_VICTORY_FLAG = "meltdown_victory";
+
+/** Campaign flag recording that a shell already drew its one starter credit/core floor. */
+export const STARTER_FLOOR_FLAG = "starter_floor";

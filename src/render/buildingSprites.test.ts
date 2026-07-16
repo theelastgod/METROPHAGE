@@ -81,6 +81,10 @@ describe("selectBuildingSprite — infected precedence", () => {
 });
 
 describe("selectBuildingSprite — kit fallback chain", () => {
+  it("selects the dedicated noodle-counter exterior", () => {
+    expect(selectBuildingSprite(withKeys("hf_building_noodle"), "noodle")).toBe("hf_building_noodle");
+  });
+
   it("prefers a zone's own kit when it exists", () => {
     expect(
       selectBuildingSprite(withKeys("hf_building_dist_market", "hf_building_dist_docks"), "home", {

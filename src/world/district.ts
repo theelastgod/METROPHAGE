@@ -263,7 +263,30 @@ export function buildGrid(def: DistrictDef = DISTRICTS[0]): TileGrid {
   carve(grid, ...scaleTile(def.shopTile), walk);
   for (const n of def.nodes) carve(grid, ...scaleTile(n.tile), walk);
 
+  // Arrival courts must stay visually calm in every district. Several plazas use the
+  // saturated purple TILE_NEON/TILE_PLAZA language; leaving it under the player made a
+  // purple patch appear to "spawn" on every entry. Repaint only existing walkable tiles
+  // in a compact checker of concrete + sidewalk, preserving all collision footprints.
+  const [spawnX, spawnY] = scaleTile(def.spawnTile);
+  paintArrivalCourt(grid, spawnX, spawnY, TILE_FLOOR);
+
   return grid;
+}
+
+/** Repaint a compact, collision-neutral arrival court. Entry points should never inherit
+ * a biome's saturated purple plaza language, and the edge makes the court read as an
+ * intentional landing space rather than a texture glitch. */
+function paintArrivalCourt(grid: TileGrid, centerX: number, centerY: number, floor: number) {
+  for (let dy = -3; dy <= 3; dy++) {
+    for (let dx = -3; dx <= 3; dx++) {
+      const x = centerX + dx;
+      const y = centerY + dy;
+      if (grid[y]?.[x] === undefined || isWall(grid[y][x])) continue;
+      grid[y][x] = (Math.abs(dx) === 3 || Math.abs(dy) === 3 || (dx + dy) % 4 === 0)
+        ? TILE_SIDEWALK
+        : floor;
+    }
+  }
 }
 
 const bridgeHash = (x: number, y: number, salt = 0) => ((x * 9283711) ^ (y * 6892871) ^ salt) >>> 0;
@@ -386,6 +409,10 @@ export function buildBridgeGrid(def: BridgeDef = getBridge(0)): TileGrid {
   const [ex, ey] = bridgeEastTile(def);
   carve(grid, wx, wy, style.path);
   carve(grid, ex, ey, style.path);
+  // Both ends are valid arrival points depending on travel direction. Keep their
+  // courts neutral even in undercity/meltdown biomes whose trail is neon purple.
+  paintArrivalCourt(grid, wx, wy, TILE_DIRT);
+  paintArrivalCourt(grid, ex, ey, TILE_DIRT);
   carve(grid, ...scaleTile(def.guideTile), style.flank);
   return grid;
 }
@@ -733,7 +760,16 @@ export function isVenueSizedZone(zone: string | null | undefined): boolean {
   );
 }
 
-/** Zones that still use the full safehouse floor plan. */
-export function isSafehouseSizedInterior(zone: string | null | undefined): boolean {
+/**
+ * THE PROVING ("vault") is an interior, but its floor plan is the dive maze, not the
+ * safehouse — `WorldDO.initZone` binds `buildDive()` + `DIVE_SPAWN` for it, and the server
+ * owns collision. It reads as a dive to every plan/spawn lookup, while `parseDiveZone`
+ * keeps rejecting it (`Number("ault")` is NaN) so it is not a v0–v6 instance.
+ *
+ * This used to answer "safehouse" for `vault`, which split the world in two: the client
+ * built a safehouse while the server collided against the maze, so runners walked through
+ * every dive wall locally and rubber-banded off open floor.
+ */
+export function isDivePlanInterior(zone: string | null | undefined): boolean {
   return zone === "vault";
 }

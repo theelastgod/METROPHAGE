@@ -7,7 +7,6 @@ import {
   IDENTITY_PANEL_KEY,
 } from "../assets/manifest";
 
-import { preferSolanaWallet } from "../economy/wallet";
 import { drawPanelFrame, ensureButtonStrip, ensurePanelImage } from "./panelChrome";
 import { dimBackdrop, uiDim, uiGap } from "./uiLayout";
 import { bodyFont, displayFont } from "./typography";
@@ -357,7 +356,7 @@ export default class WalletSignInPanel {
     );
     this.add(
       this.scene.add
-        .text(x + w - pad, cy + uiDim(11), "RH · ETH L2", bodyFont(9, { color: "#4e5568" }))
+        .text(x + w - pad, cy + uiDim(11), "SOL · MAINNET", bodyFont(9, { color: "#4e5568" }))
         .setOrigin(1, 0),
     );
     cy += headerH;
@@ -582,7 +581,7 @@ export default class WalletSignInPanel {
           .text(
             x + pad,
             footerY + uiDim(8),
-            preferSolanaWallet() ? "PHANTOM  ·  SOLANA" : "WALLETCONNECT  ·  ROBINHOOD CHAIN",
+            "PHANTOM  ·  SOLANA",
             bodyFont(8, { color: "#3d4454" }),
           )
           .setOrigin(0, 0),

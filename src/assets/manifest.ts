@@ -199,7 +199,13 @@ export const HF_INTERACT_PORTRAIT_SLUGS = [
   "amb_courier",
   "keep_den",
   "keep_citycenter",
+  "keep_hotel", "keep_ripperdoc", "keep_pawn", "keep_garage", "keep_arcade", "keep_radio",
 ] as const;
+export const HF_SERVICE_ICON_KEYS = [
+  "sleep", "heal", "pawn", "repair", "leaderboard", "radio_contract", "quest_pickup", "bounty",
+  "neural_implant", "armor", "weapon_upgrade", "credits", "heat", "subway_ticket", "district_marker", "boss_alert",
+] as const;
+export const HF_LOADING_KEYS = ["hf_loading_early_city", "hf_loading_subway", "hf_loading_hotel"] as const;
 /**
  * Resident portrait singles. The residents sheet holds 12 painted faces but there are 32
  * residents, and the sheet fallback matches on `sex` ALONE — skin, hair, build and beard
@@ -239,8 +245,9 @@ export const STINGER_BOSS_KEY = "stinger_boss";
 export const HF_PROP_KEYS = Array.from({ length: 12 }, (_, i) => "hf_prop_" + String(i + 1).padStart(2, "0"));
 /** Higgsfield top-down landmark building props (tools/higgsfield-building-build.mjs). */
 export const HF_BUILDING_SLUGS = [
-  "bar", "clinic", "subway", "shop",
+  "bar", "noodle", "clinic", "subway", "shop",
   "guild", "hotel", "stadium", "citycenter", "home", "den",
+  "ripperdoc", "pawn", "arcade", "garage", "radio",
 ] as const;
 /** District exterior kits (NEON CORE / SPRAWL / UNDERCITY / … + wishlist unique kits). */
 export const HF_DIST_BUILDING_SLUGS = [
@@ -280,6 +287,34 @@ export const HF_SUBWAY_PROP_KEYS = [
   "hf_enemy_tunnel_centipede",
   "hf_enemy_platform_husk",
 ] as const;
+const numberedKeys = (prefix: string, count: number): string[] =>
+  Array.from({ length: count }, (_, i) => `${prefix}_${String(i + 1).padStart(2, "0")}`);
+/** Large second-pass UNDERLINE pack: fixtures plus full-frame structure skins. */
+export const HF_SUBWAY_EXPANSION_PROP_KEYS = [
+  ...numberedKeys("hf_subway_fixture", 20), ...numberedKeys("hf_subway_debris", 16),
+  ...numberedKeys("hf_subway_signalset", 12), ...numberedKeys("hf_subway_maintenance", 12),
+  ...numberedKeys("hf_subway_platformprop", 16), ...numberedKeys("hf_subway_horror", 12),
+] as const;
+export const HF_SUBWAY_IDENTITY_PROP_KEYS = [
+  "hf_subway_identity_ticket_shrine", "hf_subway_identity_flood_pump", "hf_subway_identity_quarantine_gate",
+  "hf_subway_identity_signal_altar", "hf_subway_identity_scavenger_camp", "hf_subway_identity_escalator_collapse",
+  "hf_subway_identity_memorial_marker", "hf_subway_identity_train_nose", "hf_subway_identity_route_frame",
+  "hf_subway_identity_warning_cluster", "hf_subway_identity_cable_bundle", "hf_subway_identity_vent_fan",
+  "hf_subway_identity_pipe_manifold", "hf_subway_identity_emergency_cabinet", "hf_subway_identity_signal_repeater",
+  "hf_subway_identity_service_hatch",
+] as const;
+export const HF_BUSINESS_PROP_KEYS = [
+  "hf_business_surgical_chair", "hf_business_scanner_arm", "hf_business_implant_cabinet", "hf_business_organ_cooler",
+  "hf_business_appraisal_scanner", "hf_business_display_case", "hf_business_arcade_cabinet", "hf_business_vr_chair",
+  "hf_business_vehicle_lift", "hf_business_engine_block", "hf_business_welding_station", "hf_business_drone_cradle",
+  "hf_business_mixing_console", "hf_business_transmitter_rack", "hf_business_sleep_pod", "hf_business_reception_terminal",
+] as const;
+export const HF_SUBWAY_TILE_KEYS = [
+  ...numberedKeys("hf_subway_tile_straight", 25), ...numberedKeys("hf_subway_tile_junction", 18),
+  ...numberedKeys("hf_subway_tile_cross", 12), ...numberedKeys("hf_subway_tile_station", 24),
+  ...numberedKeys("hf_subway_tile_curve", 40), ...numberedKeys("hf_subway_tile_service", 39),
+  ...numberedKeys("hf_subway_tile_stationdeep", 40), ...numberedKeys("hf_subway_tile_track", 25),
+] as const;
 /** Per-district street clutter (signature props + expanse extras). */
 export const HF_DIST_PROP_KEYS = [
   "hf_distprop_plaza_drone", "hf_distprop_plaza_tape", "hf_distprop_plaza_booth",
@@ -314,10 +349,12 @@ export const HF_LAYOUT_PLATE_KEYS = HF_LAYOUT_PLATE_TAGS.map(layoutPlateKey);
 
 /** Interior room floor plates (structure matched to venue kind). */
 export const HF_INT_ROOM_KEYS = [
-  "hf_int_bar_room", "hf_int_clinic_room", "hf_int_shop_room", "hf_int_guild_room",
+  "hf_int_bar_room", "hf_int_noodle_room", "hf_int_clinic_room", "hf_int_shop_room", "hf_int_guild_room",
   "hf_int_den_room", "hf_int_home_room", "hf_int_home_room_b",
   "hf_int_subway_room", "hf_int_stadium_room",
   "hf_int_citycenter_room", "hf_int_estate_room",
+  "hf_int_ripperdoc_room", "hf_int_pawn_room", "hf_int_arcade_room",
+  "hf_int_garage_room", "hf_int_radio_room", "hf_int_hotel_room",
 ] as const;
 /** Contagion-damaged district kits — scenery art for an outbreak district. */
 export const HF_DIST_INF_KEYS = [
@@ -346,6 +383,37 @@ export const HF_WORLD_PROP_KEYS = [
   "hf_prop_cart_barricade", "hf_prop_holo_pole", "hf_prop_manhole_glow", "hf_prop_wanted_pole",
   "hf_prop_credit_pile", "hf_prop_puddle_neon", "hf_prop_subway_kiosk",
 ] as const;
+/** First-three-hours city density pack: market, neon, residential, industrial and story props. */
+export const HF_EARLY_WORLD_PROP_KEYS = [
+  ...numberedKeys("hf_city_market", 12), ...numberedKeys("hf_city_neon", 12),
+  ...numberedKeys("hf_city_residential", 10), ...numberedKeys("hf_city_industrial", 10),
+  ...numberedKeys("hf_city_slum", 10), ...numberedKeys("hf_city_corporate", 8),
+  ...numberedKeys("hf_city_landmark", 8), "hf_city_oddity_01",
+  ...numberedKeys("hf_early_landmark", 8), ...numberedKeys("hf_early_furniture", 8),
+  ...numberedKeys("hf_early_vendor", 8), ...numberedKeys("hf_early_storyprop", 8),
+] as const;
+/** Curated web-unlimited hero props generated as a single sharp contact sheet. */
+export const HF_WEB_CITY_PROP_KEYS = [
+  "hf_web_city_transit_kiosk", "hf_web_city_civic_clock", "hf_web_city_district_marker",
+  "hf_web_city_checkpoint_arch", "hf_web_city_memorial_wall", "hf_web_city_public_terminal",
+  "hf_web_city_fountain", "hf_web_city_antenna", "hf_web_city_noodle_cart",
+  "hf_web_city_battery_stall", "hf_web_city_salvage_table", "hf_web_city_water_recycler",
+  "hf_web_city_courier_locker", "hf_web_city_community_heater", "hf_web_city_transformer",
+  "hf_web_city_generator",
+] as const;
+/** Full-frame district ground plates plus atlas-derived repeating floor materials. */
+export const HF_GROUND_PLATE_KEYS = [
+  "hf_ground_city_spawn", "hf_ground_downtown", "hf_ground_stacks", "hf_ground_spire",
+  "hf_ground_docks", "hf_ground_undercity", "hf_ground_relay", "hf_ground_wastes", "hf_ground_core",
+] as const;
+export const HF_GROUND_TILE_KEYS = [
+  ...numberedKeys("hf_ground_spawn_tile", 16),
+  ...numberedKeys("hf_ground_city_tile", 16),
+  ...numberedKeys("hf_ground_progress_tile", 16),
+  ...numberedKeys("hf_ground_interior_tile", 16),
+  ...numberedKeys("hf_ground_subway_tile", 16),
+  ...numberedKeys("hf_ground_wilderness_tile", 16),
+] as const;
 /** Hub plaza landmarks + furniture. */
 export const HF_LANDMARK_KEYS = [
   "hf_landmark_fountain", "hf_landmark_fountain_b", "hf_landmark_crucible",
@@ -372,12 +440,18 @@ export const HF_BUILDING_VARIANT_KEYS = [
   "hf_building_home_b", "hf_building_home_c",
   "hf_building_den_b", "hf_building_den_c",
   "hf_building_subway_b", "hf_building_hotel_b",
+  "hf_building_noodle_b", "hf_building_noodle_c", "hf_building_subway_c",
+  "hf_building_hotel_c", "hf_building_stadium_b", "hf_building_stadium_c",
+  "hf_building_citycenter_b", "hf_building_citycenter_c",
+  ...["ripperdoc", "pawn", "arcade", "garage", "radio"].flatMap((s) => [`hf_building_${s}_b`, `hf_building_${s}_c`]),
 ] as const;
 /** District kit multivariants. */
 export const HF_DIST_BUILDING_VARIANT_KEYS = [
   "hf_building_dist_core_b", "hf_building_dist_sprawl_b", "hf_building_dist_undercity_b",
   "hf_building_dist_docks_b", "hf_building_dist_stacks_b", "hf_building_dist_spire_b",
   "hf_building_dist_wastes_b", "hf_building_dist_relay_b", "hf_building_dist_helios_b",
+  ...["core", "sprawl", "undercity", "docks", "stacks", "spire", "wastes", "relay", "helios"].map((s) => `hf_building_dist_${s}_c`),
+  ...["market", "park", "corporate", "arcology", "kernel"].flatMap((s) => [`hf_building_dist_${s}_b`, `hf_building_dist_${s}_c`]),
 ] as const;
 
 /** Pick base or _b/_c variant by stable salt when textures exist. */
@@ -505,7 +579,10 @@ export const ASSETS: Record<string, AssetEntry[]> = {
     ...MUSIC_TRACKS.filter((t) => t.url && t.env === "menu").map((t) => ({ key: t.key, file: t.url! })),
   ],
   // Real item icons — load before the procedural bake so they win (see ICON_NAMES above).
-  icons: ICON_NAMES.map((n) => ({ key: "icon_" + n, file: "assets/icons/" + n + ".png" })),
+  icons: [
+    ...ICON_NAMES.map((n) => ({ key: "icon_" + n, file: "assets/icons/" + n + ".png" })),
+    ...HF_SERVICE_ICON_KEYS.map((n) => ({ key: "hf_service_" + n, file: "assets/icons/hf_service_" + n + ".png" })),
+  ],
   // Real street props (CyberPunk pack + generated neon props + CC0 city vehicles).
   props: [
     { key: PROP_STREETLIGHT_KEY, file: "assets/objects/prop_streetlight.png" },
@@ -534,8 +611,17 @@ export const ASSETS: Record<string, AssetEntry[]> = {
     ...HF_DIST_INF_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
     // Wishlist + expanse packs — missing files skip silently at load (BootScene loaderror).
     ...HF_SUBWAY_PROP_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
+    ...HF_SUBWAY_EXPANSION_PROP_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
+    ...HF_SUBWAY_IDENTITY_PROP_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
+    ...HF_BUSINESS_PROP_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
+    ...HF_SUBWAY_TILE_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
     ...HF_DIST_PROP_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
     ...HF_WORLD_PROP_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
+    ...HF_EARLY_WORLD_PROP_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
+    ...HF_WEB_CITY_PROP_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
+    ...HF_GROUND_PLATE_KEYS.map((k) => ({ key: k, file: "assets/tilesets/" + k + ".png" })),
+    ...HF_GROUND_TILE_KEYS.map((k) => ({ key: k, file: "assets/tilesets/" + k + ".png" })),
+    ...HF_LOADING_KEYS.map((key) => ({ key, file: `assets/ui/${key}.png` })),
     ...HF_LANDMARK_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
     ...HF_WILD_PROP_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
     ...HF_DUNGEON_PROP_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
@@ -571,4 +657,130 @@ export function faceFrame(vx: number, vy: number): number {
 /** Flat list of every declared asset. */
 export function allAssets(): AssetEntry[] {
   return Object.values(ASSETS).flat();
+}
+
+/** Large world-only packs do not block the title/cold-open boot. */
+export const DEFERRED_WORLD_CATEGORIES = new Set(["props", "decals", "interior"]);
+
+const assetSet = (...groups: ReadonlyArray<ReadonlyArray<string>>): Set<string> =>
+  new Set(groups.flatMap((g) => [...g]));
+
+// One authored exterior per kind is enough to establish identity at zone entry.
+// Variant siblings remain available for future background streaming, but decoding
+// every sibling before first play recreated the original boot wall.
+const GENERAL_BUILDINGS = assetSet(HF_BUILDING_KEYS);
+const GENERIC_WORLD = assetSet(HF_PROP_KEYS);
+
+// Campaign order is NOT HF_DIST_BUILDING_KEYS order. Keep this explicit: index-based
+// routing loaded Sprawl art for Anduril Yards, then the renderer requested Stacks and
+// found nothing, leaving scenery footprints as bare roof tiles.
+const DISTRICT_ART_KITS: ReadonlyArray<ReadonlyArray<string>> = [
+  ["hf_building_dist_core"],
+  ["hf_building_dist_stacks"],
+  ["hf_building_dist_spire"],
+  ["hf_building_dist_docks"],
+  ["hf_building_dist_undercity"],
+  ["hf_building_dist_relay"],
+  ["hf_building_dist_wastes"],
+  ["hf_building_dist_kernel", "hf_building_dist_core"],
+];
+
+/** Deterministic daily gallery: every generated asset enters rotation without forcing
+ * phones to decode the entire expansion pack on one zone transition. */
+function dailyArtSelection(keys: ReadonlyArray<string>, max: number): string[] {
+  if (keys.length <= max) return [...keys];
+  const day = Math.floor(Date.now() / 86_400_000);
+  const start = Math.abs(day * 37) % keys.length;
+  const step = 31; // coprime with the current pack sizes; distributes themes, not runs
+  const picked: string[] = [];
+  const seen = new Set<number>();
+  for (let i = 0; picked.length < max && i < keys.length * 2; i++) {
+    const at = (start + i * step) % keys.length;
+    if (!seen.has(at)) { seen.add(at); picked.push(keys[at]); }
+  }
+  return picked;
+}
+
+/**
+ * World art required by one logical zone. Missing packs still use procedural
+ * fallbacks, but unrelated subway/wilderness/interior art is no longer decoded.
+ */
+export function deferredWorldAssetsForZone(zone: string): AssetEntry[] {
+  const wanted = new Set<string>();
+  // Small authored vehicles/decals/machines are shared and cheap enough to keep.
+  for (const a of [...ASSETS.props, ...ASSETS.decals, ...ASSETS.interior]) {
+    if (!a.key.startsWith("hf_")) wanted.add(a.key);
+  }
+  for (const key of GENERIC_WORLD) wanted.add(key);
+
+  const add = (keys: ReadonlyArray<string>) => keys.forEach((k) => wanted.add(k));
+  const logical = zone || "tutorial";
+  const district = /^d(\d+)$/.exec(logical);
+  const venue = /^d\d+i\d+$/.test(logical) || /^h\d+$/.test(logical) || /^(bar|clinic|shop|den)$/.test(logical);
+
+  if (logical === "safe") {
+    add([...GENERAL_BUILDINGS]);
+    add(dailyArtSelection(HF_BUILDING_VARIANT_KEYS, 22));
+    add(dailyArtSelection(HF_DIST_BUILDING_VARIANT_KEYS, 12));
+    add(HF_ENV_KIT_KEYS);
+    add(HF_WORLD_PROP_KEYS);
+    add(dailyArtSelection(HF_EARLY_WORLD_PROP_KEYS, 48));
+    add(HF_WEB_CITY_PROP_KEYS);
+    add(["hf_ground_city_spawn"]);
+    add(numberedKeys("hf_ground_city_tile", 16));
+    add(numberedKeys("hf_ground_progress_tile", 16));
+    add(["hf_loading_early_city"]);
+  } else if (district) {
+    add([...GENERAL_BUILDINGS]);
+    add(dailyArtSelection(HF_BUILDING_VARIANT_KEYS, 18));
+    const i = Math.max(0, Math.min(DISTRICT_ART_KITS.length - 1, Number(district[1]) || 0));
+    const districtKits = DISTRICT_ART_KITS[i] ?? DISTRICT_ART_KITS[0];
+    add(districtKits);
+    for (const kit of districtKits) {
+      add(HF_DIST_BUILDING_VARIANT_KEYS.filter((k) => k.startsWith(kit + "_")));
+      const infectedKit = `${kit}_inf`;
+      if ((HF_DIST_INF_KEYS as readonly string[]).includes(infectedKit)) add([infectedKit]);
+    }
+    add(HF_INF_BUILDING_KEYS);
+    add(HF_DIST_PROP_KEYS);
+    add(HF_WORLD_PROP_KEYS);
+    add(dailyArtSelection(HF_EARLY_WORLD_PROP_KEYS, 40));
+    add(HF_WEB_CITY_PROP_KEYS);
+    const groundDistrictIds = ["downtown", "stacks", "spire", "docks", "undercity", "relay", "wastes", "core"];
+    const groundDistrictId = groundDistrictIds[Math.max(0, Number(district[1]) || 0)];
+    if (groundDistrictId) add([`hf_ground_${groundDistrictId}`]);
+    add(numberedKeys("hf_ground_city_tile", 16));
+    add(numberedKeys("hf_ground_progress_tile", 16));
+    add(HF_LANDMARK_KEYS);
+  } else if (logical === "subway") {
+    add(HF_SUBWAY_PROP_KEYS);
+    // Mobile Safari/Phantom can kill the WebGL context when the zone handoff tries
+    // to decode the entire 160MB generated subway library in one preload. Keep the
+    // authored structural essentials, then rotate a compact gallery per day. The
+    // render pass already skips unloaded variants and falls back to the base modules.
+    add(dailyArtSelection(HF_SUBWAY_EXPANSION_PROP_KEYS, 10));
+    add(dailyArtSelection(HF_SUBWAY_IDENTITY_PROP_KEYS, 6));
+    add(dailyArtSelection(HF_SUBWAY_TILE_KEYS, 14));
+    add(dailyArtSelection(numberedKeys("hf_ground_subway_tile", 16), 4));
+    add(dailyArtSelection(numberedKeys("hf_ground_progress_tile", 16), 2));
+    add(["hf_loading_subway"]);
+    add(HF_DUNGEON_PROP_KEYS);
+  } else if (logical === "estates" || /^est\d+$/.test(logical)) {
+    add(HF_ESTATE_KEYS);
+    add(HF_FURN_KEYS);
+  } else if (venue) {
+    add(HF_INT_ROOM_KEYS);
+    add(HF_BUSINESS_PROP_KEYS);
+    add(numberedKeys("hf_ground_interior_tile", 16));
+    add(["hf_loading_hotel"]);
+    add(HF_FURN_KEYS);
+  } else if (/^(w\d+|b\d+)$/.test(logical)) {
+    add(HF_WILD_BIOME_KEYS);
+    add(HF_WILD_PROP_KEYS);
+    add(numberedKeys("hf_ground_wilderness_tile", 16));
+  } else if (/^(v\d+|dive)/.test(logical)) {
+    add(HF_DUNGEON_PROP_KEYS);
+  }
+
+  return [...ASSETS.props, ...ASSETS.decals, ...ASSETS.interior].filter((a) => wanted.has(a.key));
 }

@@ -37,6 +37,27 @@ export function dailyDistrictMod(district: number, day = dayIndex()): DistrictMo
   return DISTRICT_MODS[(((district * 5 + day) % DISTRICT_MODS.length) + DISTRICT_MODS.length) % DISTRICT_MODS.length];
 }
 
+/** In-world version of today's modifier for district bar patrons. Keeps the fiction and
+ * the mechanical numbers on the same deterministic source of truth. */
+export function districtBarIntelLine(district: number, day = dayIndex()): string {
+  const mod = dailyDistrictMod(district, day);
+  const pay = Math.round((mod.creditMult - 1) * 100);
+  const payout = pay > 0 ? `bounties are up ${pay}%` : pay < 0 ? `bounties are down ${Math.abs(pay)}%` : "bounties pay flat";
+  const lead: Record<string, string> = {
+    surge: "Corp's buying fear wholesale today.",
+    lockdown: "Garrison plated up before dawn.",
+    ghostgrid: "Silent units on every corner. Watch reflections.",
+    overclock: "Whole block's running hot enough to cook wire.",
+    brownout: "Half the grid is asleep. So is the payroll.",
+    acid_rain: "Rain's chewing chrome and slowing boots.",
+    drone_swarm: "Sky's full of cheap wings and cheaper guns.",
+    signal_jolt: "Grid keeps skipping frames. The hunters do too.",
+    curfew: "Heavy armor owns the streets after the bell.",
+    contagion_bloom: "Green flecks in the vents. Don't breathe deep.",
+  };
+  return `${lead[mod.id] ?? mod.blurb} ${payout}.`;
+}
+
 // ── HIGH-VALUE TARGET ────────────────────────────────────────────────────────
 /** Payout multiplier for downing the day's HVT (credits + XP). */
 export const HVT_BOUNTY_MULT = 25;

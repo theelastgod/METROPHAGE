@@ -123,12 +123,11 @@ describe("venue kind resolution (client and server must agree)", () => {
     });
   });
 
-  it("a kind with no art room still falls back to the legacy plan", () => {
-    // `hotel` has no hf_int_*_room baked, so it must keep the hash-picked layout.
+  it("the hotel resolves to its dedicated sleep-pod interior", () => {
     const hotelIdx = ONLINE_CITY.buildings.findIndex((b) => b.kind === "hotel");
     expect(hotelIdx, "expected a hotel in the hub").toBeGreaterThanOrEqual(0);
-    expect(venueLayoutFor(`h${hotelIdx}`).art).toBeUndefined();
-    expect(venueLayoutFor(`h${hotelIdx}`).counter).toBeTruthy();
+    expect(venueLayoutFor(`h${hotelIdx}`).art).toBe("hf_int_hotel_room");
+    expect(venueLayoutFor(`h${hotelIdx}`).counter).toBeUndefined();
   });
 
   it("grids are deterministic — the server's build equals the client's", () => {

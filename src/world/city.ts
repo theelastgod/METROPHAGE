@@ -153,6 +153,12 @@ export type BuildingKind =
   | "guild"
   | "clinic"
   | "bar"
+  | "noodle"
+  | "ripperdoc"
+  | "pawn"
+  | "arcade"
+  | "garage"
+  | "radio"
   | "hospital" // full heal + cure (the low-HP loop)
   | "hotel" // rest to recover
   | "subway" // metro — gateway to the underground (combat dungeon)
@@ -175,19 +181,25 @@ export function roofTileForKind(kind: BuildingKind, env: Env): number {
     case "home":
       return TILE_WALL_RES;
     case "den":
+    case "arcade":
       return TILE_WALL_SLUM;
     case "guild":
+    case "garage":
+    case "radio":
     case "subway":
       return TILE_WALL_IND;
     case "shop":
+    case "pawn":
       // NOT TILE_MARKET / TILE_NEON — those are walkable GROUND tiles; as roofs they
       // let players stroll on top of every shop and bar in the city (both the client
       // and the server share this grid, so collision agreed with the stroll). The
       // facade paint + rooftop lights carry each kind's look — the roof must be wall.
       return ENV[env].wall;
     case "bar":
+    case "noodle":
       return TILE_WALL_SLUM;
     case "clinic":
+    case "ripperdoc":
       return TILE_WALL_CORP;
     case "stadium":
       return TILE_WALL;
@@ -256,7 +268,10 @@ function fill(grid: TileGrid, r: Rect, tile: number) {
     for (let x = r.x1; x <= r.x2; x++) if (grid[y]?.[x] !== undefined) grid[y][x] = tile;
 }
 
-const KINDS: BuildingKind[] = ["home", "home", "shop", "bar", "clinic", "den", "guild", "home", "shop"];
+const KINDS: BuildingKind[] = [
+  "home", "shop", "bar", "clinic", "den", "guild", "noodle",
+  "ripperdoc", "pawn", "arcade", "garage", "radio",
+];
 
 /** Block column/row ranges between the avenues (the gaps the city fills with blocks). */
 function blockRanges(size: number): Array<[number, number]> {
@@ -303,12 +318,30 @@ export function buildCity(seed = 1337, w = CITY_W, h = CITY_H): CityMap {
   const cx = Math.round(w / 2);
   const cy = Math.round(h / 2);
   const plazas: Rect[] = [];
-  // The plaza must always contain the hand-placed hub fixtures (venue doors at ±12 x,
-  // citizen NPCs at +14 y, mining nodes) so none strand inside a building after a shrink.
-  const plazaRx = Math.max(14, Math.round(w * 0.022));
-  const plazaRy = Math.max(16, Math.round(h * 0.019));
+  // Compact visual square around spawn. A separate invisible reserve below keeps nearby
+  // buildings away from service approaches without making the whole area read as plaza.
+  const plazaRx = 6;
+  const plazaRy = 5;
   const central: Rect = { x1: cx - plazaRx, y1: cy - plazaRy, x2: cx + plazaRx, y2: cy + plazaRy };
-  fill(grid, central, TILE_PLAZA);
+  const plazaReserve: Rect = { x1: cx - 14, y1: cy - 16, x2: cx + 14, y2: cy + 16 };
+
+  // Civic paving only: dark sidewalk frame, clean concrete court, asphalt inlay and
+  // crosswalk arms. Do not use TILE_PLAZA/TILE_NEON here — both carry the saturated
+  // purple nightlife treatment and made the safe civic square read like a nightclub.
+  fill(grid, central, TILE_SIDEWALK);
+  fill(grid, { x1: cx - 5, y1: cy - 4, x2: cx + 5, y2: cy + 4 }, TILE_FLOOR);
+  fill(grid, { x1: cx - 2, y1: cy - 1, x2: cx + 2, y2: cy + 1 }, TILE_LANE);
+  fill(grid, { x1: cx - 1, y1: cy - 5, x2: cx + 1, y2: cy + 5 }, TILE_CROSSWALK);
+  fill(grid, { x1: cx - 6, y1: cy - 1, x2: cx + 6, y2: cy + 1 }, TILE_CROSSWALK);
+  // Small utility-grate corners keep the civic floor materially varied without
+  // reintroducing the saturated purple plaza/neon tiles.
+  for (const [gx, gy] of [[cx - 5, cy - 4], [cx + 5, cy - 4], [cx - 5, cy + 4], [cx + 5, cy + 4]] as const) {
+    grid[gy][gx] = TILE_GRATE;
+  }
+  // South deploy and north-east Fixer approaches extend beyond the compact square.
+  fill(grid, { x1: cx - 1, y1: cy + 8, x2: cx + 1, y2: cy + 14 }, TILE_SIDEWALK);
+  fill(grid, { x1: cx + 8, y1: cy - 10, x2: cx + 12, y2: cy - 8 }, TILE_SIDEWALK);
+  fill(grid, { x1: cx + 10, y1: cy - 12, x2: cx + 12, y2: cy - 9 }, TILE_SIDEWALK);
   plazas.push(central);
 
   const buildings: CityBuilding[] = [];
@@ -322,6 +355,7 @@ export function buildCity(seed = 1337, w = CITY_W, h = CITY_H): CityMap {
     [cx, cy - 4],
   ];
   let bid = 0;
+  const usedKindByEnv = new Set<string>();
 
   /** Drop an env-typed prop on a walkable tile (skips walls / out-of-bounds). */
   const placeProp = (env: Env, tx: number, ty: number) => {
@@ -337,7 +371,7 @@ export function buildCity(seed = 1337, w = CITY_W, h = CITY_H): CityMap {
     for (const [bx1, bx2] of cols) {
       if (bx2 - bx1 < 3 || ry2 - ry1 < 3) continue;
       // skip the central plaza block
-      if (bx1 <= central.x2 && bx2 >= central.x1 && ry1 <= central.y2 && ry2 >= central.y1) continue;
+      if (bx1 <= plazaReserve.x2 && bx2 >= plazaReserve.x1 && ry1 <= plazaReserve.y2 && ry2 >= plazaReserve.y1) continue;
 
       const mcx = (bx1 + bx2) / 2;
       const mcy = (ry1 + ry2) / 2;
@@ -372,7 +406,16 @@ export function buildCity(seed = 1337, w = CITY_W, h = CITY_H): CityMap {
       if (ix2 - ix1 < 2 || iy2 - iy1 < 2) continue;
       fill(grid, { x1: ix1, y1: iy1, x2: ix2, y2: iy2 }, pal.wall);
 
-      const kind = KINDS[(bid + Math.floor(roll * 100)) % KINDS.length];
+      const startKind = (bid + Math.floor(roll * 100)) % KINDS.length;
+      let kind = KINDS[startKind];
+      for (let offset = 0; offset < KINDS.length; offset++) {
+        const candidate = KINDS[(startKind + offset) % KINDS.length];
+        if (!usedKindByEnv.has(`${env}:${candidate}`)) {
+          kind = candidate;
+          break;
+        }
+      }
+      usedKindByEnv.add(`${env}:${kind}`);
       // EVERY hub building is enterable now (walk in, meet its resident). Still consume the
       // roll so the rest of the deterministic layout is unchanged.
       rand();
@@ -392,11 +435,32 @@ export function buildCity(seed = 1337, w = CITY_W, h = CITY_H): CityMap {
     }
   }
 
-  // Promote the nearest enterable homes into the unique landmarks (hospital, hotel,
+  // The regular avenue grid's nearest block begins 16+ tiles from the spawn. That is
+  // acceptable on desktop, but a slightly zoomed mobile camera showed only paving and
+  // made the hub look as if its city art had failed to load. Add a restrained inner
+  // civic ring: three small, enterable structures outside the service portals. These
+  // use the exact same shared collision/building metadata as every other hub façade.
+  const innerCivicRects: Rect[] = [
+    { x1: cx - 3, y1: cy - 10, x2: cx + 3, y2: cy - 7 },
+    { x1: cx - 11, y1: cy - 3, x2: cx - 7, y2: cy + 3 },
+    { x1: cx + 7, y1: cy - 3, x2: cx + 11, y2: cy + 3 },
+  ];
+  for (const [i, rect] of innerCivicRects.entries()) {
+    const env: Env = "downtown";
+    const kind: BuildingKind = (["citycenter", "hotel", "hospital"] as const)[i];
+    fill(grid, rect, roofTileForKind(kind, env));
+    const door: [number, number] = [Math.round((rect.x1 + rect.x2) / 2), rect.y2];
+    grid[door[1]][door[0]] = TILE_SIDEWALK;
+    if (!isWall(grid[door[1] + 1]?.[door[0]])) grid[door[1] + 1][door[0]] = TILE_SIDEWALK;
+    buildings.push({ rect, door, kind, env, id: `civic_${i}` });
+    npcSpots.push([door[0], door[1] + 1]);
+  }
+
+  // Promote the nearest enterable buildings into the unique landmarks (hospital, hotel,
   // subway, stadium, civic spire) so each exists exactly once, close to the plaza.
   const distToCentre = (b: CityBuilding) =>
     ((b.rect.x1 + b.rect.x2) / 2 - cx) ** 2 + ((b.rect.y1 + b.rect.y2) / 2 - cy) ** 2;
-  const homes = buildings.filter((b) => b.door && b.kind === "home").sort((a, b) => distToCentre(a) - distToCentre(b));
+  const homes = buildings.filter((b) => b.door).sort((a, b) => distToCentre(a) - distToCentre(b));
   LANDMARK_KINDS.forEach((lk, i) => {
     if (homes[i]) homes[i].kind = lk;
   });
@@ -500,6 +564,12 @@ export const INTERIOR_NAMES: Record<BuildingKind, string> = {
   guild: "RUNNERS' GUILD",
   clinic: "MED-CLINIC",
   bar: "THE FERAL CAT",
+  noodle: "MAMA TSE'S NOODLES",
+  ripperdoc: "SPLICE CLINIC",
+  pawn: "NIX EXCHANGE",
+  arcade: "GHOST ARCADE",
+  garage: "WREN'S GARAGE",
+  radio: "PIRATE RADIO",
   hospital: "HELIX GENERAL",
   hotel: "THE NEON ROOST",
   subway: "METRO — THE UNDERLINE",
@@ -512,12 +582,18 @@ function interiorDims(kind: BuildingKind): { w: number; h: number } {
   switch (kind) {
     case "bar":
       return { w: 24, h: 14 }; // long counter hall
+    case "noodle":
+      return { w: 18, h: 18 }; // square kitchen + booth room
     case "clinic":
+    case "ripperdoc":
     case "hospital":
       return { w: 22, h: 15 }; // ward depth
     case "shop":
+    case "pawn":
       return { w: 21, h: 14 }; // aisle length
     case "guild":
+    case "garage":
+    case "radio":
       return { w: 22, h: 15 }; // war-table center
     case "subway":
       return { w: 24, h: 15 }; // turnstile + track strip
@@ -526,6 +602,7 @@ function interiorDims(kind: BuildingKind): { w: number; h: number } {
     case "citycenter":
       return { w: 22, h: 15 }; // fountain lobby
     case "den":
+    case "arcade":
       return { w: 18, h: 13 }; // tight backroom
     case "hotel":
       return { w: 20, h: 14 };

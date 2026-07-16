@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { ASSETS } from "../assets/manifest";
+import { ASSETS, DEFERRED_WORLD_CATEGORIES } from "../assets/manifest";
 import { generatePlaceholders } from "../assets/textures";
 import { applyTextureFilters } from "../assets/textureFilters";
 import { ensureItemIcons } from "../assets/itemIcons";
@@ -46,6 +46,7 @@ export default class BootScene extends Phaser.Scene {
     });
 
     for (const [category, list] of Object.entries(ASSETS)) {
+      if (DEFERRED_WORLD_CATEGORIES.has(category)) continue;
       for (const a of list) {
         if (!a.file) continue;
         if (category === "audio") {

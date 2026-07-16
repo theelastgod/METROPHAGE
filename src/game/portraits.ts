@@ -204,6 +204,12 @@ export function portraitFor(id: string, sex?: string): PortraitRef {
   if (CAST[id] !== undefined) return { key: PORTRAIT_CAST_KEY, frame: CAST[id] };
   // Interact singles beat sheet frames for named service NPCs.
   if (INTERACT[id] !== undefined) return preferInteractSingle(id, INTERACT[id]);
+  // Expansion keepers (hotel, ripperdoc, pawn, garage, arcade, radio) have authored
+  // singles but no cell in the legacy 12-face keeper sheet. Check the shipped-single
+  // roster before KEEPERS so overlapping ids such as keep_hotel use their real art.
+  if ((HF_INTERACT_PORTRAIT_SLUGS as readonly string[]).includes(id)) {
+    return { key: portraitInteractKey(id), frame: 0 };
+  }
   if (KEEPERS[id] !== undefined) return { key: PORTRAIT_KEEPERS_KEY, frame: KEEPERS[id] };
   if (RESIDENTS[id] !== undefined) return { key: PORTRAIT_RESIDENTS_KEY, frame: RESIDENTS[id] };
   if (id.startsWith("keep_")) {

@@ -191,6 +191,20 @@ export interface FurniturePiece {
   y: number; // tile y within the room
 }
 
+/** Catalogue value of a validated layout. Unknown ids contribute nothing. */
+export function furnitureLayoutValue(pieces: readonly FurniturePiece[]): number {
+  return pieces.reduce((sum, p) => sum + (furnitureKind(p.k)?.price ?? 0), 0);
+}
+
+/** Server-side furnishing charge. Moving pieces is free, removing them gives no refund,
+ * and only a positive increase over the home's currently saved layout burns credits. */
+export function furnitureUpgradeCost(
+  saved: readonly FurniturePiece[],
+  draft: readonly FurniturePiece[],
+): number {
+  return Math.max(0, furnitureLayoutValue(draft) - furnitureLayoutValue(saved));
+}
+
 /**
  * Default asking price for a never-owned estate (credits).
  *
@@ -208,9 +222,8 @@ export interface FurniturePiece {
  * plot always quotes the constant (`e.owner ? e.price : ESTATE_BASE_PRICE`), never a
  * stale D1 row, so all 20 plots reprice the moment this lands.
  *
- * ⚠ Repeatable boss bounties (bounties.ts `marek_grudge` ₵900/boss, 30s respawn, no
- * cooldown) can clear ~₵80k/hr and would reduce this to well under an hour. That loop
- * has to be capped for this price to mean what it says.
+ * Boss bounties are durably limited to one payout per job per 24 hours, so their
+ * rewards cannot collapse this ownership horizon through respawn farming.
  */
 export const ESTATE_BASE_PRICE = 60_000;
 

@@ -7,7 +7,7 @@ import { prefersMobileUx } from "../systems/Mobile";
  * screens. HUD stays on the separate zoom-1 UI camera (unchanged).
  * Slight on purpose — too high crops combat FOV badly.
  */
-export const MOBILE_WORLD_ZOOM = 1.18;
+export const MOBILE_WORLD_ZOOM = 1.24;
 
 /**
  * Supersampled rendering with an isolated UI layer.

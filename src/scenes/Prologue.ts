@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { VIEW_W, VIEW_H, COLORS, uiDim } from "../config";
 import { applyMenuNeon } from "../render/ensureNeon";
+import { playDeployTeaser } from "../ui/DeployTeaser";
 import type { Customization } from "../game/customization";
 import { getClass } from "../game/classes";
 import MusicDirector from "../audio/MusicDirector";
@@ -226,7 +227,14 @@ export default class Prologue extends Phaser.Scene {
       t.on("pointerdown", () => {
         if (!this.acting) return;
         this.deployTutorial(mode);
-        transitionTo(this, "Online", { zone: "tutorial", tutorialMode: mode }, { style: "deploy", accent: 0x00e5ff });
+        playDeployTeaser(this, () => {
+          transitionTo(
+            this,
+            "Online",
+            { zone: "tutorial", tutorialMode: mode },
+            { style: "deploy", accent: 0x00e5ff },
+          );
+        });
       });
       this.tweens.add({ targets: [t, s], alpha: 1, duration: 400, delay: 200 });
     };

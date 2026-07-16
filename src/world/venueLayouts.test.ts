@@ -8,7 +8,7 @@ import {
   hashVenueLayoutFor,
   isWall,
 } from "./district";
-import { buildVenueRoom, venueLayoutFor, venueSpawnFor } from "./rooms";
+import { ROOM_PLANS, buildVenueRoom, venueLayoutFor, venueSpawnFor } from "./rooms";
 import { TILE } from "../config";
 
 /** Flood fill from a tile; returns the set of reachable floor tiles. */
@@ -27,6 +27,26 @@ function reachable(grid: number[][], sx: number, sy: number): Set<string> {
 }
 
 describe("venue floor plans (shared client/server geometry)", () => {
+  it("every art-traced room has one connected, walkable floor", () => {
+    for (const [kind, L] of Object.entries(ROOM_PLANS)) {
+      if (!L) continue;
+      const g = buildVenueRoomFromLayout(L);
+      const [mx, my] = L.mat;
+      expect(isWall(g[my][mx]), `${kind}: mat is a wall`).toBe(false);
+      expect(isWall(g[my - 1][mx]), `${kind}: spawn tile is a wall`).toBe(false);
+      const region = reachable(g, mx, my);
+      for (const [sx, sy] of L.seats) {
+        expect(isWall(g[sy][sx]), `${kind}: seat ${sx},${sy} is a wall`).toBe(false);
+        expect(region.has(`${sx},${sy}`), `${kind}: seat ${sx},${sy} unreachable`).toBe(true);
+      }
+      let floors = 0;
+      for (let y = 0; y < L.h; y++) {
+        for (let x = 0; x < L.w; x++) if (!isWall(g[y][x])) floors++;
+      }
+      expect(region.size, `${kind}: sealed-off floor pocket`).toBe(floors);
+    }
+  });
+
   it("every layout: mat + spawn + all seats walkable and mat-reachable", () => {
     for (const L of VENUE_LAYOUTS) {
       const g = buildVenueRoomFromLayout(L);

@@ -37,6 +37,8 @@
     "gen:music:local": "node tools/gen-music-local.mjs"
   },
   "dependencies": {
+    "@reown/appkit": "^1.8.22",
+    "@reown/appkit-adapter-solana": "^1.8.22",
     "@solana/spl-token": "^0.4.15",
     "@solana/web3.js": "^1.98.4",
     "@walletconnect/ethereum-provider": "^2.23.10",

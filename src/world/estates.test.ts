@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { sanitizeFurniture, furnitureFits, pieceAt, occupiedTiles, furnitureKind, type FurniturePiece } from "./estates";
+import { sanitizeFurniture, furnitureFits, pieceAt, occupiedTiles, furnitureKind, furnitureLayoutValue, furnitureUpgradeCost, type FurniturePiece } from "./estates";
 
 // Room is 15×11 with walls on the border → placeable tiles x 1..13, y 1..9; exit mat at [7,9].
 const bed = furnitureKind("bed")!; // 2×1
@@ -7,6 +7,16 @@ const rug = furnitureKind("rug")!; // 2×2
 const chair = furnitureKind("chair")!; // 1×1
 
 describe("furniture placement — footprint aware", () => {
+  it("charges only positive catalogue value added to the saved layout", () => {
+    const saved: FurniturePiece[] = [{ k: "bed", x: 1, y: 1 }];
+    expect(furnitureLayoutValue(saved)).toBe(64);
+    expect(furnitureUpgradeCost(saved, [{ k: "bed", x: 8, y: 4 }])).toBe(0); // move
+    expect(furnitureUpgradeCost(saved, [])).toBe(0); // remove, no refund
+    expect(furnitureUpgradeCost(saved, [...saved, { k: "chair", x: 4, y: 4 }])).toBe(24);
+    expect(furnitureUpgradeCost(saved, [{ k: "chair", x: 4, y: 4 }])).toBe(0); // downgrade
+    expect(furnitureUpgradeCost([], [{ k: "bogus", x: 2, y: 2 }])).toBe(0);
+  });
+
   it("keeps a piece's whole footprint inside the walls", () => {
     expect(furnitureFits(1, 1, chair)).toBe(true);
     expect(furnitureFits(13, 1, chair)).toBe(true); // last floor column

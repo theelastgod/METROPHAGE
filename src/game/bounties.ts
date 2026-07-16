@@ -5,6 +5,13 @@
 
 export type BountyObjective = "kill" | "collect" | "boss" | "hvt";
 
+export const BOSS_BOUNTY_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+
+export function bossBountyCooldownRemaining(completedAt: number, now = Date.now()): number {
+  if (!Number.isFinite(completedAt) || completedAt <= 0) return 0;
+  return Math.max(0, completedAt + BOSS_BOUNTY_COOLDOWN_MS - now);
+}
+
 export interface Bounty {
   id: string;
   npc: string; // the NPC id who gives it

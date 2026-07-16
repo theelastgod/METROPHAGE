@@ -10,15 +10,20 @@ import {
   buildDive,
   buildTutorial,
   buildBridgeGrid,
+  isDivePlanInterior,
+  isVenueSizedZone,
+  parseDiveZone,
   isWall,
   spawnPoint,
   SAFEHOUSE_SPAWN,
   SUBWAY_SPAWN,
   DIVE_SPAWN,
   districtBuildings,
+  TILE_NEON,
+  TILE_PLAZA,
 } from "./district";
-import { buildHomeRoom } from "./estates";
-import { BRIDGES } from "../game/bridges";
+import { buildHomeRoom, ESTATES, ESTATES_ZONE } from "./estates";
+import { BRIDGES, bridgeEastTile, bridgeWestTile } from "../game/bridges";
 import { ONLINE_CITY, CITY_HUB_SPAWN } from "./city";
 import { TUTORIAL_SPAWN } from "../game/tutorialLayout";
 
@@ -86,6 +91,53 @@ describe("resolveOpenSpawn never places inside walls", () => {
     });
   });
 
+  it("returns hub building exits to the exact façade doorway", () => {
+    ONLINE_CITY.buildings.forEach((b, i) => {
+      if (!b.door) return;
+      const p = spawnPointForTravel(ONLINE_CITY.grid, "safe", `h${i}`, undefined, CITY_HUB_SPAWN);
+      assertOpen(ONLINE_CITY.grid, resolveOpenSpawn(ONLINE_CITY.grid, p), `hub building h${i}`);
+      expect(Math.floor(p.x / TILE), `h${i} doorway x`).toBe(b.door[0]);
+      expect(Math.floor(p.y / TILE), `h${i} just south of doorway`).toBe(b.door[1] + 1);
+    });
+  });
+
+  it("returns estate interiors to their own doorstep", () => {
+    for (const plot of ESTATES.plots) {
+      const p = spawnPointForTravel(ESTATES.grid, ESTATES_ZONE, `est${plot.id}`);
+      assertOpen(ESTATES.grid, resolveOpenSpawn(ESTATES.grid, p), `estate ${plot.id}`);
+      expect([Math.floor(p.x / TILE), Math.floor(p.y / TILE)]).toEqual(plot.door);
+    }
+  });
+
+  it("returns named hub venues to their plaza portal", () => {
+    const [cx, cy] = ONLINE_CITY.spawn;
+    const entries: Array<[string, [number, number]]> = [
+      ["clinic", [cx - 4, cy - 6]],
+      ["shop", [cx + 4, cy - 6]],
+      ["bar", [cx - 4, cy + 6]],
+      ["den", [cx + 4, cy + 6]],
+      ["vault", [cx + 12, cy]],
+    ];
+    for (const [from, door] of entries) {
+      const p = spawnPointForTravel(ONLINE_CITY.grid, "safe", from, undefined, CITY_HUB_SPAWN);
+      assertOpen(ONLINE_CITY.grid, resolveOpenSpawn(ONLINE_CITY.grid, p), `hub venue ${from}`);
+      expect([Math.floor(p.x / TILE), Math.floor(p.y / TILE)]).toEqual(door);
+    }
+  });
+
+  it("keeps the city spawn plaza compact and visually multi-surface", () => {
+    const plaza = ONLINE_CITY.plazas[0];
+    expect(plaza.x2 - plaza.x1 + 1).toBeLessThanOrEqual(19);
+    expect(plaza.y2 - plaza.y1 + 1).toBeLessThanOrEqual(17);
+    const tiles = new Set<number>();
+    for (let y = plaza.y1; y <= plaza.y2; y++) {
+      for (let x = plaza.x1; x <= plaza.x2; x++) tiles.add(ONLINE_CITY.grid[y][x]);
+    }
+    expect(tiles.size).toBeGreaterThanOrEqual(4);
+    expect(tiles.has(TILE_PLAZA)).toBe(false);
+    expect(tiles.has(TILE_NEON)).toBe(false);
+  });
+
   /**
    * "Not a wall" is NOT enough. ARGUS SPIRE and ORBITAL RELAY both shipped a spawnTile
    * sitting inside a building footprint: buildGrid filled the tower, carve() opened the
@@ -122,6 +174,35 @@ describe("resolveOpenSpawn never places inside walls", () => {
     });
   });
 
+  it("every combat arrival has an open field-medic post", () => {
+    DISTRICTS.forEach((def) => {
+      const grid = buildGrid(def);
+      const [sx, sy] = def.spawnTile;
+      const spots: Array<[number, number]> = [
+        [sx * DISTRICT_SCALE + 7, sy * DISTRICT_SCALE - 4],
+        [sx * DISTRICT_SCALE - 7, sy * DISTRICT_SCALE - 4],
+        [sx * DISTRICT_SCALE + 7, sy * DISTRICT_SCALE + 4],
+        [sx * DISTRICT_SCALE - 7, sy * DISTRICT_SCALE + 4],
+      ];
+      expect(spots.some(([x, y]) => grid[y]?.[x] !== undefined && !isWall(grid[y][x])), `${def.id}: medic post`).toBe(true);
+    });
+  });
+
+  it("every combat arrival court is free of purple plaza/neon tiles", () => {
+    DISTRICTS.forEach((def) => {
+      const grid = buildGrid(def);
+      const sx = def.spawnTile[0] * DISTRICT_SCALE;
+      const sy = def.spawnTile[1] * DISTRICT_SCALE;
+      for (let dy = -3; dy <= 3; dy++) {
+        for (let dx = -3; dx <= 3; dx++) {
+          const tile = grid[sy + dy]?.[sx + dx];
+          if (tile === undefined || isWall(tile)) continue;
+          expect([TILE_PLAZA, TILE_NEON], `${def.id}: purple tile at ${dx},${dy}`).not.toContain(tile);
+        }
+      }
+    });
+  });
+
   it("no district's authored key tiles sit inside a building footprint", () => {
     DISTRICTS.forEach((def) => {
       const inside = (t: [number, number]) =>
@@ -155,6 +236,46 @@ describe("resolveOpenSpawn never places inside walls", () => {
       const grid = buildBridgeGrid(b);
       const p = spawnPointForTravel(grid, b.id, undefined);
       assertOpen(grid, resolveOpenSpawn(grid, p), b.id);
+    }
+  });
+
+  // THE PROVING is an interior whose plan is the dive maze. The client once resolved it to
+  // buildSafehouse() while WorldDO.initZone bound buildDive(), so the two sides disagreed
+  // about every wall in the zone. Both sides read the plan through isDivePlanInterior now.
+  it("routes THE PROVING to the dive plan the server builds, not the safehouse", () => {
+    expect(isDivePlanInterior("vault")).toBe(true);
+    // It must not be mistaken for a v0–v6 dive instance or a compact venue room.
+    expect(parseDiveZone("vault")).toBe(-1);
+    expect(isVenueSizedZone("vault")).toBe(false);
+
+    const dive = buildDive();
+    const safehouse = buildSafehouse();
+    const differs = dive.some((row, y) => row.some((t, x) => isWall(t) !== isWall(safehouse[y][x])));
+    expect(differs, "dive and safehouse must differ, else this test proves nothing").toBe(true);
+
+    // Arrive on the dive's entry pad, never the safehouse centre out in the maze.
+    const spawn = spawnPointForTravel(dive, "vault", "safe", undefined, DIVE_SPAWN);
+    assertOpen(dive, spawn, "vault travel spawn");
+    const entry = { x: DIVE_SPAWN.x / TILE, y: DIVE_SPAWN.y / TILE };
+    const at = { x: spawn.x / TILE, y: spawn.y / TILE };
+    expect(Math.hypot(at.x - entry.x, at.y - entry.y), "spawn must land near the dive entry pad").toBeLessThan(6);
+  });
+
+  it("both ends of every wilderness bridge have purple-free arrival courts", () => {
+    for (const b of BRIDGES) {
+      const grid = buildBridgeGrid(b);
+      for (const [label, [sx, sy]] of [
+        ["west", bridgeWestTile(b)],
+        ["east", bridgeEastTile(b)],
+      ] as const) {
+        for (let dy = -3; dy <= 3; dy++) {
+          for (let dx = -3; dx <= 3; dx++) {
+            const tile = grid[sy + dy]?.[sx + dx];
+            if (tile === undefined || isWall(tile)) continue;
+            expect([TILE_PLAZA, TILE_NEON], `${b.id} ${label}: purple tile at ${dx},${dy}`).not.toContain(tile);
+          }
+        }
+      }
     }
   });
 });

@@ -232,30 +232,32 @@ export function getActiveWalletConnectProvider(): EvmRequestProvider | null {
 }
 
 /**
- * Mobile deep-link fallback when WalletConnect project id is missing.
- * Opens the live page inside a wallet's in-app browser (injected ethereum).
+ * Mobile deep-link fallback when no injected provider is present.
+ * The production path opens Phantom's in-app browser for a Solana injector.
  */
-export function openInWalletBrowser(wallet: "metamask" | "phantom" | "coinbase" | "trust" = "metamask"): void {
-  if (typeof window === "undefined") return;
-  const url = window.location.href;
+export function walletBrowserUrl(
+  wallet: "metamask" | "phantom" | "coinbase" | "trust",
+  url: string,
+): string {
   const encoded = encodeURIComponent(url);
-  const hostPath = `${window.location.host}${window.location.pathname}${window.location.search}${window.location.hash}`;
-  let target: string;
+  const parsed = new URL(url);
+  const hostPath = `${parsed.host}${parsed.pathname}${parsed.search}${parsed.hash}`;
   switch (wallet) {
     case "phantom":
-      target = `https://phantom.app/ul/browse/${encoded}?ref=https://${window.location.host}`;
-      break;
+      return `https://phantom.app/ul/browse/${encoded}?ref=https://${parsed.host}`;
     case "coinbase":
-      target = `https://go.cb-w.com/dapp?cb_url=${encoded}`;
-      break;
+      return `https://go.cb-w.com/dapp?cb_url=${encoded}`;
     case "trust":
-      target = `https://link.trustwallet.com/open_url?coin_id=60&url=${encoded}`;
-      break;
+      return `https://link.trustwallet.com/open_url?coin_id=60&url=${encoded}`;
     case "metamask":
     default:
-      target = `https://metamask.app.link/dapp/${hostPath}`;
-      break;
+      return `https://metamask.app.link/dapp/${hostPath}`;
   }
+}
+
+export function openInWalletBrowser(wallet: "metamask" | "phantom" | "coinbase" | "trust" = "phantom"): void {
+  if (typeof window === "undefined") return;
+  const target = walletBrowserUrl(wallet, window.location.href);
   window.open(target, "_blank", "noopener,noreferrer");
 }
 

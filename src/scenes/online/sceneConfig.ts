@@ -98,7 +98,9 @@ export const CITY_HUB_NPCS: {
     name: "THE FIXER",
     tag: "THE WAKE", // campaign jobs — not the daily contracts board (J)
     color: 0x39ff88,
-    tile: hubT(8, 10),
+    // Story anchor lives on the quiet north-east edge of the plaza, not in the
+    // arrival square. The waypoint still leads new runners directly here.
+    tile: hubT(12, -12),
     look: hubLook({ color: 0x39ff88, head: "hood", skin: 0x4f3220, hair: "long", hairColor: 0xc7cdd8, cloak: "coat" }),
   },
   {
@@ -179,6 +181,9 @@ export const parseHubInterior = (zone: string): number | null => {
 /** Readable interior label per hub building kind. */
 export const HUB_INTERIOR_TITLE: Record<string, string> = {
   home: "RESIDENCE", shop: "SHOP", bar: "BAR", clinic: "CLINIC", den: "DEN",
+  noodle: "MAMA TSE'S NOODLES",
+  ripperdoc: "SPLICE CLINIC", pawn: "NIX EXCHANGE", arcade: "GHOST ARCADE",
+  garage: "WREN'S GARAGE", radio: "PIRATE RADIO",
   guild: "GUILD HALL", hotel: "HOTEL", hospital: "HOSPITAL", subway: "▼ UNDERLINE",
   stadium: "ARENA LOBBY", citycenter: "CITY HALL",
 };
@@ -189,7 +194,7 @@ export const HUB_INTERIOR_TITLE: Record<string, string> = {
  * (vendor / heal / stash / forge / market / underground subway / …), not just flavour talk.
  */
 export type VenueStaff = {
-  /** openService key, or specials: "heal" | "meal" | "subway". */
+  /** openService key, or specials: "heal" | "meal" | "rest" | "subway". */
   svc: string;
   name: string;
   tag: string;
@@ -201,6 +206,10 @@ export type VenueStaff = {
 
 export function venueStaffFor(kind: string): VenueStaff[] {
   switch (kind) {
+    case "pawn":
+      return [{ svc: "vendor", name: "NIX", tag: "EXCHANGE", color: 0xf7ff3c, look: hubLook({ color: 0xf7ff3c, head: "hood", skin: 0x7c4f30, hair: "undercut", faceMark: "tattoo", cloak: "coat" }), npcId: "keep_pawn" }];
+    case "garage":
+      return [{ svc: "forge", name: "WREN", tag: "TUNE / FORGE", color: 0x8bff6a, look: hubLook({ color: 0x8bff6a, sex: "f", head: "cap", hair: "ponytail", gloves: "wraps" }), npcId: "keep_garage" }];
     case "shop":
       return [
         {
@@ -255,6 +264,8 @@ export function venueStaffFor(kind: string): VenueStaff[] {
           }),
         },
       ];
+    case "arcade":
+      return [{ svc: "board", name: "ECHO", tag: "SCORES", color: 0xb06bff, look: hubLook({ color: 0xb06bff, sex: "f", hair: "long", hairColor: 0xff2bd6, visor: "scan" }), npcId: "keep_arcade" }];
     case "den":
       return [
         {
@@ -266,6 +277,8 @@ export function venueStaffFor(kind: string): VenueStaff[] {
           npcId: "keep_den",
         },
       ];
+    case "radio":
+      return [{ svc: "contracts", name: "MOTH", tag: "PIRATE SIGNAL", color: 0x29e7ff, look: hubLook({ color: 0x29e7ff, sex: "f", hair: "braids", hairColor: 0x9dff3c, antennae: true }), npcId: "keep_radio" }];
     case "bar":
       return [
         {
@@ -277,6 +290,19 @@ export function venueStaffFor(kind: string): VenueStaff[] {
           npcId: "keep_bar",
         },
       ];
+    case "noodle":
+      return [
+        {
+          svc: "meal",
+          name: "MAMA TSE",
+          tag: "HOT BROTH",
+          color: 0xffb13c,
+          look: hubLook({ color: 0xffb13c, skin: 0xc98a5e, hair: "bun", hairColor: 0x1b1820, gloves: "wraps" }),
+          npcId: "keep_noodle",
+        },
+      ];
+    case "ripperdoc":
+      return [{ svc: "heal", name: "SPLICE", tag: "CHROME / PATCH", color: 0x8dfff0, look: hubLook({ color: 0x8dfff0, skin: 0x7c4f30, hair: "undercut", visor: "scan", decal: "cross" }), npcId: "keep_ripperdoc" }];
     case "clinic":
       return [
         {
@@ -302,7 +328,7 @@ export function venueStaffFor(kind: string): VenueStaff[] {
     case "hotel":
       return [
         {
-          svc: "meal",
+          svc: "rest",
           name: "CONCIERGE",
           tag: "REST",
           color: 0xff79c6,
@@ -354,6 +380,9 @@ export const hexColor = (color: number) => `#${(color & 0xffffff).toString(16).p
 /** Door accent per hub building kind. */
 export const HUB_DOOR_COLOR: Record<string, number> = {
   home: 0xffb13c, shop: 0x00e5ff, bar: 0x9dff3c, clinic: 0x39ff88, den: 0xff2bd6,
+  noodle: 0xffb13c,
+  ripperdoc: 0x8dfff0, pawn: 0xf7ff3c, arcade: 0xb06bff,
+  garage: 0x8bff6a, radio: 0x29e7ff,
   guild: 0x4d8cff, hotel: 0xff79c6, hospital: 0x8dfff0, subway: 0xff3b6b,
   stadium: 0xf7ff3c, citycenter: 0xb06bff,
 };

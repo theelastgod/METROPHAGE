@@ -4,6 +4,25 @@ import { ESTATES } from "./estates";
 import { isWall } from "./district";
 
 describe("city hub collision (shared client/server grid)", () => {
+  it("shows a real building ring inside the mobile spawn viewport", () => {
+    const [sx, sy] = ONLINE_CITY.spawn;
+    const nearest = Math.min(...ONLINE_CITY.buildings.map((b) =>
+      Math.hypot(
+        Math.max(b.rect.x1 - sx, 0, sx - b.rect.x2),
+        Math.max(b.rect.y1 - sy, 0, sy - b.rect.y2),
+      ),
+    ));
+    expect(nearest).toBeLessThanOrEqual(7);
+  });
+  it("does not repeat a business kind inside the same city environment", () => {
+    const seen = new Set<string>();
+    for (const b of ONLINE_CITY.buildings) {
+      if (["hospital", "hotel", "subway", "stadium", "citycenter"].includes(b.kind)) continue;
+      const key = `${b.env}:${b.kind}`;
+      expect(seen.has(key), `duplicate ${key}`).toBe(false);
+      seen.add(key);
+    }
+  });
   it("no building roof is walkable — only its door opening", () => {
     const { grid, buildings } = ONLINE_CITY;
     for (const b of buildings) {

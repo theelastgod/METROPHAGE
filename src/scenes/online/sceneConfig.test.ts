@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ONLINE_CITY } from "../../world/city";
 import {
   DISTRICT_VENUE_TITLE,
+  CITY_HUB_NPCS,
   HUB_CX,
   HUB_CY,
   districtBuildingKind,
@@ -33,6 +34,13 @@ describe("online scene configuration", () => {
   it("anchors hub offsets to the authored city spawn", () => {
     expect([HUB_CX, HUB_CY]).toEqual(ONLINE_CITY.spawn);
     expect(hubT(-3, 5)).toEqual([ONLINE_CITY.spawn[0] - 3, ONLINE_CITY.spawn[1] + 5]);
+  });
+
+  it("keeps the Fixer away from the central arrival footprint", () => {
+    const fixer = CITY_HUB_NPCS.find((npc) => npc.svc === "contracts");
+    expect(fixer).toBeTruthy();
+    expect(Math.hypot(fixer!.tile[0] - HUB_CX, fixer!.tile[1] - HUB_CY)).toBeGreaterThan(15);
+    expect(ONLINE_CITY.grid[fixer!.tile[1]]?.[fixer!.tile[0]]).toBeDefined();
   });
 
   it("derives district gates from actual grid dimensions", () => {

@@ -10,6 +10,12 @@ import type { BuildingKind } from "../world/city";
  *  fall back to the procedural façade. hospital reuses the clinic art (green cross). */
 export const BUILDING_SPRITE: Partial<Record<BuildingKind, string>> = {
   bar: "hf_building_bar",
+  noodle: "hf_building_noodle",
+  ripperdoc: "hf_building_ripperdoc",
+  pawn: "hf_building_pawn",
+  arcade: "hf_building_arcade",
+  garage: "hf_building_garage",
+  radio: "hf_building_radio",
   clinic: "hf_building_clinic",
   hospital: "hf_building_clinic",
   subway: "hf_building_subway",
@@ -26,6 +32,11 @@ export const BUILDING_SPRITE: Partial<Record<BuildingKind, string>> = {
  *  and subject — infected swaps in on the same footprint. */
 export const BUILDING_INFECTED: Partial<Record<BuildingKind, string>> = {
   bar: "hf_building_inf_bar",
+  ripperdoc: "hf_building_inf_clinic",
+  pawn: "hf_building_inf_shop",
+  arcade: "hf_building_inf_den",
+  garage: "hf_building_inf_guild",
+  radio: "hf_building_inf_citycenter",
   clinic: "hf_building_inf_clinic",
   hospital: "hf_building_inf_clinic",
   shop: "hf_building_inf_shop",

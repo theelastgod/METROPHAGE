@@ -13,6 +13,8 @@ import {
   HF_WILD_PROP_KEYS,
 } from "../assets/manifest";
 import { isWall, TILE_DIRT, TILE_GRASS, TILE_WATER, TILE_NEON, TILE_LANE, type TileGrid } from "../world/district";
+import { generatedAssetScale } from "./generatedAssetSizing";
+import { hasPropWallClearance } from "./propClearance";
 
 const hash = (x: number, y: number, salt = 0) => ((x * 73856093) ^ (y * 19349663) ^ salt) >>> 0;
 
@@ -82,7 +84,9 @@ function placeProp(
 ): Phaser.GameObjects.Image | null {
   if (!scene.textures.exists(key)) return null;
   groundShadow(scene, x, y + 8, depth, scale * 0.65, 0.22);
-  return scene.add.image(x, y, key).setOrigin(0.5, originY).setDepth(depth).setScale(scale).setAlpha(alpha);
+  const image = scene.add.image(x, y, key).setOrigin(0.5, originY).setDepth(depth).setAlpha(alpha);
+  image.setScale(generatedAssetScale(key, image.width, image.height, scale));
+  return image;
 }
 
 /**
@@ -107,6 +111,10 @@ export function scatterWildernessProps(
     for (let tx = 2; tx < W - 2; tx++) {
       const t = row[tx];
       if (isWall(t) || t === TILE_WATER) continue;
+      // Generated wilderness cutouts are taller/wider than their anchor tile. Give
+      // ruins the same clearance guarantee as city buildings so props cannot paint
+      // across their walls or roofs.
+      if (!hasPropWallClearance(grid, tx, ty)) continue;
       const h = hash(tx, ty, profile.salt);
       // declutter: thin the overall junk field (~60% fewer props) so trails and
       // clearings read clean instead of wall-to-wall salvage. Deterministic per tile.

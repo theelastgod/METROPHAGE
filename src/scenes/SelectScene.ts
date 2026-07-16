@@ -50,13 +50,14 @@ import {
 import { ensureGuestDeviceSecret, readGuestDeviceSecret } from "../net/NetClient";
 import { metroApiBase, isEvmAddress } from "../economy/metro";
 import { prefersMobileUx } from "../systems/Mobile";
+import { playDeployTeaser } from "../ui/DeployTeaser";
 
 type MenuPhase = "wallet" | "returning" | "create" | "guest_returning";
 
 /**
  * Title screen — full-bleed layout.
  * Guest multiplayer: callsign + device secret → full server save, no wallet.
- * Wallet: optional permanent identity (WalletConnect / MetaMask / Phantom); returning players skip customize.
+ * Wallet: optional permanent Solana identity (Phantom); returning players skip customize.
  */
 export default class SelectScene extends Phaser.Scene {
   private hover = -1;
@@ -73,6 +74,7 @@ export default class SelectScene extends Phaser.Scene {
   private actionLayer!: Phaser.GameObjects.Container;
   private classLayer!: Phaser.GameObjects.Container;
   private preview?: Phaser.GameObjects.Image;
+  private deploying = false;
 
   constructor() {
     super("Select");
@@ -88,6 +90,11 @@ export default class SelectScene extends Phaser.Scene {
   create() {
     const boot = document.getElementById("boot");
     if (boot) boot.remove();
+
+    // Phaser reuses the scene instance, so field initializers only run once per page.
+    // Without this reset the guard stayed true after the first deploy and every later
+    // return to the menu (death, disconnect, character switch) left DEPLOY inert.
+    this.deploying = false;
 
     this.cameras.main.setBackgroundColor(COLORS.bgVoid);
     installMenuCameras(this);
@@ -357,16 +364,16 @@ export default class SelectScene extends Phaser.Scene {
     this.walletPanel.show({
       step: "connect",
       status: "ready",
-      statusText: mobile ? "WalletConnect · free sign-in" : `WalletConnect · ${walletChoiceList()} · free sign-in`,
-      headline: "Connect your wallet",
+      statusText: mobile ? "Phantom · free Solana sign-in" : `${walletChoiceList()} · free Solana sign-in`,
+      headline: "Connect Phantom",
       body: mobile
-        ? "Any wallet — free sign-in, no gas. Or play free with a device save."
-        : `Sign up with any wallet — ${walletChoiceProse()}, and more. Free message (no gas). Your runner is permanently bound to your address across devices. Prefer no wallet? Play free with a device-locked multiplayer save.`,
+        ? "Phantom signs one free Solana message. Or play free with a device save."
+        : `Sign in with ${walletChoiceProse()}. The signature is free—no transaction and no gas. Your runner is permanently bound to that Solana address across devices. Prefer no wallet? Play free with a device-locked multiplayer save.`,
       wallet: null,
       actions: this.walletActions([
         {
-          label: "◈ CONNECT WALLET",
-          sub: mobile ? "WalletConnect · free message" : `${walletChoiceList()} · free message`,
+          label: "◈ CONNECT PHANTOM",
+          sub: mobile ? "open Phantom · free message" : `${walletChoiceList()} · free message`,
           color: COLORS.neonGreen,
           primary: true as const,
           fn: () => void this.onMetaMaskSignUp(),
@@ -387,8 +394,8 @@ export default class SelectScene extends Phaser.Scene {
     this.walletPanel.show({
       step: "connect",
       status: "busy",
-      statusText: "awaiting wallet · WalletConnect",
-      headline: "Check your wallet",
+      statusText: "awaiting Phantom · Solana",
+      headline: "Check Phantom",
       body: `Approve the connection in ${walletChoiceProse()}. Then sign a free login message — no gas. Your runner is permanently bound to this address.`,
       wallet: connectedWallet(),
       actions: [],
@@ -1368,17 +1375,20 @@ export default class SelectScene extends Phaser.Scene {
   }
 
   private deployOnline(zone: string, tutorialMode?: "quick" | "full") {
-    if (this.options?.isOpen) return;
+    if (this.options?.isOpen || this.deploying) return;
+    this.deploying = true;
     if (tutorialMode) {
       updateSettings({ tutorialMode });
       this.registry.set("tutorialMode", tutorialMode);
     }
-    transitionTo(
-      this,
-      "Online",
-      { zone, tutorialMode: tutorialMode ?? getSettings().tutorialMode },
-      { style: "deploy", accent: 0x39ff88 },
-    );
+    playDeployTeaser(this, () => {
+      transitionTo(
+        this,
+        "Online",
+        { zone, tutorialMode: tutorialMode ?? getSettings().tutorialMode },
+        { style: "deploy", accent: 0x39ff88 },
+      );
+    });
   }
 
   private drawFrames() {

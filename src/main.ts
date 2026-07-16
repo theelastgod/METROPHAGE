@@ -32,9 +32,11 @@ import { mountMetroPanel } from "./ui/MetroPanel";
 import { getOnlinePlayer } from "./economy/session";
 import { randomCustomization } from "./game/customization";
 import { installClientUpdateWatch } from "./systems/ClientUpdate";
+import { showBetaNotice } from "./ui/BetaNotice";
 
 // Mobile landscape: FIT shows the full game (no crop). ENVELOP used to fill the
 // screen by clipping HUD/world edges — that was the "cut off" bug on phones.
+showBetaNotice();
 const mobile = prefersMobileUx();
 
 /** Pin #game-root to the real visible phone viewport (handles URL-bar show/hide). */
@@ -49,15 +51,13 @@ function sizeMobileRoot() {
   root.style.top = `${top}px`;
   root.style.right = "auto";
   root.style.bottom = "auto";
-  // Keep html/body in lockstep so iOS Safari doesn't leave letterbox gutters.
-  try {
-    document.documentElement.style.width = `${w}px`;
-    document.documentElement.style.height = `${h}px`;
-    document.body.style.width = `${w}px`;
-    document.body.style.height = `${h}px`;
-  } catch {
-    /* ignore */
-  }
+  // Do not freeze html/body to the current pixel dimensions. Phantom and other
+  // wallet webviews reuse that layout box after rotation, which can leave the
+  // page permanently portrait even though visualViewport is landscape.
+  document.documentElement.style.removeProperty("width");
+  document.documentElement.style.removeProperty("height");
+  document.body.style.removeProperty("width");
+  document.body.style.removeProperty("height");
 }
 
 // Assigned after Phaser.Game construction — resize handlers guard on this.
@@ -170,6 +170,10 @@ if (mobile && typeof window !== "undefined") {
   window.addEventListener("resize", () => refreshMobileScale());
   window.visualViewport?.addEventListener("resize", () => refreshMobileScale());
   window.visualViewport?.addEventListener("scroll", () => refreshMobileScale());
+  window.addEventListener("pageshow", delayedRefresh);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") delayedRefresh();
+  });
   try {
     window.matchMedia("(orientation: landscape)").addEventListener("change", delayedRefresh);
   } catch {

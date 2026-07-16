@@ -263,6 +263,30 @@ body:has(#metro-panel.open) #metro-fab{opacity:0;pointer-events:none;transform:n
   #metro-panel .notice:not(.warn):not(.ok){display:none}
   #metro-panel button,#metro-panel input{min-height:40px}
 }
+/* Landscape phones are commonly wider than 700px, so they miss the width-based
+   bottom-sheet rules above. Clamp the card to the actual safe viewport on all four
+   sides and let only its body scroll; no control can land beyond the visible page. */
+@media (orientation:landscape) and (max-height:600px){
+  .mp-mobile #metro-panel{
+    top:max(4px,env(safe-area-inset-top,0px));
+    right:max(4px,env(safe-area-inset-right,0px));
+    bottom:max(4px,env(safe-area-inset-bottom,0px));
+    left:max(4px,env(safe-area-inset-left,0px));
+    width:auto;max-width:none;height:auto;max-height:none;padding-bottom:0;
+    border:1px solid rgba(0,229,255,.92);border-radius:10px
+  }
+  .mp-mobile #metro-panel .head{padding:8px 12px}
+  .mp-mobile #metro-panel .sub{display:none}
+  .mp-mobile #metro-panel .body{min-height:0;padding:8px 12px;overflow-y:auto}
+  .mp-mobile #metro-panel .pool-band{padding:8px;margin-bottom:6px}
+  .mp-mobile #metro-panel .pool-value{font-size:18px}
+  .mp-mobile #metro-panel .hero-dep{padding:8px;margin-bottom:6px}
+  .mp-mobile #metro-panel .hero-dep .steps,.mp-mobile #metro-panel .metrics{display:none}
+  .mp-mobile #metro-panel .section{margin-top:8px;padding-top:8px}
+  .mp-mobile #metro-panel .notice:not(.warn):not(.ok){display:none}
+  .mp-mobile #metro-panel button,.mp-mobile #metro-panel input{min-height:38px}
+  .mp-mobile #metro-panel .status{padding:7px 12px;font-size:9px}
+}
 @media (max-width:380px){
   #metro-panel .metrics{grid-template-columns:1fr 1fr}
   #metro-panel .metrics .metric:last-child{grid-column:1 / -1}
@@ -1031,7 +1055,11 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
   };
 
   const refresh = async () => {
-    void refreshPool();
+    // Awaited: the account read below branches on `pool.settlement` to decide whether to
+    // sign. Fire-and-forget left `pool` null on the first open, so the POST went out
+    // unsigned, came back 401, and the panel showed "—" everywhere plus a bogus "wallet
+    // sign-in required" until the user hit Refresh again.
+    await refreshPool();
     const player = getPlayerId();
     $("m-player").textContent = player ?? "— (log in online)";
     if (!player) {
@@ -1226,7 +1254,14 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
   }
 
   // One-click deposit: Solana SPL (Phantom) or legacy ERC-20 (MetaMask)
+  // Latched: this fires a REAL on-chain transfer. Unguarded, a double-tap (easy on a
+  // laggy canvas or a phone) queued two wallet approvals and sent two transfers, but both
+  // callbacks write the one #m-txsig field — so only the last signature was ever claimed
+  // and the other deposit's tokens sat in the treasury with no client path to recover.
+  let sending = false;
   $("m-send").onclick = async () => {
+    if (sending) return;
+    const sendBtn = $("m-send") as HTMLButtonElement;
     const treasury = pool?.treasury || $("m-treasury").dataset.full;
     const amount = Number(($("m-dep-amt") as HTMLInputElement).value);
     if (!treasury) return status("refresh — no treasury address yet");
@@ -1237,12 +1272,28 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
     }
     if (pool?.simLocked || pool?.dangerousSim) return status("bridge locked — cannot deposit while settlement is sim");
 
-    if (solPrimary || metroIsSolana || !metroIsEvm) {
-      if (!solanaWalletAvailable() && connectedChain() === "evm") {
-        return status("connect Phantom (Solana) for SPL deposits");
+    sending = true;
+    sendBtn.disabled = true;
+    try {
+      if (solPrimary || metroIsSolana || !metroIsEvm) {
+        if (!solanaWalletAvailable() && connectedChain() === "evm") {
+          return status("connect Phantom (Solana) for SPL deposits");
+        }
+        status("approve $METRO transfer in Phantom (you pay SOL fee)…");
+        const sent = await sendSplDeposit({ treasury, amount, rpc: metroRpc() });
+        if (!sent.ok || !sent.txHash) {
+          status(`✗ ${sent.reason ?? "send failed"}`);
+          return;
+        }
+        ($("m-txsig") as HTMLInputElement).value = sent.txHash;
+        status("tx sent — waiting a few seconds then claiming deposit…");
+        await new Promise((r) => setTimeout(r, 4000));
+        ($("m-deposit") as HTMLButtonElement).click();
+        return;
       }
-      status("approve $METRO transfer in Phantom (you pay SOL fee)…");
-      const sent = await sendSplDeposit({ treasury, amount, rpc: metroRpc() });
+
+      status("approve $METRO transfer in MetaMask (you pay RH ETH gas)…");
+      const sent = await sendErc20Deposit({ treasury, amount });
       if (!sent.ok || !sent.txHash) {
         status(`✗ ${sent.reason ?? "send failed"}`);
         return;
@@ -1251,19 +1302,10 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
       status("tx sent — waiting a few seconds then claiming deposit…");
       await new Promise((r) => setTimeout(r, 4000));
       ($("m-deposit") as HTMLButtonElement).click();
-      return;
+    } finally {
+      sending = false;
+      sendBtn.disabled = false;
     }
-
-    status("approve $METRO transfer in MetaMask (you pay RH ETH gas)…");
-    const sent = await sendErc20Deposit({ treasury, amount });
-    if (!sent.ok || !sent.txHash) {
-      status(`✗ ${sent.reason ?? "send failed"}`);
-      return;
-    }
-    ($("m-txsig") as HTMLInputElement).value = sent.txHash;
-    status("tx sent — waiting a few seconds then claiming deposit…");
-    await new Promise((r) => setTimeout(r, 4000));
-    ($("m-deposit") as HTMLButtonElement).click();
   };
 
   $("m-deposit").onclick = async () => {

@@ -8,14 +8,18 @@ import {
   HF_FURN_KEYS,
   HF_WILD_PROP_KEYS,
   HF_DUNGEON_PROP_KEYS,
+  HF_SUBWAY_EXPANSION_PROP_KEYS,
+  HF_SUBWAY_IDENTITY_PROP_KEYS,
+  HF_SUBWAY_TILE_KEYS,
   GLOW_KEY,
   pickHfVariant,
   layoutPlateKey,
 } from "../assets/manifest";
 import type { SubwayStation } from "../world/subway";
-import { subwayStationTier } from "../world/subway";
+import { subwayStationTier, subwayTunnelArtModules } from "../world/subway";
 import type { BuildingKind } from "../world/city";
 import { layoutTagForRoom, type VenueLayoutTag } from "../world/district";
+import { generatedAssetScale, generatedReferencePx } from "./generatedAssetSizing";
 
 function place(
   scene: Phaser.Scene,
@@ -28,15 +32,17 @@ function place(
   glow = false,
   tint = 0xffffff,
   originY = 0.85,
+  rotation = 0,
 ) {
   if (!scene.textures.exists(key)) return null;
   const img = scene.add
     .image(x, y, key)
     .setDepth(depth)
     .setOrigin(0.5, originY)
-    .setScale(scale)
     .setAlpha(alpha)
-    .setTint(tint);
+    .setTint(tint)
+    .setRotation(rotation);
+  img.setScale(generatedAssetScale(key, img.width, img.height, scale, generatedReferencePx(key)));
   if (glow) {
     scene.add
       .image(x, y - 4, GLOW_KEY)
@@ -47,6 +53,15 @@ function place(
       .setAlpha(0.18);
   }
   return img;
+}
+
+function liveKey(scene: Phaser.Scene, keys: ReadonlyArray<string>, salt: number): string | null {
+  if (!keys.length) return null;
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[Math.abs(salt + i) % keys.length];
+    if (scene.textures.exists(key)) return key;
+  }
+  return null;
 }
 
 function exists(scene: Phaser.Scene, key: string) {
@@ -128,6 +143,10 @@ export function dressSubwayWishlistArt(scene: Phaser.Scene, stations: SubwayStat
     const px = st.tx * TILE + TILE / 2;
     const py = st.ty * TILE + TILE / 2;
 
+    const stationTileFamily = tier >= 2 ? "hf_subway_tile_stationdeep_" : "hf_subway_tile_station_";
+    const stationTile = liveKey(scene, HF_SUBWAY_TILE_KEYS.filter((k) => k.startsWith(stationTileFamily)), salt);
+    if (stationTile) place(scene, stationTile, px, py, depth - 0.25, 0.9, 0.42, false, 0xffffff, 0.5);
+
     // Floor apron under platform (structure plate)
     place(scene, apron, px, py, depth - 0.15, 1.05, 0.75, false, 0xffffff, 0.5);
     place(scene, platform, px, py, depth, 0.95, 0.92, false, 0xffffff, 0.55);
@@ -165,6 +184,19 @@ export function dressSubwayWishlistArt(scene: Phaser.Scene, stations: SubwayStat
       place(scene, "hf_enemy_ticket_specter", px, py - TILE * 5, depth + 0.12, 0.85, 0.9, true, 0xff2bd6);
       place(scene, "hf_subway_train_dead_b", px - TILE * 8, py - TILE, depth + 0.05, 0.8, 0.88);
     }
+
+    // Second-pass station storytelling: distinct fixtures around the chamber edges.
+    // These are non-colliding dressing and stay off the central traversal cross.
+    const stationProps = [...HF_SUBWAY_EXPANSION_PROP_KEYS, ...HF_SUBWAY_IDENTITY_PROP_KEYS].filter((k) =>
+      tier >= 2 ? true : !k.includes("horror"),
+    );
+    const spots = [
+      [-5, -4], [5, -4], [-5, 4], [5, 4], [-3, -6], [3, 6],
+    ] as const;
+    spots.forEach(([dx, dy], i) => {
+      const key = liveKey(scene, stationProps, salt + i * 19);
+      if (key) place(scene, key, px + dx * TILE, py + dy * TILE, depth + 0.16, 0.52, 0.94, key.includes("signal") || key.includes("horror"), st.accent);
+    });
   }
 
   if (hub) {
@@ -184,19 +216,37 @@ export function dressSubwayWishlistArt(scene: Phaser.Scene, stations: SubwayStat
     }
   }
 
-  const majors = stations.filter((s) => s.major);
-  for (let i = 0; i < majors.length - 1; i++) {
-    const a = majors[i];
-    const b = majors[i + 1];
-    const mx = ((a.tx + b.tx) / 2) * TILE + TILE / 2;
-    const my = ((a.ty + b.ty) / 2) * TILE + TILE / 2;
-    const key =
-      i % 3 === 0
-        ? "hf_subway_tunnel_junction"
-        : i % 3 === 1
-          ? "hf_subway_tunnel_cross"
-          : "hf_subway_tunnel_straight";
-    place(scene, key, mx, my, depth - 0.1, 0.7, 0.55, false, 0xffffff, 0.5);
+  // These continuous descriptors are the actual tunnel map modules. buildSubway()
+  // carves the same footprints; this pass paints structure first, before scattered
+  // fixtures, debris, enemies and lighting are layered above it.
+  for (const m of subwayTunnelArtModules()) {
+    const salt = m.tx * 31 + m.ty * 17;
+    const families = m.key.includes("straight")
+      ? ["hf_subway_tile_straight_", "hf_subway_tile_curve_", "hf_subway_tile_track_", "hf_subway_tile_service_"]
+      : m.key.includes("cross")
+        ? ["hf_subway_tile_cross_"]
+        : ["hf_subway_tile_junction_"];
+    const generated = liveKey(scene, HF_SUBWAY_TILE_KEYS.filter((k) => families.some((p) => k.startsWith(p))), salt);
+    // New plates are authored with the rail running north/south; legacy plates run
+    // west/east. Offset generated rotation by one quarter-turn to match the carved path.
+    const turns = generated ? ((m.quarterTurns + 1) % 4) : m.quarterTurns;
+    const plate = place(
+      scene,
+      generated ?? m.key,
+      m.tx * TILE + TILE / 2,
+      m.ty * TILE + TILE / 2,
+      depth - 0.1,
+      0.7,
+      0.55,
+      false,
+      0xffffff,
+      0.5,
+      turns * (Math.PI / 2),
+    );
+    if (plate) {
+      const turned = turns % 2 === 1;
+      plate.setDisplaySize((turned ? m.h : m.w) * TILE, (turned ? m.w : m.h) * TILE);
+    }
   }
 }
 
@@ -212,6 +262,11 @@ const FURN_BY_KIND: Record<string, string[]> = {
   subway: ["hf_furn_terminal", "hf_furn_locker", "hf_furn_neon_lamp"],
   stadium: ["hf_furn_war_table", "hf_furn_locker", "hf_furn_neon_lamp"],
   citycenter: ["hf_furn_plant", "hf_furn_neon_lamp", "hf_furn_terminal", "hf_hub_bench"],
+  ripperdoc: ["hf_business_surgical_chair", "hf_business_scanner_arm", "hf_business_implant_cabinet", "hf_business_organ_cooler"],
+  pawn: ["hf_business_appraisal_scanner", "hf_business_display_case", "hf_furn_shelf", "hf_furn_terminal"],
+  arcade: ["hf_business_arcade_cabinet", "hf_business_vr_chair", "hf_furn_neon_lamp", "hf_furn_terminal"],
+  garage: ["hf_business_vehicle_lift", "hf_business_engine_block", "hf_business_welding_station", "hf_business_drone_cradle"],
+  radio: ["hf_business_mixing_console", "hf_business_transmitter_rack", "hf_furn_terminal", "hf_furn_neon_lamp"],
 };
 
 /**
@@ -295,6 +350,8 @@ export function dressArtRoom(
   roomW: number,
   roomH: number,
   depth = 2.0,
+  /** Optional district identity wash; a duplicate of the same art preserves geometry. */
+  accent?: number,
 ): boolean {
   if (!exists(scene, art)) return false;
   scene.add
@@ -303,9 +360,21 @@ export function dressArtRoom(
     .setOrigin(0.5)
     .setDepth(depth)
     .setAlpha(1);
-  // Painted art stretched across a room reads soft, not blocky.
+  if (accent !== undefined) {
+    scene.add
+      .image((roomW * TILE) / 2, (roomH * TILE) / 2, art)
+      .setDisplaySize(roomW * TILE, roomH * TILE)
+      .setOrigin(0.5)
+      .setDepth(depth + 0.01)
+      .setTint(accent)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setAlpha(0.075);
+  }
+  // The room sources are enhanced to ~3x their original size and then drawn smaller.
+  // LINEAR re-blurred those pixels during camera zoom; NEAREST preserves the authored
+  // counters, walls, signage, and floor details in interiors and hub rooms.
   try {
-    scene.textures.get(art).setFilter(Phaser.Textures.FilterMode.LINEAR);
+    scene.textures.get(art).setFilter(Phaser.Textures.FilterMode.NEAREST);
   } catch {
     /* ignore */
   }

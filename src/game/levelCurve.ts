@@ -51,6 +51,10 @@ export function levelMods(level: number): Partial<ModBag> {
   return {
     hpAdd: growth * HP_PER_LEVEL,
     dmgPct: growth * DMG_PER_LEVEL,
+    // `lv`, not `growth`: these deliberately reproduce the old inline server formulas
+    // (min(0.05 + level*0.012, 0.3) and min(level*0.004, 0.08)) that levelCurve.test.ts
+    // pins number-for-number, so L1's +1.2% crit is baseline, not a bug. The "L1 is all
+    // zeros" note above is about raw power (hpAdd/dmgPct) only.
     critPct: Math.min(lv * CRIT_PER_LEVEL, CRIT_CAP),
     lifestealPct: Math.min(lv * LIFESTEAL_PER_LEVEL, LIFESTEAL_CAP),
   };

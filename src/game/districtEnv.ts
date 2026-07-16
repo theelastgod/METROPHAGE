@@ -118,7 +118,9 @@ export const DISTRICT_ENV: Record<string, DistrictEnvTheme> = {
     fixtureMix: ["streetlight", "vending", "planter", "streetlight"],
     ground: {
       floor: TILE_FLOOR,
-      plaza: TILE_NEON,
+      // Keep Palantir's public node neutral; its nightlife colour lives in signage,
+      // reflections and rain rather than as a purple floor patch.
+      plaza: TILE_GRATE,
       lane: TILE_LANE,
       sidewalkChance: 0.18,
       sidewalk: TILE_SIDEWALK,
@@ -245,7 +247,8 @@ export const DISTRICT_ENV: Record<string, DistrictEnvTheme> = {
     fixtureMix: ["dumpster", "ac", "bin", "barrier"],
     ground: {
       floor: TILE_DIRT,
-      plaza: TILE_NEON,
+      // Buried-vault service court — no saturated purple tile patch under objectives.
+      plaza: TILE_GRATE,
       lane: TILE_GRATE,
       sidewalkChance: 0.12,
       sidewalk: TILE_FLOOR,

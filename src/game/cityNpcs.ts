@@ -176,11 +176,23 @@ export const INTERIOR_PLAN: Record<string, string[][]> = {
   den: [["vex", "ghost"]], // the broker + the quiet one share a back room (dens are rare)
   guild: [["kessler"]],
   home: [["marek"]],
+  noodle: [["res_tallow"]],
+  ripperdoc: [["res_mercy"]],
+  pawn: [["res_nix"]],
+  arcade: [["res_echo"]],
+  garage: [["res_wren"]],
+  radio: [["res_moth"]],
 };
 
 /** Generic keepers staff interiors with no named resident, so no room is empty. */
 const KEEPERS: Record<string, CityNpcDef> = {
   bar: { id: "keep_bar", name: "BARKEEP", look: look({ color: 0xff79c6, skin: 0xc98a5e, hair: "short", hairColor: 0x1b1820 }), lines: ["What'll it be, runner?", "Grid's flickered all night."] },
+  noodle: { id: "keep_noodle", name: "MAMA TSE", look: look({ color: 0xffb13c, skin: 0xc98a5e, hair: "bun", hairColor: 0x1b1820, gloves: "wraps" }), lines: ["Broth's older than you are. Don't insult it.", "Eat. You look like a debt collector's afterthought."] },
+  ripperdoc: { id: "keep_ripperdoc", name: "SPLICE", look: look({ color: 0x8dfff0, skin: 0x7c4f30, hair: "undercut", visor: "scan", decal: "cross" }), lines: ["Chrome's cheap. Nerves aren't.", "Hold still. Or don't — I bill the same either way."] },
+  pawn: { id: "keep_pawn", name: "NIX", look: look({ color: 0xf7ff3c, head: "hood", skin: 0x7c4f30, faceMark: "tattoo", cloak: "coat" }), lines: ["I buy histories and sell objects.", "Serial numbers cost extra to forget."] },
+  arcade: { id: "keep_arcade", name: "ECHO", look: look({ color: 0xb06bff, sex: "f", hair: "long", hairColor: 0xff2bd6, visor: "scan" }), lines: ["High score's been dead three years.", "The cabinet still dreams about beating it."] },
+  garage: { id: "keep_garage", name: "WREN", look: look({ color: 0x8bff6a, sex: "f", head: "cap", hair: "ponytail", gloves: "wraps" }), lines: ["If it moves, I can tune it.", "If it doesn't, I can make that permanent."] },
+  radio: { id: "keep_radio", name: "MOTH", look: look({ color: 0x29e7ff, sex: "f", hair: "braids", hairColor: 0x9dff3c, antennae: true }), lines: ["Corp weather says clear. Bring a respirator.", "You're live in five. Try to sound dangerous."] },
   shop: { id: "keep_shop", name: "CLERK", look: look({ color: 0x00e5ff, skin: 0xe6b58c, hair: "buzz", hairColor: 0x2a1d14 }), lines: ["Browse all you like. Touch nothing.", "Prices are firm."] },
   clinic: { id: "keep_clinic", name: "MEDIC", look: look({ color: 0x39ff88, skin: 0x7c4f30, hair: "ponytail", hairColor: 0x1b1820, decal: "cross" }), lines: ["Hold still, this'll sting.", "Don't bleed on my floor."] },
   guild: { id: "keep_guild", name: "QUARTERMASTER", look: look({ color: 0x4d8cff, skin: 0xf3d2b8, hair: "short", hairColor: 0x4a2f1c, cloak: "coat", beard: "stubble" }), lines: ["Contracts are on the board.", "The guild carries no deadweight."] },
@@ -315,6 +327,20 @@ export const AMBIENT_NPCS: CityNpcDef[] = [
   { id: "amb_vendor", name: "NOODLE COOK", look: look({ color: 0xff7a18, skin: 0xa9794a, hair: "bun", hairColor: 0x1b1820 }), lines: ["Hot synth-noodles! Two credits!", "Eat. You look like static."] },
 ];
 
+/** Combat-zone street medics. One appears near each district arrival, rotating by
+ * district so emergency healing feels local rather than like a cloned hub service. */
+export const FIELD_MEDICS: CityNpcDef[] = [
+  { id: "field_medic_patch", name: "PATCH", look: look({ color: 0x39ff88, skin: 0x7c4f30, hair: "buzz", decal: "cross", gloves: "wraps", strap: true }), lines: ["Sit down before you fall down.", "First seal is charity. The next scar is yours."] },
+  { id: "field_medic_suture", name: "SUTURE", look: look({ color: 0x8dfff0, sex: "f", skin: 0xe6b58c, hair: "braids", hairColor: 0x1b1820, visor: "scan", decal: "cross" }), lines: ["Corp triage asks for clearance. I ask where it hurts.", "Hold still. The district already moves enough."] },
+  { id: "field_medic_gauze", name: "GAUZE", look: look({ color: 0xffb13c, skin: 0xa9794a, head: "hood", hair: "short", beard: "stubble", gloves: "wraps" }), lines: ["Clean bandage costs more than the bullet.", "You walked here. Good. Walk away too."] },
+  { id: "field_medic_needle", name: "NEEDLE", look: look({ color: 0x9dff3c, sex: "f", skin: 0x4f3220, hair: "undercut", hairColor: 0xc7cdd8, faceMark: "scar", decal: "cross" }), lines: ["No forms. No names. Arm out.", "I patch runners, not bad decisions."] },
+];
+
+export function districtFieldMedic(district: number): CityNpcDef {
+  const n = FIELD_MEDICS.length;
+  return FIELD_MEDICS[((Math.floor(district) % n) + n) % n];
+}
+
 /** Stands by the plaza and sends you down into THE UNDERLINE (the subway dungeon). */
 export const SUBWAY_WARDEN: CityNpcDef = {
   id: "subway_warden",
@@ -324,7 +350,12 @@ export const SUBWAY_WARDEN: CityNpcDef = {
   lines: ["Mind the gap. And the things in it.", "Down the tunnels? Bring teeth."],
 };
 
-export const ALL_NPCS: CityNpcDef[] = [...KEY_NPCS, ...CITIZENS, ...REGIONAL_NPCS, ...AMBIENT_NPCS, SUBWAY_WARDEN, ...Object.values(KEEPERS)];
+// ALL_RESIDENTS belongs here: res_* ids are load-bearing in INTERIOR_PLAN,
+// NPC_SERVICE_OVERRIDES and BOUNTIES, and npcDef() is the only way to resolve them.
+// While they were missing, callers that map ids → defs and filter out the misses
+// (OnlineScene's interior roster) silently dropped every authored resident — the rooms
+// just showed their generic keeper, with no error anywhere.
+export const ALL_NPCS: CityNpcDef[] = [...KEY_NPCS, ...CITIZENS, ...REGIONAL_NPCS, ...AMBIENT_NPCS, ...FIELD_MEDICS, ...ALL_RESIDENTS, SUBWAY_WARDEN, ...Object.values(KEEPERS)];
 
 export function npcDef(id: string): CityNpcDef | undefined {
   return ALL_NPCS.find((n) => n.id === id);

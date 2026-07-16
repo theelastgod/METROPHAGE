@@ -27,6 +27,11 @@ import {
   walletConnectEnabled,
   type EvmRequestProvider,
 } from "./walletConnect";
+import {
+  connectViaSolanaWalletModal,
+  disconnectSolanaWalletModal,
+  getActiveAppKitSolanaProvider,
+} from "./solanaWalletModal";
 
 interface EvmProvider extends EvmRequestProvider {
   isMetaMask?: boolean;
@@ -258,7 +263,7 @@ function getSolana(): SolanaProvider | null {
     backpack?: { solana?: SolanaProvider };
     solflare?: SolanaProvider;
   };
-  return w.phantom?.solana ?? w.solana ?? w.backpack?.solana ?? w.solflare ?? null;
+  return w.phantom?.solana ?? w.solana ?? w.backpack?.solana ?? w.solflare ?? getActiveAppKitSolanaProvider() ?? null;
 }
 
 /**
@@ -440,7 +445,17 @@ export async function ensureRobinhoodNetwork(
 
 async function connectSolana(): Promise<string | null> {
   const sol = getSolana();
-  if (!sol) return null;
+  if (!sol) {
+    // Normal mobile Safari/Chrome has no injector. Prefer the generic Solana
+    // wallet picker; deep-link directly to Phantom only when AppKit is unavailable.
+    if (isLikelyMobile() && walletConnectEnabled()) {
+      const address = await connectViaSolanaWalletModal();
+      if (address) persistConnection(address, "solana", "solana");
+      return address;
+    }
+    if (isLikelyMobile()) openInWalletBrowser("phantom");
+    return null;
+  }
   try {
     const res = await sol.connect({ onlyIfTrusted: true }).catch(() => sol.connect());
     const addr = res.publicKey.toString();
@@ -532,16 +547,13 @@ async function connectEvm(): Promise<string | null> {
 }
 
 /**
- * Connect a wallet.
- * Default: EVM (injected → WalletConnect → mobile deep-link).
- * Pass prefer: "solana" for Phantom / SPL path.
+ * Connect a wallet. The live path is Phantom/Solana; the EVM branch remains only
+ * for explicitly forced compatibility deployments.
  */
 export async function connectWallet(prefer?: "evm" | "solana"): Promise<string | null> {
   const wantSol = prefer === "solana" || (prefer !== "evm" && preferSolanaWallet());
   if (wantSol) {
-    const sol = await connectSolana();
-    if (sol) return sol;
-    return connectEvm();
+    return connectSolana();
   }
   const eth = await connectEvm();
   if (eth) return eth;
@@ -557,6 +569,7 @@ export async function disconnectWallet(): Promise<void> {
   } catch {
     /* ignore */
   }
+  await disconnectSolanaWalletModal();
   if (wasWc) {
     await disconnectWalletConnect();
   }
@@ -654,14 +667,14 @@ export function walletUiLabel(): string {
  */
 export function walletChoiceList(): string {
   return preferSolanaWallet()
-    ? "Phantom · Solflare · any WalletConnect wallet"
+    ? "Phantom · Solflare"
     : "MetaMask · Phantom · any WalletConnect wallet";
 }
 
 /** Prose form of the same list, for sentences rather than button subtitles. */
 export function walletChoiceProse(): string {
   return preferSolanaWallet()
-    ? "Phantom, Solflare, or any WalletConnect wallet"
+    ? "Phantom or Solflare"
     : "MetaMask, Phantom, or any WalletConnect wallet";
 }
 

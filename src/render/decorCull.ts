@@ -17,7 +17,12 @@ export function installDecorCulling(
   opts: { minDepth?: number; maxDepth?: number; exclude?: Set<Phaser.GameObjects.GameObject> } = {},
 ): { adopted: number; cells: number } {
   const minD = opts.minDepth ?? 0.5;
-  const maxD = opts.maxDepth ?? 6.5;
+  // Only adopt the true ground band. Container children no longer participate in the
+  // scene display list's global depth sort: a depth-4.05 building image adopted into a
+  // depth-3 container rendered UNDER its depth-4 opaque pad, producing black buildings;
+  // depth-5 props similarly fell under their separately painted shadows. Keep façades,
+  // props, and other layered art in the scene list so their authored ordering survives.
+  const maxD = opts.maxDepth ?? 3.9;
   const exclude = opts.exclude ?? new Set<Phaser.GameObjects.GameObject>();
 
   type Positioned = Phaser.GameObjects.Image; // shape shared by Image/Rectangle/Graphics for x/y/depth

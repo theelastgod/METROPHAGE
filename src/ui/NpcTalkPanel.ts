@@ -8,6 +8,7 @@ import { bodyFont, displayFont } from "./typography";
 import {
   NPC_SERVICES,
   npcRoleLabel,
+  serviceIconKey,
   servicesForNpc,
   type NpcServiceId,
 } from "../game/npcServices";
@@ -186,10 +187,24 @@ export default class NpcTalkPanel {
       g.lineStyle(uiDim(1), col, muted ? 0.25 : 0.5).strokeRoundedRect(bx, by, btnW, btnH, uiDim(3));
 
       const twoLine = btnH >= uiDim(28);
+      const iconKey = serviceIconKey(opt.id);
+      const iconSize = Math.min(btnH - uiDim(6), uiDim(mobile ? 30 : 24));
+      const hasIcon = this.scene.textures.exists(iconKey);
+      if (hasIcon) {
+        add(
+          this.scene.add
+            .image(bx + uiDim(5) + iconSize / 2, by + btnH / 2, iconKey)
+            .setDisplaySize(iconSize, iconSize)
+            .setAlpha(muted ? 0.28 : 0.9)
+            .setScrollFactor(0)
+            .setDepth(D + 4),
+        );
+      }
+      const textX = bx + uiDim(hasIcon ? (mobile ? 42 : 35) : 8);
       const label = add(
         this.scene.add
           .text(
-            bx + uiDim(8),
+            textX,
             by + (twoLine ? uiDim(3) : btnH / 2),
             twoLine ? opt.label : `${opt.label} · ${clip(opt.disabledReason ?? opt.hint, 28)}`,
             bodyFont(mobile ? 10 : 11, {
@@ -204,7 +219,7 @@ export default class NpcTalkPanel {
       if (twoLine) {
         add(
           this.scene.add
-            .text(bx + uiDim(8), by + uiDim(15), clip(opt.disabledReason ?? opt.hint, 42), bodyFont(7, {
+            .text(textX, by + uiDim(15), clip(opt.disabledReason ?? opt.hint, 42), bodyFont(7, {
               color: muted ? "#3a4050" : "#6a7488",
             }))
             .setScrollFactor(0)

@@ -16,6 +16,12 @@ const KIND_STYLE: Record<
   { accent: number; sign: number; glyph: "cross" | "metro" | "arena" | "spire" | "shop" | "bar" | "home" | "den" | "guild" | "none" }
 > = {
   bar: { accent: 0xff2bd6, sign: 0xff2bd6, glyph: "bar" },
+  noodle: { accent: 0xffb13c, sign: 0xff2bd6, glyph: "bar" },
+  ripperdoc: { accent: 0x8dfff0, sign: 0x39ff88, glyph: "cross" },
+  pawn: { accent: 0xf7ff3c, sign: 0xffb13c, glyph: "shop" },
+  arcade: { accent: 0xb06bff, sign: 0xff2bd6, glyph: "den" },
+  garage: { accent: 0x8bff6a, sign: 0xffb13c, glyph: "guild" },
+  radio: { accent: 0x29e7ff, sign: 0xff2bd6, glyph: "spire" },
   shop: { accent: 0xffb13c, sign: 0xf7ff3c, glyph: "shop" },
   clinic: { accent: 0x39ff88, sign: 0x39ff88, glyph: "cross" },
   guild: { accent: 0x29e7ff, sign: 0x00e5ff, glyph: "guild" },
@@ -172,23 +178,106 @@ function placeFullBuildingArt(
   depth: number,
   accent: number,
 ): void {
-  // Solid pad so tilemap wall cells never peek through transparent PNG edges.
-  // Depth sits above tilemap (~0) and below actors (~9) — 4.x keeps roofs/walls covered.
+  // Structural steel pad so tilemap wall cells never peek through transparent PNG
+  // edges. This used to be opaque near-black, turning every transparent silhouette
+  // margin into a black rectangle when art did not fill its footprint.
   const pad = scene.add.graphics().setDepth(depth);
-  pad.fillStyle(0x080a14, 1).fillRect(X1, Y1, w, h);
-  pad.fillStyle(accent, 0.14).fillRect(X1, Y1, w, 3);
+  pad.fillStyle(0x1b2534, 1).fillRect(X1, Y1, w, h);
+  pad.fillStyle(accent, 0.16).fillRect(X1 + 3, Y1 + 3, Math.max(0, w - 6), Math.max(0, h - 6));
+  pad.fillStyle(0x344256, 0.72).fillRect(X1, Y1, w, 3);
+  pad.fillStyle(accent, 0.48).fillRect(X1, Y1, w, 1);
   const img = scene.add
     .image(X1 + w / 2, Y1 + h / 2, spriteKey)
     .setDisplaySize(w, h)
     .setDepth(depth + 0.05)
     .setAlpha(1);
-  // Painted top-down art should filter soft when stretched across large footprints.
+  // Environment sources are already enhanced to their display size. LINEAR filtering
+  // softened them a second time (especially under camera zoom), making hub buildings
+  // look blurred despite the larger PNGs. Keep hard detail at the pixel-art renderer's
+  // native NEAREST policy.
   try {
-    scene.textures.get(spriteKey).setFilter(Phaser.Textures.FilterMode.LINEAR);
+    scene.textures.get(spriteKey).setFilter(Phaser.Textures.FilterMode.NEAREST);
   } catch {
     /* ignore */
   }
   void img;
+}
+
+/** Orbital Relay's source plates are intentionally dark rooftop hardware. At gameplay
+ * scale their detail can collapse into an undecorated slab, so reinforce the authored
+ * uplink language with sparse vector panels that remain legible under fog and zoom. */
+function paintRelayIdentity(
+  scene: Phaser.Scene,
+  X1: number,
+  Y1: number,
+  X2: number,
+  Y2: number,
+  depth: number,
+  salt: number,
+): void {
+  const g = scene.add.graphics().setDepth(depth + 0.11);
+  const w = X2 - X1;
+  const h = Y2 - Y1;
+  const cyan = 0x61e7ff;
+  const blue = 0x6b9bff;
+  g.lineStyle(2, cyan, 0.72).strokeRect(X1 + 5, Y1 + 5, Math.max(2, w - 10), Math.max(2, h - 10));
+  g.lineStyle(1, blue, 0.5).strokeRect(X1 + 10, Y1 + 10, Math.max(2, w - 20), Math.max(2, h - 20));
+
+  // Communications panel bays along the upper and lower faces.
+  const bays = Math.max(2, Math.min(6, Math.floor(w / 80)));
+  const gap = w / (bays + 1);
+  for (let i = 1; i <= bays; i++) {
+    const px = X1 + gap * i;
+    const lit = (i + salt) % 3 !== 0;
+    g.fillStyle(lit ? cyan : blue, lit ? 0.7 : 0.32).fillRect(px - 10, Y1 + 14, 20, 5);
+    g.fillStyle(0x091522, 0.88).fillRect(px - 7, Y1 + 16, 14, 1);
+    g.fillStyle(lit ? blue : cyan, 0.42).fillRect(px - 8, Y2 - 19, 16, 4);
+  }
+
+  // Concentric uplink dish/radar mark. On narrow gate pylons it becomes a compact
+  // antenna target rather than squeezing a whole building painting into a blank bar.
+  const cx = X1 + w * 0.5;
+  const cy = Y1 + h * 0.5;
+  const r = Math.max(7, Math.min(28, Math.min(w, h) * 0.18));
+  g.lineStyle(2, cyan, 0.75).strokeCircle(cx, cy, r);
+  g.lineStyle(1, blue, 0.6).strokeCircle(cx, cy, r * 0.55);
+  g.lineStyle(1, cyan, 0.55).lineBetween(cx - r, cy, cx + r, cy);
+  g.lineStyle(1, cyan, 0.55).lineBetween(cx, cy - r, cx, cy + r);
+  g.fillStyle(0xeafcff, 0.9).fillCircle(cx, cy, 2);
+}
+
+/** Readable surface detail for the buried-vault kit. The art deliberately uses deep,
+ * organic shadows; these service seams keep its structures legible from the combat
+ * camera without turning them into bright generic city blocks. */
+function paintUndercityIdentity(
+  scene: Phaser.Scene,
+  X1: number,
+  Y1: number,
+  X2: number,
+  Y2: number,
+  depth: number,
+  salt: number,
+): void {
+  const g = scene.add.graphics().setDepth(depth + 0.11);
+  const w = X2 - X1;
+  const h = Y2 - Y1;
+  const cyan = 0x4fe8e2;
+  const hazard = 0x9dff3c;
+  g.lineStyle(2, cyan, 0.6).strokeRect(X1 + 6, Y1 + 6, Math.max(2, w - 12), Math.max(2, h - 12));
+  // Uneven containment seams make a long rectangular footprint read as a vault wall.
+  const seams = Math.max(2, Math.min(6, Math.floor(w / 84)));
+  for (let i = 1; i <= seams; i++) {
+    const x = X1 + (w * i) / (seams + 1);
+    const lit = (salt + i) % 3 !== 0;
+    g.lineStyle(2, lit ? cyan : 0x273d48, lit ? 0.68 : 0.7).lineBetween(x, Y1 + 14, x, Y2 - 14);
+    if (lit) g.fillStyle(cyan, 0.72).fillRect(x - 7, Y1 + 18, 14, 5);
+  }
+  const bayY = Y1 + h * 0.57;
+  g.fillStyle(0x0b2025, 0.78).fillRect(X1 + 14, bayY - 11, Math.max(4, w - 28), 22);
+  g.lineStyle(1, hazard, 0.58).strokeRect(X1 + 14, bayY - 11, Math.max(4, w - 28), 22);
+  for (let x = X1 + 26; x < X2 - 16; x += 28) {
+    g.fillStyle((x + salt) % 2 === 0 ? cyan : hazard, 0.48).fillRect(x, bayY - 3, 13, 6);
+  }
 }
 
 /** Thin neon door frame so enterable HF buildings still read as venues. */
@@ -304,14 +393,27 @@ export function paintDistrictBuildingFacades(
 
     if (fullReplace && spriteKey) {
       placeFullBuildingArt(scene, X1, Y1, w, h, spriteKey, depth, accent);
+      if (opts?.districtId === "relay") paintRelayIdentity(scene, X1, Y1, X2, Y2, depth, i);
+      if (opts?.districtId === "undercity") paintUndercityIdentity(scene, X1, Y1, X2, Y2, depth, i);
       if (landmark) glow(scene, X1 + w * 0.5, Y1 + 6, accent, 2.4, 0.22, depth + 0.12);
       hfRects.push(worldRect);
       continue;
     }
 
-    // Small / no-art fallback: procedural kind wash + crown.
-    g.fillStyle(accent, 0.2).fillRect(X1, Y1, w, h);
-    g.fillStyle(0x05060f, 0.22).fillRect(X1 + 3, Y1 + 8, w - 6, h - 12);
+    // Small / no-art fallback: a complete steel structure, not a lightly tinted tile
+    // rectangle. If any generated file fails, the footprint must still read as a
+    // building with mass, façade bays, windows and a roof crown.
+    g.fillStyle(0x202b38, 0.98).fillRect(X1, Y1, w, h);
+    g.fillStyle(0x111923, 0.9).fillRect(X1 + 5, Y1 + 9, Math.max(0, w - 10), Math.max(0, h - 14));
+    const bayW = Math.max(18, Math.min(36, Math.floor(w / 7)));
+    const rowH = Math.max(18, Math.min(30, Math.floor(h / 6)));
+    for (let wy = Y1 + 18; wy < Y2 - 12; wy += rowH) {
+      for (let wx = X1 + 12; wx < X2 - 12; wx += bayW) {
+        const lit = ((wx / bayW + wy / rowH + i) | 0) % 3 !== 0;
+        g.fillStyle(lit ? accent : 0x314052, lit ? 0.42 : 0.3)
+          .fillRect(wx, wy, Math.min(12, X2 - wx - 5), 7);
+      }
+    }
     g.fillStyle(accent, landmark ? 0.7 : 0.5).fillRect(X1, Y1, w, 7);
     g.fillStyle(accent, landmark ? 1 : 0.85).fillRect(X1, Y1, w, 2);
     g.fillStyle(accent, 0.28).fillRect(X1, Y1 + 7, 3, h - 7);
@@ -329,6 +431,8 @@ export function paintDistrictBuildingFacades(
         .setAlpha(0.95);
       hfRects.push(worldRect);
     }
+    if (opts?.districtId === "relay") paintRelayIdentity(scene, X1, Y1, X2, Y2, depth, i);
+    if (opts?.districtId === "undercity") paintUndercityIdentity(scene, X1, Y1, X2, Y2, depth, i);
   }
   return hfRects;
 }

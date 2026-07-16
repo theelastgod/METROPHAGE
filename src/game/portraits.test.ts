@@ -91,9 +91,12 @@ describe("interact singles replace the unsliceable sheet", () => {
   });
 
   it("keeps the slug list in interact-frame order (aliases resolve by index)", () => {
-    expect([...HF_INTERACT_PORTRAIT_SLUGS]).toEqual([
+    expect([...HF_INTERACT_PORTRAIT_SLUGS].slice(0, 12)).toEqual([
       "porter", "tunnel_rat", "scrap_boss", "hawker", "preacher", "street_kid",
       "amb_tech", "amb_vendor", "subway_warden", "amb_courier", "keep_den", "keep_citycenter",
     ]);
+    for (const slug of ["keep_hotel", "keep_ripperdoc", "keep_pawn", "keep_garage", "keep_arcade", "keep_radio"]) {
+      expect(HF_INTERACT_PORTRAIT_SLUGS).toContain(slug);
+    }
   });
 });

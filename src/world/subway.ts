@@ -38,6 +38,20 @@ const EXIT_DY = 10;
 /** East track-bay offset for dead-train placement. */
 const TRACK_BAY_DX = 9;
 
+/** Art module placed on subway geometry. Pure data: both server collision and client
+ * rendering consume these descriptors, so a tunnel plate can never float over rock. */
+export interface SubwayArtModule {
+  id: string;
+  key: "hf_subway_tunnel_straight" | "hf_subway_tunnel_junction" | "hf_subway_tunnel_cross";
+  tx: number;
+  ty: number;
+  /** Walkable footprint in tiles, centered on tx/ty. */
+  w: number;
+  h: number;
+  /** Quarter turns clockwise; renderer converts this to radians. */
+  quarterTurns: 0 | 1 | 2 | 3;
+}
+
 export interface SubwayStation {
   id: string;
   zone: string;
@@ -256,6 +270,19 @@ function carveRect(g: TileGrid, x0: number, y0: number, x1: number, y1: number, 
   }
 }
 
+function tunnelPolyline(ax: number, ay: number, bx: number, by: number): Array<[number, number]> {
+  const midX = Math.round((ax + bx) / 2);
+  const midY = Math.round((ay + by) / 2);
+  const jog = ((ax + ay + bx + by) & 1) === 0 ? 3 : -3;
+  return [
+    [ax, ay],
+    [midX, ay],
+    [midX, midY + jog],
+    [midX, by],
+    [bx, by],
+  ];
+}
+
 /** Orthogonal tunnel with slight mid-offset so routes aren't dead-straight. */
 function carveTunnel(g: TileGrid, ax: number, ay: number, bx: number, by: number, half = CORRIDOR_HALF) {
   // L-shaped + mid dogleg so the network reads as real metro tunnels.
@@ -322,6 +349,57 @@ function stationEdges(): Array<[SubwayStation, SubwayStation]> {
 }
 
 /**
+ * Tunnel art tiled continuously along the authored dogleg paths. These modules are
+ * the subway map's structural units: buildSubway carves their exact footprints and
+ * the client renders the matching plates before adding fixtures and encounters.
+ */
+export function subwayTunnelArtModules(): SubwayArtModule[] {
+  const modules = new Map<string, SubwayArtModule>();
+  for (const [a, b] of stationEdges()) {
+    const pts = tunnelPolyline(a.tx, a.ty, b.tx, b.ty);
+    for (let i = 0; i < pts.length - 1; i++) {
+      const [x0, y0] = pts[i];
+      const [x1, y1] = pts[i + 1];
+      const vertical = x0 === x1;
+      const len = Math.abs((vertical ? y1 - y0 : x1 - x0));
+      // A straight plate covers seven tiles along its rail axis. Six-tile spacing
+      // overlaps adjacent edges slightly, producing a continuous authored tunnel
+      // instead of occasional decorative stickers floating over generic corridors.
+      const count = Math.max(1, Math.ceil(len / 6) - 1);
+      for (let n = 1; n <= count; n++) {
+        const t = n / (count + 1);
+        const tx = Math.round(x0 + (x1 - x0) * t);
+        const ty = Math.round(y0 + (y1 - y0) * t);
+        const id = `straight:${tx}:${ty}:${vertical ? 1 : 0}`;
+        modules.set(id, {
+          id,
+          key: "hf_subway_tunnel_straight",
+          tx,
+          ty,
+          w: vertical ? 5 : 7,
+          h: vertical ? 7 : 5,
+          quarterTurns: vertical ? 1 : 0,
+        });
+      }
+      if (i < pts.length - 2) {
+        const [tx, ty] = pts[i + 1];
+        const id = `junction:${tx}:${ty}`;
+        modules.set(id, {
+          id,
+          key: modules.has(id) ? "hf_subway_tunnel_cross" : "hf_subway_tunnel_junction",
+          tx,
+          ty,
+          w: 7,
+          h: 7,
+          quarterTurns: 0,
+        });
+      }
+    }
+  }
+  return [...modules.values()];
+}
+
+/**
  * Build the full UNDERLINE grid: branching tunnels between district stations
  * in map-accurate directions (not a single east-west spine).
  */
@@ -333,9 +411,21 @@ export function buildSubway(): TileGrid {
     g.push(row);
   }
 
-  // Tunnels first
+  // Connect station anchors first, then make every art plate footprint explicitly
+  // walkable. The module pass is authoritative for the visible tunnel shape.
   for (const [a, b] of stationEdges()) {
     carveTunnel(g, a.tx, a.ty, b.tx, b.ty);
+  }
+
+  // The art module footprint is authoritative too: give every rendered plate a walkable
+  // tile box even where two doglegs overlap or rounding moves a plate by one tile.
+  for (const m of subwayTunnelArtModules()) {
+    const hw = Math.floor(m.w / 2);
+    const hh = Math.floor(m.h / 2);
+    carveRect(g, m.tx - hw, m.ty - hh, m.tx + hw, m.ty + hh, TILE_INNER_FLOOR);
+    // Preserve the rail stripe through the module center.
+    if (m.quarterTurns % 2 === 1) carveRect(g, m.tx, m.ty - hh, m.tx, m.ty + hh, TILE_CROSSWALK);
+    else carveRect(g, m.tx - hw, m.ty, m.tx + hw, m.ty, TILE_CROSSWALK);
   }
 
   // Stations carved around HF structure: platform apron, ticket hall (N), exit (S), track bay (E).
@@ -406,17 +496,7 @@ function tunnelPathSamples(
   by: number,
   steps = 6,
 ): Array<{ tx: number; ty: number; t: number }> {
-  const midX = Math.round((ax + bx) / 2);
-  const midY = Math.round((ay + by) / 2);
-  const jog = ((ax + ay + bx + by) & 1) === 0 ? 3 : -3;
-  // Polyline: A → (midX, ay) → (midX, midY+jog) → (midX, by) → B
-  const pts: Array<[number, number]> = [
-    [ax, ay],
-    [midX, ay],
-    [midX, midY + jog],
-    [midX, by],
-    [bx, by],
-  ];
+  const pts = tunnelPolyline(ax, ay, bx, by);
   // Segment lengths
   const segs: number[] = [];
   let total = 0;

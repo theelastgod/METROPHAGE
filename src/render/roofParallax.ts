@@ -60,8 +60,8 @@ export function installRoofParallax(
     const img = scene.add
       .image(bx, by, CAP_TEX)
       .setDisplaySize(w - 6, h - 6)
-      .setTint(0x0a0d19)
-      .setAlpha(low ? 0.3 : 0.38)
+      .setTint(0x263247)
+      .setAlpha(low ? 0.26 : 0.32)
       .setDepth(depth);
     let edge: Phaser.GameObjects.Image | undefined;
     if (!low) {

@@ -25,14 +25,15 @@ import { bridgeWestTile, getBridge, travelSpawnTile } from "../game/bridges";
 import type { DistrictDef } from "../game/districts";
 import { districtBuildingKind, wildernessShackDef } from "../game/districtVenues";
 import { ONLINE_CITY, type BuildingKind } from "./city";
+import { ESTATES, ESTATES_ZONE } from "./estates";
 import {
+  DIVE_SPAWN,
   HUB_SERVICE_ROOMS,
-  SAFEHOUSE_SPAWN,
   buildVenueRoomFromLayout,
   gridH,
   gridW,
   hashVenueLayoutFor,
-  isSafehouseSizedInterior,
+  isDivePlanInterior,
   isVenueSizedZone,
   isWall,
   nearestWalkable,
@@ -43,6 +44,16 @@ import {
 } from "./district";
 
 const S = DISTRICT_SCALE;
+
+/** Named venue portals around the central hub, relative to ONLINE_CITY.spawn.
+ *  Keep these aligned with CITY_HUB_DOORS in scenes/online/sceneConfig.ts. */
+const HUB_SERVICE_DOOR_OFFSETS: Readonly<Record<string, readonly [number, number]>> = {
+  clinic: [-4, -6],
+  shop: [4, -6],
+  bar: [-4, 6],
+  den: [4, 6],
+  vault: [12, 0],
+};
 
 /**
  * Per-kind room plans, traced from the baked art. Kinds absent here fall back to the
@@ -62,19 +73,45 @@ export const ROOM_PLANS: Partial<Record<BuildingKind, VenueLayout>> = {
     tag: "studio",
     art: "hf_int_bar_room",
     blocks: [
-      // Bar counter + back bar, flush to the west wall as the art paints it — leaving a
-      // gap at x=1 would model a 1-tile dead-end corridor that isn't in the picture.
-      [1, 1, 6, 3],
-      [11, 6, 13, 7], // east booth, upper — row 8 is the aisle between the two
-      [11, 9, 13, 10], // east booth, lower
-      [4, 10, 6, 12], // south booth, west — x=7 stays clear as the entrance lane
-      [8, 10, 10, 12], // south booth, east
+      [1, 1, 7, 6], // kitchen + U-shaped bar counter
+      [10, 1, 13, 5], // raised north-east lounge
+      [10, 7, 13, 9], // east booth, middle
+      [10, 11, 13, 13], // east booth, south
+      [1, 9, 2, 13], // west storage bay
+      [4, 11, 6, 13], // south booth, west
+      [8, 11, 9, 13], // south booth, east; x=7 is the entrance lane
     ],
     seats: [
-      [4, 4], // barkeep, working the front of the counter
-      [7, 6], // middle of the drinking floor
-      [12, 8], // the aisle between the east booths
-      [2, 7], // west wall
+      [8, 4], // barkeep at the open end of the counter
+      [7, 8], // middle of the drinking floor
+      [9, 8], // aisle beside the east booth
+      [3, 8], // west aisle
+    ],
+  },
+
+  // MAMA TSE'S NOODLES — hf_int_noodle_room (576x576, square).
+  // Art reads: a broad cooking counter in the north-west, booth banks along the east
+  // and south walls, a storage bay to the west, and a clear south-centre entrance aisle.
+  noodle: {
+    w: 18,
+    h: 18,
+    mat: [9, 16],
+    tag: "studio",
+    art: "hf_int_noodle_room",
+    blocks: [
+      [1, 1, 8, 7], // kitchen, back bar, and L-shaped cooking counter
+      [12, 1, 16, 6], // north-east booth bank
+      [13, 8, 16, 11], // east booth, middle
+      [13, 12, 16, 15], // east booth, south
+      [1, 9, 3, 15], // west storage bay
+      [5, 13, 8, 15], // south booth, west
+      [10, 13, 12, 15], // south booth, east; x=9 remains the entry aisle
+    ],
+    seats: [
+      [9, 7], // cook at the open end of the counter
+      [11, 7], // aisle beside the north-east booths
+      [12, 10], // middle booth aisle
+      [9, 11], // open central dining floor
     ],
   },
 
@@ -88,17 +125,16 @@ export const ROOM_PLANS: Partial<Record<BuildingKind, VenueLayout>> = {
     tag: "studio",
     art: "hf_int_clinic_room",
     blocks: [
-      [1, 1, 5, 3], // reception counter
-      [11, 5, 13, 6], // medbay 1 — x=10 stays clear as the ward aisle
-      [11, 8, 13, 9], // medbay 2
-      [11, 11, 13, 12], // medbay 3
-      [1, 6, 2, 7], // supply cabinets, west wall
+      [1, 1, 13, 5], // reception work area + north cabinets (staff-only back line)
+      [10, 6, 13, 8], // medbay 1
+      [10, 10, 13, 12], // medbay 2
+      [1, 12, 4, 14], // south-west diagnostics terminal
     ],
     seats: [
-      [4, 5], // medic at the counter
-      [7, 7], // the cross on the floor
-      [10, 6], // ward aisle
-      [3, 10], // west of the floor
+      [9, 6], // medic at the open end of reception
+      [7, 8], // the cross on the floor
+      [9, 11], // ward aisle
+      [3, 10], // west side of the floor
     ],
   },
 
@@ -112,18 +148,19 @@ export const ROOM_PLANS: Partial<Record<BuildingKind, VenueLayout>> = {
     tag: "studio",
     art: "hf_int_shop_room",
     blocks: [
-      [3, 2, 3, 8], // shelf aisle, west   — row 1 and row 9+ stay open so aisles connect
-      [7, 2, 7, 8], // shelf aisle, middle
-      [11, 2, 11, 8], // shelf aisle, east
-      [1, 2, 1, 9], // wall shelving, west
-      [13, 2, 13, 9], // wall shelving, east
-      [6, 11, 8, 12], // register island
+      [1, 1, 13, 2], // north stock wall
+      [1, 3, 2, 10], // west wall shelving
+      [4, 3, 5, 10], // shelf aisle, west
+      [9, 3, 10, 10], // shelf aisle, east
+      [12, 3, 13, 11], // east wall shelving and crates
+      [5, 12, 6, 13], // register island, west half
+      [8, 12, 9, 13], // register island, east half; x=7 keeps the door lane clear
     ],
     seats: [
-      [7, 10], // vendor, in front of the register
-      [5, 5], // between the west aisles
-      [9, 5], // between the east aisles
-      [2, 11], // south-west floor
+      [7, 11], // vendor behind the register
+      [3, 6], // west browsing aisle
+      [7, 6], // central browsing aisle
+      [11, 6], // east browsing aisle
     ],
   },
 
@@ -137,18 +174,19 @@ export const ROOM_PLANS: Partial<Record<BuildingKind, VenueLayout>> = {
     tag: "studio",
     art: "hf_int_guild_room",
     blocks: [
-      [5, 1, 9, 2], // dais / banner wall, north
-      [6, 6, 9, 8], // the war table
-      [1, 4, 2, 5], // weapon rack, west upper
-      [1, 8, 2, 9], // weapon rack, west lower
-      [12, 4, 13, 5], // weapon rack, east upper
-      [12, 8, 13, 9], // weapon rack, east lower
+      [4, 1, 10, 2], // command dais / banner wall
+      [1, 1, 3, 2], // north-west equipment alcove (not a walkable pocket)
+      [5, 4, 10, 10], // full raised holo war table
+      [1, 3, 3, 9], // west weapon and equipment bank
+      [12, 3, 13, 9], // east weapon and equipment bank
+      [1, 11, 4, 13], // south-west console, flush to the walls
+      [12, 11, 13, 13], // south-east workbench; x=11 remains a circulation lane
     ],
     seats: [
-      [7, 4], // quartermaster, north of the table
-      [5, 7], // west side of the table
-      [10, 7], // east side of the table
-      [7, 10], // south of the table
+      [7, 3], // quartermaster at the north end
+      [4, 7], // west side of the table
+      [11, 7], // east side of the table
+      [7, 11], // south of the table
     ],
   },
 
@@ -162,17 +200,18 @@ export const ROOM_PLANS: Partial<Record<BuildingKind, VenueLayout>> = {
     tag: "studio",
     art: "hf_int_den_room",
     blocks: [
-      [1, 1, 4, 3], // crate stacks, north-west
-      [10, 1, 13, 3], // terminal bank, north-east
-      [1, 7, 3, 9], // cargo, west wall
-      [11, 7, 13, 9], // cargo, east wall
-      [5, 11, 9, 12], // low table, south of centre
+      [1, 1, 13, 3], // terminal bank across the north wall
+      [1, 4, 3, 7], // west cargo stack, upper
+      [1, 10, 4, 13], // west cargo stack, lower
+      [11, 4, 13, 10], // east couch and cargo bank
+      [11, 12, 13, 14], // south-east equipment
+      [7, 6, 9, 10], // central low table
     ],
     seats: [
-      [7, 5], // fixer, mid-floor
-      [4, 8], // west of the floor
-      [10, 5], // by the terminals
-      [7, 9], // centre
+      [7, 4], // fixer below the terminals
+      [4, 8], // west aisle
+      [10, 5], // beside the couch
+      [7, 11], // south of the table
     ],
   },
 
@@ -188,22 +227,24 @@ export const ROOM_PLANS: Partial<Record<BuildingKind, VenueLayout>> = {
     tag: "studio",
     art: "hf_int_home_room",
     blocks: [
-      [1, 1, 3, 3], // kitchen counter
-      [11, 1, 13, 3], // storage
-      [1, 6, 2, 8], // shelving, west wall
-      [11, 6, 13, 8], // couch, east wall
+      [5, 1, 10, 3], // north console
+      [1, 1, 4, 3], // closed north-west end of the couch alcove
+      [1, 4, 4, 12], // long west couch
+      [12, 5, 13, 12], // east storage console
+      [6, 6, 8, 10], // coffee table on the rug
+      [11, 1, 13, 3], // north-east plant / cabinet
     ],
     seats: [
-      [7, 6], // on the rug
-      [4, 4], // by the kitchen
-      [10, 4], // by the storage
-      [3, 10], // south-west floor
+      [9, 8], // east side of the rug
+      [5, 4], // by the north console
+      [11, 4], // by the storage
+      [5, 11], // south-west floor
     ],
   },
 
   // CIVIC SPIRE — hf_int_citycenter_room (179×180, ~0.99).
-  // Art reads: a glowing civic emblem inlaid in the floor dead centre (walkable — it is
-  // a floor inlay, not a fixture) ringed by four support columns, open plaza around it.
+  // Art reads: a raised circular civic emitter in the centre, reception across the north,
+  // and a freestanding access terminal on the south approach.
   citycenter: {
     w: 15,
     h: 15,
@@ -211,16 +252,15 @@ export const ROOM_PLANS: Partial<Record<BuildingKind, VenueLayout>> = {
     tag: "studio",
     art: "hf_int_citycenter_room",
     blocks: [
-      [3, 3, 4, 4], // column, north-west
-      [10, 3, 11, 4], // column, north-east
-      [3, 10, 4, 11], // column, south-west
-      [10, 10, 11, 11], // column, south-east
+      [3, 1, 11, 3], // north reception desk
+      [5, 5, 9, 9], // raised civic emitter
+      [8, 11, 9, 12], // south access terminal; centre-left approach stays open
     ],
     seats: [
-      [7, 6], // north of the emblem
-      [7, 9], // south of the emblem
-      [4, 7], // west of the emblem
-      [10, 7], // east of the emblem
+      [7, 4], // north of the emitter
+      [6, 11], // south-west approach
+      [4, 7], // west of the emitter
+      [10, 7], // east of the emitter
     ],
   },
 
@@ -246,6 +286,59 @@ export const ROOM_PLANS: Partial<Record<BuildingKind, VenueLayout>> = {
       [7, 11], // south
     ],
   },
+};
+
+// Second-pass Higgsfield venues. Each square plan is traced from its own 576px plate;
+// the south-centre entrance and central aisle stay clear in every room.
+ROOM_PLANS.ripperdoc = {
+  w: 18, h: 18, mat: [9, 16], tag: "studio", art: "hf_int_ripperdoc_room",
+  blocks: [
+    [1, 1, 7, 7], [11, 1, 16, 7], // surgery and diagnostics bays
+    [1, 10, 7, 15], [11, 10, 16, 15], // fabrication and consultation bays
+  ],
+  seats: [[9, 5], [9, 9], [8, 12], [10, 12]],
+};
+ROOM_PLANS.pawn = {
+  w: 18, h: 18, mat: [9, 16], tag: "studio", art: "hf_int_pawn_room",
+  blocks: [
+    [1, 1, 8, 7], [13, 1, 16, 6], // counter and secure appraisal booth
+    [1, 10, 3, 15], [12, 8, 16, 14], // stock wall and display islands
+  ],
+  seats: [[9, 6], [11, 5], [7, 10], [10, 12]],
+};
+ROOM_PLANS.arcade = {
+  w: 18, h: 18, mat: [9, 16], tag: "studio", art: "hf_int_arcade_room",
+  blocks: [
+    [1, 1, 8, 7], [13, 1, 16, 6], // prize counter and simulator stage
+    [2, 10, 6, 15], [8, 10, 8, 15], [10, 10, 12, 15], [14, 9, 16, 14], // cabinet banks; x=9 is the entry lane
+  ],
+  seats: [[9, 7], [11, 8], [7, 9], [13, 8]],
+};
+ROOM_PLANS.garage = {
+  w: 18, h: 18, mat: [9, 16], tag: "studio", art: "hf_int_garage_room",
+  blocks: [
+    [1, 1, 8, 7], [12, 1, 16, 6], // machine bench and parts store
+    [1, 11, 6, 15], [10, 9, 16, 15], // tool bench and vehicle lift
+  ],
+  seats: [[9, 6], [10, 8], [8, 11], [7, 8]],
+};
+ROOM_PLANS.radio = {
+  w: 18, h: 18, mat: [9, 16], tag: "studio", art: "hf_int_radio_room",
+  blocks: [
+    [1, 1, 8, 7], [12, 1, 16, 6], // broadcast desk and listening booth
+    [11, 8, 16, 11], [11, 13, 16, 15], // isolation pods
+    [4, 12, 7, 15], // south studio island, leaving the door lane clear
+  ],
+  seats: [[9, 6], [10, 9], [8, 11], [9, 13]],
+};
+ROOM_PLANS.hotel = {
+  w: 18, h: 18, mat: [9, 16], tag: "studio", art: "hf_int_hotel_room",
+  blocks: [
+    [1, 1, 8, 7], // reception and key counter
+    [12, 1, 16, 6], [12, 8, 16, 11], [12, 13, 16, 15], // sleep pods
+    [1, 10, 3, 15], // service/storage wall
+  ],
+  seats: [[9, 6], [10, 9], [10, 12], [8, 12]],
 };
 
 /**
@@ -305,24 +398,75 @@ export function spawnPointForTravel(
   // here put runners outside the walls after walking in.
   if (isVenueSizedZone(zone)) {
     raw = venueSpawnFor(zone, grid);
-  } else if (isSafehouseSizedInterior(zone)) {
-    // Named hub service interiors (clinic/bar/den/shop/vault) use the large safehouse plan.
+  } else if (isDivePlanInterior(zone)) {
+    // THE PROVING is handed a dive grid, so it must seed from the dive's entry pad.
+    // Seeding from SAFEHOUSE_SPAWN (20,15) dropped runners mid-corridor, past the entry
+    // hall and away from the surface exit the plan puts at DIVE_SPAWN.
     const open = nearestWalkable(
       grid,
-      Math.floor(SAFEHOUSE_SPAWN.x / TILE),
-      Math.floor(SAFEHOUSE_SPAWN.y / TILE),
+      Math.floor(DIVE_SPAWN.x / TILE),
+      Math.floor(DIVE_SPAWN.y / TILE),
       16,
     );
     raw = open
       ? { x: open[0] * TILE + TILE / 2, y: open[1] * TILE + TILE / 2 }
-      : { x: SAFEHOUSE_SPAWN.x, y: SAFEHOUSE_SPAWN.y };
+      : { x: DIVE_SPAWN.x, y: DIVE_SPAWN.y };
   } else {
     raw = { x: TILE * 1.5, y: TILE * 1.5 };
     let found = false;
+    // Every hub building has its own interior ("h{K}"). Return to that exact façade,
+    // one tile south of its carved doorway, instead of the city-wide spawn pad.
+    const hm = fromZone ? /^h(\d+)$/.exec(fromZone) : null;
+    if (hm && zone === "safe") {
+      const b = ONLINE_CITY.buildings[parseInt(hm[1], 10)];
+      const door = b?.door;
+      if (door) {
+        const [tx, ty] = door;
+        const candidates: Array<[number, number]> = [
+          [tx, ty + 1],
+          [tx, ty + 2],
+          [tx - 1, ty + 1],
+          [tx + 1, ty + 1],
+          [tx, ty],
+        ];
+        for (const [cx, cy] of candidates) {
+          if (grid[cy]?.[cx] !== undefined && !isWall(grid[cy][cx])) {
+            raw = { x: cx * TILE + TILE / 2, y: cy * TILE + TILE / 2 };
+            found = true;
+            break;
+          }
+        }
+      }
+    }
+    // Legacy named hub venues use freestanding portals around the plaza rather than
+    // ONLINE_CITY building indices. They still return to the portal that was entered.
+    const serviceOffset = fromZone ? HUB_SERVICE_DOOR_OFFSETS[fromZone] : undefined;
+    if (!found && serviceOffset && zone === "safe") {
+      const tx = ONLINE_CITY.spawn[0] + serviceOffset[0];
+      const ty = ONLINE_CITY.spawn[1] + serviceOffset[1];
+      const open = nearestWalkable(grid, tx, ty, 12);
+      if (open) {
+        raw = { x: open[0] * TILE + TILE / 2, y: open[1] * TILE + TILE / 2 };
+        found = true;
+      }
+    }
+    // Private estate interiors ("est{K}") return to their own street-side doorstep.
+    const em = fromZone ? /^est(\d+)$/.exec(fromZone) : null;
+    if (!found && em && zone === ESTATES_ZONE) {
+      const plot = ESTATES.plots[parseInt(em[1], 10)];
+      if (plot) {
+        const [tx, ty] = plot.door;
+        const open = nearestWalkable(grid, tx, ty, 12);
+        if (open) {
+          raw = { x: open[0] * TILE + TILE / 2, y: open[1] * TILE + TILE / 2 };
+          found = true;
+        }
+      }
+    }
     // stepping OUT of a district building interior ("d{N}i{K}") — arrive at that building's
     // doorstep, the same street tile its door portal occupies (mirrors the client's door math)
     const bm = fromZone ? /^d(\d+)i(\d+)$/.exec(fromZone) : null;
-    if (bm && def && zone === `d${bm[1]}`) {
+    if (!found && bm && def && zone === `d${bm[1]}`) {
       const b = def.layout.buildings[parseInt(bm[2], 10)];
       if (b) {
         const tx = Math.round((b.x1 + b.x2) / 2) * S;

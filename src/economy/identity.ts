@@ -105,7 +105,7 @@ export async function fetchWalletIdentity(proof: {
   }
 }
 
-/** Connect wallet (if needed) — does not sign or hit the server. EVM-first + WalletConnect. */
+/** Connect Phantom/Solana (if needed) — does not sign or hit the server. */
 export async function ensureWalletConnected(): Promise<string | null> {
   const existing = connectedWallet();
   if (existing) return existing;
@@ -118,7 +118,7 @@ function noWalletDetail(): string {
   const sol = preferSolanaWallet();
   if (walletConnectAvailable()) {
     return sol
-      ? "Open the wallet picker, choose Phantom / Solflare / any WalletConnect wallet, then approve."
+      ? "Open Phantom or Solflare, then approve the connection."
       : "Open the wallet picker, choose MetaMask / Phantom / any WalletConnect wallet, then approve.";
   }
   if (isLikelyMobile()) {
@@ -132,7 +132,7 @@ function noWalletDetail(): string {
 }
 
 /** Full wallet sign-up: connect + sign login message (proof for /identity and WS). */
-export async function metaMaskSignUp(): Promise<
+export async function walletSignUp(): Promise<
   | { ok: true; proof: { wallet: string; sig: string; ts: number } }
   | { ok: false; error: IdentityError; detail?: string }
 > {
@@ -154,8 +154,8 @@ export async function metaMaskSignUp(): Promise<
   return { ok: true, proof };
 }
 
-/** Alias — wallet sign-up (same implementation). */
-export const walletSignUp = metaMaskSignUp;
+/** Backward-compatible symbol for older callers; the live path is Phantom/Solana. */
+export const metaMaskSignUp = walletSignUp;
 
 export function hasWalletProvider(): boolean {
   return walletAvailable();

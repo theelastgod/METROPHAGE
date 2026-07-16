@@ -13,6 +13,7 @@ import {
   subwayBossTile,
   subwayThreatTier,
   resolveSubwayOpen,
+  subwayTunnelArtModules,
 } from "./subway";
 
 describe("THE UNDERLINE subway network", () => {
@@ -89,6 +90,32 @@ describe("THE UNDERLINE subway network", () => {
     expect(isWall(g[boss.ty]?.[boss.tx])).toBe(false);
   });
 
+  it("carves every rendered tunnel module footprint into shared walkable geometry", () => {
+    const g = buildSubway();
+    const modules = subwayTunnelArtModules();
+    expect(modules.length).toBeGreaterThan(30);
+    expect(modules.some((m) => m.key === "hf_subway_tunnel_junction")).toBe(true);
+    expect(modules.some((m) => m.quarterTurns === 1)).toBe(true);
+    for (const m of modules) {
+      const hw = Math.floor(m.w / 2);
+      const hh = Math.floor(m.h / 2);
+      for (let y = m.ty - hh; y <= m.ty + hh; y++) {
+        for (let x = m.tx - hw; x <= m.tx + hw; x++) {
+          expect(isWall(g[y]?.[x]), `${m.id} floats over rock at ${x},${y}`).toBe(false);
+        }
+      }
+    }
+  });
+
+  it("covers tunnel lines continuously with overlapping authored art modules", () => {
+    const modules = subwayTunnelArtModules();
+    expect(modules.length).toBeGreaterThan(100);
+    for (const m of modules) {
+      expect(m.w).toBeGreaterThanOrEqual(5);
+      expect(m.h).toBeGreaterThanOrEqual(5);
+    }
+  });
+
   it("populates the boarding station — it is the one you arrive at, not a dead room", () => {
     // Regression: the hub was skipped by the station-guard loop AND smothered by a
     // 16-tile clear pad, so the first station a player ever sees had zero enemies
@@ -119,4 +146,3 @@ describe("THE UNDERLINE subway network", () => {
     }
   });
 });
-

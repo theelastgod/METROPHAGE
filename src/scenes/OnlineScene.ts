@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { installUiCamera } from "../render/cameras";
 import { installRoofParallax, type RoofParallax } from "../render/roofParallax";
 import { createTerrainLayer, type TerrainProfile } from "../render/terrainLayer";
+import { paintGeneratedGroundArt } from "../render/generatedGroundArt";
 import { paintRooftopLights } from "../render/rooftopLights";
 import { PlayerLight } from "../render/PlayerLight";
 import Atmosphere from "../render/Atmosphere";
@@ -26,7 +27,6 @@ import {
   BULLET_KEY,
   GLOW_KEY,
   NODE_KEY,
-  PROP_STREETLIGHT_KEY,
   PROP_VENDING_KEY,
   PROP_AC_KEY,
   PROP_CAR_KEY,
@@ -47,6 +47,7 @@ import {
   PORTRAIT_INTERACT_KEY,
   STINGER_BOSS_KEY,
   VO_MELTDOWN_KEY,
+  deferredWorldAssetsForZone,
 } from "../assets/manifest";
 import { driveChar } from "../assets/anim";
 import {
@@ -62,6 +63,7 @@ import {
   gridDims,
   pvpZonesFor,
   stepMove,
+  AOI_RADIUS,
   NET_TICK_MS,
   RESPAWN_MS,
   type MoveState,
@@ -78,19 +80,20 @@ import {
   buildDive,
   parseDiveZone,
   DIVE_CORE_TILE,
+  DIVE_SPAWN,
   buildTutorial,
   SAFEHOUSE_SPAWN,
   TUTORIAL_PORTAL_RADIUS,
   TUTORIAL_SPAWN,
   isVenueSizedZone,
-  isSafehouseSizedInterior,
+  isDivePlanInterior,
   isWall,
   type TileGrid,
 } from "../world/district";
 // Interior rooms resolve by venue KIND (art-traced plans) — the server builds the same
 // grid from the same resolver, so both sides must import from world/rooms, never from
 // world/district's hash-picked fallback.
-import { buildVenueRoom, venueLayoutFor, venueSpawnFor } from "../world/rooms";
+import { buildVenueRoom, venueKindForZone, venueLayoutFor, venueSpawnFor } from "../world/rooms";
 import { HUB_SERVICE_ROOMS } from "../world/district";
 import {
   parseBridgeZone,
@@ -152,8 +155,9 @@ import { cityPulseAt } from "../game/cityPulse";
 import { noteNpcTalk, noteNpcBountyDone, npcMemoryLine } from "../game/npcMemory";
 import { buildStamp } from "../buildInfo";
 import { raidScriptFor } from "../game/raid";
-import { dailyDistrictMod } from "../game/districtMods";
+import { dailyDistrictMod, districtBarIntelLine } from "../game/districtMods";
 import { fadeInScene, transitionTo } from "../systems/transitions";
+import { dismissZoneLoadingSplash, showZoneLoadingSplash } from "../ui/ZoneLoadingSplash";
 import { juiceShake, juiceFlash, juiceHitStop, juiceZoomPunch, juiceNeonPulse } from "../systems/juice";
 import Particles from "../render/Particles";
 import { playCombatPose, resetCombatPose } from "../assets/combatAnim";
@@ -178,7 +182,7 @@ import RsSkillsPanel from "../ui/RsSkillsPanel";
 import RsActionBar from "../ui/RsActionBar";
 import RsGameMessage from "../ui/RsGameMessage";
 import { grantSkillXp, loadRsSkills, type RsSkillXp } from "../game/rsSkills";
-import { scatterWorldProps, fixtureKeyFor } from "../render/propScatter";
+import { scatterWorldProps } from "../render/propScatter";
 import { envForDistrict, type DistrictEnvTheme } from "../game/districtEnv";
 import OnlineMinimap from "../ui/OnlineMinimap";
 import RsQuestLog from "../ui/RsQuestLog";
@@ -244,7 +248,7 @@ import {
   wildernessShacks,
 } from "../game/districtVenues";
 import { applyCosmetic } from "../game/cosmetics";
-import { npcDef, AMBIENT_NPCS, INTERIOR_PLAN, keeperFor, districtResident, hubResident, campaignAllyLines, STORY_ALLIES, locationAwareLine } from "../game/cityNpcs";
+import { npcDef, AMBIENT_NPCS, INTERIOR_PLAN, keeperFor, districtResident, districtFieldMedic, hubResident, campaignAllyLines, STORY_ALLIES, locationAwareLine } from "../game/cityNpcs";
 import { portraitFor, portraitForName, portraitForBoss, portraitSheetFallback, type PortraitRef } from "../game/portraits";
 import { bountyForNpc } from "../game/bounties";
 import { noteRecentPlayer, listRecentPlayers, pinRecentPlayer } from "../game/recentPlayers";
@@ -379,7 +383,7 @@ export default class OnlineScene extends Phaser.Scene {
   private mapPanel!: OnlineMap; // fast-travel map with per-account discovery fog
   private baseLook?: PlayerLook; // your base appearance (cosmetics merge on top for rendering)
   private chatPanel!: OnlineChatPanel;
-  private lastChatShown = 0;
+  private lastChatShownAt = 0; // newest chat line already bubbled (chatLog is capped + shifts)
   private rosterText!: Phaser.GameObjects.Text;
   private tradeText!: Phaser.GameObjects.Text;
   private trackerG!: Phaser.GameObjects.Graphics; // backing frame behind the objective tracker
@@ -497,6 +501,8 @@ export default class OnlineScene extends Phaser.Scene {
   private lastMeleeSlashAt = 0;
   private static readonly PICKUP_MAGNET = 88;
   private static readonly KILL_STREAK_MS = 2800;
+  /** Ignore "kills" this close to the AOI edge — they are almost certainly culls. */
+  private static readonly AOI_KILL_MARGIN = 120;
   private travelToast?: Phaser.GameObjects.Text;
   /** Offline/connecting drill preview — local movement until the server welcomes us. */
   private drillLocal: MoveState | null = null;
@@ -509,7 +515,21 @@ export default class OnlineScene extends Phaser.Scene {
     super("Online");
   }
 
+  private preloadZone = TUTORIAL_ZONE;
+
+  init(data?: { zone?: string }) {
+    this.preloadZone = data?.zone || TUTORIAL_ZONE;
+  }
+
   preload() {
+    for (const a of deferredWorldAssetsForZone(this.preloadZone)) {
+      if (!a.file || this.textures.exists(a.key)) continue;
+      if (a.frameWidth && a.frameHeight) {
+        this.load.spritesheet(a.key, a.file, { frameWidth: a.frameWidth, frameHeight: a.frameHeight });
+      } else {
+        this.load.image(a.key, a.file);
+      }
+    }
     const sheets = [
       [PORTRAIT_CAST_KEY, "assets/portraits/cast_sheet.jpg"],
       [PORTRAIT_KEEPERS_KEY, "assets/portraits/keepers_sheet.jpg"],
@@ -538,6 +558,7 @@ export default class OnlineScene extends Phaser.Scene {
   }
 
   create(data?: { zone?: string; from?: string; tutorialMode?: TutorialMode }) {
+    dismissZoneLoadingSplash();
     const rawCust = this.registry.get("customization") as Customization | undefined;
     const cust = sanitizeCustomization(rawCust, this.registry.get("classId") as string | undefined);
     this.callsign = (rawCust?.callsign || "runner").toLowerCase();
@@ -551,6 +572,7 @@ export default class OnlineScene extends Phaser.Scene {
     this.registry.remove("tutorialDeploying");
     this.wheelObjs = [];
     this.lastEmoteShownAt = 0;
+    this.lastChatShownAt = 0;
     this.bossOverlays.clear(); // GO destroyed on shutdown; drop stale refs before re-create
     this.clearBossIntro();
     this.bossIntroShown = "";
@@ -605,9 +627,22 @@ export default class OnlineScene extends Phaser.Scene {
     this.homeDraft = [];
     this.hudPanelImg = null;
     this.trackerPanelImg = null;
+    // SHUTDOWN destroyed the Text, but the field still pointed at it — so the lazy
+    // `if (!this.linkRetryBtn)` build never re-ran and every zone after the first
+    // silently had no LINK control, until a label change hit the dead texture and threw.
+    this.linkRetryBtn = undefined;
     this.estatePlateObjs = [];
     this.wanderers = []; // scene restart destroyed the sprites — drop the stale refs
     this.wandererGrid = null;
+    // Both are built only for certain zone kinds, but update() polls them unconditionally,
+    // so a stale one keeps animating the previous zone's destroyed objects every frame.
+    this.roofParallax?.destroy();
+    this.roofParallax = undefined;
+    this.atmosphere = undefined;
+    // Class-field initializers do not re-run when Phaser reuses the scene instance, so
+    // the old zone's link state leaked in and faked "connected" during the new handshake.
+    this.connectionState = "connecting";
+    this.lastHudConnectionState = null;
     this.registryObjs = [];
     this.registryOpen = false;
     this.districtDoors = [];
@@ -667,7 +702,13 @@ export default class OnlineScene extends Phaser.Scene {
                   ? buildHomeRoom()
                   : isVenueSizedZone(this.zone)
                     ? buildVenueRoom(this.zone)
-                    : buildSafehouse()
+                    : // THE PROVING is an interior whose plan is the dive maze — the server
+                      // builds buildDive() for it, and the server owns collision. This
+                      // fell through to buildSafehouse(), so the two sides disagreed about
+                      // every wall in the zone.
+                      isDivePlanInterior(this.zone)
+                      ? buildDive()
+                      : buildSafehouse()
               : this.isBridge
                 ? buildBridgeGrid(bridgeDef!)
                 : buildGrid(def);
@@ -727,6 +768,16 @@ export default class OnlineScene extends Phaser.Scene {
       lightweight: this.isCityHub,
       forceWetStreets: dEnv ? dEnv.wetStreets : undefined,
     });
+    paintGeneratedGroundArt(this, {
+      profile: terrainProfile,
+      zone: this.zone,
+      worldW: this.worldW,
+      worldH: this.worldH,
+      districtId: def?.id,
+      infected: dEnv?.infectedFacades ?? false,
+      citySpawn: this.isCityHub ? CITY_HUB_SPAWN : undefined,
+      artRoom,
+    });
     if (this.isCityHub) {
       paintCityEnvWash(this, ONLINE_CITY.zones);
       // Full HF replacement for landmarks / large blocks — skip roof caps on those rects
@@ -753,9 +804,14 @@ export default class OnlineScene extends Phaser.Scene {
         bridgeDef!.layout.biome,
       );
     } else if (this.isCityHub || isCombatDistrict) {
-      scatterWorldProps(this, grid, 4, this.isCityHub ? 0.003 : (dEnv?.propDensity ?? 0.006), {
+      scatterWorldProps(this, grid, 4, this.isCityHub ? 0.0014 : (dEnv?.propDensity ?? 0.006) * 0.7, {
         propBias: dEnv?.propBias,
         accent: zoneAccent,
+        clearCenter: this.isCityHub
+          ? { tx: HUB_CX, ty: HUB_CY, radius: 18 }
+          : isCombatDistrict
+            ? { tx: def.spawnTile[0] * DISTRICT_SCALE, ty: def.spawnTile[1] * DISTRICT_SCALE, radius: 8 }
+            : undefined,
       });
     }
     if (this.isCityHub) {
@@ -787,27 +843,9 @@ export default class OnlineScene extends Phaser.Scene {
         const cy = ((b.y1 + b.y2) / 2) * DISTRICT_SCALE * TILE + TILE / 2;
         this.atmosphere.addHologram(cx, cy, zoneAccent, dEnv.holoGlyphs);
       }
-      // Wall-adjacent fixtures — mix matches the district (industrial dumpsters vs corp planters).
-      const hash = (x: number, y: number) => ((x * 73856093) ^ (y * 19349663)) >>> 0;
-      const adjWall = (x: number, y: number) =>
-        isWall(grid[y]?.[x - 1]) || isWall(grid[y]?.[x + 1]) || isWall(grid[y - 1]?.[x]) || isWall(grid[y + 1]?.[x]);
-      const fixtures = dEnv.fixtureMix.length ? dEnv.fixtureMix : (["streetlight", "vending", "ac"] as const);
-      let placed = 0;
-      for (let ty = 1; ty < grid.length - 1 && placed < 14; ty++) {
-        for (let tx = 1; tx < grid[ty].length - 1; tx++) {
-          if (isWall(grid[ty][tx]) || !adjWall(tx, ty)) continue;
-          const h = hash(tx, ty);
-          if (h % 10 !== 0) continue;
-          const px = tx * TILE + TILE / 2;
-          const py = ty * TILE + TILE / 2;
-          const bias = fixtures[h % fixtures.length];
-          const key = fixtureKeyFor(bias, h >> 3);
-          if (!this.textures.exists(key)) continue;
-          const tall = key === PROP_STREETLIGHT_KEY || key.includes("streetlight") || key.includes("hf_prop_01");
-          this.add.image(px, py + TILE / 2, key).setOrigin(0.5, tall ? 1 : 0.85).setDepth(4);
-          placed++;
-        }
-      }
+      // Wall-adjacent object pass removed: large generated cutouts anchored beside a
+      // wall visibly painted over the façade. The clearance-aware street scatter above
+      // supplies district furniture without violating building silhouettes.
       paintRooftopLights(
         this,
         districtBuildings(def),
@@ -897,8 +935,8 @@ export default class OnlineScene extends Phaser.Scene {
           const py = hubNpc.tile[1] * TILE + TILE / 2;
           const key = lookKey(hubNpc.look);
           bakeRemoteLook(this, key, hubNpc.look);
-          // Stall shows TAG only (FORGE / VENDOR…) — name appears on hover / interact bubble.
-          this.drawServiceStall(px, py, hubNpc.name, hubNpc.tag, hubNpc.color);
+          // Keep the arrival plaza open: service NPCs stand on their own with a light
+          // beacon instead of each occupying a bulky market stall.
           const isFixer = hubNpc.svc === "contracts";
           // THE FIXER is the first-session north star — brighter beacon than other stalls.
           const g = this.add
@@ -1061,7 +1099,10 @@ export default class OnlineScene extends Phaser.Scene {
           // Art-traced room (world/rooms.ts): the baked picture IS the room, and its
           // fixtures are already collision blocks — so skip the procedural counter/rug
           // pass and the scattered furniture that would paint over it.
-          if (!dressArtRoom(this, VL.art ?? "", VL.w, VL.h)) {
+          // District venues share one collision-traced room image, then receive a subtle
+          // local accent wash. This makes a WASTES bar read differently from a SPIRE bar
+          // without generating a second picture whose fixtures could desync collision.
+          if (!dressArtRoom(this, VL.art ?? "", VL.w, VL.h, 2.0, bi ? accent : undefined)) {
             this.dressVenueRoom(kind, accent);
             let vh = 5381;
             for (let i = 0; i < this.zone.length; i++) vh = ((vh << 5) + vh + this.zone.charCodeAt(i)) >>> 0;
@@ -1105,7 +1146,7 @@ export default class OnlineScene extends Phaser.Scene {
       // district ambient life — a few authored citizens near the entrance so the world
       // outside the hub feels inhabited (cosmetic fixtures; HSS + player shots ignore them).
       const [sx, sy] = def.spawnTile;
-      const S = 2;
+      const S = DISTRICT_SCALE;
       const spots: [number, number][] = [
         [sx * S - 6, sy * S],
         [sx * S + 6, sy * S],
@@ -1120,6 +1161,20 @@ export default class OnlineScene extends Phaser.Scene {
         const adef = AMBIENT_NPCS[(this.districtIndex * 3 + placed) % AMBIENT_NPCS.length];
         this.makeTalkNpc(adef.name, adef.look, adef.lines, tx * TILE + TILE / 2, ty * TILE + TILE / 2, adef.id);
         placed++;
+      }
+      // A local street medic anchors each combat arrival. Healing remains
+      // server-authoritative and charity cooldown-limited via npcServices/world.ts.
+      const medic = districtFieldMedic(this.districtIndex);
+      const medicSpots: [number, number][] = [
+        [sx * S + 7, sy * S - 4],
+        [sx * S - 7, sy * S - 4],
+        [sx * S + 7, sy * S + 4],
+        [sx * S - 7, sy * S + 4],
+      ];
+      for (const [tx, ty] of medicSpots) {
+        if (isWall(grid[ty]?.[tx])) continue;
+        this.makeTalkNpc(medic.name, medic.look, medic.lines, tx * TILE + TILE / 2, ty * TILE + TILE / 2, medic.id, true);
+        break;
       }
       const edges = districtEdgeTiles(grid);
       const fwd = DISTRICT_TRANSIT_FWD.find((t) => t.district === this.districtIndex);
@@ -2046,7 +2101,9 @@ export default class OnlineScene extends Phaser.Scene {
         return;
       }
       if (e.key === "e" || e.key === "E") {
-        this.doInteract();
+        // Guarded like every pointer interact path: unguarded, pressing E with the
+        // Bag/Map/Market open fired a full zone handoff underneath the modal.
+        if (!this.blockRsInput()) this.doInteract();
         return;
       }
       if (e.key === "g" || e.key === "G") {
@@ -2190,10 +2247,14 @@ export default class OnlineScene extends Phaser.Scene {
         }
         const indoors = this.interior || this.isSubway || this.isDive;
         const dest = indoors ? this.fromZone : "safe";
-        // leaving a district-building interior tells the district WHICH door to spawn at;
-        // all other exits keep their classic entry spawn
+        // Building interiors tell the destination WHICH doorway to return to. Omitting
+        // h{K}/est{K} here sent desktop H-key exits to the whole area's default spawn.
         const from = indoors
-          ? parseBuildingInterior(this.zone) || parseWildernessShack(this.zone)
+          ? parseBuildingInterior(this.zone) ||
+            parseHubInterior(this.zone) !== null ||
+            parseEstateInterior(this.zone) !== null ||
+            parseWildernessShack(this.zone) ||
+            HUB_SERVICE_ROOMS.has(this.zone)
             ? this.zone
             : undefined
           : this.zone;
@@ -2284,7 +2345,7 @@ export default class OnlineScene extends Phaser.Scene {
   }
 
   /**
-   * Keep a device-local runner profile so CONTINUE works without MetaMask.
+   * Keep a device-local runner profile so CONTINUE works without Phantom.
    * Guest server progress still keys off callsign + device secret on login.
    */
   private isGuestRun(): boolean {
@@ -2522,7 +2583,8 @@ export default class OnlineScene extends Phaser.Scene {
     // Compact FRLG rooms (district buildings, hub facades, estate homes) — mat entry tile.
     // SAFEHOUSE_SPAWN is centre of the large safehouse plan and sits OUTSIDE 15×11 walls.
     else if (isVenueSizedZone(this.zone)) preferred = venueSpawnFor(this.zone, this.zoneGrid);
-    else if (isSafehouseSizedInterior(this.zone)) preferred = SAFEHOUSE_SPAWN;
+    // THE PROVING runs the dive plan, so its entry pad is DIVE_SPAWN, not the safehouse centre.
+    else if (isDivePlanInterior(this.zone)) preferred = DIVE_SPAWN;
     else if (this.interior && !this.isSubway) preferred = SAFEHOUSE_SPAWN;
     if (!preferred || !this.zoneGrid) return preferred;
     // Never park the drill/local preview inside walls.
@@ -2770,7 +2832,7 @@ export default class OnlineScene extends Phaser.Scene {
     const n = this.net;
     // FIXER / contracts is the first-hour north star — never lock it. Everything else waits.
     // Heal / meal / subway entry are always allowed (survival utilities).
-    const utilitySvc = svc === "heal" || svc === "meal" || svc === "subway" || svc === "stash";
+    const utilitySvc = svc === "heal" || svc === "meal" || svc === "rest" || svc === "subway" || svc === "stash";
     if (svc !== "contracts" && !utilitySvc && firstHourSystemsLocked() && !this.isTutorial) {
       this.pointBlockedPlayerToFixer();
       return;
@@ -2820,7 +2882,11 @@ export default class OnlineScene extends Phaser.Scene {
         const hb = parseHubInterior(this.zone);
         const hubKind = hb !== null ? ONLINE_CITY.buildings[hb]?.kind : "";
         const medicId =
-          this.zone === "hospital" || hubKind === "hospital" ? "keep_hospital" : "keep_clinic";
+          this.zone === "hospital" || hubKind === "hospital"
+            ? "keep_hospital"
+            : hubKind === "ripperdoc"
+              ? "keep_ripperdoc"
+              : "keep_clinic";
         n.npcService(medicId, "heal_paid");
         this.showBubble(this.me?.x ?? 0, this.me?.y ?? 0, "MEDIC: hold still…");
         break;
@@ -2830,8 +2896,20 @@ export default class OnlineScene extends Phaser.Scene {
           this.showBubble(this.me?.x ?? 0, this.me?.y ?? 0, "kitchen's offline");
           break;
         }
-        n.npcService("keep_hotel", "meal");
-        this.showBubble(this.me?.x ?? 0, this.me?.y ?? 0, "CONCIERGE: sit. eat.");
+        const hb = parseHubInterior(this.zone);
+        const hubKind = hb !== null ? ONLINE_CITY.buildings[hb]?.kind : "";
+        const cookId = hubKind === "noodle" ? "keep_noodle" : "keep_hotel";
+        n.npcService(cookId, "meal");
+        this.showBubble(this.me?.x ?? 0, this.me?.y ?? 0, hubKind === "noodle" ? "MAMA TSE: eat while it's hot." : "CONCIERGE: sit. eat.");
+        break;
+      }
+      case "rest": {
+        if (!n.connected) {
+          this.showBubble(this.me?.x ?? 0, this.me?.y ?? 0, "rooms are offline");
+          break;
+        }
+        n.npcService("keep_hotel", "rest");
+        this.showBubble(this.me?.x ?? 0, this.me?.y ?? 0, "CONCIERGE: sleep. the locks hold.");
         break;
       }
       case "subway":
@@ -3271,18 +3349,44 @@ export default class OnlineScene extends Phaser.Scene {
    */
   private placeWildernessShacks(bridgeIndex: number) {
     const S = DISTRICT_SCALE;
+    const bridge = getBridge(bridgeIndex);
+    const biome = bridge.layout.biome;
     const g = this.add.graphics().setDepth(4.2);
     for (const [si, sh] of wildernessShacks(bridgeIndex).entries()) {
       const fx = sh.foot[0] * S;
       const fy = sh.foot[1] * S;
       const fw = 2 * S;
       const fh = 2 * S;
-      // Tiny shack body
-      g.fillStyle(0x121018, 0.98).fillRect(fx * TILE, fy * TILE, fw * TILE, fh * TILE);
-      g.fillStyle(0x2a1a14, 0.95).fillRect(fx * TILE, fy * TILE, fw * TILE, 6);
-      g.lineStyle(1, 0x6a5040, 0.7).strokeRect(fx * TILE + 1, fy * TILE + 1, fw * TILE - 2, fh * TILE - 2);
-      // Roof wash
-      g.fillStyle(0xffb13c, 0.25).fillRect(fx * TILE, fy * TILE, fw * TILE, 3);
+      // A complete, biome-aware micro-building. The old three-rectangle treatment
+      // read as an empty dark block on every trail, particularly Tidal Scrub.
+      const x = fx * TILE;
+      const y = fy * TILE;
+      const w = fw * TILE;
+      const h = fh * TILE;
+      const flood = biome === "floodplain";
+      const roof = biome === "undercity" ? 0x26313d : biome === "ash_wastes" ? 0x5b4737 : 0x253542;
+      const body = flood ? 0x314c53 : biome === "industrial_cut" ? 0x394032 : 0x34313d;
+      const trim = flood ? 0x7feeff : bridge.accent;
+      const lamp = biome === "meltdown" ? 0xff6d3b : flood ? 0x61e7ff : 0xffb13c;
+      // Shadow + raised pilings make floodplain shacks read as actual stilt homes.
+      g.fillStyle(0x05080e, 0.55).fillRect(x + 4, y + h - 4, w - 8, 9);
+      if (flood) {
+        g.fillStyle(0x18262e, 0.98).fillRect(x + 10, y + h - 3, 6, 15);
+        g.fillStyle(0x18262e, 0.98).fillRect(x + w - 16, y + h - 3, 6, 15);
+        g.fillStyle(0x61e7ff, 0.28).fillRect(x + 2, y + h + 8, w - 4, 2);
+      }
+      g.fillStyle(body, 1).fillRect(x, y + 7, w, h - 7);
+      g.fillStyle(roof, 1).fillTriangle(x - 3, y + 8, x + w / 2, y - 4, x + w + 3, y + 8);
+      g.fillStyle(0x101720, 0.95).fillRect(x + 6, y + 14, w - 12, h - 22);
+      // Corrugated wall ribs + two lit service windows.
+      for (let rx = x + 10; rx < x + w - 7; rx += 12) {
+        g.fillStyle(0x73808a, 0.25).fillRect(rx, y + 16, 2, h - 25);
+      }
+      g.fillStyle(trim, 0.75).fillRect(x + 5, y + 10, w - 10, 3);
+      g.fillStyle(lamp, 0.7).fillRect(x + 10, y + h - 18, 12, 6);
+      g.fillStyle(lamp, 0.7).fillRect(x + w - 22, y + h - 18, 12, 6);
+      g.lineStyle(2, trim, 0.72).strokeRect(x + 2, y + 5, w - 4, h - 7);
+      g.fillStyle(trim, 0.8).fillCircle(x + w / 2, y + 4, 3);
       const dest = wildernessShackZone(bridgeIndex, si);
       let dtx = sh.door[0] * S;
       let dty = sh.door[1] * S;
@@ -3321,6 +3425,7 @@ export default class OnlineScene extends Phaser.Scene {
     const sh = wildernessShackDef(ref.bridge, ref.index);
     const bridge = getBridge(ref.bridge);
     const accent = bridge.accent;
+    const biome = bridge.layout.biome;
     const L = venueLayoutFor(this.zone);
     this.add
       .text(this.worldW / 2, 4 * TILE, `▣ ${sh?.label ?? "TRAIL SHACK"}`, {
@@ -3340,10 +3445,42 @@ export default class OnlineScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(6);
 
-    // Dim shack floor wash
+    // A shack is a refuge, not an empty venue plan. Keep this vector furniture clear
+    // of the server's walkable seats/mat, so what is painted here remains collision-safe.
     const bg = this.add.graphics().setDepth(2.2);
-    bg.fillStyle(0x1a120c, 0.35).fillRect(TILE, TILE, (L.w - 2) * TILE, (L.h - 2) * TILE);
-    bg.fillStyle(accent, 0.08).fillRect(TILE * 2, TILE * 2, (L.w - 4) * TILE, (L.h - 4) * TILE);
+    const flood = biome === "floodplain";
+    const wall = flood ? 0x1e363c : biome === "ash_wastes" ? 0x34251e : 0x252a36;
+    const floor = flood ? 0x182a2d : biome === "undercity" ? 0x172329 : 0x1d1d28;
+    const wood = flood ? 0x59756f : biome === "industrial_cut" ? 0x67614d : 0x625044;
+    const lamp = flood ? 0x61e7ff : biome === "meltdown" ? 0xff6d3b : 0xffb13c;
+    const ix = TILE;
+    const iy = TILE;
+    const iw = (L.w - 2) * TILE;
+    const ih = (L.h - 2) * TILE;
+    bg.fillStyle(wall, 1).fillRect(ix, iy, iw, ih);
+    bg.fillStyle(floor, 1).fillRect(ix + 7, iy + 8, iw - 14, ih - 16);
+    // Timber / metal floorboards retain readable room scale under the mobile camera.
+    for (let y = iy + 15; y < iy + ih - 8; y += 14) bg.fillStyle(wood, 0.16).fillRect(ix + 8, y, iw - 16, 1);
+    bg.lineStyle(2, accent, 0.5).strokeRect(ix + 4, iy + 4, iw - 8, ih - 8);
+    // North wall: cot and shelving. They deliberately sit inside the collision wall ring.
+    bg.fillStyle(0x111820, 0.96).fillRect(ix + 12, iy + 13, 54, 20);
+    bg.fillStyle(wood, 0.9).fillRect(ix + 14, iy + 15, 50, 5);
+    bg.fillStyle(0xc1d5df, 0.72).fillRect(ix + 17, iy + 22, 20, 7);
+    bg.fillStyle(0x0c1118, 1).fillRect(ix + iw - 38, iy + 12, 22, 30);
+    for (let sy = iy + 16; sy < iy + 38; sy += 8) bg.fillStyle(accent, 0.5).fillRect(ix + iw - 35, sy, 16, 2);
+    // Field stove / water can: visual anchors that differentiate a lived-in refuge.
+    const stoveX = ix + iw - 57;
+    const stoveY = iy + ih - 52;
+    bg.fillStyle(0x0b1015, 1).fillRect(stoveX, stoveY, 27, 24);
+    bg.lineStyle(1, wood, 0.8).strokeRect(stoveX, stoveY, 27, 24);
+    bg.fillStyle(lamp, 0.7).fillCircle(stoveX + 13, stoveY + 9, 5);
+    bg.fillStyle(0x64717c, 0.8).fillRect(stoveX + 20, stoveY - 14, 4, 15);
+    // Floodplain shelters retain a small water-line window; other biomes get a shutter.
+    const winX = ix + iw - 74;
+    bg.fillStyle(flood ? 0x3e98aa : 0x111827, 0.9).fillRect(winX, iy + 13, 22, 14);
+    bg.lineStyle(1, flood ? 0x8ff8ff : accent, 0.7).strokeRect(winX, iy + 13, 22, 14);
+    bg.lineStyle(1, wood, 0.5).lineBetween(winX + 11, iy + 14, winX + 11, iy + 26);
+    this.add.image(stoveX + 13, stoveY + 8, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(lamp).setDepth(2.35).setScale(0.42).setAlpha(0.22);
 
     if (sh) {
       const [stx, sty] = L.seats[0] ?? [Math.floor(L.w / 2), 3];
@@ -3629,6 +3766,13 @@ export default class OnlineScene extends Phaser.Scene {
 
   private advanceLine(npc: { lines?: string[]; lineIdx?: number }): string {
     const idx = npc.lineIdx ?? 0;
+    const district = /^d(\d+)i\d+$/.exec(this.zone);
+    // Every third conversation in a district bar yields truthful daily-condition
+    // intelligence before the player commits to another street run.
+    if (district && venueKindForZone(this.zone) === "bar" && idx % 3 === 2) {
+      npc.lineIdx = idx + 1;
+      return districtBarIntelLine(Number(district[1]));
+    }
     const line = locationAwareLine(npc.lines, this.zone, idx);
     npc.lineIdx = idx + 1;
     return line || "…";
@@ -4089,43 +4233,6 @@ export default class OnlineScene extends Phaser.Scene {
     }
   }
 
-  /** A market STALL that houses a hub service operative: striped awning, a counter the
-   *  NPC stands behind, and an always-visible sign board so a runner reads what each
-   *  stand offers from across the plaza. Purely cosmetic — the NPC sprite + interaction
-   *  are placed by the caller. */
-  private drawServiceStall(px: number, py: number, name: string, tag: string, color: number) {
-    const hex = "#" + (color & 0xffffff).toString(16).padStart(6, "0");
-    const W = 72, hw = W / 2;
-    const ay = py - 36; // awning line
-    const g = this.add.graphics().setDepth(6);
-    // support posts
-    g.fillStyle(0x161c2c, 1).fillRect(px - hw + 1, ay + 10, 3, 42).fillRect(px + hw - 4, ay + 10, 3, 42);
-    // striped awning
-    g.fillStyle(0x0a0e18, 0.94).fillRect(px - hw, ay, W, 12);
-    for (let i = 0; i < 6; i++) g.fillStyle(i % 2 ? color : 0x141a2a, 0.9).fillRect(px - hw + 2 + i * 11.2, ay + 2, 9, 8);
-    g.fillStyle(color, 0.9).fillRect(px - hw, ay, W, 2);
-    // sign board — service TAG only (FORGE / VENDOR); operator name is not permanent world UI
-    const sy = ay - 15;
-    g.fillStyle(0x05060f, 0.96).fillRect(px - hw, sy, W, 14);
-    g.lineStyle(1.5, color, 0.95).strokeRect(px - hw, sy, W, 14);
-    this.add.image(px, sy + 7, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(color).setDepth(5.8).setScale(0.65, 0.32).setAlpha(0.28);
-    this.add.text(px, sy + 7, tag, displayFont(10, { color: hex, fontStyle: "bold" })).setOrigin(0.5).setDepth(10);
-    // counter drawn OVER the NPC's feet so they read as standing behind the stand
-    const cg = this.add.graphics().setDepth(9.5);
-    cg.fillStyle(0x111730, 0.98).fillRect(px - hw + 4, py + 12, W - 8, 12);
-    cg.fillStyle(color, 0.5).fillRect(px - hw + 4, py + 12, W - 8, 2);
-    cg.fillStyle(0x05060f, 0.6).fillRect(px - hw + 4, py + 22, W - 8, 2);
-    // Name only on hover of the stall zone (pointer on sign area) — keeps plaza readable.
-    const nameLbl = this.add
-      .text(px, py + 30, name, bodyFont(8, { color: "#9aa3b2" }))
-      .setOrigin(0.5)
-      .setDepth(10)
-      .setAlpha(0);
-    const hit = this.add.zone(px - hw, sy, W, py + 24 - sy).setOrigin(0).setInteractive({ useHandCursor: true }).setDepth(10);
-    hit.on("pointerover", () => nameLbl.setAlpha(1));
-    hit.on("pointerout", () => nameLbl.setAlpha(0));
-  }
-
   /** Decorative city furniture for the hub plaza — a centre fountain, benches, and a
    *  holo-board — so the safe zone reads as a lived-in square, not an empty tile field. */
   /** Dress the hub plaza into a lived-in neon square: paving decal, a centre fountain,
@@ -4396,11 +4503,11 @@ export default class OnlineScene extends Phaser.Scene {
     const glow = (x: number, y: number, c: number, sx: number, sy: number, a: number, d = 3.5) =>
       this.add.image(x, y, GLOW_KEY).setBlendMode(ADD).setTint(c).setDepth(d).setScale(sx, sy).setAlpha(a);
 
-    // ── plaza paving: concentric neon rings centred on the square + a lit path south ──
+    // ── civic paving accents: restrained cyan/brass rings + a lit path south ──
     const [cx, cy] = w(0, 0);
     const ring = this.add.graphics().setDepth(2.6);
     ring.lineStyle(2, 0x29e7ff, 0.13).strokeEllipse(cx, cy, 320, 158);
-    ring.lineStyle(1, 0xff2bd6, 0.1).strokeEllipse(cx, cy, 230, 116);
+    ring.lineStyle(1, 0xd8b36a, 0.12).strokeEllipse(cx, cy, 230, 116);
     ring.lineStyle(1, 0x29e7ff, 0.07).strokeEllipse(cx, cy, 410, 205);
     for (let i = 0; i < 5; i++) ring.fillStyle(0x39ff88, 0.05).fillRect(cx - 24 + i * 11, cy + 120, 6, 96); // guide stripes → deploy gate
 
@@ -4432,7 +4539,7 @@ export default class OnlineScene extends Phaser.Scene {
       glow(x, y - 32, 0xffb86a, 1.0, 0.5, 0.22, 5.5);
       glow(x, y + 10, 0xffd98a, 1.5, 0.8, 0.12, 3);
     };
-    for (const [x, y] of [w(-10, -6), w(10, -6), w(-10, 6), w(10, 6), w(-10, 0), w(10, 0), w(-2, -11), w(2, -11)]) streetlight(x, y);
+    for (const [x, y] of [w(-11, -7), w(11, -7), w(-11, 7), w(11, 7)]) streetlight(x, y);
 
     // ── planters (neon foliage) ──
     const planter = (x: number, y: number, c: number) => {
@@ -4442,7 +4549,7 @@ export default class OnlineScene extends Phaser.Scene {
       for (let i = 0; i < 5; i++) g.fillStyle(c, 0.8).fillRect(x - 8 + i * 4, y - 3 - (i % 2 ? 9 : 5), 2, i % 2 ? 9 : 5);
       glow(x, y - 6, c, 0.4, 0.4, 0.14);
     };
-    for (const [x, y, c] of [[...w(-6, -3), 0x39ff88], [...w(6, -3), 0x39ff88], [...w(-6, 3), 0x9dff3c], [...w(6, 3), 0x9dff3c], [...w(-2, 9), 0x39ff88], [...w(2, 9), 0x39ff88]] as [number, number, number][]) planter(x, y, c);
+    for (const [x, y, c] of [[...w(-12, -9), 0x39ff88], [...w(12, 9), 0x9dff3c]] as [number, number, number][]) planter(x, y, c);
 
     // ── ramen carts (rising steam) ──
     const cart = (x: number, y: number) => {
@@ -4454,8 +4561,7 @@ export default class OnlineScene extends Phaser.Scene {
       const st = glow(x, y - 16, 0xdfe8ff, 0.4, 0.4, 0.16, 6);
       this.tweens.add({ targets: st, y: y - 32, alpha: 0, scale: 0.7, duration: 2200, repeat: -1 });
     };
-    cart(...w(-10, 3));
-    cart(...w(10, -3));
+    cart(...w(-13, -11));
 
     // ── arcade cabinets (glowing screens) ──
     const arcade = (x: number, y: number, c: number) => {
@@ -4465,8 +4571,7 @@ export default class OnlineScene extends Phaser.Scene {
       g.fillStyle(0x0a0e18, 1).fillRect(x - 6, y - 4, 12, 4);
       glow(x, y - 12, c, 0.5, 0.5, 0.22, 5.8);
     };
-    arcade(...w(-10, -3), 0xff2bd6);
-    arcade(...w(10, 3), 0x00e5ff);
+    arcade(...w(13, 10), 0x00e5ff);
 
     // ── holo-billboards ──
     const billboard = (x: number, y: number, text: string, c: number) => {
@@ -4479,11 +4584,9 @@ export default class OnlineScene extends Phaser.Scene {
       this.tweens.add({ targets: t, alpha: 0.55, duration: 1700, yoyo: true, repeat: -1 });
     };
     billboard(...w(0, -13), "METRO CITY\nSAFE ZONE", 0x39ff88);
-    billboard(...w(-14, -9), "NEON\nCORE", 0xff2bd6);
-    billboard(...w(14, -9), "CORP\nROW", 0x29e7ff);
 
     // ── benches ──
-    for (const [bx, by] of [w(-6, 1), w(6, 1), w(-4, 5), w(4, 5)]) {
+    for (const [bx, by] of [w(-9, 6), w(9, 6)]) {
       const bg = this.add.graphics().setDepth(4);
       bg.fillStyle(0x151b2c, 1).fillRect(bx - 16, by - 3, 32, 7);
       bg.fillStyle(0x0a0e18, 1).fillRect(bx - 14, by + 4, 3, 5).fillRect(bx + 11, by + 4, 3, 5);
@@ -4500,7 +4603,6 @@ export default class OnlineScene extends Phaser.Scene {
     // ── PVP herald → make THE CRUCIBLE findable the moment you spawn ──
     // A red billboard up top + a signpost by the deploy gate: PvP is the arena in the SE
     // corner of every combat district, so a new runner reads where to fight from the plaza.
-    billboard(...w(8, -13), "⚔ PVP\nCRUCIBLE", 0xff3b6b);
     const [px, py] = w(5, 4);
     const pg = this.add.graphics().setDepth(6);
     pg.fillStyle(0x14060a, 0.96).fillRect(px - 60, py - 10, 120, 17);
@@ -5280,7 +5382,10 @@ export default class OnlineScene extends Phaser.Scene {
       style,
       accent,
       // Wait for server onClose flush before the next zone DO claims session_zone.
-      onMid: () => this.net?.disconnectAwait(2500) ?? Promise.resolve(),
+      onMid: async () => {
+        await (this.net?.disconnectAwait(2500) ?? Promise.resolve());
+        showZoneLoadingSplash(zone);
+      },
     });
   }
 
@@ -5559,6 +5664,17 @@ export default class OnlineScene extends Phaser.Scene {
     }
     for (const [id, prev] of this.prevEnemyHp) {
       if (!live.has(id)) {
+        // A vanished id is not proof of a kill. The server culls the snapshot by distance
+        // as well as by death (worldSnapshot: `e.hp > 0 && near(...)`), so anything that
+        // left AOI reads exactly like a corpse from here. Crediting those fired the full
+        // kill celebration — and phantom combat XP — for simply walking away, while the
+        // boss locator still displayed the boss as ALIVE. Nothing is killable near the AOI
+        // edge anyway, so ignoring that band costs no real celebration.
+        const dx = prev.x - this.net.pred.x;
+        const dy = prev.y - this.net.pred.y;
+        if (Math.hypot(dx, dy) > AOI_RADIUS - OnlineScene.AOI_KILL_MARGIN) continue;
+        // The boss carries its own authoritative liveness, so trust it over the roster.
+        if (prev.boss && this.net.boss?.alive) continue;
         this.killStreak++;
         this.killStreakExpiresAt = this.time.now + OnlineScene.KILL_STREAK_MS;
         noteKill();
@@ -6460,7 +6576,10 @@ export default class OnlineScene extends Phaser.Scene {
           ? INTERIOR_TITLES[this.zone] ?? "▣ INTERIOR"
           : this.isSubway
             ? "▼ THE UNDERLINE"
-            : `${this.zone.toUpperCase()} ${DISTRICTS[this.districtIndex].name}`;
+            // Optional, like every other DISTRICTS lookup: districtIndex comes from zone
+            // parsing that accepts d0–d31 while DISTRICTS has 8 entries, and this runs from
+            // update(), so an out-of-range zone would kill the scene, not just the HUD row.
+            : `${this.zone.toUpperCase()} ${DISTRICTS[this.districtIndex]?.name ?? ""}`;
       const soloWander = !!this.drillLocal && !st.connected && (this.isCityHub || (this.interior && !this.isSubway));
       // two compact lines — cell/war detail lives in the L leaderboard, HP is the bar
       this.hud.setText([
@@ -7760,14 +7879,20 @@ export default class OnlineScene extends Phaser.Scene {
 
   /** Show speech bubbles when players send area chat — visible to everyone nearby. */
   private processChatBubbles() {
-    const log = this.net.chatLog;
-    while (this.lastChatShown < log.length) {
-      const c = log[this.lastChatShown++]!;
+    // Key off `at`, like processEmotes, rather than an index into chatLog: the log is
+    // capped at 40 and shift()s, so its length stops growing while an index-based cursor
+    // keeps climbing. Once the cursor reached 40, every bubble in the zone stopped
+    // forever — and sys lines burn the cursor too, so that took only minutes.
+    let newest = this.lastChatShownAt;
+    for (const c of this.net.chatLog) {
+      if (c.at <= this.lastChatShownAt) continue;
+      if (c.at > newest) newest = c.at;
       if (c.sys || c.ch === "whisper") continue;
       if (c.ch !== "zone" && c.ch !== "party" && c.ch !== "guild") continue;
       const pos = this.chatBubblePos(c.from, c.x, c.y);
       if (pos) this.spawnChatBubble(c.from, c.text, pos.x, pos.y);
     }
+    this.lastChatShownAt = newest;
   }
 
   private chatBubblePos(from: string, x?: number, y?: number): { x: number; y: number } | null {
