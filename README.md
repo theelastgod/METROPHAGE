@@ -46,7 +46,8 @@ Four classes, each with a full server-validated kit:
 ## The $METRO economy
 
 $METRO is a tradeable on-chain token bridged to server-authoritative `credits`.
-**Preferred settlement: Solana SPL** via Phantom. Robinhood Chain ERC-20 remains as legacy.
+**Preferred settlement: Solana SPL** via Phantom. Robinhood Chain ERC-20 remains in the
+tree as a dormant alternate (`METRO_SETTLEMENT=robinhood`), not the launch path.
 
 - In-game currency is off-chain `credits`.
 - Sign-up: Phantom + free message (no gas).

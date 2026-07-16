@@ -6,6 +6,7 @@ import {
   walletAvailable,
   walletConnectAvailable,
   connectWalletLabel,
+  preferSolanaWallet,
 } from "./wallet";
 import { isLikelyMobile } from "./walletConnect";
 
@@ -114,13 +115,20 @@ export async function ensureWalletConnected(): Promise<string | null> {
 }
 
 function noWalletDetail(): string {
+  const sol = preferSolanaWallet();
   if (walletConnectAvailable()) {
-    return "Open the wallet picker, choose MetaMask / Phantom / any WalletConnect wallet, then approve.";
+    return sol
+      ? "Open the wallet picker, choose Phantom / Solflare / any WalletConnect wallet, then approve."
+      : "Open the wallet picker, choose MetaMask / Phantom / any WalletConnect wallet, then approve.";
   }
   if (isLikelyMobile()) {
-    return "No browser wallet detected. Tap Connect to open MetaMask (or install a wallet app), then return.";
+    return sol
+      ? "No browser wallet detected. Tap Connect to open Phantom (or install a wallet app), then return."
+      : "No browser wallet detected. Tap Connect to open MetaMask (or install a wallet app), then return.";
   }
-  return "Install MetaMask, Phantom, or another wallet extension — or set VITE_WALLETCONNECT_PROJECT_ID for mobile WalletConnect.";
+  return sol
+    ? "Install Phantom, Solflare, or another Solana wallet extension — or set VITE_WALLETCONNECT_PROJECT_ID for mobile WalletConnect."
+    : "Install MetaMask, Phantom, or another wallet extension — or set VITE_WALLETCONNECT_PROJECT_ID for mobile WalletConnect.";
 }
 
 /** Full wallet sign-up: connect + sign login message (proof for /identity and WS). */

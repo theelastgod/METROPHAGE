@@ -1,17 +1,17 @@
 // METROPHAGE — pre-CA treasury preparation.
 //
-// AUTHORITATIVE path: Robinhood Chain / EVM treasury (0x private key).
-//   node scripts/mainnet-prepare.mjs --evm
-//   node scripts/mainnet-prepare.mjs --evm --replace
-//
-// Dormant alternate: Solana keypair (only if METRO_SETTLEMENT=solana):
+// AUTHORITATIVE path: Solana treasury keypair (base64 64-byte). This is the default.
 //   node scripts/mainnet-prepare.mjs
 //   node scripts/mainnet-prepare.mjs --replace
 //
-// Writes (gitignored): server/.mainnet-treasury.json (+ .solana-treasury.json for SOL)
+// Dormant alternate: Robinhood Chain / EVM treasury (only if METRO_SETTLEMENT=robinhood):
+//   node scripts/mainnet-prepare.mjs --evm
+//   node scripts/mainnet-prepare.mjs --evm --replace
 //
-// After you have the Robinhood ERC-20 mint CA:
-//   set METRO_MINT + VITE_METRO_MINT to the 0x address; arm mainnet only with counsel.
+// Writes (gitignored): server/.solana-treasury.json (+ .mainnet-treasury.json for EVM)
+//
+// After you have the SPL mint CA:
+//   set METRO_MINT + VITE_METRO_MINT to the base58 address; arm mainnet only with counsel.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -91,7 +91,7 @@ function makeSolanaRecord(kp) {
     note:
       "AUTHORITATIVE Solana treasury for $METRO. Never commit. Receives SPL deposits; " +
       "partially signs claims (player pays SOL). Treasury never spends SOL. " +
-      "EVM alternate: node scripts/mainnet-prepare.mjs --evm --replace",
+      "Dormant EVM alternate: node scripts/mainnet-prepare.mjs --evm --replace",
     mint: null,
     mainnetArmed: false,
     authoritative: true,
@@ -107,12 +107,13 @@ function makeEvmRecord(wallet) {
     secretFormat: "evm-hex-private-key",
     createdAt: new Date().toISOString(),
     note:
-      "AUTHORITATIVE Robinhood Chain treasury for $METRO. Never commit. " +
-      "Receives ERC-20 deposits; signs cash-outs (fund with ETH for gas). " +
-      "Solana alternate: node scripts/mainnet-prepare.mjs --replace (no --evm).",
+      "DORMANT ALTERNATE Robinhood Chain treasury for $METRO. Never commit. " +
+      "Only used with METRO_SETTLEMENT=robinhood. Receives ERC-20 deposits; " +
+      "signs cash-outs (fund with ETH for gas). " +
+      "Authoritative Solana path: node scripts/mainnet-prepare.mjs --replace (no --evm).",
     mint: null,
     mainnetArmed: false,
-    authoritative: true,
+    authoritative: false,
   };
 }
 
@@ -149,14 +150,20 @@ function printEvmSteps(record) {
   cd server
   node -e "process.stdout.write(JSON.parse(require('fs').readFileSync('.mainnet-treasury.json','utf8')).treasurySecret)" \\
     | npx wrangler secret put METRO_TREASURY_SECRET
-  # METRO_SETTLEMENT=robinhood is already in wrangler.toml [vars]
+  # wrangler.toml [vars] ships METRO_SETTLEMENT="solana" — the EVM path is dormant.
+  # To actually use this treasury you must ALSO set, in wrangler.toml [vars]:
+  #   METRO_SETTLEMENT = "robinhood"
+  #   METRO_CLUSTER    = "robinhood"   (or "robinhood-testnet")
+  #   METRO_CHAIN_ID   = "4663"        (46630 for testnet)
+  #   METRO_RPC        = "https://rpc.mainnet.chain.robinhood.com"
   npx wrangler deploy
 
 ── When you have the Robinhood ERC-20 mint CA ────────────────────────────
   npx wrangler secret put METRO_MINT          # 0x…
-  # client: VITE_METRO_MINT=0x… VITE_METRO_CLUSTER=robinhood-testnet|robinhood
+  # client: VITE_METRO_MINT=0x… VITE_METRO_SETTLEMENT=robinhood
+  #         VITE_METRO_CLUSTER=robinhood-testnet|robinhood
 
-Treasury (Robinhood Chain — AUTHORITATIVE):
+Treasury (Robinhood Chain — DORMANT ALTERNATE):
   address: ${record.treasuryAddress}
   file:    ${OUT}`);
   if (printSecret) console.log(`  METRO_TREASURY_SECRET=${record.treasurySecret}`);
@@ -193,7 +200,7 @@ if (wantEvm) {
   const wallet = Wallet.createRandom();
   const record = makeEvmRecord(wallet);
   writeRecord(record);
-  console.log("Created Robinhood/EVM treasury (AUTHORITATIVE).");
+  console.log("Created Robinhood/EVM treasury (DORMANT ALTERNATE — Solana is the launch path).");
   printEvmSteps(record);
 } else {
   const kp = Keypair.generate();

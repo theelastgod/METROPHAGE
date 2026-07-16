@@ -740,7 +740,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
     return;
   }
   const st = getMetroStatus();
-  // Robinhood primary — only force Solana UX when mint/settlement is explicitly SPL.
+  // Solana primary — EVM UX only when mint/settlement is explicitly the 0x alternate.
   const solPrimary = metroIsSolana || preferSolanaWallet();
   const walletLabel = solPrimary ? "Phantom" : walletUiLabel();
   const connectLabel = solPrimary ? "Connect Phantom" : connectWalletLabel();
@@ -837,7 +837,9 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
             </div>
             <button id="m-copy-treasury" class="secondary copy">Copy</button>
           </div>
-          <div class="notice" id="m-get-hint">Earn ₵ in-game. Cash-outs use the player-funded $METRO pool on Solana.</div>
+          <div class="notice" id="m-get-hint">Earn ₵ in-game. Cash-outs use the player-funded $METRO pool on ${
+            solPrimary ? "Solana" : "Robinhood Chain"
+          }.</div>
           <div class="notice" id="m-checklist" style="display:none"></div>
           <div class="notice" id="m-treasury-health" style="display:none"></div>
           <div class="notice" id="m-economy" style="display:none"></div>
@@ -936,9 +938,11 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
         const treas = p.treasuryConfigured || p.treasury ? "ok" : "missing";
         const fam = p.family || (solPrimary ? "solana" : "robinhood");
         ck.style.display = "block";
-        ck.textContent =
-          `Solana SPL primary · family: ${fam} · mint: ${mint} · treasury: ${treas}. ` +
-          `Go-live: server METRO_MINT + METRO_TREASURY_SECRET (base64 keypair), then client VITE_METRO_MINT.`;
+        ck.textContent = solPrimary
+          ? `Solana SPL primary · family: ${fam} · mint: ${mint} · treasury: ${treas}. ` +
+            `Go-live: server METRO_MINT + METRO_TREASURY_SECRET (base64 keypair), then client VITE_METRO_MINT.`
+          : `Robinhood ERC-20 (alternate) · family: ${fam} · mint: ${mint} · treasury: ${treas}. ` +
+            `Go-live: server METRO_MINT + METRO_TREASURY_SECRET (0x key), then client VITE_METRO_MINT.`;
       }
 
       if (!mintReady || p.readyForCa || p.family === "off") {

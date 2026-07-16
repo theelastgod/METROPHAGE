@@ -10,8 +10,9 @@
 //   • min withdraw floor + short anti-spam cooldown
 //   • optional wider spread at higher population tiers
 //
-// On-chain $METRO USD price (EVM) scales credits-per-$METRO rates so the bridge
-// tracks market value. Reference design assumes ~$1 / $METRO at launch.
+// On-chain $METRO USD price scales credits-per-$METRO rates so the bridge tracks
+// market value. Chain-agnostic: the oracle prices whichever family holds the mint
+// (Solana SPL primary, EVM alternate). Reference design assumes ~$1 at launch.
 
 /** Fixed total $METRO supply (human units; mint decimals may differ on-chain). */
 export const METRO_TOTAL_SUPPLY = 1_000_000_000;

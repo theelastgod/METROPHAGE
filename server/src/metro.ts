@@ -9,9 +9,9 @@
 // AUTHORITY: the server owns every balance and authorizes every settlement. The client
 // never mints, never reports a balance, and cannot double-spend — withdrawals debit
 // atomically (a conditional UPDATE) and deposits are claim-once (tx_sig is a PRIMARY
-// KEY). Settlement is a pluggable seam: Robinhood ERC-20 (primary), Solana SPL (alt),
+// KEY). Settlement is a pluggable seam: Solana SPL (primary), Robinhood ERC-20 (alt),
 // or devnet-sim for headless smoke tests.
-// Credits↔$METRO rates track EVM market USD (refreshed ~every 30m via metroPrice).
+// Credits↔$METRO rates track market USD (refreshed ~every 30m via metroPrice).
 //
 // Wallet proof required for live settlement (personal_sign / SIWS).
 

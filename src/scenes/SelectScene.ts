@@ -26,6 +26,9 @@ import {
   walletAvailable,
   restoreWalletSession,
   walletSessionSecret,
+  walletChoiceList,
+  walletChoiceProse,
+  preferSolanaWallet,
 } from "../economy/wallet";
 import {
   ensureWalletConnected,
@@ -275,7 +278,7 @@ export default class SelectScene extends Phaser.Scene {
           ? [
               {
                 label: "◈ LINK WALLET",
-                sub: "MetaMask · Phantom · any WalletConnect wallet",
+                sub: walletChoiceList(),
                 color: COLORS.neonGreen,
                 primary: false as const,
                 fn: () => void this.onMetaMaskSignUp(),
@@ -354,16 +357,16 @@ export default class SelectScene extends Phaser.Scene {
     this.walletPanel.show({
       step: "connect",
       status: "ready",
-      statusText: mobile ? "WalletConnect · free sign-in" : "WalletConnect · MetaMask · Phantom · free sign-in",
+      statusText: mobile ? "WalletConnect · free sign-in" : `WalletConnect · ${walletChoiceList()} · free sign-in`,
       headline: "Connect your wallet",
       body: mobile
         ? "Any wallet — free sign-in, no gas. Or play free with a device save."
-        : "Sign up with any wallet — MetaMask, Phantom, Rainbow, Trust, Coinbase, and more. Free message (no gas). Your runner is permanently bound to your address across devices. Prefer no wallet? Play free with a device-locked multiplayer save.",
+        : `Sign up with any wallet — ${walletChoiceProse()}, and more. Free message (no gas). Your runner is permanently bound to your address across devices. Prefer no wallet? Play free with a device-locked multiplayer save.`,
       wallet: null,
       actions: this.walletActions([
         {
           label: "◈ CONNECT WALLET",
-          sub: mobile ? "WalletConnect · free message" : "MetaMask · Phantom · WalletConnect · free message",
+          sub: mobile ? "WalletConnect · free message" : `${walletChoiceList()} · free message`,
           color: COLORS.neonGreen,
           primary: true as const,
           fn: () => void this.onMetaMaskSignUp(),
@@ -386,7 +389,7 @@ export default class SelectScene extends Phaser.Scene {
       status: "busy",
       statusText: "awaiting wallet · WalletConnect",
       headline: "Check your wallet",
-      body: "Approve the connection in MetaMask, Phantom, or any WalletConnect wallet. Then sign a free login message — no gas. Your runner is permanently bound to this address.",
+      body: `Approve the connection in ${walletChoiceProse()}. Then sign a free login message — no gas. Your runner is permanently bound to this address.`,
       wallet: connectedWallet(),
       actions: [],
       showDisconnect: true,
@@ -506,7 +509,7 @@ export default class SelectScene extends Phaser.Scene {
         },
         {
           label: "◈ LINK WALLET TO THIS RUNNER",
-          sub: "MetaMask · Phantom · WalletConnect · permanent id",
+          sub: `${walletChoiceList()} · permanent id`,
           color: COLORS.neonGreen,
           primary: false as const,
           fn: () => void this.linkWalletToGuestRunner(),
@@ -552,7 +555,7 @@ export default class SelectScene extends Phaser.Scene {
       status: "busy",
       statusText: "awaiting wallet",
       headline: "Link wallet to this runner",
-      body: `Connect MetaMask, Phantom, or any WalletConnect wallet and sign a free message to lock progress to “${callsign}”. That address will always load this runner until you choose NEW RUNNER.`,
+      body: `Connect ${walletChoiceProse()} and sign a free message to lock progress to “${callsign}”. That address will always load this runner until you choose NEW RUNNER.`,
       wallet: connectedWallet(),
       actions: [],
     });
@@ -710,7 +713,9 @@ export default class SelectScene extends Phaser.Scene {
   private startNewGuestRunner() {
     const local = loadLocalRunner();
     const addr = connectedWallet();
-    const solLinked = !!(addr && !isEvmAddress(addr));
+    // Linked only counts when the address belongs to the family that settles $METRO;
+    // an address from the dormant alternate cannot bind a runner.
+    const solLinked = !!addr && (preferSolanaWallet() ? !isEvmAddress(addr) : isEvmAddress(addr));
     const hasSave = !!(local?.callsign) || !!this.identity?.locked;
 
     // Nothing to lose — go straight to create.
@@ -755,7 +760,7 @@ export default class SelectScene extends Phaser.Scene {
         ...(!solLinked && walletAvailable()
           ? [
               {
-                label: "◈ LINK SOLANA FIRST",
+                label: preferSolanaWallet() ? "◈ LINK SOLANA FIRST" : "◈ LINK WALLET FIRST",
                 sub: "bind this runner to your wallet",
                 color: COLORS.neonGreen,
                 primary: true as const,

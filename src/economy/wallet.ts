@@ -221,14 +221,14 @@ export function rotateWalletSessionSecret(wallet: string): string | undefined {
   return s;
 }
 
-/** Prefer Solana only when SPL is forced / mint is base58. Default launch path is EVM. */
+/** Prefer EVM only when Robinhood is forced / mint is 0x. Default launch path is Solana. */
 export function preferSolanaWallet(): boolean {
   if (settlementForce() === "solana") return true;
   if (settlementForce() === "robinhood") return false;
   if (metroIsSolana) return true;
   if (metroIsEvm) return false;
-  // No CA yet — Robinhood / EVM is the active launch path.
-  return false;
+  // No CA yet (force=auto) — Solana / SPL is the active launch path.
+  return true;
 }
 
 function getInjectedEvm(): EvmProvider | null {
@@ -646,6 +646,23 @@ export function walletUiLabel(): string {
   if (getInjectedEvm()?.isMetaMask) return "MetaMask";
   if (getInjectedEvm()?.isPhantom) return "Phantom";
   return "Wallet";
+}
+
+/**
+ * Wallet names for sign-up copy, in the order players should try them.
+ * Leads with the family that actually settles $METRO.
+ */
+export function walletChoiceList(): string {
+  return preferSolanaWallet()
+    ? "Phantom · Solflare · any WalletConnect wallet"
+    : "MetaMask · Phantom · any WalletConnect wallet";
+}
+
+/** Prose form of the same list, for sentences rather than button subtitles. */
+export function walletChoiceProse(): string {
+  return preferSolanaWallet()
+    ? "Phantom, Solflare, or any WalletConnect wallet"
+    : "MetaMask, Phantom, or any WalletConnect wallet";
 }
 
 export function connectWalletLabel(): string {

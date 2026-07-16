@@ -274,7 +274,8 @@ if (import.meta.env.DEV) {
     `[$METRO] ${
       m.enabled
         ? `ENABLED · ${m.networkName} · ${m.cluster}${m.chainId ? ` · id ${m.chainId}` : ""}${m.mainnetLive ? " · MAINNET LIVE" : ""}`
-        : "disabled (off-chain only) · Robinhood mainnet · awaiting CA · set VITE_METRO_MINT when ready"
+        : // dualChainSummary already names the family, network and the env var to set.
+          m.summary
     }`,
   );
 }

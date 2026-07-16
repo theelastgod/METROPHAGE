@@ -1,5 +1,5 @@
 // Server-side $METRO family resolution (mirrors client chainProfile).
-// AUTHORITATIVE: Robinhood Chain ERC-20. Solana SPL remains a dormant alternate.
+// AUTHORITATIVE: Solana SPL. Robinhood Chain ERC-20 remains a dormant alternate.
 
 export type SettlementFamily = "robinhood" | "solana" | "off";
 
@@ -33,16 +33,16 @@ export function isSolanaMint(mint: string): boolean {
 
 /**
  * METRO_SETTLEMENT:
- *   robinhood|evm (default) — authoritative live path
- *   solana|sol|spl          — dormant alternate only
- *   auto                    — detect from mint shape (0x → robinhood, base58 → solana)
+ *   solana|sol|spl (default) — authoritative live path
+ *   robinhood|rh|evm         — dormant alternate only
+ *   auto                     — detect from mint shape (base58 → solana, 0x → robinhood)
  */
 export function settlementForce(env: { METRO_SETTLEMENT?: string }): "robinhood" | "solana" | "auto" {
-  const f = (env.METRO_SETTLEMENT || "robinhood").toLowerCase().trim();
-  if (f === "solana" || f === "sol" || f === "spl") return "solana";
+  const f = (env.METRO_SETTLEMENT || "solana").toLowerCase().trim();
+  if (f === "robinhood" || f === "rh" || f === "evm") return "robinhood";
   if (f === "auto") return "auto";
-  // robinhood | rh | evm | empty | anything else → robinhood (authoritative)
-  return "robinhood";
+  // solana | sol | spl | empty | anything else → solana (authoritative)
+  return "solana";
 }
 
 export function resolveSettlementFamily(
@@ -52,10 +52,12 @@ export function resolveSettlementFamily(
   const m = (mint || "").trim();
   const force = settlementForce(env);
 
-  // Explicit Solana alternate — only when operator forces solana.
-  if (force === "solana") {
+  // Explicit EVM alternate — only when operator forces robinhood.
+  if (force === "robinhood") {
     if (!m) return "off";
-    return "solana";
+    if (isEvmMint(m)) return "robinhood";
+    // base58 mint while forced robinhood → stay off (do not silently take Solana path)
+    return "off";
   }
 
   // auto: shape detection.
@@ -66,21 +68,21 @@ export function resolveSettlementFamily(
     return "off";
   }
 
-  // Default / robinhood force: Robinhood is authoritative.
-  // No mint yet → off (credits-only). Solana mint shapes are ignored unless force=solana|auto.
+  // Default / solana force: Solana is authoritative.
+  // No mint yet → off (credits-only). EVM mint shapes are ignored unless force=robinhood|auto.
   if (!m) return "off";
-  if (isEvmMint(m)) return "robinhood";
-  // base58 mint while forced robinhood → stay off (do not silently take Solana path)
+  if (isSolanaMint(m)) return "solana";
+  // 0x mint while forced solana → stay off (do not silently take the EVM path)
   return "off";
 }
 
 export function settlementFamilyLabel(family: SettlementFamily): string {
   switch (family) {
-    case "robinhood":
-      return "Robinhood Chain ERC-20";
     case "solana":
-      return "Solana SPL (alternate)";
+      return "Solana SPL";
+    case "robinhood":
+      return "Robinhood Chain ERC-20 (alternate)";
     default:
-      return "off (credits only · Robinhood primary)";
+      return "off (credits only · Solana primary)";
   }
 }

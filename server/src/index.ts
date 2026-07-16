@@ -140,8 +140,8 @@ export type SettlementKind = "sim" | "evm" | "solana";
 
 /**
  * Choose the bridge settlement.
- * AUTHORITATIVE: Robinhood Chain ERC-20 (default METRO_SETTLEMENT=robinhood).
- * Dormant alternate: Solana SPL only when METRO_SETTLEMENT=solana.
+ * AUTHORITATIVE: Solana SPL (default METRO_SETTLEMENT=solana).
+ * Dormant alternate: Robinhood Chain ERC-20 only when METRO_SETTLEMENT=robinhood.
  * Mainnet requires METRO_MAINNET_ARMED=1. Missing mint/treasury → sim.
  */
 async function pickSettlement(env: Env): Promise<{ settlement: Settlement; kind: SettlementKind; family: string }> {
@@ -152,9 +152,10 @@ async function pickSettlement(env: Env): Promise<{ settlement: Settlement; kind:
     return { settlement: simSettlement, kind: "sim", family: family === "off" ? "off" : family };
   }
 
-  // Solana SPL — dormant alternate (METRO_SETTLEMENT=solana only).
+  // Solana SPL — authoritative live path. Mainnet default fails closed to sim
+  // unless METRO_MAINNET_ARMED=1, so an unset METRO_RPC can never move real value.
   if (family === "solana") {
-    const rpc = (env.METRO_RPC || "https://api.devnet.solana.com").trim();
+    const rpc = (env.METRO_RPC || "https://api.mainnet-beta.solana.com").trim();
     if (rpcIsMainnet(rpc) && env.METRO_MAINNET_ARMED !== "1") {
       return { settlement: simSettlement, kind: "sim", family: "solana" };
     }
@@ -170,7 +171,7 @@ async function pickSettlement(env: Env): Promise<{ settlement: Settlement; kind:
     };
   }
 
-  // Robinhood / EVM — authoritative live path.
+  // Robinhood / EVM — dormant alternate (METRO_SETTLEMENT=robinhood only).
   if (family === "robinhood") {
     const chainId = defaultEvmChainId(env);
     const rpc = (env.METRO_RPC || defaultEvmRpc(chainId)).trim();
@@ -494,57 +495,42 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
       info.treasuryConfigured = hasTreasury;
       info.mainnetArmed = armed;
       info.rpc = rpc || null;
-      const force = (env.METRO_SETTLEMENT || "robinhood").toLowerCase().trim();
+      const force = (env.METRO_SETTLEMENT || "solana").toLowerCase().trim();
+      // Only an explicit EVM force (or a resolved 0x family) takes the dormant path;
+      // an unset/unknown METRO_SETTLEMENT means Solana.
       const wantRobinhood =
-        family === "robinhood" ||
-        force === "robinhood" ||
-        force === "rh" ||
-        force === "evm" ||
-        force === "" ||
-        (!force.includes("sol") && force !== "auto");
-      const cid = wantRobinhood || family === "robinhood" ? defaultEvmChainId(env) : null;
+        family === "robinhood" || force === "robinhood" || force === "rh" || force === "evm";
+      const cid = wantRobinhood ? defaultEvmChainId(env) : null;
       info.family = family;
       info.familyLabel = settlementFamilyLabel(family as "robinhood" | "solana" | "off");
-      // Robinhood is authoritative even while awaiting mint (family=off).
-      info.chain =
-        family === "solana"
-          ? "solana"
-          : cid === 4663 || cid === 46630
-            ? "robinhood"
-            : wantRobinhood
-              ? "evm"
-              : "robinhood";
-      info.chainId = family === "solana" ? null : cid;
-      info.networkName =
-        family === "solana"
-          ? /mainnet/i.test(rpc)
-            ? "Solana Mainnet"
-            : "Solana Devnet"
-          : cid === 4663
-            ? "Robinhood Chain"
-            : "Robinhood Chain Testnet";
+      // Solana is authoritative even while awaiting mint (family=off).
+      info.chain = wantRobinhood ? (cid === 4663 || cid === 46630 ? "robinhood" : "evm") : "solana";
+      info.chainId = wantRobinhood ? cid : null;
+      info.networkName = wantRobinhood
+        ? cid === 46630
+          ? "Robinhood Chain Testnet"
+          : "Robinhood Chain"
+        : /devnet/i.test(rpc)
+          ? "Solana Devnet"
+          : "Solana Mainnet";
       info.readyForCa = hasTreasury && !mint;
       info.liveBridge = live;
       info.settlement = kind;
       info.simLocked = simLocked;
       info.simAllowed = allowSim;
-      // Robinhood is authoritative; solana adapter remains loadable as alternate only.
-      info.dualPathReady = { robinhood: true, solana: false, solanaAlternate: true };
-      info.authoritativeChain = "robinhood";
-      info.note =
-        family === "solana"
-          ? "Solana SPL alternate — Phantom cash-outs when forced."
-          : "Robinhood Chain $METRO — MetaMask deposits; treasury pays gas on cash-outs when funded.";
-      info.getMetroHint =
-        family === "solana"
-          ? "Alternate SPL path — deposit via Phantom."
-          : "Get $METRO (ERC-20), Send via MetaMask to treasury, then Claim deposit.";
+      // Solana is authoritative; the EVM adapter remains loadable as alternate only.
+      info.dualPathReady = { solana: true, robinhood: false, robinhoodAlternate: true };
+      info.authoritativeChain = "solana";
+      info.note = wantRobinhood
+        ? "Robinhood Chain $METRO (dormant alternate) — MetaMask deposits; treasury pays gas on cash-outs when funded."
+        : "Solana SPL $METRO — Phantom deposits; treasury partially signs cash-outs (player pays the SOL fee).";
+      info.getMetroHint = wantRobinhood
+        ? "Dormant ERC-20 path — Send via MetaMask to treasury, then Claim deposit."
+        : "Get $METRO (SPL), Send via Phantom to treasury, then Claim deposit.";
       if (hasTreasury) {
-        // Prefer EVM treasury when Robinhood is primary (or secret is clearly EVM).
-        if (
-          (wantRobinhood || family === "robinhood" || isEvmTreasurySecret(env.METRO_TREASURY_SECRET)) &&
-          isEvmTreasurySecret(env.METRO_TREASURY_SECRET)
-        ) {
+        // Only report an EVM treasury on the dormant EVM path. Under Solana a stale 0x
+        // secret must surface as a misconfiguration — pickSettlement already sims it.
+        if (wantRobinhood && isEvmTreasurySecret(env.METRO_TREASURY_SECRET)) {
           const { treasuryEvmAddress, treasuryHealth, robinhoodRpcs } = await import("./evm");
           info.treasury = treasuryEvmAddress(env.METRO_TREASURY_SECRET!);
           info.treasuryChain = "evm";
@@ -575,7 +561,8 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
       }
       if (!live) {
         if (!mint) {
-          info.reason = "awaiting mint CA — set METRO_MINT (0x) (in-game ₵ is fully live meanwhile)";
+          info.reason =
+            "awaiting mint CA — set METRO_MINT (base58) (in-game ₵ is fully live meanwhile)";
           info.phaseHint = "awaiting_ca";
         } else if (simLocked) {
           info.reason =
@@ -599,14 +586,9 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
       return json(info);
     }
     if (url.pathname === "/metro/status" && req.method === "GET") {
-      const force = (env.METRO_SETTLEMENT || "robinhood").toLowerCase().trim();
+      const force = (env.METRO_SETTLEMENT || "solana").toLowerCase().trim();
       const wantRobinhood =
-        family === "robinhood" ||
-        force === "robinhood" ||
-        force === "rh" ||
-        force === "evm" ||
-        force === "" ||
-        (!force.includes("sol") && force !== "auto");
+        family === "robinhood" || force === "robinhood" || force === "rh" || force === "evm";
       const status: Record<string, unknown> = {
         ok: true,
         mintConfigured: !!mint,
@@ -614,11 +596,11 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
         mainnetArmed: armed,
         settlement: kind,
         family,
-        authoritativeChain: "robinhood",
+        authoritativeChain: "solana",
         simLocked,
         simAllowed: allowSim,
-        chain: family === "solana" ? "solana" : "robinhood",
-        chainId: family === "solana" ? null : defaultEvmChainId(env),
+        chain: wantRobinhood ? "robinhood" : "solana",
+        chainId: wantRobinhood ? defaultEvmChainId(env) : null,
         readyForCa: hasTreasury && !mint,
         clusterHint: rpcIsMainnet(rpc, family === "solana" ? undefined : defaultEvmChainId(env))
           ? "mainnet"
