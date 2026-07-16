@@ -19,7 +19,7 @@ art constraints). `CLAUDE.md` points at it. Non-negotiables from it:
 - `export PATH="$HOME/.local/node/bin:$PATH"` before node/npm.
 
 Everything below is already **committed to the working tree and deployed live**.
-309 tests pass (`npx vitest run`), both typechecks clean.
+326 tests pass (`npx vitest run`), both typechecks clean.
 
 ---
 
@@ -157,7 +157,7 @@ ring, aspect tracks the art.
 
 ## 4. Higgsfield art pipeline — traps that cost real credits
 
-Budget: **~400 credits, possibly 600** (~1.1/asset ⇒ ~360 assets, ~545 at 600).
+Budget: **assume 600 credits** (~1.1/asset ⇒ ~545 assets). The full content plan is §6b.
 CLI: `higgsfield` (authenticated). `tools/hf-sharpen-env.mjs <key>...` implements the
 upscale pipeline; read its header. The generation plan is §4b.
 
@@ -190,7 +190,7 @@ for 11). `hf_building_den_c` generated as a sibling den. Manifest coverage is 26
 
 ---
 
-## 4b. Generation plan — make the world feel big, on ~400 (or 600) credits
+## 4b. Generation plan — make the world feel big (see §6b for the content brief)
 
 **GATE: do §1 first.** Every asset below renders through the same path that is currently
 producing black buildings. Sharper, more plentiful art still renders black. Fixing §1 costs
@@ -279,9 +279,8 @@ Prefer these until the black-building fix is verified in-game.
 | retries @ ~10% (1 of 11 failed in the last batch) | | ~29 |
 | **total** | | **~320** |
 
-That leaves ~80 of 400 for T6 and iteration. **At 600**, spend the extra ~200 on: 3rd/4th
-building variants per kit (~60), a second full prop pass (~50), per-district wilderness
-dressing (~40), and the traced work in T6 (~50).
+This tier list is the *existing* world. **§6b supersedes it with the full 600-credit plan**
+(new building types, interiors, NPCs, oddities) — read that before spending.
 
 ### Non-negotiables when generating
 
@@ -334,11 +333,281 @@ dressing (~40), and the traced work in T6 (~50).
 - **Every building/location/environment art-driven**, including outdoors; diversity variants
   per district (a bar in the WASTES ≠ one in ARGUS SPIRE).
 
-## 7. Housekeeping
+---
+
+## 6b. CONTENT BRIEF — make the world big, varied and alive
+
+**Budget: assume 600 Higgsfield credits (~545 assets).** Take as long as you need — this is
+a build-it-properly task, not a timeboxed one. Ship it in tiers, verifying each (typecheck
+root **and** server, `npx vitest run`, `node tools/art-probe.mjs`, eyeball the PNGs) before
+starting the next. **§1 still gates all of it: art renders black until that's fixed.**
+
+### A. Many more building types, and no duplicates
+
+**The measured problem** (`ONLINE_CITY.buildings`, 30 buildings, 11 kinds):
+
+```
+shop ×8   clinic ×6   den ×6   bar ×2   guild ×2
+citycenter ×1  subway ×1  hotel ×1  home ×1  stadium ×1  hospital ×1
+```
+
+Eight identical shops and six identical clinics on one map is the single biggest reason the
+city reads small and fake. Districts are better — `DISTRICT_VENUE_KINDS = ["shop","home",
+"guild","den","bar"]` is one of each — but that's only **5 enterable venues per district**,
+and the other four buildings are scenery force-kinded `"home"` for art
+(`const kind: BuildingKind = venueKind ?? "home"` in `buildingFacades.ts`).
+
+**The rule:** a kind should appear **at most once per district/hub**, unless it is a
+deliberate singleton landmark (`LANDMARK_KINDS`). Where a duplicate exists today, replace it
+with a *new* type. That means growing `BuildingKind` from 11 to roughly **26–30** so the hub's
+30 slots are near-unique, and raising `DISTRICT_VENUE_COUNT` so districts have more to enter.
+
+**Suggested new kinds** (finalise as you like — cyberpunk-town texture, Pokémon-town spirit):
+`noodle` (counter bar), `ripperdoc` (cyberware, distinct from `clinic`), `pawn` (fence front),
+`arcade`, `laundromat`, `shrine` (Church of the Signal), `garage` (chop shop), `radio`
+(pirate broadcast), `printshop` (fabricator), `greenhouse` (hydroponics), `bathhouse`,
+`archive` (data library), `foundry`, `barber` (cosmetics), `kennel` (drone kennel), `morgue`,
+`exchange` ($METRO front), `tattoo`, `precinct`, `theatre` (holo-cinema).
+
+**Per new kind, the full set:**
+1. **Exterior art** `hf_building_<slug>.png` + `_b`/`_c` variants (free-generate — collision
+   is the footprint rect, not the art). Add slugs to `HF_BUILDING_SLUGS` /
+   `HF_BUILDING_VARIANT_KEYS` in `manifest.ts`.
+2. **Interior art** `hf_int_<slug>_room.png` (add to `HF_INT_ROOM_KEYS`).
+3. **A traced `ROOM_PLAN`** in `world/rooms.ts` — dimensions matching the art's aspect, every
+   fixture in the picture mirrored as a `blocks` rect. `rooms.test.ts` enforces the invariants.
+   **This is the slow part — the art must be generated FIRST, then traced.** ~1 hour each.
+4. **`KIND_STYLE`** in `buildingFacades.ts` — a **full** `Record<BuildingKind, …>`, so adding a
+   kind is a compile error until you fill it in. Good: let the compiler drive the checklist.
+   Same for `BUILDING_SPRITE` / `BUILDING_INFECTED` (`Partial`, so those fail *silently* —
+   check them by hand).
+5. **Titles/colour:** `DISTRICT_VENUE_TITLE`, `HUB_INTERIOR_TITLE`, `HUB_DOOR_COLOR`.
+6. **A keeper NPC + explicit dialogue + a service** — see (C).
+7. Consider `HEAL_KINDS` / `LANDMARK_KINDS` membership.
+
+Kind assignment for the hub happens in `buildCity(1337)` (`src/world/city.ts`) — that's where
+the duplicates are minted. Make it deal kinds without repeats (and keep the seed stable: the
+grid is shared client/server, and `ONLINE_CITY` is built at module load on both).
+
+### B. Different designs per district / location
+
+A NOODLE BAR in ARGUS SPIRE (corporate, cyan, glass) must not be the same picture as one in
+THE WASTES (ash, rust, scavenged). Two mechanisms already exist — use them, don't invent:
+- **Exteriors:** `DIST_KIT` + `kitChain` in `buildingSprites.ts` map an env/district id to a
+  kit with a fallback chain. District ids: `downtown, stacks, spire, docks, undercity, relay,
+  wastes, core/kernel`, plus env ids `market, park, corporate, arcology, slum, industrial,
+  residential, helios`. ⚠ `DIST_KIT` is `Record<string, …>` not a union — a typo yields `[]`
+  silently (a prime suspect in §1). Consider tightening it to a union while you're here.
+- **Interiors:** prefer a **per-district accent tint** over the shared traced room art before
+  spending credits on a second traced plan per district — same collision, different mood, zero
+  desync risk. `districtEnv.ts` already carries per-district palettes.
+
+### C. NPCs — more types, and WRITE THE ACTUAL LINES
+
+**Do not leave placeholders.** Every NPC ships with real, authored dialogue.
+
+The systems already exist and are richer than the content using them:
+- `src/game/cityNpcs.ts` — `KEY_NPCS`, `CITIZENS`, `KEEPERS`, `AMBIENT_NPCS`, `REGIONAL_NPCS`,
+  `ALL_NPCS`, `INTERIOR_PLAN` (kind → occupants), `keeperFor(kind)`.
+- `src/game/npcServices.ts` — `NpcRole` already includes `medic, bartender, broker, vendor,
+  fixer_guild, fence, courier, preacher, mechanic, cook, guard, artist`; services already
+  include `heal_paid` (₵45), `heal_charity` (free, 180s CD), `meal`, `rumor`, `intel`, `train`,
+  `bounty`, `sell_core`, `bless`, `cool_down`. `ROLE_SERVICES` maps role → services;
+  `NPC_SERVICE_OVERRIDES` maps npc id → services. `CLIENT_OPEN_SERVICES` are UI-only; anything
+  else round-trips to the server (`world.ts` ~5040–5110) — **new services need a server handler
+  or they do nothing**.
+- Story-reactive dialogue exists: `ALLY_ARC` × `storyPhase()` → `campaignAllyLines()`.
+
+**The voice** (match it — terse, wry, two lines, world-weary; names in CAPS):
+> RIN — *"Eyes open out there, runner." / "The city eats the careless."*
+> DOC HALO — *"Stay patched up. I'm always here." / "Half this district owes me blood."*
+> VEX — *"Information's the only real currency." / "Everything's for sale. Even you."*
+> OLD MAREK — *"I remember when this was all open sky." / "The slums keep what the towers throw away."*
+
+Write in that register. Examples of the standard to hit for new keepers:
+> NOODLE BAR — **MAMA TSE** (`cook`): *"Broth's older than you are. Don't insult it." /
+> "Eat. You look like a debt collector's afterthought."*
+> RIPPERDOC — **SPLICE** (`medic`): *"Chrome's cheap. Nerves aren't." / "Hold still. Or don't —
+> I bill the same either way."*
+> SHRINE — **THE STATIC** (`preacher`): *"The Signal doesn't answer. It only repeats." /
+> "Kneel or don't. The carrier wave isn't proud."*
+> KENNEL — **WHISTLE** (`artist`): *"They're not pets. They're opinions with rotors." /
+> "One bit me last week. I respect that."*
+
+**Per new building kind, author:** a keeper (name, look, role, 2–4 `lines`), 1–2 flavour
+residents for `INTERIOR_PLAN`, and district-specific variants where it earns it (a WASTES
+barkeep ≠ a SPIRE barkeep). Also honour the **earlier, still-unfilled ask: place healers
+throughout the world, including combat zones, in a way that fits the area** — the `medic` role
+and both heal services already exist; they're just confined to the hub clinic.
+
+### D. Specific interactions, and Pokémon-style world oddities
+
+The ask is *fun*, not systems for their own sake. Hooks that already exist:
+`worldEvents.ts` (₵16–33 payouts), `dailyDistrictMod` (`districtMods.ts` — daily
+`creditMult` 0.9–1.5, `enemyHpMult`), `fragments.ts` (lore pickups), `cityPulse.ts`,
+`achievements.ts`, `dailies.ts` (3/day, day-seeded).
+
+Ideas in that spirit — each should be **authored, findable, and cheap to hit**:
+- A vending machine that's eaten someone's chip: pay ₵5, it argues with you, occasionally pays
+  out a rare core. (`rumor`-shaped service, new handler.)
+- A stray drone in THE STACKS that follows you for a zone if you feed it a core.
+- A barfly in every district bar who tells you *today's* `dailyDistrictMod` in-character
+  before the HUD does.
+- OLD MAREK remembers how many times you've died and changes his greeting past a threshold
+  (stat already tracked — see `achievementsForStat`).
+- A shrine that "blesses" you (existing `bless` service) with a 10-minute cosmetic aura and a
+  wildly overstated claim about what it does.
+- Fishing-shaped idle loop in the DOCKS: a hole in the pier, a timer, a loot table of junk with
+  one genuinely good drop.
+- A building that's always closed. Every district has one. The sign changes daily. It never
+  opens. (Free, pure texture, and players will absolutely talk about it.)
+
+Keep them **server-authoritative where they touch credits/XP** — anything paying out must have
+a Worker handler, or it's client-trusted and free money.
+
+### E. Where the 600 credits go
+
+| Tier | What | Assets | Cr |
+|---|---|---|---|
+| T0 | **Fix §1 first** — nothing renders until then | 0 | 0 |
+| T1 | Sharpen existing world art (§4b) | ~80 | 88 |
+| T2 | New building **exteriors**: ~18 kinds × (base + `_b` + `_c`) | ~54 | 60 |
+| T3 | New building **interiors**: ~18 × `hf_int_<slug>_room` | ~18 | 20 |
+| T4 | Per-district kit variants so a street isn't a tiling | ~45 | 50 |
+| T5 | Ground/prop density (§4b T3) | ~70 | 77 |
+| T6 | Subway modules | ~30 | 33 |
+| T7 | Estate furniture (24) + NPC portraits for new keepers (~20) | ~44 | 48 |
+| T8 | Oddities/world-perk art (vending, drone, shrine, closed shop…) | ~25 | 28 |
+| | **subtotal** | **~366** | **~404** |
+| | retries @ ~10% (1 of 11 failed last batch) | | ~40 |
+| | **total** | | **~444** |
+
+Leaves ~155 of 600 for iteration, reruns and a second pass on whatever looks weakest in game.
+**Order matters:** T2/T3 art must exist *before* the `ROOM_PLAN` tracing, and tracing is the
+schedule driver (~1h/room × ~18), not the credits.
+
+## 7. $METRO settlement is back on **Solana** — GitBook is the remaining task
+
+The chain was switched **back to Solana SPL** (Phantom, base58 mint, `mainnet-beta`).
+Robinhood Chain / ERC-20 / MetaMask is now a **dormant alternate** that stays in the tree
+and is reachable only via `METRO_SETTLEMENT=robinhood` / `VITE_METRO_SETTLEMENT=robinhood`.
+**Do not describe Robinhood as the launch path anywhere.**
+
+Context you need: commit `9c0e1c5` had flipped the *code and config* to Robinhood but left
+**most prose still saying Solana**, so the repo was self-contradictory. This work flipped the
+code back, which resolved the contradiction rather than creating one.
+
+### What is already done (code + config + docs, verified)
+
+- Defaults: `settlementForce()` returns `solana` in `src/economy/chainProfile.ts` and
+  `server/src/settlementFamily.ts`. `wrangler.toml` ships `METRO_SETTLEMENT="solana"`,
+  `METRO_CLUSTER="mainnet-beta"`, Solana `METRO_RPC`, and **no `METRO_CHAIN_ID`**.
+- **Client and server now agree exactly**, including a strict guard: a mint of the *wrong*
+  family resolves to `off` (credits-only) rather than silently settling on the other chain.
+  Covered by `server/src/settlementFamily.test.ts` (10 tests).
+- **Mainnet is the target but is NOT armed.** `pickSettlement` falls back to `sim` unless
+  `METRO_MAINNET_ARMED=1`, so an unset `METRO_RPC` can never move real value. Keep that gate.
+- UI flips off `preferSolanaWallet()` / `solPrimary`; `walletChoiceList()` /
+  `walletChoiceProse()` in `src/economy/wallet.ts` are the single source for wallet-name copy.
+- Docs/marketing swept. `marketing/copy/metro-launch-pack.md` L309 is a **style rule** —
+  it now reads "chain reference is Solana (SPL); do not say Robinhood/ERC-20/pump.fun".
+
+### Economy: unchanged, and verified unchanged
+
+`src/game/economyPolicy.ts` is chain-agnostic and was **not** retuned. Verified live:
+total supply **1,000,000,000**; dev seed **1% = 10,000,000 $METRO** in the treasury;
+rates **100 ₵ in / 150 ₵ out**; min withdraw **300 ₵**; **no daily earn cap, no daily
+withdraw cap** (`BASE_DAILY_*` are `0` = unlimited). Do not "restore" any daily cap.
+
+**One real bug was found and fixed here** — `server/src/metroPrice.ts` gated on
+`/^0x…{40}$/` in *two* places, so a base58 SPL mint returned `null` and every bridge rate
+silently pinned to the `$1` reference multiplier forever (a null quote is indistinguishable
+from "not listed yet"). It also `.toLowerCase()`d the mint, which corrupts case-sensitive
+base58, and had no `solana` GeckoTerminal slug. Fixed + regression-tested in
+`server/src/metroPrice.test.ts` (7 tests, verified to fail against the old gate).
+
+### ▶ TASK: update the GitBook — commit to GitHub, GitSync publishes (not done)
+
+**You update the GitBook by committing to GitHub — GitSync publishes it.** Do not edit
+anything in the GitBook web UI: the space is GitSync-bound to the **`docs/gitbook`** branch
+of `github.com/theelastgod/METROPHAGE`, so a push to that branch *is* the publish step, and
+UI edits just race the sync and create conflicting commits.
+
+The manual is **not on this branch** (`gitbook/` on `feat/hf-environment-art` is an empty
+stray dir — ignore it). `.gitbook.yaml` on `docs/gitbook` sets `root: ./gitbook/`, so only
+paths under `gitbook/` render.
+
+**Sync is bidirectional — GitBook commits back.** `docs/gitbook` was already **1 commit
+behind `origin/docs/gitbook`** when this was written (GitBook's own `GITBOOK-*` commits, e.g.
+`e3822e5 GITBOOK-3: Update public game link`). **Always pull before you touch it**, or your
+push is rejected and you risk clobbering an editor's change:
+
+```sh
+git checkout docs/gitbook && git pull --ff-only origin docs/gitbook
+# …make the edits below…
+git add gitbook/ && git commit && git push origin docs/gitbook   # GitSync publishes
+git checkout feat/hf-environment-art        # don't leave the tree on the docs branch
+```
+
+Commit `024525c` *"docs: describe $METRO as a Robinhood Chain (ERC-20) token"* is what put
+Robinhood into the manual. It tells you the full blast radius — these are the pages to fix:
+
+```
+gitbook/README.md            gitbook/economy.md        gitbook/glossary.md
+gitbook/getting-started.md   gitbook/assets/economy-flow.svg
+gitbook/.gitbook/assets/economy-flow.svg     ← keep both SVG copies in sync
+```
+
+`git show 024525c` gives you the verbatim pre-Robinhood Solana prose. Use it as a **reference,
+not a patch** — **do not `git revert`**, for two independent reasons:
+
+- GitBook's own `e3822e5` sits **on top of** it and edits `gitbook/README.md`, the same file,
+  so a revert conflicts — and resolving it carelessly undoes GitBook's live-link fix.
+- Its parent is **itself stale on the rates**, so a clean revert would faithfully restore
+  numbers that were already wrong (see 2 below).
+
+Hand-apply these three things:
+
+1. **Chain wording → Solana.** `$METRO` is an **SPL token on Solana**, wallet is **Phantom**,
+   sign-up is a free message (no gas). Robinhood/ERC-20/MetaMask is a dormant alternate and
+   should not appear in the manual. The settlement row in `gitbook/economy.md` becomes
+   `Solana SPL (primary)`. Both `economy-flow.svg` copies say Solana too.
+2. **Fix the rates — do NOT copy them from either side of `024525c`.** The manual says
+   `125 ₵ → 1 ◈`, min `250 ₵`, and a `50,000 ₵ daily cap`. All three are wrong. Ground truth
+   is `src/game/economyPolicy.ts`: **100 ₵ in / 150 ₵ out**, min **300 ₵**, and **no daily
+   cap at all** (`BASE_DAILY_*` are `0` = unlimited). **Delete the daily-cap row** — it
+   describes a mechanic that no longer exists. `economyPolicy.ts` is the source of truth.
+3. **Claims wording → the Solana security model**, which is accurate to `server/src/solana.ts`:
+   the **player pays the SOL fee** (they are the fee payer on their own withdrawal), and the
+   **treasury only partially signs — it never holds or spends SOL**, so it cannot be drained
+   of gas. The Robinhood version's "deposits cost a little ETH gas" is EVM-only and must go.
+
+Separately, **back on the working branch** (these are repo runbooks, not GitBook pages —
+`.gitbook.yaml` only renders `gitbook/`): `ROBINHOOD_GO_LIVE.md` still reads as a live
+runbook, so add a "DORMANT — not the launch path" banner. `MAINNET_GO_LIVE.md` is the
+Solana one and is already correct.
+
+### ▶ TASK: the treasury secret (human-only)
+
+`METRO_TREASURY_SECRET` is a **wrangler secret**, currently an EVM `0x` private key. Solana
+needs a **base64 64-byte keypair**. An agent must not handle it. The owner runs:
+
+```sh
+cd server && node scripts/mainnet-prepare.mjs          # default (no --evm) = Solana keypair
+# then pipe .solana-treasury.json's treasurySecret into:
+npx wrangler secret put METRO_TREASURY_SECRET
+```
+
+Until that is rotated, a leftover `0x` secret makes `pickSettlement` return **sim** — which
+is the safe state, and `/metro/pool` now reports it as a misconfiguration rather than
+showing a bogus EVM treasury.
+
+## 8. Housekeeping
 
 - `.env.local` (gitignored) points the dev client at the live worker; `.claude/launch.json`
-  gained a `metrophage-probe` config on port 5199. Both additive. **Another chat session
-  shares this repo and holds port 5188** — don't fight it.
+  gained a `metrophage-probe` config on port 5199, plus a `metrophage-chain` config on 5177.
+  All additive. **Another chat session shares this repo and holds ports 5188/5199** — don't
+  fight it; take a fresh port.
 - Original art backed up in `tmp-art-backup/` (also git-tracked, so `git checkout` restores).
 - Nothing is committed to git — the working tree holds ~31 changed files. **Commit before
   further large changes.**
