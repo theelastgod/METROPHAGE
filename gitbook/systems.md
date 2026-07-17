@@ -48,6 +48,16 @@ you — the buy-in economy can't be duped.
 - **Bounties** and the daily **HIGH-VALUE TARGET** put a mark (and a reward) on specific
   kills.
 
+## NPC services — rest, patches, meals & the pier
+
+The city's NPCs sell more than talk. The **hotel keeper** (in the hotel itself — every
+service checks that the contact is actually in your zone) sells a **₵35 rest**: full
+heal, HEAT cleared, on a 120-second cooldown. Medics offer paid and charity **patches**,
+bar keepers serve **meals**, and down at THE DOCKS the **porter** will let you cast a
+line off the pier — fishing pays in stories and exploration XP, never credits. Each
+district also keeps one permanently **shuttered storefront**; knock if you want, but
+some businesses in Metro City stayed dead.
+
 ## Contracts & dailies
 
 **THE FIXER** hands out **daily contracts** alongside the campaign — repeatable objectives

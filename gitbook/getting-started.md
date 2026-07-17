@@ -19,12 +19,14 @@ and layer abilities on top.
 | **G** | Forge |
 | **M** | World map |
 | **J** | Quest journal |
+| **'** | Skills — your combat / trading / mining progression |
 | **H** | Surface from an interior or dive |
 | **ENTER** | Area chat |
 | **V** | Emotes |
 
 **Touch devices:** tap to walk, attack, and enter; on-screen **dash / Q / E** buttons
-handle abilities. The whole game is designed to run on a phone.
+handle abilities, and the action bar carries **Bag / Skills / Map / Quests** so every
+panel is reachable without a keyboard. The whole game is designed to run on a phone.
 
 > **The one thing the client is allowed to do without asking:** dash. Every other burst
 > of speed or damage is validated by the server, so there's nothing to exploit — just
