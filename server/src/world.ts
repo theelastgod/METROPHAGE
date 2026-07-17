@@ -4621,9 +4621,16 @@ export class WorldDO {
     p.tutorialDone = true;
     p.tutorialStep = tutorialTotal(mode);
     p.tutorialProgress = 0;
-    const hub = this.spreadSpawn(CITY_HUB_SPAWN, p.id);
-    p.x = hub.x;
-    p.y = hub.y;
+    // NOT spreadSpawn: this runs in the TUTORIAL DO, whose grid is the drill yard —
+    // ring-probing CITY coordinates against it fails every ring and the fallback
+    // snapped graduates to an arbitrary open drill-yard tile, which then persisted
+    // as their city position ("the portal sent me across town"). The hub commons is
+    // guaranteed open for ±4 tiles around the pad, so a tiny deterministic jitter
+    // needs no grid check; the safe DO re-validates on arrival anyway.
+    let h = 0;
+    for (let i = 0; i < p.id.length; i++) h = (h * 31 + p.id.charCodeAt(i)) >>> 0;
+    p.x = CITY_HUB_SPAWN.x + ((h % 5) - 2) * 32;
+    p.y = CITY_HUB_SPAWN.y + ((Math.floor(h / 5) % 3) - 1) * 32;
     this.ensureStarterKit(p);
     p.dirty = true;
     // Persist tutorial_done BEFORE redirect/close. Session-gated upsert after the

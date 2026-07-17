@@ -16,7 +16,10 @@ import {
 import { residentProfile, scheduledResidents } from "./residentLife";
 
 const SAFE_CONTACTS = new Set(["rin", "doc", "vex", "marek", "amb_tech", "kessler"]);
-const NAMED_INTERIORS = new Set(["clinic", "bar", "den", "shop"]);
+// These are real zone ids (unlike the kind-derived hK / dNiK interiors). Keep
+// the complete authored city set here so entering Kessler's guild or Marek's
+// home does not make a visibly present contact fail server validation.
+const NAMED_INTERIORS = new Set(["clinic", "bar", "den", "shop", "guild", "home"]);
 
 function hasId(ids: Array<{ id: string }>, npcId: string): boolean {
   return ids.some((npc) => npc.id === npcId);

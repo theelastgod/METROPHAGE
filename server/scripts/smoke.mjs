@@ -1526,7 +1526,7 @@ async function bounty() {
   store.y = w.y;
   trackState(ws, w.id, store);
   await sleep(400);
-  const civicHydrated = store.civic?.district === 0 && Number.isInteger(store.civic?.completions) && !!store.civic?.stage;
+  let civicHydrated = false; // safehouse has no district civic operation
 
   // KESSLER is a stable Metro City contact; accept in their actual zone, then deploy.
   // Use the ordinary kill-sheet job here: persistence is what this mode owns, and
@@ -1544,7 +1544,10 @@ async function bounty() {
   ws = await connect(zoneUrl("d0"));
   wire(ws);
   await login(ws, name, undefined, undefined, { from: "safe" });
-  await sleep(400);
+  // Civic context belongs to the district DO, not Kessler's safehouse. On a cold
+  // DO it may follow the first state snapshot, so wait on the message contract.
+  for (let i = 0; i < 20 && store.civic?.district !== 0; i++) await sleep(100);
+  civicHydrated = store.civic?.district === 0 && Number.isInteger(store.civic?.completions) && !!store.civic?.stage;
   const persistedAcrossZone = !!store.bounty && store.bounty.id === bountyId;
 
   ws.send(JSON.stringify({ t: "bounty", action: "accept", id: "doc_cores" })); // already have one

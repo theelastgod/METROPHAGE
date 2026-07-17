@@ -133,6 +133,31 @@ export function getActiveAppKitSolanaProvider(): SolanaProvider | null {
   return activeProvider;
 }
 
+/** Rehydrate a WalletConnect Solana signer after a normal page reload. */
+export async function restoreSolanaWalletModalProvider(
+  expectedAddress?: string,
+): Promise<string | null> {
+  const modal = await getModal();
+  if (!modal) return null;
+  try {
+    await modal.ready();
+    const address = modal.getAddressByChainNamespace("solana");
+    const provider = modal.getProvider<RawAppKitSolanaProvider>("solana");
+    if (!address || (expectedAddress && address !== expectedAddress) || !provider?.signMessage) {
+      return null;
+    }
+    activeProvider = appKitSolanaProvider(
+      address,
+      provider,
+      async () => { await modal.disconnect("solana"); },
+    );
+    return address;
+  } catch (error) {
+    console.warn("[wallet] Solana AppKit session restore failed", error);
+    return null;
+  }
+}
+
 export async function disconnectSolanaWalletModal(): Promise<void> {
   const modal = await getModal();
   try {

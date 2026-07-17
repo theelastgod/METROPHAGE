@@ -38,11 +38,14 @@
   SHUTDOWN/DESTROYED as gone. This was also the "black screen after tutorial on
   mobile" (first guest connect happens exactly there). `npm run smoke:panels` is
   GREEN end to end (desktop + mobile) for the first time.
-- **Phantom mobile**: new `src/economy/phantomDeeplink.ts` implements Phantom's
-  connect/signMessage deeplink protocol (x25519 envelopes, sessionStorage
-  round-trip state). Mobile Safari/Chrome no longer hands the whole game to
-  Phantom's portrait-locked in-app browser — only the approval round-trips
-  through the app. NEEDS PHYSICAL-DEVICE QA (add to MOBILE-QA run).
+- **Solana mobile wallet handoff**: WalletConnect/AppKit is the primary path in
+  ordinary Safari/Chrome and opens a fitted Solana wallet picker with Phantom
+  featured. AppKit initialization is awaited before the modal opens; after a
+  wallet is chosen, connection and the free login signature are approved in the
+  wallet app while play stays in the original browser. Phantom's encrypted
+  connect/signMessage protocol remains only as the no-AppKit fallback. The old
+  `phantom.app/ul/browse` game-in-wallet route has been removed. Physical-wallet
+  approval still belongs in the real-device QA run.
 - **World design**: the inner civic ring (citycenter/hotel/hospital at 7–11
   tiles from spawn) is gone — the centre is an open, furnished civic commons;
   landmark promotion keeps those kinds on the nearest street blocks. Every

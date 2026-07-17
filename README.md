@@ -106,7 +106,8 @@ $METRO is a tradeable on-chain token bridged to server-authoritative `credits`.
 tree as a dormant alternate (`METRO_SETTLEMENT=robinhood`), not the launch path.
 
 - In-game currency is off-chain `credits`.
-- Sign-up: Phantom + free message (no gas).
+- Sign-up: choose a Solana wallet (Phantom featured) + one free message (no gas);
+  mobile approval happens in the wallet app and play remains in the normal browser.
 - Cash-out pool is **100% player-funded** (starts empty). Empty/short pool →
   **"Check back later."**
 - **Rate spread**: deposit 1 ◈ → **100 ₵**, withdraw **150 ₵** → 1 ◈.

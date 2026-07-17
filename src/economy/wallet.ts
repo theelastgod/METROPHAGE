@@ -38,6 +38,7 @@ import {
   disconnectSolanaWalletModal,
   getActiveAppKitSolanaProvider,
   mobileSolanaConnectRoute,
+  restoreSolanaWalletModalProvider,
 } from "./solanaWalletModal";
 
 interface EvmProvider extends EvmRequestProvider {
@@ -633,7 +634,14 @@ export async function signWalletLogin(
 
   // Solana path first when address is base58 or we prefer Solana and address is not 0x.
   if (!isEvmAddr) {
-    const p = getSolana();
+    let p = getSolana();
+    // The cached address deliberately restores instantly at boot, but AppKit's
+    // provider lives in memory. Rehydrate that signer only when an action really
+    // needs it so zone travel remains fast and a reloaded login can still sign.
+    if (!p && addr && lastChain === "solana" && walletConnectEnabled()) {
+      await restoreSolanaWalletModalProvider(addr);
+      p = getSolana();
+    }
     const solAddr = addr ?? p?.publicKey?.toString() ?? lastConnectedAddress;
     if (p?.signMessage && solAddr && !/^0x/i.test(solAddr)) {
       const bytes = new TextEncoder().encode(message);

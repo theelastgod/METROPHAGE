@@ -9,6 +9,8 @@ describe("authoritative NPC zone presence", () => {
     expect(npcPresentInZone("marek", "d7")).toBe(false);
     expect(npcPresentInZone("doc", "clinic")).toBe(true);
     expect(npcPresentInZone("doc", "shop")).toBe(false);
+    expect(npcPresentInZone("kessler", "guild")).toBe(true);
+    expect(npcPresentInZone("marek", "home")).toBe(true);
   });
 
   it("matches deterministic hub-building occupants", () => {
