@@ -6,6 +6,7 @@
 export type NpcServiceId =
   | "chat"
   | "bounty"
+  | "fish"
   | "heal_paid"
   | "heal_charity"
   | "meal"
@@ -100,6 +101,8 @@ export function serviceIconKey(id: NpcServiceId): string {
 export const NPC_SERVICES: Record<NpcServiceId, NpcServiceDef> = {
   chat: { id: "chat", label: "Talk", hint: "just talk", cost: 0, cooldownSec: 0, color: "#9aa3b2" },
   bounty: { id: "bounty", label: "Job", hint: "work for them", cost: 0, cooldownSec: 0, color: "#d4c45a" },
+  // Docks pier line — flavour faucet, tightly cooldowned; most casts catch a story.
+  fish: { id: "fish", label: "Fish", hint: "cast a line off the pier", cost: 0, cooldownSec: 45, color: "#6ab0ff" },
   heal_paid: { id: "heal_paid", label: "Patch", hint: "₵45 · full heal", cost: 45, cooldownSec: 15, color: "#5fd49a" },
   heal_charity: { id: "heal_charity", label: "Free patch", hint: "partial heal · cooldown", cost: 0, cooldownSec: 180, color: "#7abf98" },
   meal: { id: "meal", label: "Eat", hint: "₵18 · small heal", cost: 18, cooldownSec: 40, color: "#c49a5a" },
@@ -163,7 +166,7 @@ const NPC_SERVICE_OVERRIDES: Record<string, NpcServiceId[]> = {
   mira: ["chat", "open_vendor", "bounty"],
   ghost: ["chat", "sell_core", "open_market", "bounty"],
   // Regional — light
-  porter: ["chat", "bounty", "rumor"],
+  porter: ["chat", "bounty", "rumor", "fish"],
   tunnel_rat: ["chat", "bounty", "cool_down"],
   arc_tech: ["chat", "cool_down", "bounty"],
   scrap_boss: ["chat", "bounty", "sell_core"],

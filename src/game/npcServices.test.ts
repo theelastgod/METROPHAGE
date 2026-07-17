@@ -14,6 +14,15 @@ describe("NPC service art", () => {
     expect(serviceIconKey("open_forge")).toBe("hf_service_repair");
   });
 
+  it("offers the docks pier fishing tap as a free, cooldowned flavour service", () => {
+    const fish = NPC_SERVICES.fish;
+    expect(fish).toBeTruthy();
+    expect(fish.cost).toBe(0); // mints no currency — cooldown is in-memory
+    expect(fish.cooldownSec).toBeGreaterThan(0);
+    expect(servicesForNpc("porter")).toContain("fish"); // porter = docks regional anchor
+    expect(serviceIconKey("fish")).toMatch(/^hf_service_[a-z_]+$/);
+  });
+
   it("prices hotel rest as authored: ₵35, 120s cooldown, server-authoritative", () => {
     const rest = NPC_SERVICES.rest;
     expect(rest).toBeTruthy();

@@ -6,7 +6,7 @@
 //   - partially signed base64 (player fee-payer fallback) — Phantom signs + sends
 // EVM (legacy): claimTx is a fully signed raw tx via eth_sendRawTransaction.
 
-import { getSolanaProvider, getEvmProvider, connectedChain } from "./wallet";
+import { ensureSolanaProvider, getEvmProvider, connectedChain } from "./wallet";
 
 export interface ClaimSubmitResult {
   ok: boolean;
@@ -99,7 +99,7 @@ async function submitSolanaClaim(claimTxB64: string, rpc: string): Promise<Claim
     }
 
     // Partial-signed (player fee-payer fallback) — needs Phantom.
-    const p = getSolanaProvider();
+    const p = await ensureSolanaProvider();
     if (!p) return { ok: false, reason: "no Solana wallet — connect Phantom (treasury will pay fees when funded)" };
     if (p.signAndSendTransaction) {
       const { signature } = await p.signAndSendTransaction(tx);

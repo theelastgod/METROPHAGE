@@ -4671,12 +4671,19 @@ export class WorldDO {
     const p = this.playerFor(ws);
     if (!p || !this.inTutorial()) return;
     if (msg.action === "mode" && (msg.mode === "quick" || msg.mode === "full")) {
-      if (p.tutorialStep === 0) {
+      // Accept a mode switch ANY time before graduation, resetting progress. The old
+      // step===0 gate trapped returning players: an abandoned quick attempt left
+      // tutorial_step > 0 in D1, so choosing FULL later was silently rejected — the
+      // server then ran the 9-step quick curriculum inside the 16-instructor full
+      // hall and progress wedged ("can't advance past a certain point").
+      if (p.tutorialMode !== msg.mode) {
         p.tutorialMode = msg.mode;
-        p.dirty = true;
-        this.ensureTutorialSupplies(p);
-        this.sendTutorialState(p);
+        p.tutorialStep = 0;
+        p.tutorialProgress = 0;
       }
+      p.dirty = true;
+      this.ensureTutorialSupplies(p);
+      this.sendTutorialState(p);
       return;
     }
     if (msg.action === "skip") {
@@ -5858,6 +5865,25 @@ export class WorldDO {
         p.pvpSafeUntil = Math.max(p.pvpSafeUntil, this.tick + BLESS_IFRAME_TICKS);
         p.heat = Math.max(0, p.heat - 15);
         line = "blessing — brief invulnerability";
+        break;
+      }
+      case "fish": {
+        // Docks pier flavour tap. Deliberately mints NO transferable value — the NPC
+        // cooldown is in-memory (lost on DO eviction), so any currency/core here would
+        // be farmable after a server blip. Reward is exploration XP (non-transferable)
+        // plus an authored catch line.
+        this.awardSkill(p, "exploration", 6);
+        const roll = (this.tick * 2654435761 + Math.round(p.x) * 40503 + Math.round(p.y)) >>> 0;
+        const catches = [
+          "a boot full of harbour silt",
+          "a dead drone, corroded past salvage",
+          "a knot of fibre-optic weed",
+          "a cracked data-slug, unreadable",
+          "an eyeless dock-carp — still twitching",
+          "a corp ID badge, name scratched off",
+          "nothing but an oily ripple",
+        ];
+        line = `you reel up ${catches[roll % catches.length]}`;
         break;
       }
       default:
@@ -8024,14 +8050,22 @@ export class WorldDO {
     try {
       for (const p of this.players.values()) {
         let playerSaved = true;
+        // ORDER MATTERS. The credit payout lives in the `players` row (upsertPlayer);
+        // the anti-replay guards for dailies / civic ops / district-war live in
+        // player_stats + player_dailies. These are separate D1 writes, so a failure
+        // between them cannot be atomic. Flush the GUARDS FIRST: if the isolate then
+        // dies before the credit row commits, the player is UNDER-paid (guard set,
+        // credit delta retried or lost with the isolate) — recoverable — instead of
+        // OVER-paid (credit committed, guard dropped → farmable). Under-pay beats
+        // money-printing on a bridge that settles real tokens.
+        await this.flushStats(p);
+        await this.flushDailies(p);
         // Escrow owns its own atomic debit — skip racing the ordinary upsert.
         if (p.dirty && p.pvpPending === 0) {
           p.dirty = false;
           playerSaved = await this.upsertPlayer(p);
           if (!playerSaved) p.dirty = true;
         }
-        await this.flushStats(p);
-        await this.flushDailies(p);
         if (p.bounty || (playerSaved && !p.dirty)) await this.flushBounty(p);
       }
       await this.syncMeta();

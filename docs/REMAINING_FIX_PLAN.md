@@ -1,5 +1,37 @@
 # Remaining problems plan (ex-mainnet)
 
+## 2026-07-17 night-before-launch audit (uncommitted pass)
+
+Four-dimension sweep (server economy/races, client crash classes, content wiring,
+data/protocol integrity). Client-crash and data/protocol audits came back CLEAN.
+Fixed:
+
+- **Economy replay hole**: dailies / civic ops / district-war bonus paid credits
+  (`players`) and stored their anti-replay guard (`player_stats`/`player_dailies`)
+  in separate sequential D1 writes — an eviction between them re-paid the reward.
+  `persistDirty` now flushes GUARDS FIRST so the failure direction is recoverable
+  under-pay, never money-printing. (Boss/courier bounties already used the atomic
+  claim idiom and were sound.)
+- **Skills panel unreachable** on mobile/new-density HUD — added to the simple
+  action bar; the rsSkills progression is now visible to every player.
+- **SPL provider rehydration**: login/deposit/claim all route through a shared
+  `ensureSolanaProvider()` (lazy AppKit restore at signing boundaries only); unit
+  tests in `ensureSolanaProvider.test.ts`.
+- **Tutorial-full wedge**: mode switches accepted any time before graduation
+  (reset to step 0); the hall's zone is authoritative for the reported mode.
+- **Spawn court**: road-language tiles (giant crosswalk cross + asphalt inlay)
+  replaced with civic paving + grass planter beds; test locks ≥4 surfaces, no
+  purple, no roads.
+- **Content completed**: docks `fish` service on the porter (flavour + exploration
+  XP, deliberately mints nothing — NPC cooldowns are memory-only) and the
+  always-closed storefront (`closedShops.ts`, day-seeded, one per district).
+- Smokes hardened: `rest` now proves presence-gating (keeper only in the hotel
+  zone); `reconnect` polls until the starter grant settles (was false-flaky);
+  new `fish` mode.
+
+Left deliberately: memory-only NPC service cooldowns (all affected services are
+net sinks — no exploit) and absolute xp/cores writes (latent, no external writer).
+
 ## 2026-07-16 follow-through pass
 
 - The July expansion work (art, six new venues, hotel rest, subway modules) is

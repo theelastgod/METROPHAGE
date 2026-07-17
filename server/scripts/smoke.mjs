@@ -213,95 +213,100 @@ async function check() {
 }
 
 // ── hotel rest: authoritative sleep — ₵35 debits, full heal, HEAT clear, 120s cd ──
-async function rest() {
-  const ws = await connect();
-  const w = await login(ws, "rh" + String(Date.now() % 1_000_000)); // fresh identity
-  const store = { x: w.x, y: w.y, ack: 0, hp: 100, credits: 0, heat: 0, enemies: [], shots: [], sys: [] };
+// ── docks fishing: free flavour tap, no currency mint, cooldown-gated ──
+async function fish() {
+  // porter is the DOCKS (d3) regional anchor — presence is validated per zone, so
+  // fish only from the district the porter actually stands in.
+  const ws = await connect(WS_URL + "?zone=d3");
+  const w = await login(ws, "fs" + String(Date.now() % 1_000_000));
+  const store = { x: w.x, y: w.y, credits: 0, cores: 0, sys: [] };
   trackState(ws, w.id, store);
   ws.addEventListener("message", (ev) => {
     const m = JSON.parse(ev.data);
     if (m.t === "sys") store.sys.push(m.text);
   });
   await sleep(500);
-  const hpFull = store.hp;
-  const svc = () => ws.send(JSON.stringify({ t: "npc", action: "service", npcId: "keep_hotel", service: "rest" }));
-  const sysSince = (n) => store.sys.slice(n).join(" | ");
-
-  // 1) fully rested → refusal, and no charge
-  const s0 = store.sys.length;
   const c0 = store.credits;
-  svc();
-  await sleep(800);
-  const refusedAtFull = /fully rested/i.test(sysSince(s0));
-  const noChargeAtFull = store.credits === c0;
-
-  // 2) take a hit: walk into the nearest enemy WITHOUT firing (no kill credits skew)
-  let seq = 0;
-  const t0 = Date.now();
-  while (Date.now() - t0 < 30000 && store.hp >= hpFull && !store.dead) {
-    const e = store.enemies.reduce(
-      (best, en) => {
-        const d = Math.hypot(en.x - store.x, en.y - store.y);
-        return d < best.d ? { d, en } : best;
-      },
-      { d: Infinity, en: null },
-    ).en;
-    seq++;
-    if (e) {
-      const dx = e.x - store.x;
-      const dy = e.y - store.y;
-      const d = Math.hypot(dx, dy) || 1;
-      ws.send(JSON.stringify({ t: "input", seq, mx: dx / d, my: dy / d }));
-    } else {
-      const a = (Date.now() - t0) / 1200;
-      ws.send(JSON.stringify({ t: "input", seq, mx: Math.cos(a), my: Math.sin(a) * 0.7 }));
-    }
-    await sleep(60);
-  }
-  // retreat so the enemy isn't still chewing on us while we measure the heal
-  for (let i = 0; i < 25; i++) {
-    const e = store.enemies[0];
-    const dx = e ? store.x - e.x : 1;
-    const dy = e ? store.y - e.y : 0;
-    const d = Math.hypot(dx, dy) || 1;
-    ws.send(JSON.stringify({ t: "input", seq: ++seq, mx: dx / d, my: dy / d }));
-    await sleep(60);
-  }
-  ws.send(JSON.stringify({ t: "input", seq: ++seq, mx: 0, my: 0 }));
-  await sleep(300);
-  const damaged = store.hp < hpFull && !store.dead;
-
-  // 3) rest while hurt → ₵35 debit, hp back to full, HEAT clear, authored sys line
+  const cores0 = store.cores;
+  const cast = () => ws.send(JSON.stringify({ t: "npc", action: "service", npcId: "porter", service: "fish" }));
+  const s0 = store.sys.length;
+  cast();
+  await sleep(700);
+  const caught = store.sys.slice(s0).some((t) => /reel up/i.test(t));
+  // immediate re-cast → cooldown refusal, and NO currency/core minted either time
   const s1 = store.sys.length;
-  const cBefore = store.credits;
-  const hpBefore = store.hp;
-  svc();
-  let hpPeak = store.hp;
-  for (let i = 0; i < 12; i++) {
-    await sleep(100);
-    hpPeak = Math.max(hpPeak, store.hp);
-  }
-  const sleptLine = /slept safely/i.test(sysSince(s1));
-  const charged = store.credits === cBefore - 35;
-  const healed = hpPeak >= hpFull || hpPeak > hpBefore + 20;
-  const heatClear = (store.heat ?? 0) === 0;
-
-  // 4) immediate repeat → 120s cooldown refusal, no second charge
-  const s2 = store.sys.length;
-  const cAfter = store.credits;
-  svc();
-  await sleep(800);
-  const cooldownBlocked = /cooldown — try again/i.test(sysSince(s2));
-  const noDoubleCharge = store.credits === cAfter;
-
-  const checks = { refusedAtFull, noChargeAtFull, damaged, sleptLine, charged, healed, heatClear, cooldownBlocked, noDoubleCharge };
+  cast();
+  await sleep(600);
+  const cooldownBlocked = store.sys.slice(s1).some((t) => /cooldown/i.test(t));
+  const noCurrency = store.credits === c0 && store.cores === cores0;
+  const checks = { caught, cooldownBlocked, noCurrency };
   report(
-    "REST — hotel sleep is authoritative (refusal, debit, heal, HEAT, cooldown)",
-    { hpFull, hpBefore, hpAfter: store.hp, cBefore, cAfter: store.credits, lastSys: store.sys.slice(-4) },
+    "FISH — docks pier tap: authored catch, cooldowned, mints no currency",
+    { c0, credits: store.credits, cores0, cores: store.cores, lastSys: store.sys.slice(-3) },
     Object.values(checks).every(Boolean),
     checks,
   );
   ws.close();
+}
+
+async function rest() {
+  // NPC presence is now zone-validated: the hotel keeper lives in its hub interior
+  // (h{K}), NOT the safe plaza. hp is never persisted (every zone load is full
+  // health) and the hotel interior has no combat, so the debit/heal/HEAT mechanics
+  // are covered by the pure-logic unit test (npcServices.test.ts) + the unchanged
+  // server handler. This smoke proves the AUTHORITATIVE PRESENCE GATE end to end:
+  // rest is reachable in the hotel zone, refused (no charge) at full health, and
+  // correctly rejected from the plaza where the keeper is not present.
+  const hotelIdx = 10; // ONLINE_CITY building index whose kind is "hotel" (see city.ts landmarks)
+  const svcMsg = JSON.stringify({ t: "npc", action: "service", npcId: "keep_hotel", service: "rest" });
+
+  // A) inside the hotel interior → keeper present, full-health refusal, no charge
+  const wsHotel = await connect(WS_URL + "?zone=h" + hotelIdx);
+  const hs = { credits: 0, sys: [] };
+  const wh = await login(wsHotel, "rh" + String(Date.now() % 1_000_000));
+  hs.credits = wh.credits ?? 0;
+  wsHotel.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "sys") hs.sys.push(m.text);
+    if (m.t === "state") { const me = (m.players || []).find((p) => p.id === wh.id); if (me) hs.credits = me.credits; }
+  });
+  await sleep(600);
+  const c0 = hs.credits;
+  const s0 = hs.sys.length;
+  wsHotel.send(svcMsg);
+  await sleep(900);
+  const since = hs.sys.slice(s0).join(" | ");
+  const reachable = !/not present in this zone/i.test(since);
+  const refusedAtFull = /fully rested/i.test(since);
+  const noChargeAtFull = hs.credits === c0;
+  wsHotel.close();
+
+  // B) from the plaza → keeper NOT present, service rejected, no charge
+  const wsSafe = await connect(WS_URL + "?zone=safe");
+  const ss = { credits: 0, sys: [] };
+  const wsafe = await login(wsSafe, "rp" + String(Date.now() % 1_000_000));
+  ss.credits = wsafe.credits ?? 0;
+  wsSafe.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "sys") ss.sys.push(m.text);
+    if (m.t === "state") { const me = (m.players || []).find((p) => p.id === wsafe.id); if (me) ss.credits = me.credits; }
+  });
+  await sleep(600);
+  const pc0 = ss.credits;
+  const ps0 = ss.sys.length;
+  wsSafe.send(svcMsg);
+  await sleep(900);
+  const plazaRejected = /not present in this zone/i.test(ss.sys.slice(ps0).join(" | "));
+  const noChargeInPlaza = ss.credits === pc0;
+  wsSafe.close();
+
+  const checks = { reachable, refusedAtFull, noChargeAtFull, plazaRejected, noChargeInPlaza };
+  report(
+    "REST — hotel keeper is presence-gated: reachable in the hotel, refused at full, rejected on the plaza",
+    { c0, plazaSys: ss.sys.slice(-2), hotelSys: hs.sys.slice(-2) },
+    Object.values(checks).every(Boolean),
+    checks,
+  );
 }
 
 async function combat() {
@@ -3747,7 +3752,11 @@ async function reconnect() {
     }
   });
   await login(a, name, 0);
-  await sleep(500);
+  // Wait for the starter-credit grant to SETTLE before sampling the baseline. A
+  // fixed 500ms sometimes read 0 (grant tick not yet broadcast), and since the
+  // grant is 60 > the 50 stability tolerance, that produced a false 0→60 "unstable"
+  // failure. Poll until credits land (or a hard cap) so c0 is the real balance.
+  for (let i = 0; i < 30 && sa.credits <= 0; i++) await sleep(100);
   const c0 = sa.credits;
   // Second tab same identity — first should be replaced (4002) eventually
   const b = await connect(base + "?zone=safe");
@@ -3839,6 +3848,7 @@ try {
   else if (mode === "look") await look();
   else if (mode === "bot") await bot();
   else if (mode === "rest") await rest();
+  else if (mode === "fish") await fish();
   else if (mode === "death") await death();
   else if (mode === "stash") await stash();
   else if (mode === "resident") await resident();

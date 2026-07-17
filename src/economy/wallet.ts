@@ -311,6 +311,25 @@ export function getSolanaProvider(): SolanaProvider | null {
 }
 
 /**
+ * Async provider getter for SIGNING/TRANSACTION boundaries (login signature, SPL
+ * deposit, withdrawal claims). After a page reload the cached address restores
+ * instantly but AppKit's in-memory signer does not — a sync getSolanaProvider()
+ * then reports a phantom "connected" wallet with no provider and every bridge
+ * action fails. Rehydration stays LAZY (only at these boundaries) so zone travel
+ * never waits on AppKit.
+ */
+export async function ensureSolanaProvider(): Promise<SolanaProvider | null> {
+  const existing = getSolana();
+  if (existing) return existing;
+  const addr = lastConnectedAddress;
+  if (addr && lastChain === "solana" && walletConnectEnabled()) {
+    await restoreSolanaWalletModalProvider(addr);
+    return getSolana();
+  }
+  return null;
+}
+
+/**
  * Active EVM provider for requests (sign, send, switch chain).
  * Prefer WalletConnect when that is how we connected; else injected.
  */
@@ -634,14 +653,9 @@ export async function signWalletLogin(
 
   // Solana path first when address is base58 or we prefer Solana and address is not 0x.
   if (!isEvmAddr) {
-    let p = getSolana();
-    // The cached address deliberately restores instantly at boot, but AppKit's
-    // provider lives in memory. Rehydrate that signer only when an action really
-    // needs it so zone travel remains fast and a reloaded login can still sign.
-    if (!p && addr && lastChain === "solana" && walletConnectEnabled()) {
-      await restoreSolanaWalletModalProvider(addr);
-      p = getSolana();
-    }
+    // Lazy AppKit rehydration lives in ensureSolanaProvider — shared with the
+    // SPL deposit/claim paths so no boundary sees address-without-provider.
+    const p = !isEvmAddr ? await ensureSolanaProvider() : getSolana();
     const solAddr = addr ?? p?.publicKey?.toString() ?? lastConnectedAddress;
     if (p?.signMessage && solAddr && !/^0x/i.test(solAddr)) {
       const bytes = new TextEncoder().encode(message);

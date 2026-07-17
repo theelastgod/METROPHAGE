@@ -325,18 +325,29 @@ export function buildCity(seed = 1337, w = CITY_W, h = CITY_H): CityMap {
   const central: Rect = { x1: cx - plazaRx, y1: cy - plazaRy, x2: cx + plazaRx, y2: cy + plazaRy };
   const plazaReserve: Rect = { x1: cx - 14, y1: cy - 16, x2: cx + 14, y2: cy + 16 };
 
-  // Civic paving only: dark sidewalk frame, clean concrete court, asphalt inlay and
-  // crosswalk arms. Do not use TILE_PLAZA/TILE_NEON here — both carry the saturated
-  // purple nightlife treatment and made the safe civic square read like a nightclub.
+  // Civic paving only — NO road-language tiles inside the court. The old asphalt
+  // inlay + giant crosswalk arms were fine when the civic ring hemmed them in, but
+  // on the open commons the zebra/lane art dominates the spawn view and reads as
+  // "road tiles pointing in weird directions". Sidewalk frame, concrete court,
+  // a sidewalk-band medallion, grate corners — collision identical (all walkable).
+  // Do not use TILE_PLAZA/TILE_NEON here — both carry the saturated purple
+  // nightlife treatment and made the safe civic square read like a nightclub.
   fill(grid, central, TILE_SIDEWALK);
   fill(grid, { x1: cx - 5, y1: cy - 4, x2: cx + 5, y2: cy + 4 }, TILE_FLOOR);
-  fill(grid, { x1: cx - 2, y1: cy - 1, x2: cx + 2, y2: cy + 1 }, TILE_LANE);
-  fill(grid, { x1: cx - 1, y1: cy - 5, x2: cx + 1, y2: cy + 5 }, TILE_CROSSWALK);
-  fill(grid, { x1: cx - 6, y1: cy - 1, x2: cx + 6, y2: cy + 1 }, TILE_CROSSWALK);
+  // Concentric sidewalk medallion where the crosswalk cross used to be.
+  fill(grid, { x1: cx - 2, y1: cy - 2, x2: cx + 2, y2: cy + 2 }, TILE_SIDEWALK);
+  fill(grid, { x1: cx - 1, y1: cy - 1, x2: cx + 1, y2: cy + 1 }, TILE_FLOOR);
+  grid[cy][cx] = TILE_GRATE; // the pad's centre stone
   // Small utility-grate corners keep the civic floor materially varied without
   // reintroducing the saturated purple plaza/neon tiles.
   for (const [gx, gy] of [[cx - 5, cy - 4], [cx + 5, cy - 4], [cx - 5, cy + 4], [cx + 5, cy + 4]] as const) {
     grid[gy][gx] = TILE_GRATE;
+  }
+  // Grass planter beds inside the court corners — the town-square greenery the
+  // planter/tree dressing sits in (fourth walkable surface, zero road language).
+  for (const [gx, gy] of [[cx - 4, cy - 3], [cx + 4, cy - 3], [cx - 4, cy + 3], [cx + 4, cy + 3]] as const) {
+    grid[gy][gx] = TILE_GRASS;
+    grid[gy][gx + (gx < cx ? 1 : -1)] = TILE_GRASS;
   }
   // South deploy and north-east Fixer approaches extend beyond the compact square.
   fill(grid, { x1: cx - 1, y1: cy + 8, x2: cx + 1, y2: cy + 14 }, TILE_SIDEWALK);

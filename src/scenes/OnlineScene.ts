@@ -159,6 +159,7 @@ import { relationshipConversationLine, relationshipLine } from "../game/relation
 import { buildStamp } from "../buildInfo";
 import { raidScriptFor } from "../game/raid";
 import { dailyDistrictMod, districtBarIntelLine } from "../game/districtMods";
+import { closedShopFor, closedShopBump } from "../game/closedShops";
 import { districtAftermath, districtCivicRoleLine } from "../game/districtLife";
 import { fadeInScene, transitionTo } from "../systems/transitions";
 import { dismissZoneLoadingSplash, showZoneLoadingSplash } from "../ui/ZoneLoadingSplash";
@@ -908,9 +909,22 @@ export default class OnlineScene extends Phaser.Scene {
     // Enterable doors: exactly ONE of each venue kind (shop/home/guild/den/bar).
     // Extra footprints are scenery-only (district kit / small blocks — no second shop).
     if (!this.interior && !this.isSubway && !this.isDive && !this.isTutorial && !this.isCityHub && !this.isBridge) {
+      let shutteredDone = false;
       districtBuildings(def).forEach((b, i) => {
         const kind = districtBuildingKind(i, this.districtIndex);
-        if (!kind) return; // scenery block — no door
+        if (!kind) {
+          // The district's ONE always-closed storefront: the first scenery footprint
+          // with a walkable doorstep gets a shuttered, day-seeded defunct shop.
+          if (!shutteredDone) {
+            const tx = Math.round((b.x1 + b.x2) / 2) * DISTRICT_SCALE;
+            const doorstep = b.y2 * DISTRICT_SCALE + 1;
+            if (grid[doorstep]?.[tx] !== undefined && !isWall(grid[doorstep][tx])) {
+              shutteredDone = true;
+              this.makeClosedShopDoor(tx, doorstep);
+            }
+          }
+          return; // scenery block — no enterable door
+        }
         const doorColor = buildingExteriorAccent(kind);
         const tx = Math.round((b.x1 + b.x2) / 2) * DISTRICT_SCALE;
         const doorstep = b.y2 * DISTRICT_SCALE + 1; // walkable street tile just south of the south wall
@@ -1494,7 +1508,9 @@ export default class OnlineScene extends Phaser.Scene {
           this.rsGameMessage?.show(`◈ ${mod.name} — ${mod.blurb}`, { ttlMs: 4500, color: "#f7ff3c" });
         });
       }
-      if (this.isTutorial) this.net.setTutorialMode(tutorialMode);
+      // The HALL you are standing in is authoritative for the curriculum — stale
+      // registry/settings must never re-arm the other mode's step list mid-drill.
+      if (this.isTutorial) this.net.setTutorialMode(tutorialModeFromZone(this.zone) ?? tutorialMode);
       if (this.net.godMode) {
         setGodSessionUnlock(true);
         if (this.mapPanel) this.mapPanel.godMode = true;
@@ -1842,6 +1858,19 @@ export default class OnlineScene extends Phaser.Scene {
       simpleHud
         ? [
             { key: "inv", label: "Bag", sub: mobile ? "tap" : "I", color: 0x00e5ff, onClick: () => this.inv?.toggle() },
+            // Skills must ride the simple bar too: mobile / new-density has no keyboard
+            // for the ' shortcut, so without this the entire rsSkills progression
+            // (combat/trading/mining XP accrues server-side) is unreachable.
+            {
+              key: "skills",
+              label: "Skills",
+              sub: mobile ? "tap" : "'",
+              color: 0xf7ff3c,
+              onClick: () => {
+                this.rsSkillsPanel.characterLevel = this.net.level;
+                this.rsSkillsPanel.toggle();
+              },
+            },
             { key: "map", label: "Map", sub: mobile ? "tap" : "M", color: 0x39ff88, onClick: () => this.mapPanel?.toggle(this.net.discovered, this.net.unlocked, this.zone) },
             { key: "quests", label: "Quests", sub: mobile ? "tap" : "J", color: 0xb06bff, onClick: () => this.refreshQuestLog(true) },
             // keep key consistent in both mobile/desktop bars
@@ -5368,6 +5397,31 @@ export default class OnlineScene extends Phaser.Scene {
   /** A door into a building interior — a glowing portal you enter with E (or click).
    *  `flat` skips the free-standing portal box (district doorways draw their own
    *  recessed FRLG-style opening in the wall face instead). */
+  /** The district's one always-closed storefront: a boarded doorway with a day-seeded
+   *  defunct-shop sign; bumping it just narrates why it's shut (pure flavour). */
+  private makeClosedShopDoor(tx: number, doorstep: number) {
+    const shop = closedShopFor(this.districtIndex);
+    const px = tx * TILE + TILE / 2;
+    const wx = tx * TILE;
+    const wy = (doorstep - 1) * TILE;
+    const dg = this.add.graphics().setDepth(4.5);
+    // Dark opening, then two boards nailed across it, then a rusted padlock glint.
+    dg.fillStyle(0x05060f, 0.96).fillRect(wx + 6, wy + 8, TILE - 12, TILE - 8);
+    dg.fillStyle(0x3a2e22, 0.95).fillRect(wx + 3, wy + 12, TILE - 6, 4);
+    dg.fillStyle(0x3a2e22, 0.95).fillRect(wx + 3, wy + TILE - 8, TILE - 6, 4);
+    dg.lineStyle(2, 0x6b5a44, 0.7).strokeRect(wx + 6, wy + 8, TILE - 12, TILE - 8);
+    dg.fillStyle(0xd9b64a, 0.5).fillRect(wx + TILE / 2 - 1, wy + TILE / 2 - 1, 3, 3);
+    // Faded amber signboard on the facade above.
+    this.drawBuildingSign(px, wy - 6, shop.name, 0xb8935a);
+    // Tap/click the door to hear why it's shut (pure flavour — no travel).
+    let attempt = 0;
+    const zone = this.add.zone(wx + 4, wy + 6, TILE - 8, TILE - 4).setOrigin(0).setInteractive({ useHandCursor: true }).setDepth(9);
+    zone.on("pointerdown", () => {
+      this.showBubble(px, wy + TILE / 2, closedShopBump(shop, attempt));
+      attempt++;
+    });
+  }
+
   private makeDoor(door: { dest: string; label: string; tile: [number, number]; color: number; flat?: boolean }) {
     const px = door.tile[0] * TILE + TILE / 2;
     const py = door.tile[1] * TILE + TILE / 2;
