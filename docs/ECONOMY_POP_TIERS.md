@@ -23,7 +23,9 @@ and a short anti-spam cooldown change — never a per-day earn or withdraw ceili
 - Pool empty / too small for the amount → **Check back later.**
 - Minimum withdraw floor (tier-dependent, ~300–400 ₵)
 - Short cooldown between withdraw *requests* (not a daily max)
-- On-chain treasury ATA balance for live settlement
+- On-chain treasury balance for live settlement
+- EVM market USD price of $METRO (refreshed ~every 30 minutes) scales credits-per-$METRO
+  rates so deposits/cash-outs track real token value (reference design: $1 / $METRO)
 
 ## Code
 - `src/game/economyPolicy.ts` — policy

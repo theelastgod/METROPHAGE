@@ -10,7 +10,9 @@
 //   • min withdraw floor + short anti-spam cooldown
 //   • optional wider spread at higher population tiers
 //
-// USD price is free-floating — all math is $METRO + off-chain credits.
+// On-chain $METRO USD price scales credits-per-$METRO rates so the bridge tracks
+// market value. Chain-agnostic: the oracle prices whichever family holds the mint
+// (Solana SPL primary, EVM alternate). Reference design assumes ~$1 at launch.
 
 /** Fixed total $METRO supply (human units; mint decimals may differ on-chain). */
 export const METRO_TOTAL_SUPPLY = 1_000_000_000;
@@ -174,6 +176,12 @@ export interface EconomyPolicy {
   nextPopThreshold: number | null;
   devSeedMetro: number;
   note: string;
+  /** Live market USD per 1 $METRO (EVM). Reference = 1 when unlisted. */
+  metroUsd: number;
+  /** deposit/withdraw rates scaled by metroUsd / reference. */
+  priceMult: number;
+  priceSource: string;
+  priceStale: boolean;
 }
 
 export interface EconomySnapshot {
@@ -183,6 +191,27 @@ export interface EconomySnapshot {
   seedMetro?: number;
   /** Ignored — no global daily WD cap. */
   withdrawnTodayMetro?: number;
+  /**
+   * Market USD price of 1 $METRO on the settlement chain.
+   * When omitted / invalid, rates use the design reference ($1).
+   */
+  metroUsd?: number;
+  /** Design reference USD for $METRO (default 1). */
+  metroUsdReference?: number;
+  priceSource?: string;
+  priceStale?: boolean;
+}
+
+/** Design reference: base pop-tier rates assume ~$1 per $METRO. */
+export const METRO_USD_REFERENCE_DEFAULT = 1.0;
+export const METRO_PRICE_MULT_MIN = 0.25;
+export const METRO_PRICE_MULT_MAX = 8;
+
+/** Multiplier applied to base credits-per-$METRO rates from market USD. */
+export function metroPriceMultiplier(usd: number, ref = METRO_USD_REFERENCE_DEFAULT): number {
+  if (!Number.isFinite(usd) || usd <= 0) return 1;
+  const r = ref > 0 ? ref : 1;
+  return clamp(usd / r, METRO_PRICE_MULT_MIN, METRO_PRICE_MULT_MAX);
 }
 
 function clamp(n: number, lo: number, hi: number): number {
@@ -198,8 +227,13 @@ function creditsToMetroAt(credits: number, withdrawRate: number): number {
 }
 
 /**
- * Resolve live bridge rates from pool health + population tier.
+ * Resolve live bridge rates from pool health + population tier + market USD price.
  * Does **not** impose daily earn or daily withdraw caps.
+ *
+ * Market USD (EVM): scales both deposit and withdraw credits-per-$METRO by the
+ * same multiplier so the spread ratio stays intact while absolute ₵ tracks token value.
+ *   mult = clamp(metroUsd / $1_ref, 0.25, 8)
+ * Example: $2 $METRO → ~2× credits per token in both directions.
  */
 export function resolveEconomyPolicy(snap: EconomySnapshot): EconomyPolicy {
   const pool = Math.max(0, snap.poolMetro || 0);
@@ -207,12 +241,25 @@ export function resolveEconomyPolicy(snap: EconomySnapshot): EconomyPolicy {
   const players = clamp(Math.floor(snap.activePlayers ?? TARGET_PLAYERS), 1, 100_000);
   const seed = snap.seedMetro ?? METRO_DEV_SEED_METRO;
   const tier = populationTier(players);
+  const ref = snap.metroUsdReference ?? METRO_USD_REFERENCE_DEFAULT;
+  const metroUsd =
+    Number.isFinite(snap.metroUsd) && (snap.metroUsd as number) > 0
+      ? (snap.metroUsd as number)
+      : ref;
+  const priceMult = metroPriceMultiplier(metroUsd, ref);
+  const priceSource = snap.priceSource ?? (snap.metroUsd != null ? "market" : "reference");
+  const priceStale = !!snap.priceStale;
 
   let deposit = tier.depositCreditsPerMetro;
   let withdraw = tier.withdrawCreditsPerMetro;
   let minWd = tier.minWithdrawCredits;
   let cooldown = tier.withdrawCooldownMs;
   let phase: EconomyPhase = pool > 0 ? "healthy" : "bootstrap";
+
+  // Apply market price to base tier rates first (then stress may widen the spread).
+  deposit = Math.round(deposit * priceMult);
+  withdraw = Math.round(withdraw * priceMult);
+  minWd = Math.round(minWd * priceMult);
 
   let coverage: number | null = null;
   const liability = circ / Math.max(1, withdraw);
@@ -223,22 +270,29 @@ export function resolveEconomyPolicy(snap: EconomySnapshot): EconomyPolicy {
   } else if (coverage != null && coverage < 0.15) {
     // Crisis: widen spread only — still no daily caps.
     phase = "crisis";
-    deposit = Math.min(deposit, 85);
-    withdraw = Math.max(withdraw, 200);
-    minWd = Math.max(minWd, 400);
+    deposit = Math.min(deposit, Math.round(85 * priceMult));
+    withdraw = Math.max(withdraw, Math.round(200 * priceMult));
+    minWd = Math.max(minWd, Math.round(400 * priceMult));
     cooldown = Math.max(cooldown, 45_000);
   } else if (coverage != null && coverage < 0.4) {
     phase = "stress";
-    deposit = Math.min(deposit, 95);
-    withdraw = Math.max(withdraw, 175);
-    minWd = Math.max(minWd, 350);
+    deposit = Math.min(deposit, Math.round(95 * priceMult));
+    withdraw = Math.max(withdraw, Math.round(175 * priceMult));
+    minWd = Math.max(minWd, Math.round(350 * priceMult));
     cooldown = Math.max(cooldown, 35_000);
   } else {
     phase = pool >= creditsToMetroAt(minWd, withdraw) ? "healthy" : "bootstrap";
   }
 
-  deposit = clamp(deposit, 70, 120);
-  withdraw = clamp(withdraw, 125, 220);
+  // Soft clamps after price scale — keep a positive spread.
+  const loDep = Math.max(20, Math.round(70 * Math.min(1, priceMult)));
+  const hiDep = Math.round(120 * Math.max(1, priceMult) * 1.5);
+  const loWd = Math.max(30, Math.round(125 * Math.min(1, priceMult)));
+  const hiWd = Math.round(220 * Math.max(1, priceMult) * 1.5);
+  deposit = clamp(deposit, loDep, hiDep);
+  withdraw = clamp(withdraw, loWd, hiWd);
+  if (withdraw <= deposit) withdraw = deposit + Math.max(20, Math.round(50 * priceMult));
+  minWd = Math.max(minWd, deposit * 2);
 
   const nextTh = nextPopThreshold(players);
   const noteParts = [
@@ -246,6 +300,8 @@ export function resolveEconomyPolicy(snap: EconomySnapshot): EconomyPolicy {
     phase,
     "unlimited earn · unlimited daily WD",
     `seed ${seed.toLocaleString()}◈`,
+    `◈≈$${metroUsd.toFixed(metroUsd >= 1 ? 2 : 4)} (${priceSource}${priceStale ? ",stale" : ""})`,
+    `rate×${priceMult.toFixed(2)}`,
   ];
   if (nextTh != null) noteParts.push(`next rate tier >${nextTh}`);
 
@@ -268,6 +324,10 @@ export function resolveEconomyPolicy(snap: EconomySnapshot): EconomyPolicy {
     nextPopThreshold: nextTh,
     devSeedMetro: seed,
     note: noteParts.join(" · ") + " — " + tier.blurb,
+    metroUsd,
+    priceMult,
+    priceSource,
+    priceStale,
   };
 }
 

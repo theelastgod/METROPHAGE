@@ -318,7 +318,8 @@ export const TUTORIAL_INSTRUCTORS_FULL: TutorialInstructor[] = [
     look: look({ color: 0xff79c6, head: "beret", sex: "f", skin: 0xe6b58c, hair: "short", hairColor: 0x1b1820, cloak: "coat" }),
     lines: [
       "Your signature colour chose your CELL — one of four factions.",
-      "Capturing nodes scores your cell. The war tally is server-wide.",
+      "OPEN MOUTH copies freedom. UNFINISHED WAR defends blocks. QUIET PROTOCOL preserves truth. MANY-BODIED survives together.",
+      "Capturing nodes scores your Cell. The war tally is server-wide, but every Cell is arguing about what freedom should become.",
       "Lesson logged. Open the forge next (G) when you're ready.",
     ],
   },

@@ -41,34 +41,30 @@ export function xpProgress(xp: number) {
 
 export type RsSkillXp = Record<RsSkillId, number>;
 
+export const RS_SKILL_IDS: RsSkillId[] = ["combat", "trading", "exploration", "crafting", "mining"];
+
+export const RS_SKILL_XP_CAP = xpForLevel(99);
+
 export function emptyRsSkills(): RsSkillXp {
   return { combat: 0, trading: 0, exploration: 0, crafting: 0, mining: 0 };
 }
 
-const KEY = "metrophage_rs_skills_v1";
-
-export function loadRsSkills(): RsSkillXp {
-  try {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return emptyRsSkills();
-    return { ...emptyRsSkills(), ...(JSON.parse(raw) as Partial<RsSkillXp>) };
-  } catch {
-    return emptyRsSkills();
-  }
+export function skillStatKey(id: RsSkillId): `skill_${RsSkillId}` {
+  return `skill_${id}`;
 }
 
-export function saveRsSkills(sk: RsSkillXp) {
-  try {
-    localStorage.setItem(KEY, JSON.stringify(sk));
-  } catch {
-    /* ignore */
+/** Sanitize the authoritative player_stats counters into the fixed wire shape. */
+export function skillSnapshot(stats: Record<string, number>): RsSkillXp {
+  const out = emptyRsSkills();
+  for (const id of RS_SKILL_IDS) {
+    const raw = stats[skillStatKey(id)] ?? 0;
+    out[id] = Math.min(RS_SKILL_XP_CAP, Math.max(0, Math.floor(Number.isFinite(raw) ? raw : 0)));
   }
+  return out;
 }
 
-export function grantSkillXp(sk: RsSkillXp, id: RsSkillId, amount: number): { leveled: boolean; level: number } {
-  const before = levelForXp(sk[id]);
-  sk[id] += amount;
-  const after = levelForXp(sk[id]);
-  saveRsSkills(sk);
-  return { leveled: after > before, level: after };
+/** Capped award amount, used by the Worker before it bumps a durable stat. */
+export function skillAwardAmount(stats: Record<string, number>, id: RsSkillId, amount: number): number {
+  const current = skillSnapshot(stats)[id];
+  return Math.min(Math.max(0, Math.floor(amount)), RS_SKILL_XP_CAP - current);
 }

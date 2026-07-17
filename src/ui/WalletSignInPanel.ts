@@ -11,6 +11,7 @@ import { drawPanelFrame, ensureButtonStrip, ensurePanelImage } from "./panelChro
 import { dimBackdrop, uiDim, uiGap } from "./uiLayout";
 import { bodyFont, displayFont } from "./typography";
 import { addPanelGlow } from "./studioChrome";
+import { prefersMobileUx } from "../systems/Mobile";
 
 export type WalletStep = "connect" | "sign" | "play";
 
@@ -150,10 +151,18 @@ export default class WalletSignInPanel {
     return STEP_LABELS.findIndex((s) => s.id === step);
   }
 
-  /** Desktop card width — deliberately narrower than a tablet sheet. */
+  /** Card width — full-bleed sheet on phones, compact card on desktop. */
   private panelWidth() {
+    if (prefersMobileUx()) {
+      // Use nearly full landscape width with breathing room for thumbs / safe area.
+      return Math.min(VIEW_W - uiDim(20), uiDim(520));
+    }
     const max = Math.min(uiDim(400), VIEW_W - uiDim(72));
     return Math.max(uiDim(300), max);
+  }
+
+  private isMobile() {
+    return prefersMobileUx();
   }
 
   private drawAnimOverlay() {
@@ -201,8 +210,10 @@ export default class WalletSignInPanel {
     this.hoverBtn = -1;
     this.clearDynamic();
 
-    const pad = uiDim(18); // tighter than default panelPad
-    const gap = uiGap("sm");
+    const mobile = this.isMobile();
+    // Mobile: roomy thumb padding + bigger actions. Desktop: tight card.
+    const pad = uiDim(mobile ? 14 : 18);
+    const gap = uiGap(mobile ? "xs" : "sm");
     const w = this.panelWidth();
     const innerW = w - pad * 2;
     const wrapW = innerW - uiGap("xs");
@@ -215,41 +226,50 @@ export default class WalletSignInPanel {
       return { h, w: tw };
     };
 
-    const headlineStyle = displayFont(16, {
+    const headlineStyle = displayFont(mobile ? 15 : 16, {
       color: "#eafdff",
       fontStyle: "bold",
       wordWrap: { width: wrapW },
     });
-    const bodyStyle = bodyFont(11, {
+    // Shorter body copy on phones — less vertical bulk in the center.
+    const bodyStyle = bodyFont(mobile ? 10 : 11, {
       color: "#8b93a5",
       wordWrap: { width: wrapW },
-      lineSpacing: uiDim(3),
+      lineSpacing: uiDim(mobile ? 2 : 3),
     });
     const headlineM = measure(state.headline || " ", headlineStyle);
     const bodyM = measure(state.body || " ", bodyStyle);
 
-    // Compact desktop rows (was 56 — tablet-fat).
-    let btnH = uiDim(44);
-    const btnGap = uiDim(6);
+    // Mobile: finger-tall primary rows (~48–52 design px). Desktop: compact.
+    let btnH = uiDim(mobile ? 50 : 44);
+    const btnGap = uiDim(mobile ? 8 : 6);
     const n = state.actions.length;
     let actionH = n > 0 ? n * btnH + (n - 1) * btnGap : 0;
 
-    const headerH = uiDim(40);
-    const stepsH = uiDim(28);
-    const statusH = uiDim(26);
-    const contentPad = uiDim(10);
-    const footerH = uiDim(28);
+    const headerH = uiDim(mobile ? 32 : 40);
+    const stepsH = uiDim(mobile ? 22 : 28);
+    const statusH = uiDim(mobile ? 22 : 26);
+    const contentPad = uiDim(mobile ? 6 : 10);
+    const footerH = uiDim(mobile ? 20 : 28);
     const stackGaps = gap * 3;
 
-    let contentBlock = contentPad + headlineM.h + uiDim(6) + bodyM.h + contentPad;
-    const maxPanel = VIEW_H - uiDim(32);
+    let contentBlock = contentPad + headlineM.h + uiDim(4) + bodyM.h + contentPad;
+    // Cap body height on mobile so buttons always fit above the fold.
+    if (mobile) {
+      const maxBody = uiDim(52);
+      if (bodyM.h > maxBody) {
+        contentBlock = contentPad + headlineM.h + uiDim(4) + maxBody + contentPad;
+      }
+    }
+    // Leave headroom for title/tagline above the card on mobile (top-aligned sheet).
+    const maxPanel = mobile ? VIEW_H - uiDim(88) : VIEW_H - uiDim(32);
     let fixedChrome = headerH + stepsH + statusH + stackGaps + actionH + footerH + pad * 2;
-    const maxContent = Math.max(uiDim(64), maxPanel - fixedChrome);
+    const maxContent = Math.max(uiDim(mobile ? 48 : 64), maxPanel - fixedChrome);
     if (contentBlock > maxContent) contentBlock = maxContent;
 
     let h = fixedChrome + contentBlock;
     if (h > maxPanel && n > 0) {
-      const minBtn = uiDim(36);
+      const minBtn = uiDim(mobile ? 44 : 36);
       const shrinkPer = Math.ceil((h - maxPanel) / n);
       const squeezed = Math.max(minBtn, btnH - shrinkPer);
       fixedChrome -= (btnH - squeezed) * n;
@@ -260,11 +280,20 @@ export default class WalletSignInPanel {
     if (h > maxPanel) h = maxPanel;
 
     let x = (VIEW_W - w) / 2;
-    let y = (VIEW_H - h) / 2;
-    if (state.offsetY) {
-      y = Math.min(y + uiDim(state.offsetY) * 0.45, VIEW_H - h - uiDim(14));
+    // Mobile: sit under the brand mark (upper third) — not dead-center clutter.
+    // Desktop: classic vertical center.
+    let y: number;
+    if (mobile) {
+      y = uiDim(72);
+      if (state.offsetY) y += uiDim(state.offsetY) * 0.25;
+      y = Math.max(uiDim(56), Math.min(y, VIEW_H - h - uiDim(12)));
+    } else {
+      y = (VIEW_H - h) / 2;
+      if (state.offsetY) {
+        y = Math.min(y + uiDim(state.offsetY) * 0.45, VIEW_H - h - uiDim(14));
+      }
+      y = Math.max(uiDim(10), Math.min(y, VIEW_H - h - uiDim(10)));
     }
-    y = Math.max(uiDim(10), Math.min(y, VIEW_H - h - uiDim(10)));
     this.frame = { x, y, w, h };
 
     const g = this.g;
@@ -327,7 +356,7 @@ export default class WalletSignInPanel {
     );
     this.add(
       this.scene.add
-        .text(x + w - pad, cy + uiDim(11), "RH · ETH L2", bodyFont(9, { color: "#4e5568" }))
+        .text(x + w - pad, cy + uiDim(11), "SOL · MAINNET", bodyFont(9, { color: "#4e5568" }))
         .setOrigin(1, 0),
     );
     cy += headerH;
@@ -411,17 +440,18 @@ export default class WalletSignInPanel {
     const stackTop = contentTop + Math.max(contentPad, (contentH - stackH) / 2);
     const midX = x + w / 2;
 
-    const headlineCentered = displayFont(16, {
+    // Must match measure() styles above (mobile vs desktop) or height math is wrong.
+    const headlineCentered = displayFont(mobile ? 15 : 16, {
       color: "#eafdff",
       fontStyle: "bold",
       align: "center",
       wordWrap: { width: wrapW },
     });
-    const bodyCentered = bodyFont(11, {
+    const bodyCentered = bodyFont(mobile ? 10 : 11, {
       color: "#8b93a5",
       align: "center",
       wordWrap: { width: wrapW },
-      lineSpacing: uiDim(3),
+      lineSpacing: uiDim(mobile ? 2 : 3),
     });
 
     this.add(
@@ -489,15 +519,20 @@ export default class WalletSignInPanel {
         }
       }
 
-      const twoLine = btnH >= uiDim(40);
+      const twoLine = btnH >= uiDim(this.isMobile() ? 44 : 40);
       const label = this.scene.add
-        .text(bx + uiDim(14), ay + (twoLine ? uiDim(14) : btnH / 2), act.label, displayFont(primary ? 12 : 11, {
-          color: primary ? "#f2f6ff" : this.hex(act.color),
-          fontStyle: "bold",
-        }))
+        .text(
+          bx + uiDim(14),
+          ay + (twoLine ? uiDim(this.isMobile() ? 16 : 14) : btnH / 2),
+          act.label,
+          displayFont(primary ? (this.isMobile() ? 13 : 12) : this.isMobile() ? 12 : 11, {
+            color: primary ? "#f2f6ff" : this.hex(act.color),
+            fontStyle: "bold",
+          }),
+        )
         .setOrigin(0, 0.5);
       const sub = this.scene.add
-        .text(bx + uiDim(14), ay + uiDim(26), act.sub, bodyFont(9, {
+        .text(bx + uiDim(14), ay + uiDim(this.isMobile() ? 30 : 26), act.sub, bodyFont(this.isMobile() ? 10 : 9, {
           color: "#5c6474",
           wordWrap: { width: btnW - uiDim(40) },
         }))
@@ -543,7 +578,12 @@ export default class WalletSignInPanel {
       g.lineStyle(1, 0x1a2030, 0.45).lineBetween(x + pad, footerY, x + w - pad, footerY);
       this.add(
         this.scene.add
-          .text(x + pad, footerY + uiDim(8), "METAMASK  ·  ROBINHOOD CHAIN", bodyFont(8, { color: "#3d4454" }))
+          .text(
+            x + pad,
+            footerY + uiDim(8),
+            "PHANTOM  ·  SOLANA",
+            bodyFont(8, { color: "#3d4454" }),
+          )
           .setOrigin(0, 0),
       );
     }

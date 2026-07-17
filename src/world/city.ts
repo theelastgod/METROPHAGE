@@ -153,6 +153,12 @@ export type BuildingKind =
   | "guild"
   | "clinic"
   | "bar"
+  | "noodle"
+  | "ripperdoc"
+  | "pawn"
+  | "arcade"
+  | "garage"
+  | "radio"
   | "hospital" // full heal + cure (the low-HP loop)
   | "hotel" // rest to recover
   | "subway" // metro — gateway to the underground (combat dungeon)
@@ -175,19 +181,25 @@ export function roofTileForKind(kind: BuildingKind, env: Env): number {
     case "home":
       return TILE_WALL_RES;
     case "den":
+    case "arcade":
       return TILE_WALL_SLUM;
     case "guild":
+    case "garage":
+    case "radio":
     case "subway":
       return TILE_WALL_IND;
     case "shop":
+    case "pawn":
       // NOT TILE_MARKET / TILE_NEON — those are walkable GROUND tiles; as roofs they
       // let players stroll on top of every shop and bar in the city (both the client
       // and the server share this grid, so collision agreed with the stroll). The
       // facade paint + rooftop lights carry each kind's look — the roof must be wall.
       return ENV[env].wall;
     case "bar":
+    case "noodle":
       return TILE_WALL_SLUM;
     case "clinic":
+    case "ripperdoc":
       return TILE_WALL_CORP;
     case "stadium":
       return TILE_WALL;
@@ -256,7 +268,10 @@ function fill(grid: TileGrid, r: Rect, tile: number) {
     for (let x = r.x1; x <= r.x2; x++) if (grid[y]?.[x] !== undefined) grid[y][x] = tile;
 }
 
-const KINDS: BuildingKind[] = ["home", "home", "shop", "bar", "clinic", "den", "guild", "home", "shop"];
+const KINDS: BuildingKind[] = [
+  "home", "shop", "bar", "clinic", "den", "guild", "noodle",
+  "ripperdoc", "pawn", "arcade", "garage", "radio",
+];
 
 /** Block column/row ranges between the avenues (the gaps the city fills with blocks). */
 function blockRanges(size: number): Array<[number, number]> {
@@ -303,12 +318,41 @@ export function buildCity(seed = 1337, w = CITY_W, h = CITY_H): CityMap {
   const cx = Math.round(w / 2);
   const cy = Math.round(h / 2);
   const plazas: Rect[] = [];
-  // The plaza must always contain the hand-placed hub fixtures (venue doors at ±12 x,
-  // citizen NPCs at +14 y, mining nodes) so none strand inside a building after a shrink.
-  const plazaRx = Math.max(14, Math.round(w * 0.022));
-  const plazaRy = Math.max(16, Math.round(h * 0.019));
+  // Compact visual square around spawn. A separate invisible reserve below keeps nearby
+  // buildings away from service approaches without making the whole area read as plaza.
+  const plazaRx = 6;
+  const plazaRy = 5;
   const central: Rect = { x1: cx - plazaRx, y1: cy - plazaRy, x2: cx + plazaRx, y2: cy + plazaRy };
-  fill(grid, central, TILE_PLAZA);
+  const plazaReserve: Rect = { x1: cx - 14, y1: cy - 16, x2: cx + 14, y2: cy + 16 };
+
+  // Civic paving only — NO road-language tiles inside the court. The old asphalt
+  // inlay + giant crosswalk arms were fine when the civic ring hemmed them in, but
+  // on the open commons the zebra/lane art dominates the spawn view and reads as
+  // "road tiles pointing in weird directions". Sidewalk frame, concrete court,
+  // a sidewalk-band medallion, grate corners — collision identical (all walkable).
+  // Do not use TILE_PLAZA/TILE_NEON here — both carry the saturated purple
+  // nightlife treatment and made the safe civic square read like a nightclub.
+  fill(grid, central, TILE_SIDEWALK);
+  fill(grid, { x1: cx - 5, y1: cy - 4, x2: cx + 5, y2: cy + 4 }, TILE_FLOOR);
+  // Concentric sidewalk medallion where the crosswalk cross used to be.
+  fill(grid, { x1: cx - 2, y1: cy - 2, x2: cx + 2, y2: cy + 2 }, TILE_SIDEWALK);
+  fill(grid, { x1: cx - 1, y1: cy - 1, x2: cx + 1, y2: cy + 1 }, TILE_FLOOR);
+  grid[cy][cx] = TILE_GRATE; // the pad's centre stone
+  // Small utility-grate corners keep the civic floor materially varied without
+  // reintroducing the saturated purple plaza/neon tiles.
+  for (const [gx, gy] of [[cx - 5, cy - 4], [cx + 5, cy - 4], [cx - 5, cy + 4], [cx + 5, cy + 4]] as const) {
+    grid[gy][gx] = TILE_GRATE;
+  }
+  // Grass planter beds inside the court corners — the town-square greenery the
+  // planter/tree dressing sits in (fourth walkable surface, zero road language).
+  for (const [gx, gy] of [[cx - 4, cy - 3], [cx + 4, cy - 3], [cx - 4, cy + 3], [cx + 4, cy + 3]] as const) {
+    grid[gy][gx] = TILE_GRASS;
+    grid[gy][gx + (gx < cx ? 1 : -1)] = TILE_GRASS;
+  }
+  // South deploy and north-east Fixer approaches extend beyond the compact square.
+  fill(grid, { x1: cx - 1, y1: cy + 8, x2: cx + 1, y2: cy + 14 }, TILE_SIDEWALK);
+  fill(grid, { x1: cx + 8, y1: cy - 10, x2: cx + 12, y2: cy - 8 }, TILE_SIDEWALK);
+  fill(grid, { x1: cx + 10, y1: cy - 12, x2: cx + 12, y2: cy - 9 }, TILE_SIDEWALK);
   plazas.push(central);
 
   const buildings: CityBuilding[] = [];
@@ -322,6 +366,7 @@ export function buildCity(seed = 1337, w = CITY_W, h = CITY_H): CityMap {
     [cx, cy - 4],
   ];
   let bid = 0;
+  const usedKindByEnv = new Set<string>();
 
   /** Drop an env-typed prop on a walkable tile (skips walls / out-of-bounds). */
   const placeProp = (env: Env, tx: number, ty: number) => {
@@ -337,7 +382,7 @@ export function buildCity(seed = 1337, w = CITY_W, h = CITY_H): CityMap {
     for (const [bx1, bx2] of cols) {
       if (bx2 - bx1 < 3 || ry2 - ry1 < 3) continue;
       // skip the central plaza block
-      if (bx1 <= central.x2 && bx2 >= central.x1 && ry1 <= central.y2 && ry2 >= central.y1) continue;
+      if (bx1 <= plazaReserve.x2 && bx2 >= plazaReserve.x1 && ry1 <= plazaReserve.y2 && ry2 >= plazaReserve.y1) continue;
 
       const mcx = (bx1 + bx2) / 2;
       const mcy = (ry1 + ry2) / 2;
@@ -372,7 +417,16 @@ export function buildCity(seed = 1337, w = CITY_W, h = CITY_H): CityMap {
       if (ix2 - ix1 < 2 || iy2 - iy1 < 2) continue;
       fill(grid, { x1: ix1, y1: iy1, x2: ix2, y2: iy2 }, pal.wall);
 
-      const kind = KINDS[(bid + Math.floor(roll * 100)) % KINDS.length];
+      const startKind = (bid + Math.floor(roll * 100)) % KINDS.length;
+      let kind = KINDS[startKind];
+      for (let offset = 0; offset < KINDS.length; offset++) {
+        const candidate = KINDS[(startKind + offset) % KINDS.length];
+        if (!usedKindByEnv.has(`${env}:${candidate}`)) {
+          kind = candidate;
+          break;
+        }
+      }
+      usedKindByEnv.add(`${env}:${kind}`);
       // EVERY hub building is enterable now (walk in, meet its resident). Still consume the
       // roll so the rest of the deterministic layout is unchanged.
       rand();
@@ -392,11 +446,37 @@ export function buildCity(seed = 1337, w = CITY_W, h = CITY_H): CityMap {
     }
   }
 
-  // Promote the nearest enterable homes into the unique landmarks (hospital, hotel,
+  // The very centre stays BUILDING-FREE: the old inner civic ring (citycenter/hotel/
+  // hospital squeezed 7–11 tiles from spawn) crowded the plaza once the sharpened art
+  // landed — you spawned in a canyon between two megablocks. The landmark promotion
+  // below guarantees those kinds still exist once each on the nearest street blocks.
+  // Instead, dress the open plaza as a civic commons (FRLG town-square rhythm):
+  // formal planter/bench ring, lantern corners, market stalls on the Fixer approach.
+  const plazaDressing: Array<{ kind: PropKind; x: number; y: number }> = [
+    // formal planter ring around the concrete court
+    { kind: "planter", x: cx - 5, y: cy - 3 }, { kind: "planter", x: cx + 5, y: cy - 3 },
+    { kind: "planter", x: cx - 5, y: cy + 3 }, { kind: "planter", x: cx + 5, y: cy + 3 },
+    // benches face the centre on each axis
+    { kind: "bench", x: cx - 3, y: cy - 4 }, { kind: "bench", x: cx + 3, y: cy - 4 },
+    { kind: "bench", x: cx - 3, y: cy + 4 }, { kind: "bench", x: cx + 3, y: cy + 4 },
+    // lanterns mark the plaza corners; trees soften the sidewalk frame
+    { kind: "lantern", x: cx - 6, y: cy - 5 }, { kind: "lantern", x: cx + 6, y: cy - 5 },
+    { kind: "lantern", x: cx - 6, y: cy + 5 }, { kind: "lantern", x: cx + 6, y: cy + 5 },
+    { kind: "tree", x: cx - 8, y: cy - 7 }, { kind: "tree", x: cx + 8, y: cy - 7 },
+    { kind: "tree", x: cx - 8, y: cy + 7 }, { kind: "tree", x: cx + 8, y: cy + 7 },
+    // a couple of stalls along the north-east Fixer approach keep it lively
+    { kind: "stall", x: cx + 8, y: cy - 9 }, { kind: "stall", x: cx + 10, y: cy - 11 },
+    { kind: "billboard", x: cx, y: cy - 8 },
+  ];
+  for (const d of plazaDressing) {
+    if (!isWall(grid[d.y]?.[d.x])) decorations.push(d);
+  }
+
+  // Promote the nearest enterable buildings into the unique landmarks (hospital, hotel,
   // subway, stadium, civic spire) so each exists exactly once, close to the plaza.
   const distToCentre = (b: CityBuilding) =>
     ((b.rect.x1 + b.rect.x2) / 2 - cx) ** 2 + ((b.rect.y1 + b.rect.y2) / 2 - cy) ** 2;
-  const homes = buildings.filter((b) => b.door && b.kind === "home").sort((a, b) => distToCentre(a) - distToCentre(b));
+  const homes = buildings.filter((b) => b.door).sort((a, b) => distToCentre(a) - distToCentre(b));
   LANDMARK_KINDS.forEach((lk, i) => {
     if (homes[i]) homes[i].kind = lk;
   });
@@ -500,6 +580,12 @@ export const INTERIOR_NAMES: Record<BuildingKind, string> = {
   guild: "RUNNERS' GUILD",
   clinic: "MED-CLINIC",
   bar: "THE FERAL CAT",
+  noodle: "MAMA TSE'S NOODLES",
+  ripperdoc: "SPLICE CLINIC",
+  pawn: "NIX EXCHANGE",
+  arcade: "GHOST ARCADE",
+  garage: "WREN'S GARAGE",
+  radio: "PIRATE RADIO",
   hospital: "HELIX GENERAL",
   hotel: "THE NEON ROOST",
   subway: "METRO — THE UNDERLINE",
@@ -507,10 +593,43 @@ export const INTERIOR_NAMES: Record<BuildingKind, string> = {
   citycenter: "CIVIC SPIRE",
 };
 
+/** Per-kind interior footprint — room shape matches HF interior plates / furniture. */
+function interiorDims(kind: BuildingKind): { w: number; h: number } {
+  switch (kind) {
+    case "bar":
+      return { w: 24, h: 14 }; // long counter hall
+    case "noodle":
+      return { w: 18, h: 18 }; // square kitchen + booth room
+    case "clinic":
+    case "ripperdoc":
+    case "hospital":
+      return { w: 22, h: 15 }; // ward depth
+    case "shop":
+    case "pawn":
+      return { w: 21, h: 14 }; // aisle length
+    case "guild":
+    case "garage":
+    case "radio":
+      return { w: 22, h: 15 }; // war-table center
+    case "subway":
+      return { w: 24, h: 15 }; // turnstile + track strip
+    case "stadium":
+      return { w: 23, h: 16 }; // barrier ring
+    case "citycenter":
+      return { w: 22, h: 15 }; // fountain lobby
+    case "den":
+    case "arcade":
+      return { w: 18, h: 13 }; // tight backroom
+    case "hotel":
+      return { w: 20, h: 14 };
+    default:
+      return { w: 20, h: 13 }; // home / default
+  }
+}
+
 /** Build a small interior room for a building of the given kind. */
 export function buildInterior(kind: BuildingKind): Interior {
-  const w = 20;
-  const h = 13;
+  const { w, h } = interiorDims(kind);
   const grid: TileGrid = [];
   for (let y = 0; y < h; y++) grid.push(new Array(w).fill(TILE_INNER_FLOOR));
   // wall ring
@@ -529,18 +648,62 @@ export function buildInterior(kind: BuildingKind): Interior {
   const spawn: [number, number] = [ex, h - 2];
 
   const npcSpots: [number, number][] = [];
-  // a counter for service buildings: a wall row with a gap, NPC behind it
-  if (kind === "shop" || kind === "bar" || kind === "clinic" || kind === "guild" || kind === "hospital" || kind === "hotel") {
+  // Structure partitions that frame HF furniture (not a single generic counter for all).
+  if (kind === "bar") {
+    // L-counter: north run + short west stub (matches bar counter art)
+    for (let x = 3; x <= w - 4; x++) grid[4][x] = TILE_INNER_WALL;
+    for (let y = 4; y <= 7; y++) grid[y][3] = TILE_INNER_WALL;
+    grid[4][ex] = TILE_INNER_FLOOR;
+    npcSpots.push([ex, 3], [6, h - 4], [w - 5, h - 4]);
+  } else if (kind === "clinic" || kind === "hospital") {
+    // Reception counter + light ward pillars
+    for (let x = 3; x <= w - 4; x++) grid[4][x] = TILE_INNER_WALL;
+    grid[4][ex] = TILE_INNER_FLOOR;
+    grid[8][7] = TILE_INNER_WALL;
+    grid[8][w - 8] = TILE_INNER_WALL;
+    npcSpots.push([ex, 3], [5, h - 4], [w - 5, h - 4]);
+  } else if (kind === "shop") {
+    // Aisle islands
+    for (let x = 3; x <= w - 4; x++) grid[4][x] = TILE_INNER_WALL;
+    grid[4][ex] = TILE_INNER_FLOOR;
+    for (let y = 7; y <= 9; y++) {
+      grid[y][6] = TILE_INNER_WALL;
+      grid[y][w - 7] = TILE_INNER_WALL;
+    }
+    npcSpots.push([ex, 3], [5, h - 4], [w - 5, h - 4]);
+  } else if (kind === "guild") {
+    // Open center for war table; rack walls as side stubs
+    for (let x = 4; x <= w - 5; x++) grid[3][x] = TILE_INNER_WALL;
+    grid[3][ex] = TILE_INNER_FLOOR;
+    for (let y = 6; y <= 9; y++) {
+      grid[y][2] = TILE_INNER_WALL;
+      grid[y][w - 3] = TILE_INNER_WALL;
+    }
+    npcSpots.push([ex, 2], [6, h - 4], [w - 6, h - 4]);
+  } else if (kind === "subway") {
+    // Turnstile wall + south track strip (non-walkable edge flavor via wall tiles)
+    for (let x = 4; x <= w - 5; x++) grid[5][x] = TILE_INNER_WALL;
+    grid[5][ex] = TILE_INNER_FLOOR;
+    for (let x = 2; x <= w - 3; x++) grid[h - 3][x] = TILE_INNER_WALL;
+    npcSpots.push([ex, 4], [5, 8], [w - 5, 8]);
+  } else if (kind === "stadium") {
+    // Barrier arc mid-room
+    for (let x = 4; x <= w - 5; x++) grid[8][x] = TILE_INNER_WALL;
+    grid[8][ex] = TILE_INNER_FLOOR;
+    npcSpots.push([ex, 3], [5, 6], [w - 5, 6]);
+  } else if (kind === "hotel" || kind === "citycenter") {
     const cy = 4;
     for (let x = 3; x <= w - 4; x++) grid[cy][x] = TILE_INNER_WALL;
-    grid[cy][ex] = TILE_INNER_FLOOR; // a gap to step behind, if needed
-    npcSpots.push([ex, cy - 1]); // keeper / quest-giver behind the counter
-    npcSpots.push([5, h - 4]); // a patron / second NPC
-    npcSpots.push([w - 5, h - 4]); // a third NPC
+    grid[cy][ex] = TILE_INNER_FLOOR;
+    npcSpots.push([ex, cy - 1], [5, h - 4], [w - 5, h - 4]);
   } else {
-    // home / den — a lived-in room: an occupant + a visitor (furniture is decorative)
-    npcSpots.push([ex, 3]); // occupant
-    npcSpots.push([5, h - 4]); // a visitor
+    // home / den — lived-in room; den gets a crate-nest corner partition
+    npcSpots.push([ex, 3], [5, h - 4]);
+    if (kind === "den") {
+      grid[3][3] = TILE_INNER_WALL;
+      grid[3][4] = TILE_INNER_WALL;
+      grid[4][3] = TILE_INNER_WALL;
+    }
   }
 
   return { grid, w, h, spawn, exit, npcSpots, props: furnishInterior(kind, ex), name: INTERIOR_NAMES[kind] };

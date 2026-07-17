@@ -210,7 +210,7 @@ const PVP: TutorialStepDef = {
   id: "pvp",
   title: "PVP ARENAS",
   teach:
-    "PvP is only in THE CRUCIBLE — a marked arena in the southeast corner of combat districts, away from story beats. Chat, emotes, and trade work everywhere. The server enforces arena damage.",
+    "PvP is only in THE CRUCIBLE (SE of combat districts). Entry locks a $METRO buy-in. If another player kills you, 10% of your credits drop on the floor — you respawn outside the arena. Outside PvP, death never takes credits.",
   hint: "Talk to ARENA MARSHAL (E) · or SPACE",
   kind: "pvp",
   count: 1,

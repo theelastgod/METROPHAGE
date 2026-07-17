@@ -2,7 +2,7 @@
 // Public mainnet launched 2026-07-01; testnet since 2026-02.
 // Docs: https://docs.robinhood.com/chain/connecting/
 //
-// This is the preferred settlement network for $METRO (ERC-20) + MetaMask sign-up.
+// Dormant compatibility adapter only. Solana SPL + Phantom is the live path.
 // Fully EVM-compatible — same personal_sign / ERC-20 paths as Ethereum, different chainId.
 
 export interface RobinhoodNetworkDef {
@@ -43,8 +43,8 @@ export const ROBINHOOD_TESTNET: RobinhoodNetworkDef = {
 
 export type RobinhoodCluster = "robinhood" | "robinhood-testnet";
 
-export function robinhoodNetwork(cluster: RobinhoodCluster = "robinhood-testnet"): RobinhoodNetworkDef {
-  return cluster === "robinhood" ? ROBINHOOD_MAINNET : ROBINHOOD_TESTNET;
+export function robinhoodNetwork(cluster: RobinhoodCluster = "robinhood"): RobinhoodNetworkDef {
+  return cluster === "robinhood-testnet" ? ROBINHOOD_TESTNET : ROBINHOOD_MAINNET;
 }
 
 /** wallet_addEthereumChain / wallet_switchEthereumChain params (MetaMask). */

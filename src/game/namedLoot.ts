@@ -46,13 +46,18 @@ export function maybeNamedLoot(base: Item, level: number, forceChance?: number):
       break;
     }
   }
-  const mods = rollModsFor(pick.slot, pick.rarity, level + 1);
+  // Never emit below the drop that triggered the roll. This is an upgrade (see the
+  // docstring), but the singular pool deliberately widens to blackice entries for
+  // variety — and taking the entry's own rarity turned ~3 of every 4 triggered Singular
+  // rolls into a strictly worse item than the drop the player had already earned.
+  const rarity: Rarity = base.rarity === "singular" ? "singular" : pick.rarity;
+  const mods = rollModsFor(pick.slot, rarity, level + 1);
   mods.dmgPct = Math.max(mods.dmgPct ?? 0, pick.slot === "weapon" ? 0.1 : 0);
   return {
     id: `uniq_${++counter}_${Math.random().toString(36).slice(2, 7)}`,
     name: pick.name,
     slot: pick.slot,
-    rarity: pick.rarity,
+    rarity,
     mods,
     weaponId: pick.weaponId ?? (pick.slot === "weapon" ? base.weaponId : undefined),
     ilvl: Math.min(3, base.ilvl ?? 0),

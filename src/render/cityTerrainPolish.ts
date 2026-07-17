@@ -19,6 +19,26 @@ export function paintCityEnvWash(
   return g;
 }
 
+/** Full-map colour wash for a combat district (one mood colour over the whole floor). */
+export function paintDistrictEnvWash(
+  scene: Phaser.Scene,
+  worldW: number,
+  worldH: number,
+  wash: number,
+  washAlpha: number,
+  depth = 1.2,
+): Phaser.GameObjects.Graphics {
+  const g = scene.add.graphics().setDepth(depth);
+  if (washAlpha <= 0) return g;
+  g.fillStyle(wash, washAlpha).fillRect(0, 0, worldW, worldH);
+  // Soft vignette so edges read darker / more thematic.
+  g.fillStyle(0x020108, washAlpha * 0.55).fillRect(0, 0, worldW, TILE * 2);
+  g.fillStyle(0x020108, washAlpha * 0.55).fillRect(0, worldH - TILE * 2, worldW, TILE * 2);
+  g.fillStyle(0x020108, washAlpha * 0.4).fillRect(0, 0, TILE * 2, worldH);
+  g.fillStyle(0x020108, washAlpha * 0.4).fillRect(worldW - TILE * 2, 0, TILE * 2, worldH);
+  return g;
+}
+
 const KIND_NEON: Record<string, number> = {
   bar: 0xff2bd6,
   clinic: 0x39ff88,

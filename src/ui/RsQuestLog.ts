@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { QUESTS, getQuest } from "../game/quests";
+import { QUESTS, getQuest, hasFlagFromCompleted } from "../game/quests";
 import { BOUNTIES } from "../game/bounties";
 import { FRAGMENTS } from "../game/fragments";
 import Modal from "./Modal";
@@ -237,11 +237,3 @@ export default class RsQuestLog extends Modal {
   }
 }
 
-/** Map campaign flag → previous quest that sets it (for lock display). */
-function hasFlagFromCompleted(flag: string, completed: Set<string>): boolean {
-  for (const q of QUESTS) {
-    if (q.setsFlag === flag && completed.has(q.id)) return true;
-  }
-  // If no prior quest sets it, treat as unlocked (edge data).
-  return !QUESTS.some((q) => q.setsFlag === flag);
-}

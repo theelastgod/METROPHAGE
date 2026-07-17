@@ -1,5 +1,32 @@
-import { loginMessage, type PlayerLook } from "../net/protocol";
-import { connectWallet, connectedWallet, signWalletLogin, walletAvailable } from "./wallet";
+import { loginMessage, retireMessage, type PlayerLook } from "../net/protocol";
+import {
+  connectWallet,
+  connectedWallet,
+  hasInjectedSolana,
+  signWalletLogin,
+  walletAvailable,
+  walletConnectAvailable,
+  connectWalletLabel,
+  preferSolanaWallet,
+} from "./wallet";
+import {
+  beginPhantomSign,
+  phantomDeeplinkSession,
+  phantomDeeplinkUsable,
+  takePhantomProof,
+} from "./phantomDeeplink";
+import { isLikelyMobile } from "./walletConnect";
+
+/** Mobile without an injector but WITH a Phantom deeplink session: signatures must
+ *  round-trip through the Phantom app (the page reloads in between). */
+function phantomSignRoundTrip(addr: string): boolean {
+  return (
+    isLikelyMobile() &&
+    phantomDeeplinkUsable() &&
+    !hasInjectedSolana() &&
+    phantomDeeplinkSession()?.wallet === addr
+  );
+}
 
 const HTTP_BASE =
   (import.meta.env as Record<string, string | undefined>).VITE_SERVER_URL?.replace(/^ws/, "http").replace(/\/ws$/, "") ??
@@ -21,8 +48,41 @@ export async function signIdentityProof(
 ): Promise<{ wallet: string; sig: string; ts: number } | null> {
   const addr = wallet ?? connectedWallet();
   if (!addr) return null;
+  // A Phantom app round-trip may have just landed with our signature — use it.
+  const landed = takePhantomProof("login", addr);
+  if (landed) return landed;
   const ts = Date.now();
+  if (phantomSignRoundTrip(addr)) {
+    // Page navigates to the Phantom app; the proof is picked up on return.
+    beginPhantomSign(loginMessage(addr, ts), { kind: "login", ts, wallet: addr });
+    return null;
+  }
   const signed = await signWalletLogin(loginMessage(addr, ts), addr);
+  if (!signed) return null;
+  return { wallet: signed.address, sig: signed.signature, ts };
+}
+
+/**
+ * Sign a proof authorizing PERMANENT deletion of this wallet's character.
+ *
+ * Separate from signIdentityProof on purpose. The server will not retire on a
+ * login proof (those are reusable and end up in logs), and this also means the
+ * wallet actually shows "permanently delete this character" instead of
+ * "METROPHAGE login" while asking someone to approve an irreversible purge.
+ */
+export async function signRetireProof(
+  wallet?: string,
+): Promise<{ wallet: string; sig: string; ts: number } | null> {
+  const addr = wallet ?? connectedWallet();
+  if (!addr) return null;
+  const landed = takePhantomProof("retire", addr);
+  if (landed) return landed;
+  const ts = Date.now();
+  if (phantomSignRoundTrip(addr)) {
+    beginPhantomSign(retireMessage(addr, ts), { kind: "retire", ts, wallet: addr });
+    return null;
+  }
+  const signed = await signWalletLogin(retireMessage(addr, ts), addr);
   if (!signed) return null;
   return { wallet: signed.address, sig: signed.signature, ts };
 }
@@ -77,32 +137,60 @@ export async function fetchWalletIdentity(proof: {
   }
 }
 
-/** Connect wallet (if needed) — does not sign or hit the server. Solana-first (Phantom). */
+/** Connect Phantom/Solana (if needed) — does not sign or hit the server. */
 export async function ensureWalletConnected(): Promise<string | null> {
   const existing = connectedWallet();
   if (existing) return existing;
+  // Always attempt connect when any path is available (inject / WC / mobile deep-link).
   if (!walletAvailable()) return null;
-  return connectWallet(); // prefers Solana when mint is SPL / no CA yet
+  return connectWallet();
+}
+
+function noWalletDetail(): string {
+  const sol = preferSolanaWallet();
+  if (walletConnectAvailable()) {
+    return sol
+      ? "Open the Solana wallet picker, choose Phantom, Solflare, or another wallet, then approve in its app."
+      : "Open the wallet picker, choose MetaMask / Phantom / any WalletConnect wallet, then approve.";
+  }
+  if (isLikelyMobile()) {
+    return sol
+      ? "No browser wallet detected. Tap Connect to open Phantom (or install a wallet app), then return."
+      : "No browser wallet detected. Tap Connect to open MetaMask (or install a wallet app), then return.";
+  }
+  return sol
+    ? "Install Phantom, Solflare, or another Solana wallet extension — or set VITE_WALLETCONNECT_PROJECT_ID for mobile WalletConnect."
+    : "Install MetaMask, Phantom, or another wallet extension — or set VITE_WALLETCONNECT_PROJECT_ID for mobile WalletConnect.";
 }
 
 /** Full wallet sign-up: connect + sign login message (proof for /identity and WS). */
-export async function metaMaskSignUp(): Promise<
+export async function walletSignUp(): Promise<
   | { ok: true; proof: { wallet: string; sig: string; ts: number } }
   | { ok: false; error: IdentityError; detail?: string }
 > {
   if (!walletAvailable()) {
-    return { ok: false, error: "no_wallet", detail: "Install Phantom (or MetaMask for legacy ERC-20)" };
+    return { ok: false, error: "no_wallet", detail: noWalletDetail() };
   }
   const addr = await ensureWalletConnected();
-  if (!addr) return { ok: false, error: "connect_failed", detail: "Wallet connection cancelled" };
+  if (!addr) {
+    return {
+      ok: false,
+      error: "connect_failed",
+      detail: isLikelyMobile() && !walletConnectAvailable()
+        ? "Opening Phantom for native approval… approve there, then return to this browser."
+        : "Wallet connection cancelled",
+    };
+  }
   const proof = await signIdentityProof(addr);
   if (!proof) return { ok: false, error: "sign_failed", detail: "Wallet signature cancelled" };
   return { ok: true, proof };
 }
 
-/** Alias — Solana-first sign-up (same implementation). */
-export const walletSignUp = metaMaskSignUp;
+/** Backward-compatible symbol for older callers; the live path is Phantom/Solana. */
+export const metaMaskSignUp = walletSignUp;
 
 export function hasWalletProvider(): boolean {
   return walletAvailable();
 }
+
+export { connectWalletLabel };

@@ -19,3 +19,6 @@ src/assets/music/*.wav
 # local auto-redeploy control + logs
 .metro-auto-redeploy.stop
 logs/
+
+# art sharpening intermediates + probe screenshots (originals are git-tracked)
+tmp-art-backup/

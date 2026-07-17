@@ -1,31 +1,24 @@
-// Operator wallets — shared client + server. Keep short.
-// Player ids are `w:<checksummed EIP-55 address>` after wallet auth.
+// Operator wallet — shared client + server. Keep this list deliberately singular.
+// Solana wallet player ids are stored as `w:<base58 public key>`.
 
-/** Lowercase 0x… addresses with full god privileges. */
-export const GOD_WALLET_HEX = [
-  "0x7bf8195c181fbb74d10aed7035c26eca18ea726d",
+export const GOD_WALLETS = [
+  "9Z9uZJXdnyTE7gkFfrepJ3BWDTNA3ZeteDkpgT6cxkve",
 ] as const;
 
-const GOD_SET = new Set<string>(GOD_WALLET_HEX);
+const GOD_SET = new Set<string>(GOD_WALLETS);
 
-/**
- * Normalize anything wallet-shaped to lowercase 0x + 40 hex, or null.
- * Accepts: raw address, `w:address`, checksummed / lower / upper.
- */
-export function normalizeWalletHex(idOrAddr: string | null | undefined): string | null {
+/** Normalize a raw Solana address or `w:<address>` player id. */
+export function normalizeWalletAddress(idOrAddr: string | null | undefined): string | null {
   if (!idOrAddr || typeof idOrAddr !== "string") return null;
-  let s = idOrAddr.trim();
-  if (s.toLowerCase().startsWith("w:")) s = s.slice(2).trim();
-  if (!s.startsWith("0x") && !s.startsWith("0X")) {
-    if (/^[a-fA-F0-9]{40}$/.test(s)) s = "0x" + s;
-    else return null;
-  }
-  if (!/^0x[a-fA-F0-9]{40}$/i.test(s)) return null;
-  return s.toLowerCase();
+  let address = idOrAddr.trim();
+  if (address.toLowerCase().startsWith("w:")) address = address.slice(2).trim();
+  // Base58 excludes 0, O, I and l. Solana public keys normally encode to 32–44 chars.
+  if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return null;
+  return address;
 }
 
-/** True for operator player id (`w:0x…`) or raw wallet address. */
+/** True only for the single authorized Solana operator wallet. */
 export function isGodAccount(idOrAddr: string | null | undefined): boolean {
-  const hex = normalizeWalletHex(idOrAddr);
-  return !!hex && GOD_SET.has(hex);
+  const address = normalizeWalletAddress(idOrAddr);
+  return !!address && GOD_SET.has(address);
 }

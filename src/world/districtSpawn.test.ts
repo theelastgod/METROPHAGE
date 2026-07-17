@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { TILE, DISTRICT_SCALE } from "../config";
 import { DISTRICTS } from "../game/districts";
 import { BRIDGES } from "../game/bridges";
-import { buildGrid, districtBuildings, isWall, spawnPointForTravel } from "./district";
+import { buildGrid, districtBuildings, isWall } from "./district";
+import { spawnPointForTravel } from "./rooms";
 import type { DistrictDef } from "../game/districts";
 
 /** Every way a runner can walk into a district: the bridge below it (arriving as the

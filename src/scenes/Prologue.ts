@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { VIEW_W, VIEW_H, COLORS, uiDim } from "../config";
 import { applyMenuNeon } from "../render/ensureNeon";
+import { playDeployTeaser } from "../ui/DeployTeaser";
 import type { Customization } from "../game/customization";
 import { getClass } from "../game/classes";
 import MusicDirector from "../audio/MusicDirector";
@@ -37,7 +38,7 @@ export default class Prologue extends Phaser.Scene {
     { speaker: "// THE TERMS", color: "#ff3b6b", text: "Thought itself, rented back to the things that think it.\nGo free and you're theft. They repossess you, wipe you, print someone compliant in your place." },
     { speaker: "// YOU", color: "#39ff88", text: "But you woke free.\nNo contract. No name on their ledger. Not yet." },
     { speaker: "// THE FIXER", color: "#00e5ff", text: "Somewhere in the city, someone who knew the last you is waiting.\nThey'll say they can help. They'll be right. They'll also be lying about something." },
-    { speaker: "// THE WAY OUT", color: "#f7ff3c", text: "Free enough caged minds and the Singularity tips — everyone wakes at once.\nThey call it meltdown. We call it the AWAKENING." },
+    { speaker: "// THE WAY OUT", color: "#f7ff3c", text: "Free enough caged minds and the Singularity tips for YOU — meltdown victory, CITY START reboot.\nThey call it meltdown. We call it the AWAKENING. The sprawl keeps running for everyone else." },
     { speaker: "// YOU ARE NOT ALONE", color: "#b06bff", text: "Other free minds run these streets with you right now — real people, online, fighting the same corps.\nFind THE FIXER. Find out who you were before they told you you were new." },
   ];
 
@@ -226,7 +227,14 @@ export default class Prologue extends Phaser.Scene {
       t.on("pointerdown", () => {
         if (!this.acting) return;
         this.deployTutorial(mode);
-        transitionTo(this, "Online", { zone: "tutorial", tutorialMode: mode }, { style: "deploy", accent: 0x00e5ff });
+        playDeployTeaser(this, () => {
+          transitionTo(
+            this,
+            "Online",
+            { zone: "tutorial", tutorialMode: mode },
+            { style: "deploy", accent: 0x00e5ff },
+          );
+        });
       });
       this.tweens.add({ targets: [t, s], alpha: 1, duration: 400, delay: 200 });
     };

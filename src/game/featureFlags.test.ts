@@ -23,7 +23,7 @@ describe("featureFlags", () => {
     expect(launchFlagsFromEnv({ METRO_DISABLE_DISTRICT_WAR: "off" }).districtWar).toBe(false);
   });
 
-  it("clamps hub and emit caps", () => {
+  it("clamps the hub cap", () => {
     expect(parseIntEnv("9999", 48, 8, 200)).toBe(200);
     expect(parseIntEnv("2", 48, 8, 200)).toBe(8);
     expect(launchFlagsFromEnv({ METRO_HUB_CAP: "60" }).hubCap).toBe(60);

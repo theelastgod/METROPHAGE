@@ -38,12 +38,29 @@ migrations_dir = "migrations"
 # Signals Paid-tier tuning paths (snapshot headroom, faster persist). Harmless if free.
 METRO_PAID_TIER = "1"
 # Launch ops: build stamp for /health (update on release). Kill switches default OFF.
-METRO_BUILD = "dd20b56-20260714"
-# Soft hub capacity + daily emit anti-farm (see src/game/featureFlags.ts).
+METRO_BUILD = "89adcef-20260716"
+# Soft hub capacity (see src/game/featureFlags.ts).
 METRO_HUB_CAP = "48"
-# 0 = unlimited earn from play (default). Only set >0 for emergency anti-farm.
-METRO_DAILY_EMIT_CAP = "0"
+# Horizontal zone shards (safe / dN / subway). Instance 0 keeps legacy DO name.
+METRO_MAX_INSTANCES = "4"
+# Soft concurrent target per combat/subway instance (hub uses METRO_HUB_CAP).
+METRO_INSTANCE_CAP = "40"
+# $METRO settlement family — Solana SPL is authoritative.
+# Robinhood Chain ERC-20 stays in code as a dormant alternate (METRO_SETTLEMENT=robinhood).
+METRO_SETTLEMENT = "solana"
+# Network target: Solana mainnet-beta. Mint CA intentionally empty until go-live.
+# When CA is ready: wrangler secret put METRO_MINT (base58) + METRO_TREASURY_SECRET
+# (base64 64-byte keypair), then METRO_MAINNET_ARMED=1 and rebuild client with
+# VITE_METRO_MINT. Real value cannot move on mainnet until METRO_MAINNET_ARMED=1.
+METRO_CLUSTER = "mainnet-beta"
+# Public endpoint is rate-limited — point this at a dedicated RPC before launch.
+METRO_RPC = "https://api.mainnet-beta.solana.com"
 # Kill switches — set to "1" during an incident, redeploy (or wrangler secret/var):
 # METRO_DISABLE_MARKET = "1"
 # METRO_DISABLE_CLAIM_GOAL = "1"
 # METRO_DISABLE_DISTRICT_WAR = "1"
+
+# Reliability: reclaim abandoned cash-out claims (refund credits) every 5 minutes.
+# Does not touch the 20 Hz DO tick path.
+[triggers]
+crons = ["*/5 * * * *"]

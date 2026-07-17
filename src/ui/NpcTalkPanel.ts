@@ -1,15 +1,21 @@
-// Small, quiet multi-choice talk menu for NPCs with a real extra (heal / tip / job…).
+// Compact multi-choice talk menu for NPCs (heal / tip / job…).
+// Sized in design-space and clamped to the viewport so it never draws off-screen
+// on mobile landscape or supersampled desktop backings.
 
 import Phaser from "phaser";
-import { dimBackdrop, modalRect, uiDim, uiFont } from "./uiLayout";
+import { dimBackdrop, fitModalRect, uiDim } from "./uiLayout";
 import { bodyFont, displayFont } from "./typography";
 import {
   NPC_SERVICES,
   npcRoleLabel,
+  serviceIconKey,
   servicesForNpc,
   type NpcServiceId,
 } from "../game/npcServices";
 import { bountyForNpc } from "../game/bounties";
+import { storyPhase } from "../game/cityNpcs";
+import { prefersMobileUx } from "../systems/Mobile";
+import { districtStandingTier, relationshipTierName } from "../game/relationships";
 
 export interface NpcTalkOption {
   id: NpcServiceId;
@@ -50,20 +56,32 @@ export default class NpcTalkPanel {
     cores: number;
     hasBountyActive: boolean;
     activeBountyId: string | null;
+    /** Active campaign quest id — story allies escalate their jobs in the late act. */
+    campaignQuest?: string | null;
+    trust?: number;
+    talks?: number;
+    jobs?: number;
+    districtStanding?: number;
+    confirmed?: string[];
+    campaignCompleted?: string[];
+    /** Current weekly public-work ledger; civic courier jobs stay hidden at zero. */
+    weeklyCivic?: number[];
   }) {
     this.clear();
     this.open = true;
     this.npcId = opts.npcId;
     this.npcName = opts.name;
 
-    const hasBountyDef = !!bountyForNpc(opts.npcId);
+    const phase = storyPhase(opts.campaignQuest ?? null);
+    const hasBountyDef = !!bountyForNpc(opts.npcId, phase, opts.confirmed, opts.campaignCompleted, opts.weeklyCivic);
     const services = servicesForNpc(opts.npcId, hasBountyDef);
+    const trustTier = Math.max(0, Math.min(3, Math.floor(opts.trust ?? 0)));
     const options: NpcTalkOption[] = [];
     for (const id of services) {
       const def = NPC_SERVICES[id];
       if (!def) continue;
       if (id === "bounty") {
-        const b = bountyForNpc(opts.npcId);
+        const b = bountyForNpc(opts.npcId, phase, opts.confirmed, opts.campaignCompleted, opts.weeklyCivic);
         if (!b) continue;
         if (opts.hasBountyActive && opts.activeBountyId !== b.id) {
           options.push({
@@ -97,85 +115,143 @@ export default class NpcTalkPanel {
         });
         continue;
       }
-      options.push({ id, label: def.label, hint: def.hint, color: def.color });
+      const hint = id === "rumor" && trustTier >= 3
+        ? "confidant truth"
+        : id === "rumor" && trustTier >= 2
+          ? "trusted local intel"
+          : def.hint;
+      options.push({ id, label: def.label, hint, color: def.color });
     }
     if (!options.some((o) => o.id === "chat")) {
       options.unshift({ id: "chat", label: "Talk", hint: "just talk", color: "#9aa3b2" });
     }
 
-    // Compact: quote + up to 4 choices (most NPCs only have 2).
-    const rows = Math.min(options.length, 4);
+    // Design-space sizing (NOT pre-uiDim'd — fitModalRect scales once).
+    // Mobile: wider sheet, finger-tall rows, lower third so thumbs reach without
+    // covering the NPC / combat. Desktop: compact centered card.
+    const mobile = prefersMobileUx();
+    const designW = mobile ? 340 : 340;
+    const headerDesign = mobile ? 64 : 72;
+    const rowDesign = mobile ? 44 : 36;
+    const designH = headerDesign + options.length * rowDesign + (mobile ? 14 : 18);
     const D = 1740;
-    const h = uiDim(96) + rows * uiDim(36) + uiDim(18);
-    const { x, y, w } = modalRect(400, Math.min(h, 280));
-    this.backdrop = dimBackdrop(this.scene, D, 0.35, () => this.close(), { x, y, w, h: Math.min(h, 280) });
+    const { x, y, w, h } = fitModalRect(designW, designH, {
+      marginDesign: mobile ? 8 : 20,
+      vAlign: mobile ? "lower" : "center",
+    });
+    this.backdrop = dimBackdrop(this.scene, D, 0.4, () => this.close(), { x, y, w, h });
 
     const add = <T extends Phaser.GameObjects.GameObject>(o: T): T => {
       this.objs.push(o);
       return o;
     };
     const g = add(this.scene.add.graphics().setScrollFactor(0).setDepth(D + 1));
-    const panelH = Math.min(h, 280);
-    g.fillStyle(0x080a12, 0.94).fillRect(x, y, w, panelH);
-    g.lineStyle(uiDim(1), 0x3a4560, 0.85).strokeRect(x, y, w, panelH);
+    g.fillStyle(0x080a12, 0.96).fillRoundedRect(x, y, w, h, uiDim(6));
+    g.lineStyle(uiDim(1), 0x3a4560, 0.9).strokeRoundedRect(x, y, w, h, uiDim(6));
 
+    const pad = uiDim(12);
     const role = npcRoleLabel(opts.npcId);
+    const trust = relationshipTierName(trustTier);
     add(
       this.scene.add
-        .text(x + uiDim(14), y + uiDim(10), `${opts.name}`, displayFont(12, { color: "#c8d0dc", fontStyle: "bold" }))
+        .text(x + pad, y + uiDim(8), `${opts.name}`, displayFont(mobile ? 11 : 12, { color: "#c8d0dc", fontStyle: "bold" }))
         .setScrollFactor(0)
         .setDepth(D + 3),
     );
     add(
       this.scene.add
-        .text(x + w - uiDim(12), y + uiDim(12), role, bodyFont(9, { color: "#5a6478" }))
+        .text(x + w - pad, y + uiDim(10), `${role} · ${trust} · T${Math.max(0, Math.floor(opts.talks ?? 0))} · J${Math.max(0, Math.floor(opts.jobs ?? 0))}`, bodyFont(8, { color: "#5a6478" }))
         .setOrigin(1, 0)
         .setScrollFactor(0)
         .setDepth(D + 3),
     );
 
     const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
-    add(
+    const local = opts.districtStanding === undefined ? "" : `[LOCAL ${districtStandingTier(opts.districtStanding).name}] `;
+    const quote = add(
       this.scene.add
-        .text(x + uiDim(14), y + uiDim(34), clip(opts.line, 90), {
+        .text(x + pad, y + uiDim(28), clip(local + opts.line, mobile ? 72 : 100), {
           fontFamily: "Courier New, monospace",
-          fontSize: uiFont(10),
+          fontSize: `${uiDim(mobile ? 9 : 10)}px`,
           color: "#8a94a8",
-          wordWrap: { width: w - uiDim(28) },
+          wordWrap: { width: w - pad * 2 },
           fontStyle: "italic",
+          lineSpacing: 2,
         })
         .setScrollFactor(0)
         .setDepth(D + 3),
     );
+    // Cap quote height so buttons stay visible.
+    const quoteMaxH = uiDim(32);
+    if (quote.height > quoteMaxH) {
+      quote.setText(clip(local + opts.line, mobile ? 48 : 70));
+    }
 
-    let by = y + uiDim(72);
-    for (let i = 0; i < rows; i++) {
+    const btnStart = Math.max(y + uiDim(52), quote.y + Math.min(quote.height, quoteMaxH) + uiDim(6));
+    const btnGap = uiDim(3);
+    const btnW = w - pad * 2;
+    const bottomLimit = y + h - uiDim(8);
+    // Pack button height so every option fits inside the clamped card when possible.
+    const n = Math.max(1, options.length);
+    const availBtns = Math.max(uiDim(24), bottomLimit - btnStart);
+    let btnH = Math.min(uiDim(mobile ? 42 : 32), Math.floor((availBtns - (n - 1) * btnGap) / n));
+    btnH = Math.max(uiDim(mobile ? 36 : 22), btnH);
+    let by = btnStart;
+
+    for (let i = 0; i < options.length; i++) {
+      if (by + btnH > bottomLimit + 1) break;
       const opt = options[i];
-      const bh = uiDim(30);
-      const bw = w - uiDim(28);
-      const bx = x + uiDim(14);
+      const bx = x + pad;
       const muted = !!opt.disabled;
       const col = parseInt(opt.color.replace("#", ""), 16) || 0x9aa3b2;
-      g.fillStyle(0x10141e, muted ? 0.4 : 0.85).fillRoundedRect(bx, by, bw, bh, 3);
-      g.lineStyle(uiDim(1), col, muted ? 0.25 : 0.45).strokeRoundedRect(bx, by, bw, bh, 3);
+      g.fillStyle(0x10141e, muted ? 0.4 : 0.9).fillRoundedRect(bx, by, btnW, btnH, uiDim(3));
+      g.lineStyle(uiDim(1), col, muted ? 0.25 : 0.5).strokeRoundedRect(bx, by, btnW, btnH, uiDim(3));
 
+      const twoLine = btnH >= uiDim(28);
+      const iconKey = serviceIconKey(opt.id);
+      const iconSize = Math.min(btnH - uiDim(6), uiDim(mobile ? 30 : 24));
+      const hasIcon = this.scene.textures.exists(iconKey);
+      if (hasIcon) {
+        add(
+          this.scene.add
+            .image(bx + uiDim(5) + iconSize / 2, by + btnH / 2, iconKey)
+            .setDisplaySize(iconSize, iconSize)
+            .setAlpha(muted ? 0.28 : 0.9)
+            .setScrollFactor(0)
+            .setDepth(D + 4),
+        );
+      }
+      const textX = bx + uiDim(hasIcon ? (mobile ? 42 : 35) : 8);
       const label = add(
         this.scene.add
-          .text(bx + uiDim(10), by + uiDim(5), opt.label, bodyFont(11, { color: muted ? "#4a5160" : "#d0d6e0", fontStyle: "bold" }))
+          .text(
+            textX,
+            by + (twoLine ? uiDim(3) : btnH / 2),
+            twoLine ? opt.label : `${opt.label} · ${clip(opt.disabledReason ?? opt.hint, 28)}`,
+            bodyFont(mobile ? 10 : 11, {
+              color: muted ? "#4a5160" : "#d0d6e0",
+              fontStyle: "bold",
+            }),
+          )
+          .setOrigin(0, twoLine ? 0 : 0.5)
           .setScrollFactor(0)
           .setDepth(D + 4),
       );
-      add(
-        this.scene.add
-          .text(bx + uiDim(10), by + uiDim(17), opt.disabledReason ?? opt.hint, bodyFont(8, { color: muted ? "#3a4050" : "#6a7488" }))
-          .setScrollFactor(0)
-          .setDepth(D + 4),
-      );
+      if (twoLine) {
+        add(
+          this.scene.add
+            .text(textX, by + uiDim(15), clip(opt.disabledReason ?? opt.hint, 42), bodyFont(7, {
+              color: muted ? "#3a4050" : "#6a7488",
+            }))
+            .setScrollFactor(0)
+            .setDepth(D + 4),
+        );
+      }
 
       if (!muted) {
         const zone = add(
           this.scene.add
-            .zone(bx, by, bw, bh)
+            .zone(bx, by, btnW, btnH)
             .setOrigin(0)
             .setScrollFactor(0)
             .setDepth(D + 5)
@@ -191,7 +267,7 @@ export default class NpcTalkPanel {
           pick?.(opt.id, id, name);
         });
       }
-      by += uiDim(36);
+      by += btnH + btnGap;
     }
   }
 

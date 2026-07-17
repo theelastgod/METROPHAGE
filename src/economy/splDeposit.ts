@@ -1,7 +1,7 @@
 // One-click SPL $METRO deposit via Phantom (or any injected Solana wallet).
 // Transfers mint tokens from the player's ATA to the treasury ATA (creates player ATA if needed).
 
-import { getSolanaProvider, connectedWallet, connectedChain } from "./wallet";
+import { ensureSolanaProvider, connectedWallet, connectedChain } from "./wallet";
 import { METRO_MINT, metroIsSolana, metroRpc } from "./metro";
 
 export interface DepositSendResult {
@@ -29,7 +29,8 @@ export async function sendSplDeposit(args: {
 
   const from = connectedWallet();
   if (!from || connectedChain() === "evm") return { ok: false, reason: "connect Phantom (or a Solana wallet) first" };
-  const provider = getSolanaProvider();
+  // Async: rehydrates AppKit's signer after a reload (cached address ≠ live provider).
+  const provider = await ensureSolanaProvider();
   if (!provider) return { ok: false, reason: "no Solana wallet detected — install Phantom" };
 
   try {

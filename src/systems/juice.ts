@@ -30,14 +30,37 @@ export function juiceFlash(
   scene.cameras.main.flash(duration, r, g, b);
 }
 
-/** Brief time dilation on impactful hits — premium combat punch. */
+/**
+ * Brief time dilation on impactful hits — premium combat punch.
+ *
+ * Restore uses wall-clock time (not scene.time.delayedCall). Concurrent
+ * hit-stops used to stack via `prev = timeScale` while already at 0.06, then
+ * restore back to 0.06 forever — which freezes delayedCalls/tweens (boss
+ * intro letterbox, death cards, etc. never fade).
+ */
+let hitStopUntil = 0;
+let hitStopTimer: ReturnType<typeof setTimeout> | null = null;
+
 export function juiceHitStop(scene: Phaser.Scene, ms = 56): void {
   if (getSettings().reduceFlashing) return;
-  const prev = scene.time.timeScale;
+  const now = performance.now();
+  hitStopUntil = Math.max(hitStopUntil, now + ms);
   scene.time.timeScale = 0.06;
-  scene.time.delayedCall(ms, () => {
-    scene.time.timeScale = prev;
-  });
+  if (hitStopTimer != null) clearTimeout(hitStopTimer);
+  const tick = () => {
+    hitStopTimer = null;
+    const left = hitStopUntil - performance.now();
+    if (left > 0) {
+      hitStopTimer = setTimeout(tick, Math.min(left, 48));
+      return;
+    }
+    try {
+      if (scene.time) scene.time.timeScale = 1;
+    } catch {
+      /* scene torn down */
+    }
+  };
+  hitStopTimer = setTimeout(tick, ms);
 }
 
 /** Micro zoom punch toward the action.

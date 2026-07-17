@@ -23,6 +23,8 @@ export interface WorldEventDef {
   minHeatNorm: number; // gate: only eligible at/above this Heat (0..1)
   weight: number; // relative pick weight among eligible events
   reward: { xp: number; currency: number };
+  condition: string;
+  failure: string;
 }
 
 export const WORLD_EVENTS: WorldEventDef[] = [
@@ -37,6 +39,8 @@ export const WORLD_EVENTS: WorldEventDef[] = [
     minHeatNorm: 0,
     weight: 1,
     reward: { xp: 55, currency: 22 },
+    condition: "Remain alive until the final discharge; a party reboot before resolution counts.",
+    failure: "The grid found you grounded. No survival payout; the district marks where your crew had to lift you.",
   },
   {
     id: "blackout",
@@ -49,6 +53,8 @@ export const WORLD_EVENTS: WorldEventDef[] = [
     minHeatNorm: 0,
     weight: 0.8,
     reward: { xp: 45, currency: 19 },
+    condition: "Remain alive until emergency light returns; a party reboot before resolution counts.",
+    failure: "The dark kept your signal at resolution. No survival payout; somebody else carried the route to light.",
   },
   {
     id: "purge_wave",
@@ -61,6 +67,8 @@ export const WORLD_EVENTS: WorldEventDef[] = [
     minHeatNorm: 0.35, // only when the district is already hot
     weight: 1.1,
     reward: { xp: 75, currency: 33 },
+    condition: "Remain alive until the repo formation breaks; a party reboot before resolution counts.",
+    failure: "The purge line put you down before it broke. No survival payout; your reboot is part of the casualty record.",
   },
   {
     id: "contagion_outbreak",
@@ -73,6 +81,8 @@ export const WORLD_EVENTS: WorldEventDef[] = [
     minHeatNorm: 0,
     weight: 0.9,
     reward: { xp: 55, currency: 22 },
+    condition: "Remain alive until the contagion window closes; a party reboot before resolution counts.",
+    failure: "The outbreak outpaced your chassis. No survival payout; field crews logged the reboot instead.",
   },
   {
     id: "heat_spike",
@@ -85,6 +95,8 @@ export const WORLD_EVENTS: WorldEventDef[] = [
     minHeatNorm: 0.15,
     weight: 1,
     reward: { xp: 50, currency: 25 },
+    condition: "Remain alive until district HEAT stabilizes; a party reboot before resolution counts.",
+    failure: "The spike burned through your limit. No survival payout; the street remembers who restarted you.",
   },
   {
     id: "repo_siren",
@@ -97,6 +109,8 @@ export const WORLD_EVENTS: WorldEventDef[] = [
     minHeatNorm: 0.2,
     weight: 0.95,
     reward: { xp: 70, currency: 30 },
+    condition: "Remain alive until the siren cycle ends; a party reboot before resolution counts.",
+    failure: "The siren ended with your signal down. No survival payout; the HSS do not get to call the reboot surrender.",
   },
   {
     id: "market_glitch",
@@ -109,6 +123,8 @@ export const WORLD_EVENTS: WorldEventDef[] = [
     minHeatNorm: 0,
     weight: 0.7,
     reward: { xp: 40, currency: 16 },
+    condition: "Remain alive until the corrupted market window settles; a party reboot before resolution counts.",
+    failure: "The glitch closed while your link was down. No survival payout; the brokers still recorded the interruption.",
   },
 ];
 

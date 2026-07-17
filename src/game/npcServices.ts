@@ -6,9 +6,11 @@
 export type NpcServiceId =
   | "chat"
   | "bounty"
+  | "fish"
   | "heal_paid"
   | "heal_charity"
   | "meal"
+  | "rest"
   | "cool_down"
   | "rumor"
   | "intel"
@@ -68,13 +70,43 @@ export interface NpcServiceDef {
   color: string;
 }
 
+/** Premium service-menu icon keyed to the generated Higgsfield icon pack. */
+export function serviceIconKey(id: NpcServiceId): string {
+  const icon: Partial<Record<NpcServiceId, string>> = {
+    bounty: "bounty",
+    heal_paid: "heal",
+    heal_charity: "heal",
+    meal: "credits",
+    rest: "sleep",
+    cool_down: "heat",
+    rumor: "district_marker",
+    intel: "neural_implant",
+    train: "weapon_upgrade",
+    buy_core: "credits",
+    sell_core: "pawn",
+    bless: "armor",
+    open_vendor: "pawn",
+    open_forge: "repair",
+    open_market: "credits",
+    open_guild: "district_marker",
+    open_contracts: "radio_contract",
+    open_stash: "armor",
+    open_board: "leaderboard",
+    open_cosmetics: "armor",
+  };
+  return `hf_service_${icon[id] ?? "quest_pickup"}`;
+}
+
 /** Street services — costs are sinks vs kill emit (CREDITS_PER_KILL). */
 export const NPC_SERVICES: Record<NpcServiceId, NpcServiceDef> = {
   chat: { id: "chat", label: "Talk", hint: "just talk", cost: 0, cooldownSec: 0, color: "#9aa3b2" },
   bounty: { id: "bounty", label: "Job", hint: "work for them", cost: 0, cooldownSec: 0, color: "#d4c45a" },
+  // Docks pier line — flavour faucet, tightly cooldowned; most casts catch a story.
+  fish: { id: "fish", label: "Fish", hint: "cast a line off the pier", cost: 0, cooldownSec: 45, color: "#6ab0ff" },
   heal_paid: { id: "heal_paid", label: "Patch", hint: "₵45 · full heal", cost: 45, cooldownSec: 15, color: "#5fd49a" },
   heal_charity: { id: "heal_charity", label: "Free patch", hint: "partial heal · cooldown", cost: 0, cooldownSec: 180, color: "#7abf98" },
   meal: { id: "meal", label: "Eat", hint: "₵18 · small heal", cost: 18, cooldownSec: 40, color: "#c49a5a" },
+  rest: { id: "rest", label: "Sleep", hint: "₵35 · full heal + clear HEAT", cost: 35, cooldownSec: 120, color: "#d88ac8" },
   cool_down: { id: "cool_down", label: "Vent", hint: "₵20 · clear HEAT", cost: 20, cooldownSec: 45, color: "#5aa8b8" },
   rumor: { id: "rumor", label: "Tip", hint: "₵22 · a street tip", cost: 22, cooldownSec: 90, color: "#a87898" },
   intel: { id: "intel", label: "Intel", hint: "₵50 · a deeper tip", cost: 50, cooldownSec: 150, color: "#b06898" },
@@ -122,21 +154,21 @@ const ROLE_SERVICES: Record<NpcRole, NpcServiceId[]> = {
  * Variety comes from *who* does what, not from long lists.
  */
 const NPC_SERVICE_OVERRIDES: Record<string, NpcServiceId[]> = {
-  // Story allies — job + one soft extra
-  rin: ["chat", "bounty"],
-  doc: ["chat", "heal_charity", "bounty"],
-  vex: ["chat", "rumor", "bounty"],
+  // Story allies — room systems + soft extras
+  rin: ["chat", "open_vendor", "bounty"],
+  doc: ["chat", "heal_charity", "heal_paid", "bounty"],
+  vex: ["chat", "open_market", "rumor", "bounty"],
   marek: ["chat", "bounty"],
   // Hub cast
   juno: ["chat", "bounty"],
-  sable: ["chat", "meal", "bounty"],
-  kessler: ["chat", "bounty"],
-  mira: ["chat", "bounty"],
-  ghost: ["chat", "sell_core", "bounty"],
+  sable: ["chat", "meal", "open_contracts", "bounty"],
+  kessler: ["chat", "open_guild", "bounty"],
+  mira: ["chat", "open_vendor", "bounty"],
+  ghost: ["chat", "sell_core", "open_market", "bounty"],
   // Regional — light
-  porter: ["chat", "bounty", "rumor"],
+  porter: ["chat", "bounty", "rumor", "fish"],
   tunnel_rat: ["chat", "bounty", "cool_down"],
-  arc_tech: ["chat", "cool_down"],
+  arc_tech: ["chat", "cool_down", "bounty"],
   scrap_boss: ["chat", "bounty", "sell_core"],
   hawker: ["chat", "bounty", "rumor"],
   preacher: ["chat", "bless", "bounty"],
@@ -149,50 +181,62 @@ const NPC_SERVICE_OVERRIDES: Record<string, NpcServiceId[]> = {
   amb_arc_clerk: ["chat", "rumor"],
   amb_tech: ["chat", "cool_down", "bounty"],
   amb_vendor: ["chat", "meal", "bounty"],
-  // Keepers — one job matching the room
-  keep_bar: ["chat", "meal", "bounty"],
-  keep_shop: ["chat", "rumor"],
+  // Field triage is deliberately charity-only: useful during a run, but the long
+  // server cooldown prevents a combat district from replacing the paid clinic sink.
+  field_medic_patch: ["chat", "heal_charity"],
+  field_medic_suture: ["chat", "heal_charity"],
+  field_medic_gauze: ["chat", "heal_charity"],
+  field_medic_needle: ["chat", "heal_charity"],
+  // Keepers — job matching the room (open_* opens the real system panel)
+  keep_bar: ["chat", "meal", "open_contracts", "bounty"],
+  keep_noodle: ["chat", "meal", "bounty"],
+  keep_ripperdoc: ["chat", "heal_charity", "heal_paid", "bounty"],
+  keep_pawn: ["chat", "open_vendor", "rumor", "bounty"],
+  keep_arcade: ["chat", "open_board", "rumor", "bounty"],
+  keep_garage: ["chat", "open_forge", "cool_down", "bounty"],
+  keep_radio: ["chat", "open_contracts", "rumor", "bounty"],
+  keep_shop: ["chat", "open_vendor", "rumor"],
   keep_clinic: ["chat", "heal_charity", "heal_paid", "bounty"],
-  keep_guild: ["chat", "rumor", "bounty"],
-  keep_den: ["chat", "sell_core"],
-  keep_home: ["chat"],
-  keep_hospital: ["chat", "heal_paid"],
-  keep_hotel: ["chat", "meal"],
-  keep_subway: ["chat"],
-  keep_stadium: ["chat"],
-  keep_citycenter: ["chat", "rumor"],
+  keep_guild: ["chat", "open_guild", "open_forge", "bounty"],
+  keep_den: ["chat", "open_market", "sell_core"],
+  keep_home: ["chat", "open_stash"],
+  keep_hospital: ["chat", "heal_paid", "heal_charity"],
+  keep_hotel: ["chat", "rest", "bounty"],
+  keep_subway: ["chat", "rumor"], // enter UNDERLINE via door / CONDUCTOR service on client
+  keep_stadium: ["chat", "open_board", "bounty"],
+  keep_citycenter: ["chat", "open_board", "rumor", "bounty"],
   // Residents — rotate single specialties (not full kits)
   res_nix: ["chat", "rumor", "bounty"],
-  res_solenne: ["chat"],
-  res_raze: ["chat"],
-  res_moth: ["chat", "rumor"],
-  res_dash: ["chat"],
-  res_cinder: ["chat", "cool_down"],
-  res_echo: ["chat"],
+  res_solenne: ["chat", "bounty"],
+  res_raze: ["chat", "bounty"],
+  res_moth: ["chat", "rumor", "bounty"],
+  res_dash: ["chat", "bounty"],
+  res_cinder: ["chat", "cool_down", "bounty"],
+  res_echo: ["chat", "bounty"],
   res_tallow: ["chat", "meal", "bounty"],
   res_wren: ["chat", "cool_down", "bounty"],
   res_pike: ["chat", "bounty"],
-  res_hollow: ["chat", "bless"],
+  res_hollow: ["chat", "bless", "bounty"],
   res_ferro: ["chat"],
   res_static: ["chat", "bounty"],
   res_rook: ["chat", "rumor"],
   res_plume: ["chat"],
   res_grist: ["chat", "meal"],
   res_velvet: ["chat", "meal", "bounty"],
-  res_coil: ["chat", "cool_down"],
-  res_ash: ["chat"],
-  res_brick: ["chat"],
+  res_coil: ["chat", "cool_down", "bounty"],
+  res_ash: ["chat", "bounty"],
+  res_brick: ["chat", "bounty"],
   res_sparrow: ["chat", "sell_core"],
   res_lumen: ["chat"],
   res_quill: ["chat", "bounty", "rumor"],
-  res_glass: ["chat", "rumor"],
+  res_glass: ["chat", "rumor", "bounty"],
   res_juniper: ["chat"],
   res_tin: ["chat", "cool_down"],
   res_mercy: ["chat", "heal_charity", "bounty"],
-  res_borne: ["chat"],
+  res_borne: ["chat", "bounty"],
   res_lace: ["chat"],
   res_odd: ["chat"],
-  res_salt: ["chat"],
+  res_salt: ["chat", "bounty"],
   res_pip: ["chat", "rumor"],
 };
 
@@ -221,6 +265,10 @@ export const NPC_ROLES: Record<string, NpcRole> = {
   amb_arc_clerk: "scribe",
   amb_tech: "mechanic",
   amb_vendor: "cook",
+  field_medic_patch: "medic",
+  field_medic_suture: "medic",
+  field_medic_gauze: "medic",
+  field_medic_needle: "medic",
   keep_bar: "bartender",
   keep_shop: "vendor",
   keep_clinic: "medic",

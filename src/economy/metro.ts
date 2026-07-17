@@ -1,10 +1,9 @@
 // METROPHAGE — $METRO on-chain layer gate (Phase 5).
 //
-// Primary: Solana SPL (base58 mint) — Phantom / Solana
-// Legacy:  Robinhood Chain ERC-20 (0x mint) — MetaMask / RH L2
-// Auto-detect from mint shape, or force VITE_METRO_SETTLEMENT=robinhood|solana.
-// Empty mint → pure off-chain credits. Mainnet requires METRO_MAINNET_ARMED.
-// Go-live: set VITE_METRO_MINT (+ server METRO_MINT + METRO_TREASURY_SECRET).
+// AUTHORITATIVE: Solana mainnet-beta SPL (base58 mint) — Phantom / WalletConnect
+// Dormant alternate: Robinhood Chain ERC-20 (0x) — only with VITE_METRO_SETTLEMENT=robinhood
+// Empty mint → pure off-chain credits (awaiting CA). Real-value settlement also needs METRO_MAINNET_ARMED.
+// Go-live: VITE_METRO_MINT (base58) + server METRO_MINT + METRO_TREASURY_SECRET + MAINNET_ARMED=1.
 
 import {
   ROBINHOOD_MAINNET,
@@ -30,7 +29,7 @@ const env: Record<string, string | undefined> =
     (import.meta as unknown as { env?: Record<string, string | undefined> }).env) ||
   {};
 
-/** The $METRO mint / ERC-20 contract (the "CA"). Empty string = layer off. */
+/** The $METRO SPL mint (the "CA"); a 0x ERC-20 contract on the dormant alternate. Empty = layer off. */
 export const METRO_MINT = env.VITE_METRO_MINT ?? "";
 
 export type MetroCluster =
@@ -44,16 +43,20 @@ export type MetroCluster =
 
 function parseCluster(): MetroCluster {
   const c = (env.VITE_METRO_CLUSTER || "").toLowerCase().trim();
+  if (c === "mainnet-beta" || c === "mainnet" || c === "solana-mainnet" || c === "sol-mainnet")
+    return "mainnet-beta";
   if (c === "robinhood" || c === "rh" || c === "rh-mainnet") return "robinhood";
-  if (c === "robinhood-testnet" || c === "rh-testnet" || c === "testnet") return "robinhood-testnet";
-  if (c === "mainnet" || c === "mainnet-beta") return c === "mainnet-beta" ? "mainnet-beta" : "mainnet";
+  if (c === "robinhood-testnet" || c === "rh-testnet") return "robinhood-testnet";
   if (c === "sepolia" || c === "devnet" || c === "custom") return c as MetroCluster;
-  // Default for ERC-20 mints: Robinhood Chain testnet (safe rehearsal).
-  if (isEvmAddress(METRO_MINT)) return "robinhood-testnet";
-  return "devnet";
+  // Solana mainnet-beta is authoritative. Only an explicit EVM force uses Robinhood defaults.
+  const force = (env.VITE_METRO_SETTLEMENT || "").toLowerCase();
+  if (force === "robinhood" || force === "rh" || force === "evm") {
+    return "robinhood";
+  }
+  return "mainnet-beta";
 }
 
-/** Target network. Defaults Robinhood Chain testnet for EVM mints. */
+/** Target network. Defaults Solana mainnet-beta (authoritative path). */
 export const METRO_CLUSTER: MetroCluster = parseCluster();
 
 export const METRO_MAINNET_ARMED = env.VITE_METRO_MAINNET_ARMED === "1";
@@ -74,14 +77,18 @@ export function activeRobinhoodNetwork() {
   return null;
 }
 
+/** EIP-155 chain id, or null on Solana clusters (SPL has no chain id). */
 export function metroChainId(): number | null {
   const rh = activeRobinhoodNetwork();
   if (rh) return rh.chainId;
+  // Solana is authoritative — no chain id on the SPL path.
+  if (METRO_CLUSTER === "mainnet-beta" || METRO_CLUSTER === "devnet") return null;
   if (env.VITE_METRO_CHAIN_ID) {
     const n = parseInt(env.VITE_METRO_CHAIN_ID, 10);
     return Number.isFinite(n) ? n : null;
   }
-  if (isEvmAddress(METRO_MINT)) return ROBINHOOD_TESTNET.chainId;
+  // Dormant EVM alternate: only once a 0x mint is actually in hand.
+  if (isEvmAddress(METRO_MINT)) return ROBINHOOD_MAINNET.chainId;
   return null;
 }
 
@@ -89,13 +96,16 @@ export function metroRpc(): string {
   if (env.VITE_METRO_RPC) return env.VITE_METRO_RPC;
   const rh = activeRobinhoodNetwork();
   if (rh) return rh.rpcUrl;
-  if (isEvmAddress(METRO_MINT)) return ROBINHOOD_TESTNET.rpcUrl;
-  return METRO_CLUSTER === "mainnet-beta" ? "https://api.mainnet-beta.solana.com" : "https://api.devnet.solana.com";
+  if (METRO_CLUSTER === "devnet") return "https://api.devnet.solana.com";
+  if (METRO_CLUSTER === "mainnet-beta") return "https://api.mainnet-beta.solana.com";
+  // Dormant EVM alternate: only once a 0x mint is actually in hand.
+  if (isEvmAddress(METRO_MINT)) return ROBINHOOD_MAINNET.rpcUrl;
+  return "https://api.mainnet-beta.solana.com";
 }
 
-/** Default Robinhood cluster string for wallet_switch. */
+/** Default Robinhood cluster string for wallet_switch — mainnet unless testnet forced. */
 export function metroRobinhoodCluster(): RobinhoodCluster {
-  return METRO_CLUSTER === "robinhood" ? "robinhood" : "robinhood-testnet";
+  return METRO_CLUSTER === "robinhood-testnet" ? "robinhood-testnet" : "robinhood";
 }
 
 const BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
@@ -178,7 +188,7 @@ export function getMetroStatus(): MetroStatus {
   };
 }
 
-// ── Token framing (Solana SPL primary; 1% dev seed + player deposits) ─────
+// ── Token framing (Solana SPL primary; 1% dev seed + player deposits) ──────────
 // Fixed 1B human units. Cash-out pool = 1% seed + deposits − withdrawals.
 // USD price floats with the market; game math is in $METRO + credits.
 export const METRO_TOTAL_SUPPLY = POLICY_SUPPLY;

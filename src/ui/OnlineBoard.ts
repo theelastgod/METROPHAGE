@@ -1,11 +1,14 @@
 import Phaser from "phaser";
 import { COLORS } from "../config";
 import { ACHIEVEMENTS, BOARD_STATS, STAT_LABELS, type StatKey } from "../game/achievements";
+import { publicPlayerKey } from "../net/protocol";
 import Modal from "./Modal";
 import { closeHint, dimBackdrop, modalRect, uiDim, uiFont } from "./uiLayout";
 
 interface Row {
-  player: string;
+  /** Opaque digest of the player id — the server no longer publishes raw ids
+   *  (for wallet runners the id is their on-chain address). */
+  key: string;
   name: string;
   v: number;
 }
@@ -14,6 +17,8 @@ export default class OnlineBoard extends Modal {
   private httpBase: string;
   private achievements = new Set<string>();
   private selfId = "";
+  /** Digest of selfId — the board publishes digests, so match on the same shape. */
+  private selfKey = "";
   private statSel: StatKey = "kills";
   private rows: Row[] = [];
   private loading = false;
@@ -25,7 +30,15 @@ export default class OnlineBoard extends Modal {
 
   toggle(achievements: Set<string>, selfId: string) {
     this.achievements = achievements;
-    this.selfId = selfId;
+    if (selfId !== this.selfId) {
+      this.selfId = selfId;
+      this.selfKey = "";
+      // Async, but the board re-builds when rows land; highlight resolves then.
+      void publicPlayerKey(selfId).then((k) => {
+        this.selfKey = k;
+        if (this.open) this.build();
+      });
+    }
     this.toggleOpen();
     if (this.open) void this.fetchBoard();
   }
@@ -144,12 +157,12 @@ export default class OnlineBoard extends Modal {
       tx("no ranked players yet — go make a name", bx, ry + uiDim(12), 12, "#5a6172");
     } else {
       this.rows.forEach((row, i) => {
-        const me = row.player === this.selfId;
+        const me = !!row.key && row.key === this.selfKey;
         g.fillStyle(me ? 0x231a3a : i % 2 ? 0x0e0c1c : 0x12102a, 0.9).fillRect(bx, ry, bw, rankRowH);
         if (me) g.lineStyle(uiDim(1.4), COLORS.neonMagenta, 1).strokeRect(bx, ry, bw, rankRowH);
         const rankColor = i === 0 ? "#f7ff3c" : i === 1 ? "#cfe8ff" : i === 2 ? "#ff7a3c" : "#9aa3b2";
         tx(`#${i + 1}`, bx + uiDim(12), ry + uiDim(8), 13, rankColor, true);
-        tx(row.name || row.player, bx + uiDim(60), ry + uiDim(8), 13, me ? "#ff2bd6" : "#cfe8ff", me);
+        tx(row.name, bx + uiDim(60), ry + uiDim(8), 13, me ? "#ff2bd6" : "#cfe8ff", me);
         tx(String(row.v), bx + bw - uiDim(14), ry + uiDim(8), 13, "#39ff88", true, 1);
         ry += rankRowH + uiDim(3);
       });

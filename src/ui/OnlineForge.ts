@@ -3,15 +3,21 @@ import { COLORS } from "../config";
 import { Item, Slot, RARITIES, SLOT_NAMES, itemStatLines } from "../game/items";
 import { getWeapon } from "../game/weapons";
 import { iconKey, ensureItemIcons } from "../assets/itemIcons";
+import { hfGunKeyForKlass } from "../assets/manifest";
 import { upgradeCost, reforgeCost, salvageYield, fuseCost, canUpgrade, canFuse, UPGRADE_MAX } from "../game/crafting";
 import Modal from "./Modal";
 import { closeHint, dimBackdrop, modalRect, uiDim, uiFont } from "./uiLayout";
 import { fitTextToWidth, setFittedText } from "./typography";
+import { prefersMobileUx } from "../systems/Mobile";
 
 const SLOT_ICON: Record<Slot, string> = { weapon: "WEAPON-MOD", implant: "IMPLANT", armor: "ARMOR", chip: "CHIP" };
-function itemIcon(it: Item): { key: string; tint: number } {
+function itemIcon(it: Item, scene?: Phaser.Scene): { key: string; tint: number } {
   const w = it.weaponId ? getWeapon(it.weaponId) : undefined;
-  if (w) return { key: iconKey(w.klass), tint: 0xffffff };
+  if (w) {
+    const hf = hfGunKeyForKlass(w.klass);
+    if (!scene || scene.textures.exists(hf)) return { key: hf, tint: 0xffffff };
+    return { key: iconKey(w.klass), tint: 0xffffff };
+  }
   return { key: iconKey(SLOT_ICON[it.slot]), tint: RARITIES[it.rarity].color };
 }
 
@@ -65,10 +71,11 @@ export default class OnlineForge extends Modal {
       return o;
     };
     const D = 1700;
-    const rowH = uiDim(62);
+    const isMobile = prefersMobileUx();
+    const rowH = uiDim(isMobile ? 72 : 62);
     const rows = [...this.equipped.map((it) => ({ it, eq: true })), ...this.items.map((it) => ({ it, eq: false }))];
-    const shown = rows.slice(0, 9);
-    const { x, y, w, h } = modalRect(680, 100 + shown.length * 62);
+    const shown = rows.slice(0, isMobile ? 7 : 9);
+    const { x, y, w, h } = modalRect(680, 100 + shown.length * (isMobile ? 72 : 62));
 
     add(dimBackdrop(scene, D, 0.62, () => this.close(), { x, y, w, h }));
     const g = add(scene.add.graphics().setScrollFactor(0).setDepth(D + 1));
@@ -91,11 +98,11 @@ export default class OnlineForge extends Modal {
       if (maxWidth !== undefined) fitTextToWidth(t, maxWidth);
       return t;
     };
-    const btnH = uiDim(24);
+    const btnH = uiDim(isMobile ? 40 : 24);
     const btn = (bx: number, by: number, bw: number, label: string, color: number, enabled: boolean, fn: () => void) => {
       g.fillStyle(enabled ? 0x161232 : 0x0e0c1c, 0.95).fillRect(bx, by, bw, btnH);
       g.lineStyle(uiDim(1.2), color, enabled ? 0.95 : 0.3).strokeRect(bx, by, bw, btnH);
-      tx(label, bx + bw / 2, by + uiDim(6), 11, enabled ? "#cfe8ff" : "#4a5266", false, 0.5, bw - uiDim(8));
+      tx(label, bx + bw / 2, by + uiDim(isMobile ? 12 : 6), isMobile ? 12 : 11, enabled ? "#cfe8ff" : "#4a5266", false, 0.5, bw - uiDim(8));
       if (enabled) {
         const z = add(
           scene.add.zone(bx, by, bw, btnH).setOrigin(0).setScrollFactor(0).setInteractive({ useHandCursor: true }).setDepth(D + 4),
@@ -130,7 +137,7 @@ export default class OnlineForge extends Modal {
       const selected = this.fuseSel === it.id;
       g.fillStyle(selected ? 0x231a3a : 0x12102a, 0.92).fillRect(x + uiDim(18), ry, w - uiDim(36), cardH);
       g.lineStyle(selected ? uiDim(2) : uiDim(1.4), selected ? 0x39ff88 : r.color, 1).strokeRect(x + uiDim(18), ry, w - uiDim(36), cardH);
-      const ic = itemIcon(it);
+      const ic = itemIcon(it, this.scene);
       add(scene.add.image(x + uiDim(42), ry + cardH / 2, ic.key).setDisplaySize(iconSize, iconSize).setTint(ic.tint).setScrollFactor(0).setDepth(D + 2));
       const lvl = it.ilvl ?? 0;
       const leftTextX = x + uiDim(66);

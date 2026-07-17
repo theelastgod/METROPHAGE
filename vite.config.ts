@@ -1,4 +1,19 @@
-import { defineConfig, loadEnv } from "vite";
+import { defineConfig, loadEnv, type Plugin } from "vite";
+import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { nodePolyfills } from "vite-plugin-node-polyfills";
+
+/** Keep in lockstep with `export const PROTOCOL_VERSION` in src/net/protocol.ts. */
+function readProtocolVersion(): number {
+  try {
+    const src = readFileSync(resolve(process.cwd(), "src/net/protocol.ts"), "utf8");
+    const m = src.match(/export const PROTOCOL_VERSION\s*=\s*(\d+)/);
+    if (m) return Number(m[1]);
+  } catch {
+    /* fall through */
+  }
+  return 4;
+}
 
 function assertProductionServerUrl(raw: string | undefined): void {
   const value = raw?.trim();
@@ -47,6 +62,44 @@ export default defineConfig(({ command, mode }) => {
     `local-${Date.now().toString(36)}`;
   const buildTime = new Date().toISOString();
 
+  const protocolVersion = readProtocolVersion();
+  const versionPayload = () =>
+    JSON.stringify(
+      {
+        buildId,
+        protocol: protocolVersion,
+        time: buildTime,
+      },
+      null,
+      0,
+    );
+
+  /** Emit /version.json so long-lived tabs can detect a new client ship without hard refresh. */
+  const metroVersionPlugin = (): Plugin => ({
+    name: "metro-version-json",
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const url = req.url?.split("?")[0] ?? "";
+        if (url === "/version.json") {
+          res.setHeader("Content-Type", "application/json");
+          res.setHeader("Cache-Control", "no-store");
+          res.end(versionPayload());
+          return;
+        }
+        next();
+      });
+    },
+    closeBundle() {
+      try {
+        const outDir = resolve(process.cwd(), "dist");
+        mkdirSync(outDir, { recursive: true });
+        writeFileSync(resolve(outDir, "version.json"), versionPayload() + "\n");
+      } catch (e) {
+        console.warn("[metro-version-json] write failed", e);
+      }
+    },
+  });
+
   return {
     // Relative asset URLs so the static build runs from any path — domain root
     // (Cloudflare Pages / Netlify) OR a subpath / itch.io zip (which serves from a CDN root).
@@ -55,17 +108,30 @@ export default defineConfig(({ command, mode }) => {
       __BUILD_ID__: JSON.stringify(buildId),
       __BUILD_TIME__: JSON.stringify(buildTime),
     },
+    plugins: [
+      // WalletConnect / noble crypto need Node buffer + process shims in the browser.
+      nodePolyfills({
+        include: ["buffer", "process", "util", "stream", "events"],
+        globals: { Buffer: true, global: true, process: true },
+      }),
+      metroVersionPlugin(),
+    ],
     server: {
       host: true,
       port: 5173,
     },
     build: {
       target: "es2020",
-      chunkSizeWarningLimit: 1600,
+      chunkSizeWarningLimit: 2000,
       rollupOptions: {
         output: {
-          manualChunks: {
-            phaser: ["phaser"],
+          manualChunks(id) {
+            if (id.includes("node_modules/phaser")) return "phaser";
+            // Do NOT force @walletconnect/@reown into one named chunk: rollup then
+            // parks its shared preload helper inside it, index.js gains a STATIC
+            // import of the 4 MB bundle, and every guest downloads the whole wallet
+            // stack at boot. The dynamic import() boundaries in solanaWalletModal /
+            // walletConnect already split it into lazy chunks on their own.
           },
         },
       },

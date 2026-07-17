@@ -4,6 +4,7 @@ import { NET_TICK_MS, PROTOCOL_VERSION, type ClientMsg, type PlayerLook } from "
 import {
   stepMove,
   tileIsWall,
+  collides,
   resolveOpenSpawn,
   dist2,
   segPointDist2,
@@ -26,6 +27,7 @@ import {
   RESPAWN_MS,
   XP_PER_KILL,
   levelForXp,
+  normAngle,
   CREDITS_PER_KILL,
   LOOT_DROP_CHANCE,
   PICKUP_RADIUS,
@@ -46,15 +48,11 @@ import {
   buildGrid,
   buildBridgeGrid,
   spawnPoint,
-  spawnPointForTravel,
   isWall,
-  buildSafehouse,
-  SAFEHOUSE_SPAWN,
-  buildVenueRoom,
-  venueSpawnFor,
   VENUE_SPAWN,
   buildSubway,
   SUBWAY_SPAWN,
+
   buildDive,
   DIVE_SPAWN,
   DIVE_CORE_TILE,
@@ -66,10 +64,20 @@ import {
   TUTORIAL_COP_TILE,
   TUTORIAL_NODE_TILE,
   tutorialPortalPos,
-  isVenueSizedZone,
-  isSafehouseSizedInterior,
   type TileGrid,
 } from "../../src/world/district";
+// Interior collision resolves by venue KIND (art-traced room plans). The client mirrors
+// this grid locally from the same resolver — both sides must go through world/rooms.
+import { buildVenueRoom, spawnPointForTravel, venueSpawnFor } from "../../src/world/rooms";
+import {
+  subwaySpawnForEntry,
+  subwayEnemyPosts,
+  subwayBossTile,
+  subwayThreatTier,
+  subwayScaleFromThreat,
+  SUBWAY_TIER_KINDS,
+  resolveSubwayOpen,
+} from "../../src/world/subway";
 import {
   BRIDGE_ZONE_IDS,
   parseBridgeZone,
@@ -88,6 +96,11 @@ import {
   type TutorialMode,
 } from "../../src/net/tutorial";
 import { DISTRICTS } from "../../src/game/districts";
+import { DISTRICT_VENUE_COUNT } from "../../src/game/districtVenues";
+import {
+  progressionForDistrict,
+  progressionForBridge,
+} from "../../src/game/progression";
 import { DISTRICT_SCALE, PLAYER, HEAT } from "../../src/config";
 import { ONLINE_CITY, CITY_HUB_SPAWN } from "../../src/world/city";
 import {
@@ -114,20 +127,113 @@ import {
   type Cost,
 } from "../../src/game/crafting";
 import { addMods, ZERO_MODS, type ModBag } from "../../src/game/stats";
+import { levelMods } from "../../src/game/levelCurve";
 import { achievementsForStat, type StatKey } from "../../src/game/achievements";
 import { GUILD_CREATE_COST, guildLevel, guildPerkPct, validateGuild } from "../../src/game/guilds";
 import { listingFee, metroListingFee, MIN_PRICE, MIN_METRO_PRICE, MAX_PRICE } from "../../src/game/market";
-import { PVP_BUY_IN_METRO } from "../../src/game/pvp";
+import { PVP_BUY_IN_METRO, PVP_CREDIT_DROP_PCT, PVP_CREDIT_DROP_NOTICE } from "../../src/game/pvp";
 import { fmtMetro } from "../../src/economy/metro";
 import { dailyContracts, getDaily, currentDay, repTier, type DailyObjective } from "../../src/game/dailies";
 import { phaseForHp, raidHpScale, raidScriptFor } from "../../src/game/raid";
 import { getCosmetic, applyCosmetic } from "../../src/game/cosmetics";
-import { bountyById, bountyForNpc, type BountyObjective } from "../../src/game/bounties";
+import {
+  BOSS_BOUNTY_COOLDOWN_MS,
+  bossBountyCooldownRemaining,
+  bountyById,
+  bountyForNpc,
+  bountyIsEligible,
+  type BountyObjective,
+} from "../../src/game/bounties";
+import { npcDef, storyPhase } from "../../src/game/cityNpcs";
 import { rollBossSignature, bossLootBlurb } from "../../src/game/bossLoot";
 import { maybeNamedLoot } from "../../src/game/namedLoot";
 import { weeklyGuildGoal, currentGuildWeek } from "../../src/game/guildGoals";
 import { currentDistrictWar, warMetaKey } from "../../src/game/districtWar";
+import { factionCaptureLine, factionTerritoryLine } from "../../src/game/factions";
+import { factionCampaignBrief, factionCampaignReaction } from "../../src/game/factionCampaigns";
+import { MAX_REPRINT_MEMORY, MAX_REPRINT_STAMPS, REPRINT_MEMORY_KEY, REPRINT_STAMP_KEY, nextReprintMemory, reprintMemoryCount, reprintStampCount } from "../../src/game/reprintHistory";
+import { skillAwardAmount, skillSnapshot, skillStatKey, type RsSkillId } from "../../src/game/rsSkills";
+import {
+  HUB_DATA_TERMINAL_RANGE,
+  HUB_DATA_TERMINALS,
+  terminalCooldownRemaining,
+} from "../../src/game/hubDataTerminals";
+import {
+  CIVIC_ARCHIVE_PAGE_CAP,
+  civicArchivePageKey,
+  civicArchiveRecord,
+  civicArchiveSnapshot,
+  civicArchiveSynthesis,
+} from "../../src/game/civicArchives";
+import { npcPresentInZone } from "../../src/game/npcPresence";
+import {
+  TERRITORY_FLIP_CAP,
+  decodeTerritoryLegacy,
+  encodeTerritoryLegacy,
+  territoryLegacyKey,
+  territoryLegacyLine,
+  territoryController,
+} from "../../src/game/territoryLegacy";
+import { campaignEchoLine, districtCampaignEcho } from "../../src/game/campaignEchoes";
+import {
+  CHRONICLE_BOSS_CAP,
+  CHRONICLE_BOSS_KEY,
+  CHRONICLE_CIVIC_CAP,
+  buildCityChronicle,
+  chronicleCivicKey,
+  decodeChronicleBosses,
+  decodeChronicleCivic,
+  encodeChronicleBosses,
+  encodeChronicleCivic,
+} from "../../src/game/cityChronicle";
+import {
+  CIVIC_MOMENTUM_CAP,
+  civicMomentumFromMeta,
+  civicMomentumKey,
+  dailyDistrictOperation,
+  districtAftermath,
+  districtEventContext,
+  districtOperationKey,
+  districtOperationObjectiveLabel,
+  districtRumorLine,
+  encodeCivicMomentum,
+  type DistrictOperationObjective,
+} from "../../src/game/districtLife";
+import {
+  MAX_DISTRICT_STANDING,
+  MAX_RELATIONSHIP_JOBS,
+  MAX_RELATIONSHIP_TALKS,
+  districtStandingKey,
+  districtStandingSnapshot,
+  districtStandingTier,
+  relationshipJobsKey,
+  relationshipSnapshot,
+  relationshipTalkSnapshot,
+  relationshipJobSnapshot,
+  relationshipTalkKey,
+  relationshipTier,
+  relationshipTierName,
+} from "../../src/game/relationships";
+import {
+  CASEFILE_MILESTONES,
+  residentClueGrant,
+  residentClueSnapshot,
+  residentConfirmationGrant,
+  residentConfirmationSnapshot,
+  residentProfile,
+  residentZone,
+} from "../../src/game/residentLife";
+import { MAX_RECONSTRUCTION, districtReconstruction, reconstructionKey, reconstructionSnapshot } from "../../src/game/reconstruction";
+import { factionJudgmentReaction } from "../../src/game/judgmentReactions";
+import {
+  MAX_RESCUE_MEMORY,
+  RESCUES_GIVEN_KEY,
+  RESCUES_RECEIVED_KEY,
+  rescueMemorySnapshot,
+} from "../../src/game/socialMemory";
 import { launchFlagsFromEnv, emitDayKey, type LaunchFlags } from "../../src/game/featureFlags";
+import { canRebalanceZone, doName, hardCapFor, parseInstParam, reconcileInstanceId } from "./zoneRouting";
+import { consumeCapturedAchievements, consumeCapturedDeltas } from "./statQueue";
 
 import {
   BLESS_IFRAME_TICKS,
@@ -146,7 +252,7 @@ import {
 import { verifyWalletLogin, walletPlayerId } from "./auth";
 import { allDiscoverableZones, isGodPlayerId } from "./godMode";
 import { COSMETICS } from "../../src/game/cosmetics";
-import { shouldBroadcastSnapshot } from "./snapshotPolicy";
+import { shouldBroadcastSnapshot, shouldIncludeRoster } from "./snapshotPolicy";
 import { remotePlayerView, type RemotePlayerView } from "./playerSnapshot";
 import { buildWorldSnapshot } from "./worldSnapshot";
 import {
@@ -174,9 +280,15 @@ function parseInventory(raw: string | null | undefined): Item[] {
   }
 }
 
-/** Aggregate the EFFECTIVE (forge-upgraded) mods of every equipped item into one ModBag. */
-function deriveMods(equipped: Partial<Record<Slot, Item>>): ModBag {
-  let bag = ZERO_MODS;
+/**
+ * Aggregate a character's power into one ModBag: the EFFECTIVE (forge-upgraded)
+ * mods of every equipped item, plus what the level itself is worth.
+ *
+ * Folding levels in here means every existing `p.mods.*` read — damage, maxHp,
+ * crit, lifesteal — picks up level growth with no separate code path.
+ */
+function deriveMods(equipped: Partial<Record<Slot, Item>>, level: number): ModBag {
+  let bag = addMods(ZERO_MODS, levelMods(level));
   for (const it of Object.values(equipped)) if (it) bag = addMods(bag, effectiveMods(it));
   return bag;
 }
@@ -208,25 +320,20 @@ import {
   parseCampaign,
   serializeCampaign,
   CAMPAIGN_DONE_TEXT,
+  MELTDOWN_VICTORY_TEXT,
+  MELTDOWN_VICTORY_FLAG,
+  STARTER_FLOOR_FLAG,
 } from "../../src/net/campaign";
 import type { QuestTriggerType, QuestReward } from "../../src/game/quests";
 import { rollElite, type EliteModifier } from "../../src/game/elites";
 
-// Server-only tuning (Workers Paid $5 headroom — was free-tier conservative).
-const PERSIST_EVERY_TICKS = 24; // ~1.2s durable flush (was 2s) — less loss on DO recycle
+// Server-only tuning — reliability first, then speed (Workers Paid).
+const PERSIST_EVERY_TICKS = 20; // ~1.0s durable flush — less progress loss on DO recycle
 const INTENT_EXPIRE_TICKS = 3;
-// Step 7 (ops): a durable "supervisor" alarm. It is NOT the game tick — a 20Hz
-// real-time loop runs hot as an in-memory interval (cheaper + more precise than
-// 20 alarms/s). The alarm is the lifecycle backstop: it resumes the sim if the
-// isolate was recycled mid-session (alarms survive eviction; setInterval does
-// not) and heartbeat-persists, so the loop is supervised + durable, not
-// fire-and-forget.
-const SUPERVISOR_ALARM_MS = 5_000; // was 10s — faster resume after eviction on Paid
-// Step 7 (anti-cheat): per-socket wall-clock flood guard. Legit play is ~1 input
-// per render frame plus the odd fire/chat, so even a 144fps client stays below it.
-// Movement is already flood-immune (intent is integrated once per server tick, not
-// per message) and fire is already server-rate-limited — this only stops a socket
-// from exhausting CPU/bandwidth with raw message volume.
+// Durable supervisor: NOT the game tick (20 Hz is setInterval). Alarm resumes sim
+// after isolate eviction and heartbeat-persists. Tighter interval = faster recovery.
+const SUPERVISOR_ALARM_MS = 3_000;
+// Anti-cheat: per-socket wall-clock flood guard.
 const MAX_MSG_BYTES = 4096; // reject oversized payloads outright
 const MSG_SOFT_PER_WINDOW = 520; // Paid: room for high-FPS clients + kit spam
 const MSG_KILL_PER_WINDOW = 780; // close only a genuine per-socket flood
@@ -251,7 +358,12 @@ export const parseZone = (z: string | null): number => {
 /** No-combat interior zones (the safehouse hub + enterable building interiors). Each is its
  *  own DO, reuses the safehouse room grid, and runs no enemies/boss/territory/PvP. Shared with
  *  the Worker router so these zone names pass through instead of collapsing to a district. */
-import { getFragment, DIVE_DEFAULT_FRAGMENTS } from "../../src/game/fragments";
+import {
+  DIVE_DEFAULT_FRAGMENTS,
+  getFragment,
+  newlyUnlockedMemoryInterpretations,
+  normalizeFragmentSequence,
+} from "../../src/game/fragments";
 import { dailyDistrictMod, dayIndex, hvtCallsign, HVT_BOUNTY_MULT, HVT_HP_MULT, HVT_TINT } from "../../src/game/districtMods";
 import { WORLD_EVENTS, type WorldEventDef } from "../../src/game/worldEvents";
 import { WORLD_EVENT } from "../../src/config";
@@ -264,6 +376,7 @@ import {
   sanitizeFurniture,
   sanitizeGuestbook,
   furnitureHomeBuffs,
+  furnitureUpgradeCost,
   GUEST_STAMPS,
   ESTATE_BASE_PRICE,
   type FurniturePiece,
@@ -282,16 +395,25 @@ export const NAMED_ZONES = new Set([
   ...DIVE_ZONE_IDS,
 ]);
 
-/** Per-building district interior — zone id "d{district}i{buildingIndex}". Each is its own
- *  no-combat DO reusing the safehouse room; H returns to the parent district. Bounded so a
- *  bogus id can't spin up an unbounded zone. */
+/** Per-building district interior — zone id "d{district}i{buildingIndex}".
+ *  Only the unique venue indices (one of each kind: shop/home/guild/den/bar). */
 export const parseBuildingInterior = (z: string | null): { district: number; index: number } | null => {
   const m = z ? /^d(\d+)i(\d+)$/.exec(z) : null;
   if (!m) return null;
   const district = parseInt(m[1], 10);
   const index = parseInt(m[2], 10);
-  if (district < 0 || district >= DISTRICTS.length || index < 0 || index > 63) return null;
+  if (district < 0 || district >= DISTRICTS.length || index < 0 || index >= DISTRICT_VENUE_COUNT) return null;
   return { district, index };
+};
+
+/** Wilderness trail shack — zone id "w{bridge}s{shackIndex}". Talk-only interior. */
+export const parseWildernessShack = (z: string | null): { bridge: number; index: number } | null => {
+  const m = z ? /^w(\d+)s(\d+)$/.exec(z) : null;
+  if (!m) return null;
+  const bridge = parseInt(m[1], 10);
+  const index = parseInt(m[2], 10);
+  if (bridge < 0 || bridge >= BRIDGE_ZONE_IDS.length || index < 0 || index > 7) return null;
+  return { bridge, index };
 };
 
 /** Hub building interior — zone id "h{buildingIndex}". Every building on the shared city
@@ -306,7 +428,12 @@ export const parseHubInterior = (z: string | null): number | null => {
 
 /** Zones the Worker routes by exact name or pattern (named zones + building interiors). */
 export const isNamedZone = (z: string | null): boolean =>
-  !!z && (NAMED_ZONES.has(z) || parseBuildingInterior(z) !== null || parseHubInterior(z) !== null || parseEstateInterior(z) !== null);
+  !!z &&
+  (NAMED_ZONES.has(z) ||
+    parseBuildingInterior(z) !== null ||
+    parseHubInterior(z) !== null ||
+    parseEstateInterior(z) !== null ||
+    parseWildernessShack(z) !== null);
 
 export interface Env {
   WORLD: DurableObjectNamespace;
@@ -320,14 +447,18 @@ export interface Env {
   /** Legacy alias — still accepted if METRO_MINT is unset. */
   METRO_DEVNET_MINT?: string;
   METRO_RPC?: string;
-  /** Optional EIP-155 chain id for EVM (46630 RH testnet, 4663 RH mainnet). */
+  /** Optional EIP-155 chain id for EVM (4663 RH mainnet default, 46630 RH testnet). */
   METRO_CHAIN_ID?: string;
+  /** Network label: robinhood (mainnet) | robinhood-testnet. */
+  METRO_CLUSTER?: string;
+  /** Manual $METRO USD price override (ops / pre-listing). Bridge rates scale from this. */
+  METRO_USD_PRICE?: string;
   // "1" arms real-value mainnet (counsel) — also gates NFT-tier cosmetics.
   // Required when METRO_RPC points at mainnet, else settlement stays sim.
   METRO_MAINNET_ARMED?: string;
   /** Harness only: allow deposit/withdraw while settlement is sim with a mint set. */
   METRO_ALLOW_SIM?: string;
-  /** Force settlement family: robinhood | solana | auto (default auto = detect from mint shape). */
+  /** Force settlement family: solana (default) | robinhood | auto (detect from mint shape). */
   METRO_SETTLEMENT?: string;
   /** "1" when Workers Paid is provisioned — ops /health only (tuning is compile-time). */
   METRO_PAID_TIER?: string;
@@ -337,8 +468,10 @@ export interface Env {
   METRO_DISABLE_DISTRICT_WAR?: string;
   /** Soft concurrent cap for hub zone "safe" (default 48). */
   METRO_HUB_CAP?: string;
-  /** Per-player daily emit ceiling in credits (policy may tighten under pool stress). */
-  METRO_DAILY_EMIT_CAP?: string;
+  /** Soft concurrent cap per combat/subway instance (default 40). */
+  METRO_INSTANCE_CAP?: string;
+  /** Max horizontal instances per shardable zone (default 4, max 16). */
+  METRO_MAX_INSTANCES?: string;
   /** Optional build/version stamp for /health (set in wrangler vars on deploy). */
   METRO_BUILD?: string;
 }
@@ -359,6 +492,12 @@ interface PlayerState {
   hp: number;
   dead: boolean;
   respawnTick: number;
+  /** Consecutive deaths (resets after a clean alive stretch). Used for EXTRACT offer. */
+  deathStreak: number;
+  /** Tick when deathStreak last incremented — decay after ~25s alive. */
+  deathStreakTick: number;
+  /** Next respawn uses nearest safe point outside the PvP arena. */
+  pvpDeath: boolean;
   pvpSafeUntil: number; // tick until which the player is immune to PvP (spawn protection)
   /** True when the player has paid the $METRO buy-in and is contesting in an arena. */
   pvpInArena: boolean;
@@ -385,7 +524,7 @@ interface PlayerState {
   /** False after another zone claimed the session — freeze inputs and stop balance writes. */
   sessionValid: boolean;
   inventory: Item[]; // server-authoritative loot, persisted as JSON (capped FIFO)
-  stash: Item[]; // personal safe storage (TENEMENT lockbox) — survives death, persisted as JSON
+  stash: Item[]; // personal overflow (TENEMENT lockbox); bag and stash both survive death
   equipped: Partial<Record<Slot, Item>>; // gear by slot; its mods boost combat
   mods: ModBag; // aggregate of the equipped mods (cached; recomputed on change)
   maxHp: number; // PLAYER_HP + mods.hpAdd
@@ -450,6 +589,8 @@ interface PlayerState {
   // authored NPC bounty — one active at a time, persisted cross-zone in D1
   bounty: { id: string; progress: number } | null;
   bountyDirty: boolean;
+  /** Completion timestamps learned this session; durable source is bounty_completions. */
+  bountyCompletedAt: Map<string, number>;
   /** Session cooldowns for NPC services (`npcId:service` → last use ms). Not persisted. */
   npcCd: Map<string, number>;
   // appearance (relayed to other clients so they render this player's customization)
@@ -461,6 +602,8 @@ interface Pickup {
   x: number;
   y: number;
   kind: number; // PICKUP_CREDIT | PICKUP_CORE
+  /** Credits granted on collect (PvP floor piles); default grantEmit amount if omitted. */
+  amount?: number;
   dieTick: number;
   bornTick: number; // collection grace — the drop must visibly pop first
 }
@@ -505,6 +648,7 @@ interface Enemy {
   elite?: EliteModifier; // rolled-on-spawn affix: hp/speed/status-resist/volatile + payout mult
   hvt?: boolean; // today's HIGH-VALUE TARGET — named bounty elite, huge payout, once per day
   speedMult?: number; // district daily-condition speed factor (GHOST GRID etc.)
+  dmgMult?: number; // per-enemy shot damage factor — subway posts scale by tunnel threat (unset = 1)
   altFire?: boolean; // volley alternator (SNIPER/HVT swap shot ↔ targeting hazard)
   hvtRepositionTick?: number; // last evasive-burst tick (HVT bounty protocol)
   hvtCalled?: boolean; // HVT called its one-time reinforcements (below half HP)
@@ -606,19 +750,20 @@ interface ShopItem {
   cores?: number;
   creditsGrant?: number;
 }
-// Prices vs kill emit (CREDITS_PER_KILL=10) — vendor is the primary sink (~2× prior).
+// Prices vs kill emit (CREDITS_PER_KILL=10) — vendor is the primary sink.
+// Tuned up so credit accumulation doesn't outrun sinks forever (~2% historical).
 const SHOP: Record<string, ShopItem> = {
-  heal: { price: 95, label: "FIELD PATCH", heal: true },
-  cache_standard: { price: 180, label: "SALVAGE CACHE", rarity: "standard" },
-  cache_tuned: { price: 420, label: "TUNED CACHE", rarity: "tuned" },
-  cache_blackice: { price: 1180, label: "BLACK-ICE CACHE", rarity: "blackice", repReq: 1 },
-  cache_singular: { price: 2800, label: "SINGULAR CACHE", rarity: "singular", repReq: 2 },
-  core_bundle: { price: 240, label: "CORE BUNDLE", cores: 3 },
-  core_crate: { price: 620, label: "CORE CRATE", cores: 8, repReq: 1 },
+  heal: { price: 120, label: "FIELD PATCH", heal: true },
+  cache_standard: { price: 220, label: "SALVAGE CACHE", rarity: "standard" },
+  cache_tuned: { price: 480, label: "TUNED CACHE", rarity: "tuned" },
+  cache_blackice: { price: 1320, label: "BLACK-ICE CACHE", rarity: "blackice", repReq: 1 },
+  cache_singular: { price: 3200, label: "SINGULAR CACHE", rarity: "singular", repReq: 2 },
+  core_bundle: { price: 280, label: "CORE BUNDLE", cores: 3 },
+  core_crate: { price: 720, label: "CORE CRATE", cores: 8, repReq: 1 },
   // Pure sink kit (no credit refund) — cores only.
-  supply_kit: { price: 140, label: "SUPPLY KIT", cores: 2 },
-  // Mid-game sink: insurance reprint chip (no heal — pure burn for QoL buff later sessions).
-  reprint_chip: { price: 220, label: "REPRINT CHIP", creditsGrant: 0 },
+  supply_kit: { price: 165, label: "SUPPLY KIT", cores: 2 },
+  // Mid-game hard sink: a durable social memorial, never death protection or power.
+  reprint_chip: { price: 260, label: "REPRINT MEMORIAL", creditsGrant: 0 },
 };
 
 interface Shot {
@@ -642,6 +787,14 @@ interface Shot {
  */
 export class WorldDO {
   private sessions = new Map<WebSocket, string>();
+  /**
+   * Players this instance has bounced for being full (id → ms). A bounce is only
+   * worth it if the front door can land them somewhere else; bouncing the same
+   * player twice means every slice is full, so the second try is admitted (spill)
+   * rather than volleyed forever. Mirrors pickInstance's "better than rejecting".
+   */
+  private bouncedAt = new Map<string, number>();
+  private static readonly BOUNCE_GRACE_MS = 30_000;
   /** Exactly one controlling socket per player id in this zone (hard dual-tab lock). */
   private ownerSocket = new Map<string, WebSocket>();
   private players = new Map<string, PlayerState>();
@@ -657,6 +810,8 @@ export class WorldDO {
   private errCount = 0; // soft errors (D1 fail, login reject paths that recover)
   private floodKills = 0;
   private loginCount = 0;
+  /** Prevent stacked persistDirty from alarm + tick (D1 contention / double-write). */
+  private persistInFlight = false;
   private flags: LaunchFlags = launchFlagsFromEnv({});
   // ── economy ledger: credits created/destroyed since the last flush, keyed
   // "flow:kind" — flushed to D1 economy_daily on the persist cadence. Powers
@@ -687,13 +842,23 @@ export class WorldDO {
   private pvpTail: Promise<void> = Promise.resolve();
 
   private zoneName = "d0";
+  /** Horizontal shard index within zoneName (0 = legacy DO name = zoneName). */
+  private instanceId = 0;
   private districtIndex = 0;
+  /** Zone-wide enemy damage mult (campaign progression). Applied on fire. */
+  private zoneEnemyDmgMult = 1;
   private bridgeIndex = -1;
   private diveIndex = -1; // ≥0 when this DO runs an ICE VAULT dive instance (v0–v6)
   private provingVault = false; // THE PROVING — the weekly-affixed group vault
   private zoneReady = false;
   // dynamic world events (combat districts only): telegraph -> active -> reward
-  private worldEvent: { def: WorldEventDef; phase: "telegraph" | "active"; untilTick: number } | null = null;
+  private worldEvent: {
+    def: WorldEventDef;
+    phase: "telegraph" | "active";
+    untilTick: number;
+    durationMs: number;
+    momentum: number;
+  } | null = null;
   private nextEventTick = -1;
   private lastStormTick = 0;
   private interior = false; // the safehouse zone — no enemies, no PvP
@@ -714,8 +879,10 @@ export class WorldDO {
     // state (in-flight shots, live HP) resets — acceptable on a rare eviction.
     state.blockConcurrencyWhile(async () => {
       const z = await state.storage.get<string | number>("zone");
-      if (typeof z === "string") this.initZone(z); // "safe" or "dN"
-      else if (typeof z === "number") this.initZone("d" + z); // legacy numeric
+      const instRaw = await state.storage.get<number>("inst");
+      const inst = typeof instRaw === "number" && Number.isFinite(instRaw) ? instRaw : 0;
+      if (typeof z === "string") this.initZone(z, inst); // "safe" or "dN" (+ optional shard)
+      else if (typeof z === "number") this.initZone("d" + z, inst); // legacy numeric
       for (const ws of state.getWebSockets()) {
         const att = ws.deserializeAttachment() as SessionAttach | null;
         if (att) await this.resumeSession(ws, att);
@@ -752,15 +919,34 @@ export class WorldDO {
     return resolveOpenSpawn(this.grid, base);
   }
 
+  /** Durable Object name for guild relay + session ownership (`d0` or `d0#2`). */
+  private doKey(): string {
+    return doName(this.zoneName, this.instanceId);
+  }
+
   /** Clamp zone entrance spawn so it never sits inside walls (player radius). */
   private finalizeZoneSpawn() {
     this.spawn = resolveOpenSpawn(this.grid, this.spawn);
   }
 
   /** A DO instance handles exactly one zone — bind it to its district on first hit. */
-  private initZone(zone: string | null) {
-    if (this.zoneReady) return;
+  private initZone(zone: string | null, inst: number | null | undefined) {
+    if (this.zoneReady) {
+      // Self-heal objects created by older code that persisted `inst=0` inside a
+      // `zone#N` DO. Only an explicit routed ?inst may change stored identity;
+      // internal requests without it must preserve the current shard.
+      if (zone === this.zoneName && inst != null) {
+        const repaired = reconcileInstanceId(this.instanceId, inst);
+        if (repaired !== this.instanceId) {
+          this.instanceId = repaired;
+          void this.state.storage.put("inst", repaired);
+        }
+      }
+      return;
+    }
     this.zoneReady = true;
+    this.instanceId = Math.max(0, Math.floor(Number(inst) || 0));
+    void this.state.storage.put("inst", this.instanceId);
     // THE UNDERLINE — the subway dungeon: an indoor COMBAT zone (no PvP/weather via the
     // interior flag, but it DOES populate a tough HSS garrison + a boss).
     if (isTutorialZone(zone)) {
@@ -780,6 +966,7 @@ export class WorldDO {
       this.zoneName = "subway";
       this.districtIndex = 0;
       this.grid = buildSubway();
+      // Default hub station; travel handoff / login `from` relocates to entry station.
       this.spawn = SUBWAY_SPAWN;
       this.nodes = [];
       this.spawnSubway();
@@ -862,22 +1049,37 @@ export class WorldDO {
       this.interior = true;
       this.zoneName = zone;
       this.districtIndex = 0;
-      this.grid = buildSafehouse();
-      this.spawn = SAFEHOUSE_SPAWN;
+      // Named hub venues (THE FERAL CAT / clinic / market / den) resolve their KIND and
+      // build the same art-traced room their district counterparts get. They were 40×30
+      // safehouses dressed with a 20×13 plate, so the art never matched the room.
+      this.grid = buildVenueRoom(zone!);
+      this.spawn = venueSpawnFor(zone, this.grid);
       this.nodes = [];
       void this.state.storage.put("zone", zone);
       this.finalizeZoneSpawn();
       return;
     }
-    // Per-building district interiors ("d{N}i{K}") — walk into any district building. Each is
-    // an FRLG-scale one-screen room; districtIndex is retained so exiting returns to the
-    // parent district's doorstep.
+    // Per-building district interiors ("d{N}i{K}") — one of each venue kind only.
+    // FRLG-scale room; districtIndex retained so exit returns to parent doorstep.
     const bldg = parseBuildingInterior(zone);
     if (bldg) {
       this.interior = true;
       this.zoneName = zone!;
       this.districtIndex = bldg.district;
       this.grid = buildVenueRoom(zone!); // zone-hashed floor plan — must match the client's
+      this.spawn = venueSpawnFor(zone, this.grid);
+      this.nodes = [];
+      void this.state.storage.put("zone", zone);
+      this.finalizeZoneSpawn();
+      return;
+    }
+    // Wilderness trail shack ("w{N}s{K}") — tiny talk-only room off a corridor.
+    const wsh = parseWildernessShack(zone);
+    if (wsh) {
+      this.interior = true;
+      this.zoneName = zone!;
+      this.districtIndex = Math.min(wsh.bridge, DISTRICTS.length - 1);
+      this.grid = buildVenueRoom(zone!);
       this.spawn = venueSpawnFor(zone, this.grid);
       this.nodes = [];
       void this.state.storage.put("zone", zone);
@@ -982,9 +1184,11 @@ export class WorldDO {
     });
   }
 
-  /** Wilderness corridor — patrols + ambient salvage, no boss or territory nodes. */
+  /** Wilderness corridor — threat blended between flanking districts (campaign spine). */
   private spawnBridge(def: BridgeDef) {
-    const pattern = [0, 0, 1, 0, 2, 4, 0, 1];
+    const prog = progressionForBridge(def.fromDistrict);
+    this.zoneEnemyDmgMult = prog.enemyDmgMult;
+    const pattern = prog.kindPattern;
     let i = 0;
     for (const [tx, ty, tier] of def.copPosts) {
       const stx = tx * DISTRICT_SCALE;
@@ -994,8 +1198,11 @@ export class WorldDO {
       const y = sty * TILE + TILE / 2;
       const id = this.nextEnemyId++;
       const kind = tier === "enforcer" ? 4 : pattern[i++ % pattern.length];
-      const e: Enemy = { id, x, y, ox: x, oy: y, hp: ENEMY_ARCHES[kind].hp, maxHp: ENEMY_ARCHES[kind].hp, respawnTick: 0, lastFireTick: 0, kind };
-      this.maybeElite(e, 0.06);
+      const arch = ENEMY_ARCHES[kind] ?? ENEMY_ARCHES[0];
+      // Bridges sit between districts — slightly softer than the hard end
+      const hp = Math.round(arch.hp * prog.enemyHpMult * 0.92);
+      const e: Enemy = { id, x, y, ox: x, oy: y, hp, maxHp: hp, respawnTick: 0, lastFireTick: 0, kind };
+      this.maybeElite(e, prog.eliteChance * 0.85);
       this.enemies.set(id, e);
     }
     for (const [tx, ty] of def.lootPosts) {
@@ -1015,22 +1222,11 @@ export class WorldDO {
     }
   }
 
-  /** Seed a handful of cops at the district's cop-posts (walkable tiles only). The
-   *  archetype is rotated across posts (and biased by district threat) so every zone
-   *  fields a varied garrison: patrol/wasp/lancer/hound. */
+  /** Seed garrison at cop-posts — kinds + power from campaign progression table. */
   private spawnEnemies(def: (typeof DISTRICTS)[number]) {
-    // District identity patterns — each depth feels like a different security doctrine.
-    // 0: street watch + one enforcer; 1: sniper lanes; 2-3: hound packs; 4+: wraith deep.
-    const pattern =
-      this.districtIndex <= 0
-        ? [0, 0, 1, 4, 0, 2] // early: patrol density + one ENFORCER
-        : this.districtIndex === 1
-          ? [0, 1, 5, 5, 2, 4, 1] // midtown: SNIPER lanes + enforcer
-          : this.districtIndex === 2
-            ? [1, 2, 3, 3, 2, 0, 4] // stacks: HOUND packs
-            : this.districtIndex === 3
-              ? [2, 4, 5, 3, 1, 2, 5] // spire: mixed heavy
-              : [2, 3, 4, 5, 6, 6, 2, 0]; // deep core: WRAITH + full bestiary
+    const prog = progressionForDistrict(this.districtIndex);
+    this.zoneEnemyDmgMult = prog.enemyDmgMult;
+    const pattern = prog.kindPattern;
     let i = 0;
     for (const [tx, ty] of def.copPosts) {
       const stx = tx * DISTRICT_SCALE;
@@ -1040,8 +1236,10 @@ export class WorldDO {
       const y = sty * TILE + TILE / 2;
       const id = this.nextEnemyId++;
       const kind = pattern[i++ % pattern.length];
-      const e: Enemy = { id, x, y, ox: x, oy: y, hp: ENEMY_ARCHES[kind].hp, maxHp: ENEMY_ARCHES[kind].hp, respawnTick: 0, lastFireTick: 0, kind };
-      this.maybeElite(e, 0.05 + this.districtIndex * 0.02); // deeper districts field more elites
+      const arch = ENEMY_ARCHES[kind] ?? ENEMY_ARCHES[0];
+      const hp = Math.round(arch.hp * prog.enemyHpMult);
+      const e: Enemy = { id, x, y, ox: x, oy: y, hp, maxHp: hp, respawnTick: 0, lastFireTick: 0, kind };
+      this.maybeElite(e, prog.eliteChance);
       this.enemies.set(id, e);
     }
     // THE CRUCIBLE keeps two sparring drones on staff — a solo runner who walks into the
@@ -1074,8 +1272,8 @@ export class WorldDO {
         }
       }
     }
-    // World boss — a named HSS commander at the post farthest from the player spawn, so it
-    // reads as a destination. It reforms on its own timer after a kill (see the kill handler).
+    // World boss — campaign-scaled commander at the farthest post.
+    const progBoss = progressionForDistrict(this.districtIndex);
     const boss = BOSS_ROSTER[this.districtIndex % BOSS_ROSTER.length];
     const { worldW, worldH } = gridDims(this.grid);
     let lair = { x: worldW - this.spawn.x, y: worldH - this.spawn.y };
@@ -1093,21 +1291,22 @@ export class WorldDO {
       }
     }
     const bid = this.nextEnemyId++;
+    const bossHp = Math.round(boss.hp * progBoss.bossHpMult);
     this.enemies.set(bid, {
       id: bid,
       x: lair.x,
       y: lair.y,
       ox: lair.x,
       oy: lair.y,
-      hp: boss.hp,
-      maxHp: boss.hp,
+      hp: bossHp,
+      maxHp: bossHp,
       respawnTick: 0,
       lastFireTick: 0,
       kind: BOSS_KIND,
       boss: true,
       name: boss.name,
       tint: boss.tint,
-      baseMaxHp: boss.hp,
+      baseMaxHp: bossHp,
       phaseIdx: 0,
       engagedTick: 0,
       lastAoeTick: 0,
@@ -1115,48 +1314,79 @@ export class WorldDO {
     });
   }
 
-  /** Seed THE UNDERLINE: a tough HSS garrison along the platforms + a named subway boss. */
+  /**
+   * Seed THE UNDERLINE — multi-direction tunnels.
+   * `post.depth` is campaign threat (0..7+): soft near hub / plaza, lethal on
+   * lines toward high campaign districts (wastes / kernel).
+   */
   private spawnSubway() {
-    const posts: [number, number][] = [
-      [14, 7],
-      [26, 8],
-      [14, 15],
-      [26, 16],
-      [14, 23],
-      [26, 24],
-      [34, 15],
-    ];
-    const pattern = [4, 5, 6, 2, 3, 6, 4]; // ENFORCER/SNIPER/WRAITH/LANCER/HOUND — deep-tier
+    // Tunnels have no single district dmg mult: threat varies per post along the
+    // line, so each enemy carries its own (e.dmgMult) instead of one zone value.
+    this.zoneEnemyDmgMult = 1;
+    const posts = subwayEnemyPosts();
     let i = 0;
-    for (const [tx, ty] of posts) {
-      if (isWall(this.grid[ty]?.[tx])) continue;
-      const x = tx * TILE + TILE / 2;
-      const y = ty * TILE + TILE / 2;
-      const kind = pattern[i++ % pattern.length];
+    let maxThreat = 0;
+    for (const post of posts) {
+      if (isWall(this.grid[post.ty]?.[post.tx])) continue;
+      const x = post.tx * TILE + TILE / 2;
+      const y = post.ty * TILE + TILE / 2;
+      // post.depth = campaign threat rung
+      const threat = post.depth;
+      maxThreat = Math.max(maxThreat, threat);
+      const tier = subwayThreatTier(threat);
+      const kinds = SUBWAY_TIER_KINDS[tier];
+      const kind = kinds[i++ % kinds.length];
       const id = this.nextEnemyId++;
-      const e: Enemy = { id, x, y, ox: x, oy: y, hp: ENEMY_ARCHES[kind].hp, maxHp: ENEMY_ARCHES[kind].hp, respawnTick: 0, lastFireTick: 0, kind };
-      this.maybeElite(e, 0.12); // THE UNDERLINE runs hot
+      const arch = ENEMY_ARCHES[kind] ?? ENEMY_ARCHES[0];
+      const scale = subwayScaleFromThreat(threat);
+      const hp = Math.round(arch.hp * scale.hpMult);
+      const e: Enemy = {
+        id,
+        x,
+        y,
+        ox: x,
+        oy: y,
+        hp,
+        maxHp: hp,
+        respawnTick: 0,
+        lastFireTick: 0,
+        kind,
+        dmgMult: scale.dmgMult,
+      };
+      // Elites only on mid+ lines — hub boarding stays clean
+      if (scale.eliteChance > 0) this.maybeElite(e, scale.eliteChance);
       this.enemies.set(id, e);
     }
-    const boss = BOSS_ROSTER[1];
-    const bx = 34 * TILE + TILE / 2;
-    const by = 23 * TILE + TILE / 2;
+    // Deep-line boss scales with max campaign threat on the map (~kernel)
+    const deepProg = progressionForDistrict(Math.min(7, Math.floor(maxThreat)));
+    const boss = BOSS_ROSTER[Math.min(BOSS_ROSTER.length - 1, 1 + Math.floor(maxThreat / 2))];
+    const bt = subwayBossTile();
+    // Never plant the boss in solid rock if the spur layout shifts.
+    let bx = bt.tx * TILE + TILE / 2;
+    let by = bt.ty * TILE + TILE / 2;
+    if (isWall(this.grid[bt.ty]?.[bt.tx])) {
+      const open = resolveSubwayOpen(this.grid, bx, by);
+      bx = open.x;
+      by = open.y;
+    }
     const bid = this.nextEnemyId++;
+    // Deep-line boss — campaign-scaled so rookies don't free-farm the Kernel spur.
+    const bossHp = Math.round(boss.hp * Math.max(1.6, deepProg.bossHpMult * 1.35));
     this.enemies.set(bid, {
       id: bid,
       x: bx,
       y: by,
       ox: bx,
       oy: by,
-      hp: boss.hp,
-      maxHp: boss.hp,
+      hp: bossHp,
+      maxHp: bossHp,
       respawnTick: 0,
       lastFireTick: 0,
       kind: BOSS_KIND,
       boss: true,
       name: "UNDERLINE WARDEN",
       tint: boss.tint,
-      baseMaxHp: boss.hp,
+      baseMaxHp: bossHp,
       phaseIdx: 0,
       engagedTick: 0,
       lastAoeTick: 0,
@@ -1461,7 +1691,11 @@ export class WorldDO {
         dieTick: this.tick + ticks(ENEMY_PROJ_TTL_MS),
         team: 1,
         owner: String(e.id),
-        dmg: Math.round(arch.dmg * BOSS_DMG_MULT * dmgMult),
+        // dmgMult is the raid PHASE mult; the zone/per-enemy factor is separate.
+        // Without it a boss ignored district scaling entirely — the d0 GUTTER KING
+        // and the d7 WARDEN hit for exactly the same, despite bossHpMult ramping
+        // 0.85 → 1.55 across the same spine.
+        dmg: Math.round(arch.dmg * BOSS_DMG_MULT * dmgMult * this.zoneEnemyDmgMult * (e.dmgMult ?? 1)),
       });
     }
   }
@@ -1487,11 +1721,15 @@ export class WorldDO {
 
   async fetch(req: Request): Promise<Response> {
     const url = new URL(req.url);
-    this.initZone(url.searchParams.get("zone"));
+    this.initZone(url.searchParams.get("zone"), parseInstParam(url.searchParams.get("inst")));
     // Ops: a lightweight per-zone metrics probe (no upgrade) for monitoring.
     if (url.pathname === "/stats") {
       return new Response(JSON.stringify(this.getStats()), {
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          "access-control-allow-origin": "*",
+          "cache-control": "no-store",
+        },
       });
     }
     // Cross-zone Cell chat relay — internal DO→DO only (same Worker script).
@@ -1628,6 +1866,7 @@ export class WorldDO {
       return;
     }
     if (msg.t === "leave") return this.onLeave(ws);
+    if (msg.t === "respawn") return void this.onRespawnChoice(ws, msg);
     if (msg.t === "input") return this.onInput(ws, msg);
     if (msg.t === "fire") return this.onFire(ws, msg);
     if (msg.t === "dash") return this.onDash(ws, msg);
@@ -1640,6 +1879,7 @@ export class WorldDO {
     if (msg.t === "stash") return this.onStash(ws, msg);
     if (msg.t === "estate") return this.onEstate(ws, msg);
     if (msg.t === "craft") return this.onCraft(ws, msg);
+    if (msg.t === "harvest") return void this.onHarvest(ws, msg);
     if (msg.t === "buy") return this.onBuy(ws, msg);
     if (msg.t === "chat") return this.onChat(ws, msg);
     if (msg.t === "guild") return this.onGuild(ws, msg);
@@ -1696,7 +1936,14 @@ export class WorldDO {
   private onChat(ws: WebSocket, msg: Extract<ClientMsg, { t: "chat" }>) {
     const p = this.playerFor(ws);
     if (!p) return;
-    const text = (msg.text || "").slice(0, 200).trim();
+    // Whitespace collapses to single spaces before the length clamp. The composer only
+    // emits printable keys, but `text` is off the wire: a crafted line of 200 newlines
+    // was relayed verbatim and rendered as ~2800px of text over every viewport in the
+    // zone, unclearable without leaving. Chat is one line by definition.
+    const text = (typeof msg.text === "string" ? msg.text : "")
+      .replace(/\s+/g, " ")
+      .slice(0, 200)
+      .trim();
     if (!text) return;
     if ((this.tick - p.lastChatTick) * NET_TICK_MS < 300) return; // rate-limit ~3/s
     p.lastChatTick = this.tick;
@@ -1774,7 +2021,17 @@ export class WorldDO {
         return;
       }
       this.leaveParty(p);
-      this.parties.get(pid)!.add(p.id);
+      // Re-fetch: leaveParty can disband the very party we're joining. Accepting a
+      // re-invite from your own 2-person party drops it to size 1, which deletes it,
+      // and the old non-null assertion then threw on undefined.add — ejecting both
+      // members and leaving the invite stuck.
+      const set = this.parties.get(pid);
+      if (!set) {
+        this.pendingInvites.delete(p.id);
+        this.send(ws, { t: "sys", text: "that party broke up" });
+        return;
+      }
+      set.add(p.id);
       p.party = pid;
       this.pendingInvites.delete(p.id);
       this.broadcastParty(pid);
@@ -1810,8 +2067,18 @@ export class WorldDO {
       target.dead = false;
       target.hp = Math.max(20, Math.floor(PLAYER_HP * 0.35));
       target.respawnTick = 0;
+      const rescuerBefore = rescueMemorySnapshot(p.stats);
+      const rescuedBefore = rescueMemorySnapshot(target.stats);
+      if (rescuerBefore.given < MAX_RESCUE_MEMORY) this.bumpStat(p, RESCUES_GIVEN_KEY, 1);
+      if (rescuedBefore.received < MAX_RESCUE_MEMORY) this.bumpStat(target, RESCUES_RECEIVED_KEY, 1);
       this.send(ws, { t: "sys", text: `revived ${target.name}` });
       this.sendTo(target.id, { t: "sys", text: `${p.name} rebooted you — stay close` });
+      const rescuerAfter = rescueMemorySnapshot(p.stats);
+      const rescuedAfter = rescueMemorySnapshot(target.stats);
+      if (rescuerAfter.tier > rescuerBefore.tier) this.sendTo(p.id, { t: "sys", text: `◇ SOCIAL MEMORY · ${rescuerAfter.title} — ${rescuerAfter.line}` });
+      if (rescuedAfter.tier > rescuedBefore.tier) this.sendTo(target.id, { t: "sys", text: `◇ SOCIAL MEMORY · ${rescuedAfter.title} — ${rescuedAfter.line}` });
+      this.pushRelations(p);
+      this.pushRelations(target);
       this.broadcastParty(p.party);
     } else {
       this.leaveParty(p);
@@ -1880,22 +2147,17 @@ export class WorldDO {
     const ids = [...this.players.keys()];
     if (ids.length === 0) return;
     const now = Date.now();
-    const zone = this.zoneName;
+    // session_zone stores DO key (zone or zone#N) so Cell chat can reach the right shard.
+    const zone = this.doKey();
     try {
-      // Chunk to avoid huge batches on crowded hubs.
-      for (let i = 0; i < ids.length; i += 25) {
-        const slice = ids.slice(i, i + 25);
-        await Promise.all(
-          slice.map((id) =>
-            this.env.DB.prepare("UPDATE players SET session_zone = ?, session_at = ? WHERE id = ?")
-              .bind(zone, now, id)
-              .run()
-              .catch(() => {}),
-          ),
-        );
+      // D1 batch is one round-trip per chunk — far cheaper than N parallel HTTP-style prepares.
+      const stmt = this.env.DB.prepare("UPDATE players SET session_zone = ?, session_at = ? WHERE id = ?");
+      for (let i = 0; i < ids.length; i += 40) {
+        const slice = ids.slice(i, i + 40);
+        await this.env.DB.batch(slice.map((id) => stmt.bind(zone, now, id)));
       }
     } catch {
-      /* pre-migration */
+      /* pre-migration or batch unsupported edge */
     }
   }
 
@@ -1906,8 +2168,10 @@ export class WorldDO {
   private async guildRelayCrossZone(gid: number, msg: unknown, fromId: string): Promise<void> {
     try {
       // Keep sender's session_zone hot so other zones can reach us next message.
+      // Value is DO key (zone or zone#N) — not only the logical map zone.
+      const selfKey = this.doKey();
       void this.env.DB.prepare("UPDATE players SET session_zone = ?, session_at = ? WHERE id = ?")
-        .bind(this.zoneName, Date.now(), fromId)
+        .bind(selfKey, Date.now(), fromId)
         .run()
         .catch(() => {});
 
@@ -1924,7 +2188,7 @@ export class WorldDO {
              AND p.session_zone IS NOT NULL AND p.session_zone != ''
              AND p.session_zone != ?`,
         )
-          .bind(gid, this.zoneName)
+          .bind(gid, selfKey)
           .all<{ zone: string }>();
         zones = (results ?? []).map((r) => r.zone).filter(Boolean);
         this.guildZoneCache.set(gid, { zones, at: Date.now() });
@@ -1932,15 +2196,22 @@ export class WorldDO {
       if (zones.length === 0) return;
       const payload = JSON.stringify({ guildId: gid, fromId, msg });
       await Promise.all(
-        zones.map(async (zone) => {
+        zones.map(async (doKey) => {
           const hop = async () => {
-            const stub = this.env.WORLD.get(this.env.WORLD.idFromName(zone));
+            // session_zone is the DO name; logical zone for init is without #inst.
+            const hash = doKey.lastIndexOf("#");
+            const logical = hash > 0 ? doKey.slice(0, hash) : doKey;
+            const instQ = hash > 0 ? doKey.slice(hash + 1) : "0";
+            const stub = this.env.WORLD.get(this.env.WORLD.idFromName(doKey));
             const res = await stub.fetch(
-              new Request(`https://world/guild-relay?zone=${encodeURIComponent(zone)}`, {
-                method: "POST",
-                headers: { "content-type": "application/json" },
-                body: payload,
-              }),
+              new Request(
+                `https://world/guild-relay?zone=${encodeURIComponent(logical)}&inst=${encodeURIComponent(instQ)}`,
+                {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: payload,
+                },
+              ),
             );
             if (!res.ok) throw new Error(`relay ${res.status}`);
           };
@@ -2347,7 +2618,9 @@ export class WorldDO {
    * Guest ids are lowercase names; wallet ids are `w:0x…` checksummed.
    */
   private resolvePlayer(token: string | undefined | null): PlayerState | undefined {
-    const raw = (token || "").trim();
+    // Coerce before trimming: `to` is untrusted, and a non-string like {"to":123} made
+    // `123 || ""` evaluate to 123, so .trim() threw out of chat/party/mute/trade.
+    const raw = (typeof token === "string" ? token : "").trim();
     if (!raw) return undefined;
     const direct = this.players.get(raw) ?? this.players.get(raw.toLowerCase());
     if (direct) return direct;
@@ -2517,6 +2790,7 @@ export class WorldDO {
           return sys("market listing failed — item returned to bag");
         }
         sys(currency === "metro" ? `listed ${item.name} for ◈${price} $METRO (fee ◈${fee})` : `listed ${item.name} for ₵${price} (fee ₵${fee})`);
+        this.awardSkill(p, "trading", 12);
         this.send(ws, { t: "inv", items: p.inventory });
         await this.sendMarket(ws);
         return;
@@ -2584,6 +2858,7 @@ export class WorldDO {
               this.bumpStat(seller, "credits", price);
             }
             seller.dirty = true;
+            this.awardSkill(seller, "trading", 18);
             this.sendTo(seller.id, {
               t: "sys",
               text: isMetro ? `✦ sold ${item.name} for ◈${price} $METRO` : `✦ sold ${item.name} for ₵${price}`,
@@ -2610,6 +2885,7 @@ export class WorldDO {
             }
           }
         }
+        this.awardSkill(p, "trading", 18);
         sys(isMetro ? `bought ${item.name} for ◈${price} $METRO` : `bought ${item.name} for ₵${price}`);
         await this.sendMarket(ws);
         return;
@@ -2635,11 +2911,13 @@ export class WorldDO {
       let dc = 0;
       let dk = 0;
       let dm = 0;
+      let auctionSales = 0;
       const items: Item[] = [];
       for (const r of results) {
         dc += r.credits || 0;
         dk += r.cores || 0;
         dm += r.metro || 0;
+        if ((r.reason || "").startsWith("auction sale")) auctionSales++;
         const it = this.parseItemJson(r.item);
         if (it) items.push(it);
       }
@@ -2662,6 +2940,7 @@ export class WorldDO {
         }
       }
       p.dirty = true;
+      if (auctionSales > 0) this.awardSkill(p, "trading", auctionSales * 18);
       if (dc || dk || dm) {
         const parts = [];
         if (dc) parts.push(`₵${dc}`);
@@ -2884,6 +3163,11 @@ export class WorldDO {
     b.cores += oA.cores - oB.cores;
     a.dirty = true;
     b.dirty = true;
+    // Empty handshakes remain legal for social UX, but are not profession work.
+    if (oA.credits + oA.cores + oB.credits + oB.cores > 0) {
+      this.awardSkill(a, "trading", 20);
+      this.awardSkill(b, "trading", 20);
+    }
     this.endTrade(tr, "done", "trade complete");
   }
 
@@ -2973,6 +3257,8 @@ export class WorldDO {
     let id: string;
     let walletSignedIn = false;
     if (proof?.wallet || proof?.sig) {
+      // Prefer a valid signature when present; if it fails (stale clock / near-expiry),
+      // fall through to the device session so zone travel never hard-requires a re-sign.
       const verified =
         proof.wallet && proof.sig && Number.isFinite(proof.ts)
           ? verifyWalletLogin({ wallet: proof.wallet, sig: proof.sig, ts: proof.ts! })
@@ -2981,7 +3267,7 @@ export class WorldDO {
         id = verified;
         walletSignedIn = true;
       } else if (proof.wallet && proof.session) {
-        // Session resume (zone travel) — no MetaMask popup.
+        // Session resume (zone travel) — no wallet popup.
         const wid = walletPlayerId(proof.wallet);
         if (!wid) {
           this.send(ws, { t: "sys", text: "wallet sign-in failed — bad wallet address" });
@@ -2994,6 +3280,18 @@ export class WorldDO {
         }
         id = wid;
         // secret match checked after loadPlayer below
+      } else if (proof.wallet && !proof.session) {
+        // Signature missing/stale and no device session — ask client to present session.
+        this.send(ws, {
+          t: "sys",
+          text: "wallet session missing — reconnect once from the title screen (zone travel should not require this)",
+        });
+        try {
+          ws.close(4001, "auth");
+        } catch {
+          /* already closing */
+        }
+        return;
       } else {
         this.send(ws, { t: "sys", text: "wallet sign-in failed — bad signature or stale request" });
         try {
@@ -3021,42 +3319,49 @@ export class WorldDO {
       if (!presented) {
         return reject("guest save requires a device key — enable storage / cookies for this site, then retry");
       }
-      // Harness leftovers: smoke.mjs binds `smk-<name>`. Those are not real device keys —
-      // allow a real client UUID to reclaim the callsign (was locking players out of common names).
-      const harnessSecret = !!p.secret && (p.secret.startsWith("smk-") || p.secret.length < 16);
+      // Harness leftovers: smoke.mjs binds `smk-<name>` — not real device keys; allow reclaim.
+      //
+      // Deliberately keyed on the `smk-` prefix ALONE. This used to also reclaim any
+      // secret shorter than 16 chars, which made those rows claimable by anyone
+      // presenting an arbitrary key: `{"t":"login","name":"<victim>","secret":"x"}`
+      // rebound the row to the attacker — the exact takeover the secret prevents.
+      // A short secret is still a secret; it just has to match.
+      const harnessSecret = !!p.secret && p.secret.startsWith("smk-");
       const mismatch = !!p.secret && p.secret !== presented && !harnessSecret;
       if (mismatch) {
-        // The device-secret lock exists ONLY to stop someone hijacking an established
-        // guest's assets (house / credits / loot). A fresh or barely-started save has
-        // nothing to steal, so a mismatch there is almost always the SAME player after a
-        // storage wipe — new browser, cleared cookies, incognito, or the embedded webview
-        // that doesn't persist localStorage. Bricking a no-wallet newcomer at the tutorial
-        // door is pure downside, so only keep the hard lock when the save is worth
-        // protecting; otherwise let the new device rebind and take over.
-        if (await this.guestSaveHasAssets(p)) {
-          return reject("that callsign is already saved on another device — pick a new callsign, or link a wallet to move it");
-        }
+        // PERMANENT guest memory: never rebind over an existing device secret.
+        // The only way to remove this runner is NEW RUNNER → /player/retire (with secret).
+        // Link a Solana wallet for a portable identity that is never deleted.
+        return reject(
+          "that callsign is already saved on another device — CONTINUE on the original device, pick a new callsign (NEW RUNNER), or link a Solana wallet for permanent progress",
+        );
       }
-      if (!p.secret || harnessSecret || mismatch) {
-        // Bind on first claim, rebind a harness row, or rebind an empty save onto the
-        // presenting device (the returning-after-wipe case cleared above).
+      if (!p.secret || harnessSecret) {
+        // First claim or reclaim smoke harness — bind this device.
         p.secret = presented;
         await this.env.DB.prepare("UPDATE players SET secret = ? WHERE id = ?").bind(presented, id).run();
       }
     } else {
       const session = (proof?.session ?? "").slice(0, 64) || null;
       if (walletSignedIn) {
-        // Fresh MetaMask signature: bind/refresh device session so later zones skip re-sign.
+        // Fresh wallet signature: bind/refresh device session so later zones skip re-sign.
         if (session) {
           p.secret = session;
-          await this.env.DB.prepare("UPDATE players SET secret = ? WHERE id = ?").bind(session, id).run();
+          try {
+            await this.env.DB.prepare("UPDATE players SET secret = ? WHERE id = ?").bind(session, id).run();
+          } catch {
+            /* pre-migration / transient — in-memory secret still gates this process */
+          }
         }
       } else {
-        // Session-only resume: must match the secret bound on a prior signed login.
+        // Session-only resume (zone travel / reconnect): must match the secret bound
+        // on a prior signed login. Never open a wallet UI from the server side.
         if (!session || !p.secret || p.secret !== session) {
           this.send(ws, {
             t: "sys",
-            text: "wallet session expired — sign in once with MetaMask from the title screen",
+            text: !p.secret
+              ? "wallet session not bound yet — sign in once from the title screen, then zone travel stays silent"
+              : "wallet session mismatch — sign in once from the title screen (device storage may have been cleared)",
           });
           try {
             ws.close(4001, "auth");
@@ -3066,63 +3371,53 @@ export class WorldDO {
           return;
         }
       }
-      // Wallet login: if this device has a guest secret for the same callsign, merge
-      // guest progress (credits / look / campaign) into the wallet account once.
-      // Lets offline players claim their runner when they link a wallet.
-      const presented = (proof?.secret ?? "").slice(0, 64) || null;
-      if (presented) {
-        const guestId = name.toLowerCase().replace(/[^a-z0-9_-]/g, "") || "";
-        if (guestId && !guestId.startsWith("__") && guestId !== id) {
-          try {
-            const guest = await this.loadPlayer(guestId, name, fac);
-            if (guest.secret && guest.secret === presented) {
-              // only merge into a fresh wallet shell (no look / low credits)
-              const walletFresh = !p.look && (p.credits ?? 0) < 50;
-              if (walletFresh && (guest.look || (guest.credits ?? 0) > (p.credits ?? 0))) {
-                if (guest.look) p.look = guest.look;
-                if ((guest.credits ?? 0) > (p.credits ?? 0)) p.credits = guest.credits;
-                if ((guest.cores ?? 0) > (p.cores ?? 0)) p.cores = guest.cores;
-                if (guest.campaign) p.campaign = guest.campaign;
-                if (guest.classId) p.classId = guest.classId;
-                p.dirty = true;
-                this.send(ws, {
-                  t: "sys",
-                  text: "◈ offline runner claimed onto this wallet — progress merged",
-                });
-              }
-            }
-          } catch {
-            /* guest load failed — ignore */
-          }
-        }
-      }
+      // Guest→wallet binding is explicit via POST /player/link-wallet (title screen).
+      // Do not silently merge here — that could attach the wrong callsign mid-session.
     }
     p.faction = fac;
-    // Hub soft-cap: if METRO CITY is full, route newcomers to d0 (existing session may stay).
-    if (
-      this.zoneName === "safe" &&
-      this.sessions.size >= this.flags.hubCap &&
-      !this.players.has(id)
-    ) {
-      this.send(ws, {
-        t: "sys",
-        text: `HUB AT CAPACITY (${this.flags.hubCap}) — routing you to downtown (d0). Deploy from there.`,
-      });
-      this.send(ws, { t: "redirect", zone: "d0", text: "hub full" });
-      try {
-        ws.close(1000, "hub_cap");
-      } catch {
-        /* noop */
+    // Instance hard-cap (race with Worker balancer): rebalance within the same zone
+    // so the front door can pick a less-loaded shard. Existing residents stay put.
+    //
+    // Only bounce when a bounce can actually resolve. A zone with one instance
+    // (every non-shardable zone: bridges, tutorial, estates, interiors) has
+    // nowhere to send them — the front door would route them straight back here,
+    // so rejecting is a closed door, not a rebalance. Same if we already bounced
+    // this player: the slices are full, and admitting beats an endless volley.
+    {
+      const hard = hardCapFor(this.zoneName, this.env, this.flags);
+      const canRebalance = canRebalanceZone(this.zoneName, this.env);
+      const now = Date.now();
+      for (const [pid, at] of this.bouncedAt) {
+        if (now - at > WorldDO.BOUNCE_GRACE_MS) this.bouncedAt.delete(pid);
       }
-      return;
+      const alreadyBounced = this.bouncedAt.has(id);
+      if (canRebalance && !alreadyBounced && this.sessions.size >= hard && !this.players.has(id)) {
+        this.bouncedAt.set(id, now);
+        this.send(ws, {
+          t: "sys",
+          text: `${this.zoneName.toUpperCase()} instance full (${hard}) — finding another slice…`,
+        });
+        this.send(ws, {
+          t: "redirect",
+          zone: this.zoneName,
+          rebalance: true,
+          text: "instance full",
+        });
+        try {
+          ws.close(1000, "instance_full");
+        } catch {
+          /* noop */
+        }
+        return;
+      }
     }
-    // Claim this zone as the sole active session writer for this player. Older zone
+    // Claim this DO as the sole active session writer for this player. Older zone
     // DOs lose the right to absolute-overwrite inventory/balances on their next persist.
     p.sessionAt = Date.now();
     p.sessionValid = true;
     try {
       await this.env.DB.prepare("UPDATE players SET session_zone = ?, session_at = ? WHERE id = ?")
-        .bind(this.zoneName, p.sessionAt, id)
+        .bind(this.doKey(), p.sessionAt, id)
         .run();
     } catch {
       /* pre-migration: session columns absent — degrade to same-zone kick only */
@@ -3142,50 +3437,67 @@ export class WorldDO {
     this.ownerSocket.set(id, ws);
     // Pull any bridge deposits/withdrawals that hit D1 while this row was cold / offline.
     await this.pullExternalBalances(p);
-    // warm-path spawn sanitation: an in-memory player can be wall-locked too
-    // (loadPlayer's check only covers cold loads)
-    if (
-      tileIsWall(p.x, p.y, this.grid) ||
-      (tileIsWall(p.x + TILE, p.y, this.grid) &&
-        tileIsWall(p.x - TILE, p.y, this.grid) &&
-        tileIsWall(p.x, p.y + TILE, this.grid) &&
-        tileIsWall(p.x, p.y - TILE, this.grid))
-    ) {
-      p.x = this.spawn.x;
-      p.y = this.spawn.y;
-      p.dirty = true;
-    }
     // class selects the signature ability (validated against the known roster)
     if (proof?.classId && CLASS_IDS.has(proof.classId)) {
       p.classId = proof.classId;
       p.dirty = true;
     }
-    // Zone handoff: always place at the correct entry spawn for this room.
-    // (Venue-sized interiors used to inherit district/safehouse coords via a weak
-    // spawnPointForTravel match and park the runner outside the walls.)
-    if (proof?.from || isVenueSizedZone(this.zoneName) || isSafehouseSizedInterior(this.zoneName)) {
+    // POSITION RULES
+    //  • Intentional zone travel: client sends `from` → place at the trail/door entry.
+    //  • Subway: `from` selects the station matching the surface zone you dropped in from.
+    //  • Same-zone reconnect / hibernation resume: NEVER relocate — keep in-memory or D1 x,y.
+    //  • Cold login without `from`: loadPlayer already restored D1 coords when zone matches.
+    //  • Death default reprint stays at last standing pos; CITY START is an explicit choice.
+    // Was broken: client defaulted `from` to "d0" on every OnlineScene create, so reconnect
+    // always looked like a trail handoff and forced door-mat spawn.
+    const isTravelHandoff = !!(proof?.from && String(proof.from).trim());
+    if (isTravelHandoff && this.zoneName === "subway") {
+      const raw = subwaySpawnForEntry(proof?.from);
+      const s = resolveSubwayOpen(this.grid, raw.x, raw.y);
+      p.x = s.x;
+      p.y = s.y;
+      p.dirty = true;
+      // Do NOT mutate zone-global this.spawn — last traveler would poison
+      // cold/resume defaults for everyone else on this DO.
+    } else if (isTravelHandoff) {
       const def = this.bridgeIndex >= 0 ? undefined : DISTRICTS[this.districtIndex];
       const s = spawnPointForTravel(this.grid, this.zoneName, proof?.from, def, this.spawn);
       p.x = s.x;
       p.y = s.y;
       p.dirty = true;
-    } else if (
-      tileIsWall(p.x, p.y, this.grid) ||
-      p.x < 0 ||
-      p.y < 0 ||
-      p.x >= gridDims(this.grid).worldW ||
-      p.y >= gridDims(this.grid).worldH
-    ) {
-      p.x = this.spawn.x;
-      p.y = this.spawn.y;
-      p.dirty = true;
+    } else {
+      // Resume path: only fix invalid geometry (wall / OOB / radius collision),
+      // never reset to zone origin when already free.
+      const dims = gridDims(this.grid);
+      const oob = p.x < 0 || p.y < 0 || p.x >= dims.worldW || p.y >= dims.worldH;
+      // collides() = player-radius box; tileIsWall alone missed half-in-wall roof seats.
+      const stuck = oob || collides(p.x, p.y, this.grid);
+      if (stuck) {
+        const open = resolveOpenSpawn(this.grid, { x: p.x, y: p.y });
+        if (collides(open.x, open.y, this.grid)) {
+          p.x = this.spawn.x;
+          p.y = this.spawn.y;
+        } else {
+          p.x = open.x;
+          p.y = open.y;
+        }
+        p.dirty = true;
+      }
     }
     // Hard guarantee: final position never collides with walls (player radius).
+    // Covers travel handoffs, subway station pads, and D1 resume points.
     {
       const open = resolveOpenSpawn(this.grid, { x: p.x, y: p.y });
-      if (open.x !== p.x || open.y !== p.y) {
+      if (open.x !== p.x || open.y !== p.y || collides(p.x, p.y, this.grid)) {
         p.x = open.x;
         p.y = open.y;
+        p.dirty = true;
+      }
+      // Still colliding after resolve (degenerate grid) → zone spawn, then resolve again.
+      if (collides(p.x, p.y, this.grid)) {
+        const fallback = resolveOpenSpawn(this.grid, this.spawn);
+        p.x = fallback.x;
+        p.y = fallback.y;
         p.dirty = true;
       }
     }
@@ -3226,11 +3538,15 @@ export class WorldDO {
       tickMs: NET_TICK_MS,
       world: { w: gridDims(this.grid).worldW, h: gridDims(this.grid).worldH },
       protocol: PROTOCOL_VERSION,
+      build: this.env.METRO_BUILD || undefined,
       look: p.look,
       lookLocked: lookLocked || !!p.look,
       fragments: p.fragments,
       // Always send boolean so clients can distinguish missing field vs false.
       god: !!p.godMode,
+      // Sticky instance for reconnect / party affinity (Worker load-aware /ws).
+      inst: this.instanceId,
+      zone: this.zoneName,
     });
     if (p.godMode) {
       // Sync and non-blocking — must not delay the rest of login / first snapshots.
@@ -3284,8 +3600,10 @@ export class WorldDO {
       this.sendTutorialState(p);
     } else {
       this.ensureStarterKit(p);
+      // Journal only on zone entry — do NOT re-push the full story/uplink popup.
+      // That was firing on every door/district hop and felt like spam. Story beats
+      // still send when a stage advances, the FIXER is engaged, or meltdown fires.
       this.sendCampaignJournal(ws, p);
-      this.sendCampaignBeat(ws, p);
       if (this.zoneName === "safe") {
         const nearHub =
           Math.hypot(p.x - CITY_HUB_SPAWN.x, p.y - CITY_HUB_SPAWN.y) < 96 ||
@@ -3319,8 +3637,42 @@ export class WorldDO {
     if (this.zoneName === ESTATES_ZONE || parseEstateInterior(this.zoneName) !== null) this.campaignEvent(p, "visit");
     // district arrivals: the RUNNING condition + the day's bounty, so the hunt is known
     if (/^d\d+$/.test(this.zoneName)) {
-      const dm = dailyDistrictMod(this.districtIndex, this.modDay >= 0 ? this.modDay : dayIndex());
+      const districtDay = this.modDay >= 0 ? this.modDay : dayIndex();
+      const dm = dailyDistrictMod(this.districtIndex, districtDay);
       this.send(ws, { t: "sys", text: `◈ district condition — ${dm.name}: ${dm.blurb}` });
+      const civic = dailyDistrictOperation(this.districtIndex, districtDay);
+      const civicProgress = Math.min(civic.count, p.stats[districtOperationKey(this.districtIndex, districtDay)] ?? 0);
+      this.send(ws, {
+        t: "sys",
+        text: `◇ PUBLIC OP · ${civic.name} (${civicProgress}/${civic.count}) — ${civic.brief} Objective: ${districtOperationObjectiveLabel(civic)}.`,
+      });
+      const aftermath = districtAftermath(this.districtIndex, districtDay, this.civicMomentum(districtDay));
+      if (aftermath.completions > 0) {
+        this.send(ws, {
+          t: "sys",
+          text: `◆ ${aftermath.name} · ${aftermath.completions} public ${aftermath.completions === 1 ? "win" : "wins"} today — ${aftermath.line}`,
+        });
+      }
+      const territoryRecord = decodeTerritoryLegacy(
+        this.meta[territoryLegacyKey(this.districtIndex)],
+        this.districtIndex,
+        districtDay,
+      );
+      if (territoryRecord.flips > 0) {
+        this.send(ws, { t: "sys", text: `▣ RELAY LEDGER · ${territoryLegacyLine(territoryRecord, districtDay)}` });
+      }
+      this.send(ws, {
+        t: "sys",
+        text: `⚑ ${factionTerritoryLine(p.faction, this.districtControl(), DISTRICTS[this.districtIndex]?.name ?? "the district")}`,
+      });
+      this.send(ws, {
+        t: "sys",
+        text: `⬡ ${factionCampaignReaction(p.faction, this.districtControl(), DISTRICTS[this.districtIndex]?.name ?? "the district")}`,
+      });
+      const campaignEcho = districtCampaignEcho(this.districtIndex, p.campaign.completed, [...p.campaign.flags]);
+      if (campaignEcho) this.send(ws, { t: "sys", text: `◈ CAMPAIGN ECHO · ${campaignEcho}` });
+      const judgment = factionJudgmentReaction(p.faction, [...p.campaign.flags]);
+      if (judgment) this.send(ws, { t: "sys", text: `⚖ CELL JUDGMENT · ${judgment}` });
       await this.maybePromoteHvt();
       for (const e of this.enemies.values())
         if (e.hvt && e.hp > 0) {
@@ -3333,53 +3685,20 @@ export class WorldDO {
     this.noteDeepest(p); // arriving in this district may set a "deepest reached" milestone
     this.send(ws, { t: "achv", ids: [...p.achv] }); // hydrate the unlocked achievement set
     await this.sendGuild(ws, p); // hydrate cell membership/bank/roster (cross-zone, D1)
+    await this.sendChronicle(ws); // shared weekly history from war/civic/boss/Cell ledgers
     await this.drainMail(p); // collect any auction proceeds that arrived while away
     this.sendContracts(ws, p); // hydrate today's daily contracts + reputation
     this.sendCosmetics(ws, p); // hydrate owned cosmetics + equipped transmog
     this.sendBounty(ws, p); // hydrate any active NPC bounty
+    this.bountyTravelEvent(p); // destination arrival itself completes a courier route
+    this.sendRelations(ws, p); // hydrate durable contact trust + district standing
+    this.sendSkills(ws, p); // hydrate server-owned profession progression
+    this.sendArchives(ws, p); // hydrate bounded civic records recovered at hub terminals
+    this.sendCivic(ws); // hydrate today's shared local aftermath on streets and interiors
     const organic = proof?.arrival !== "fast";
     await this.markDiscovered(ws, id, organic);
     this.ensureTick();
     await this.ensureSupervisor();
-  }
-
-  /**
-   * True when a guest save holds real, hijackable value worth keeping the device lock on.
-   * Fresh or barely-started saves return false so a returning device can rebind the callsign
-   * after a storage wipe (new browser / cleared cookies / non-persistent webview) instead of
-   * being locked out forever — the exact wall a no-wallet newcomer hits at the tutorial door.
-   *
-   * Signals are progression state, NOT the starter grant: every new guest is handed
-   * ~100₵, a few cores, and two starter items, and may reach the city before storage
-   * is durable. A callsign should only hard-lock once there is actual progress/value
-   * to protect: quest state, levels, banked credits, fragments, weekly flags, stash,
-   * or property. Only consulted on a secret mismatch, so the D1 lookups are off the
-   * hot path.
-   */
-  private async guestSaveHasAssets(p: PlayerState): Promise<boolean> {
-    if ((p.level ?? 1) >= 2) return true; // real grind, not a first-kill fluke
-    if ((p.credits ?? 0) >= 1000) return true; // banked wealth well beyond the ~100₵ starter grant
-    if ((p.metro ?? 0) >= 10) return true; // token balance is real value
-    if ((p.cores ?? 0) >= 40) return true; // substantial forge material
-    if (p.stash.length > 0) return true; // anything moved to a lockbox is intentional value
-    if (p.inventory.length > 4) return true; // more than starter kit
-    if (Object.keys(p.equipped).length > 2) return true; // geared beyond starters
-    if (p.fragments.length > 0) return true; // recovered story memory / dive reward
-    if (p.campaign.activeId || p.campaign.completed.length > 0 || p.campaign.flags.size > 0) return true;
-    if (p.cosmeticsOwned.size > 0) return true;
-    try {
-      const est = await this.env.DB.prepare("SELECT 1 FROM estates WHERE owner = ? LIMIT 1").bind(p.id).first();
-      if (est) return true; // owns a home — the exact thing the lock protects
-    } catch {
-      /* estates table absent in some test DBs — treat as no property */
-    }
-    try {
-      const listing = await this.env.DB.prepare("SELECT 1 FROM auctions WHERE seller = ? AND status='open' LIMIT 1").bind(p.id).first();
-      if (listing) return true;
-    } catch {
-      /* market table absent */
-    }
-    return false;
   }
 
   /** Build a player's runtime state, loading durable fields (pos/credits/xp/cores/
@@ -3461,7 +3780,9 @@ export class WorldDO {
       equipped = parseEquipped(row.equipped);
       try {
         const f = row.fragments ? (JSON.parse(row.fragments) as unknown) : [];
-        fragments = Array.isArray(f) ? f.filter((v): v is string => typeof v === "string") : [];
+        fragments = Array.isArray(f)
+          ? normalizeFragmentSequence(f.filter((v): v is string => typeof v === "string"))
+          : [];
       } catch {
         fragments = [];
       }
@@ -3471,25 +3792,23 @@ export class WorldDO {
       tutorialStep = row.tutorial_step ?? 0;
       tutorialMode = row.tutorial_mode === "full" ? "full" : "quick";
       if (this.inTutorial() && tutorialDone) {
+        // Finished drill but still connecting to tutorial DO → hub coords fallback
+        // (client usually redirects out of the yard).
         x = CITY_HUB_SPAWN.x;
         y = CITY_HUB_SPAWN.y;
       } else if (row.zone === this.zoneName) {
+        // Exact resume: same zone → last standing position (reconnect / page reload).
         x = row.x;
         y = row.y;
-        // sanitize: a save can land in (or be sealed inside) geometry — if the spot
-        // itself is wall, or every one-tile step out of it is wall, respawn at the
-        // zone spawn instead of trapping the player forever
-        const stuck =
-          tileIsWall(x, y, this.grid) ||
-          (tileIsWall(x + TILE, y, this.grid) &&
-            tileIsWall(x - TILE, y, this.grid) &&
-            tileIsWall(x, y + TILE, this.grid) &&
-            tileIsWall(x, y - TILE, this.grid));
-        if (stuck) {
-          x = this.spawn.x;
-          y = this.spawn.y;
+        // Player-radius collision — not just the centre tile (half-in-wall seats).
+        if (collides(x, y, this.grid)) {
+          const open = resolveOpenSpawn(this.grid, { x, y });
+          x = open.x;
+          y = open.y;
         }
       }
+      // Different zone without travel `from` → zone default spawn (map deploy / intentional
+      // zone pick). Client resume always targets row.zone so this path is rare.
     } else {
       await this.insertNewPlayer(id, name, x, y);
     }
@@ -3573,13 +3892,21 @@ export class WorldDO {
       if (brow) {
         const def = bountyById(brow.bounty_id);
         const progress = Math.max(0, Math.floor(Number(brow.progress) || 0));
-        if (def && progress < def.count) bounty = { id: def.id, progress };
+        const eligible = def && bountyIsEligible(
+          def,
+          storyPhase(campaign?.activeId ?? null),
+          residentConfirmationSnapshot(stats),
+          campaign.completed,
+          Array.from({ length: DISTRICTS.length }, (_, district) =>
+            decodeChronicleCivic(this.meta[chronicleCivicKey(district)], currentGuildWeek())),
+        );
+        if (def && eligible && progress < def.count) bounty = { id: def.id, progress };
         else bountyDirty = true;
       }
     } catch {
       /* table may not exist before migration */
     }
-    const mods = deriveMods(equipped);
+    const mods = deriveMods(equipped, levelForXp(xp));
     const maxHp = PLAYER_HP + Math.round(mods.hpAdd);
     return {
       id,
@@ -3595,6 +3922,9 @@ export class WorldDO {
       hp: maxHp,
       dead: false,
       respawnTick: 0,
+      deathStreak: 0,
+      deathStreakTick: 0,
+      pvpDeath: false,
       pvpSafeUntil: 0,
       pvpInArena: false,
       pvpEscrow: 0,
@@ -3661,6 +3991,7 @@ export class WorldDO {
       cosmeticEquipped,
       bounty,
       bountyDirty,
+      bountyCompletedAt: new Map(),
       npcCd: new Map(),
       look,
     };
@@ -3701,8 +4032,12 @@ export class WorldDO {
       progress: p.campaign.progress,
       objective: s?.objective ?? "",
       completed: [...p.campaign.completed],
+      flags: [...p.campaign.flags],
     });
   }
+
+  /** Last story-popup fingerprint per player (throttle re-brief spam). */
+  private lastStoryBeatKey = new Map<string, { key: string; at: number }>();
 
   /** Push the current campaign beat (stage journal + uplink line) to one client. */
   private sendCampaignBeat(ws: WebSocket, p: PlayerState) {
@@ -3710,12 +4045,37 @@ export class WorldDO {
     const q = p.campaign.active;
     const s = p.campaign.currentStage;
     if (q && s) {
+      if (p.campaign.fixerJudgmentPending) {
+        this.send(ws, {
+          t: "story",
+          quest: q.name,
+          stage: s.id,
+          title: "JUDGMENT",
+          text: "THE FIXER sold Blanks to keep the route open, then left your line unsigned. Mercy preserves a compromised witness. Exposure gives the city the ledger and may destroy the person who can read it.",
+          journal: s.journal,
+          objective: "Choose what THE FIXER becomes after the debt",
+          done: false,
+          choices: [
+            { id: "spare", label: "SPARE · keep the witness" },
+            { id: "expose", label: "EXPOSE · publish the ledger" },
+          ],
+        });
+        return;
+      }
       // Prefer spoken uplink; fall back to first-person journal so the FIXER always has copy.
       const spoken =
         s.onEnterLine ||
         (s.on.type === "talk"
           ? `THE FIXER: ${s.journal}`
           : `THE FIXER: ${s.objective}. ${s.journal}`);
+      // Throttle identical re-briefs (talk/engage spam) to once per 45s per stage.
+      const beatKey = `${q.id}:${s.id}:${p.campaign.progress}`;
+      const prev = this.lastStoryBeatKey.get(p.id);
+      const now = Date.now();
+      if (prev && prev.key === beatKey && now - prev.at < 45_000) {
+        return; // journal already updated; skip popup
+      }
+      this.lastStoryBeatKey.set(p.id, { key: beatKey, at: now });
       this.send(ws, {
         t: "story",
         quest: q.name,
@@ -3731,41 +4091,142 @@ export class WorldDO {
     const next = p.campaign.nextOffer();
     if (next) {
       const hook = next.stages[0]?.journal ?? next.name;
+      const echo = campaignEchoLine("fixer", p.campaign.completed, [...p.campaign.flags]);
       this.send(ws, {
         t: "story",
         quest: next.name,
         stage: "offer",
         title: "THE FIXER",
-        text: `THE FIXER: ${hook}\n\n▸ Job accepted — ${next.name}. Check your objective and deploy when ready.`,
+        text: `THE FIXER: ${echo ? `${echo}\n\n` : ""}${hook}\n\n▸ Job accepted — ${next.name}. Check your objective and deploy when ready.`,
         journal: next.stages[0]?.journal ?? "",
         objective: next.stages[0]?.objective ?? "Follow THE FIXER",
         done: false,
       });
       return;
     }
+    const melted = p.campaign.hasFlag(MELTDOWN_VICTORY_FLAG);
     this.send(ws, {
       t: "story",
       quest: "THE AWAKENING",
-      stage: "done",
-      title: "Recurrence",
-      text: CAMPAIGN_DONE_TEXT,
-      journal: CAMPAIGN_DONE_TEXT,
-      objective: "—",
+      stage: melted ? "meltdown" : "done",
+      title: melted ? "MELTDOWN" : "Recurrence",
+      text: melted ? MELTDOWN_VICTORY_TEXT : CAMPAIGN_DONE_TEXT,
+      journal: melted ? MELTDOWN_VICTORY_TEXT : CAMPAIGN_DONE_TEXT,
+      objective: melted ? "CITY START · bag kept · keep running" : "—",
       done: true,
+      meltdown: melted,
     });
   }
 
   private grantCampaignReward(p: PlayerState, reward: QuestReward) {
-    p.xp += reward.xp;
-    p.level = levelForXp(p.xp);
+    this.grantXp(p, reward.xp);
     const paid = this.grantEmit(p, "quest", reward.currency);
     this.sendTo(p.id, { t: "sys", text: `◈ quest complete — +${reward.xp} XP  ₵${paid}` });
+  }
+
+  /**
+   * Personal meltdown victory — campaign climax for ONE player.
+   * Does NOT wipe D1, other players, seasons, or the shared world.
+   * Heals the runner and redirects them to METRO CITY hub (CITY START).
+   */
+  private async personalMeltdownVictory(p: PlayerState) {
+    if (p.campaign.hasFlag(MELTDOWN_VICTORY_FLAG)) return;
+    p.campaign.flags.add(MELTDOWN_VICTORY_FLAG);
+    p.dead = false;
+    p.hp = p.maxHp;
+    p.respawnTick = this.tick;
+    p.pvpDeath = false;
+    p.deathStreak = 0;
+    p.deathStreakTick = 0;
+    p.pvpInArena = false;
+    p.pvpSafeUntil = this.tick + ticks(4000);
+    p.iframeUntilTick = this.tick + ticks(2000);
+    // Park on hub pad so the next zone's loadPlayer lands at CITY START.
+    const hub = this.zoneName === "safe" ? this.spreadSpawn(CITY_HUB_SPAWN, p.id) : CITY_HUB_SPAWN;
+    p.x = hub.x;
+    p.y = hub.y;
+    p.dirty = true;
+
+    this.sendTo(p.id, {
+      t: "story",
+      quest: "THE AWAKENING",
+      stage: "meltdown",
+      title: "MELTDOWN",
+      text: MELTDOWN_VICTORY_TEXT,
+      journal: MELTDOWN_VICTORY_TEXT,
+      objective: "Respawning at CITY START · progress kept",
+      done: true,
+      meltdown: true,
+    });
+    this.sendTo(p.id, {
+      t: "sys",
+      text: "◈ MELTDOWN — personal victory · YOU reboot at CITY START · other runners are untouched",
+    });
+    for (const [sock, id] of this.sessions) {
+      if (id === p.id) this.sendCampaignJournal(sock, p);
+    }
+
+    // Already in hub: snap in-place, no zone handoff.
+    if (this.zoneName === "safe") {
+      p.dirty = true;
+      return;
+    }
+
+    try {
+      if (p.pvpEscrow > 0) await this.refundPvpEscrow(p, "meltdown victory");
+    } catch {
+      /* best effort */
+    }
+    try {
+      await this.upsertPlayer(p, { zoneOverride: "safe" });
+    } catch {
+      /* best effort */
+    }
+
+    // Kick only this player's sockets to safe — never broadcast, never wipe others.
+    const sockets: WebSocket[] = [];
+    for (const [sock, id] of this.sessions) if (id === p.id) sockets.push(sock);
+    for (const sock of sockets) {
+      try {
+        this.send(sock, {
+          t: "redirect",
+          zone: "safe",
+          text: "◈ MELTDOWN → CITY START · bag kept · the sprawl continues for everyone else",
+        });
+      } catch {
+        /* ignore */
+      }
+      try {
+        this.send(sock, { t: "bye" });
+      } catch {
+        /* ignore */
+      }
+      this.sessions.delete(sock);
+      if (this.ownerSocket.get(p.id) === sock) this.ownerSocket.delete(p.id);
+      try {
+        sock.close(1000, "meltdown_victory");
+      } catch {
+        /* ignore */
+      }
+    }
+    this.players.delete(p.id);
   }
 
   /** Advance the personal campaign when a stage completes. */
   private campaignBeat(p: PlayerState) {
     const finished = p.campaign.tickAfterAdvance();
-    if (finished) this.grantCampaignReward(p, finished.reward);
+    if (finished) {
+      this.grantCampaignReward(p, finished.reward);
+      // THE AWAKENING (continue_q) or full campaign clear → personal meltdown victory.
+      // Per-player only — never wipes the server or other runners.
+      const shouldMelt =
+        finished.id === "continue_q" || (p.campaign.done && !p.campaign.hasFlag(MELTDOWN_VICTORY_FLAG));
+      if (shouldMelt) {
+        p.dirty = true;
+        void this.personalMeltdownVictory(p);
+        return;
+      }
+    }
     p.dirty = true;
     for (const [sock, id] of this.sessions) if (id === p.id) this.sendCampaignBeat(sock, p);
   }
@@ -3778,14 +4239,24 @@ export class WorldDO {
     this.campaignBeat(p);
   }
 
-  /** Shared campaign credit for a kill: party members fighting beside the killer get
-   *  the kill beat too, and a world boss pays its "boss" beat to EVERY runner still
-   *  standing — massed fire is the point of the finale, not kill-steal roulette. */
+  /** Shared narrative/objective credit for a kill. Nearby party members advance their
+   * own contracts, public operations, and contact jobs, but receive no duplicated base
+   * kill currency, XP, loot, HVT payout, or guild tally. */
   private sharedKillCredit(killer: PlayerState, e: { x: number; y: number }, isBoss: boolean) {
     if (killer.party >= 0) {
       for (const ally of this.players.values()) {
         if (ally.id === killer.id || ally.dead || ally.party !== killer.party) continue;
-        if (Math.hypot(ally.x - e.x, ally.y - e.y) <= 640) this.campaignEvent(ally, "kill");
+        if (Math.hypot(ally.x - e.x, ally.y - e.y) > 640) continue;
+        this.campaignEvent(ally, "kill");
+        this.contractEvent(ally, "kill", 1);
+        this.districtOperationEvent(ally, "kill", 1);
+        this.bountyEvent(ally, "kill", 1);
+        if (isBoss) {
+          this.contractEvent(ally, "boss", 1);
+          this.districtOperationEvent(ally, "boss", 1);
+          this.bountyEvent(ally, "boss", 1);
+          this.addDistrictStanding(ally, 3, "stood in a party against a commander");
+        }
       }
     }
     if (isBoss) for (const p of this.players.values()) if (!p.dead) this.campaignEvent(p, "boss");
@@ -3812,8 +4283,10 @@ export class WorldDO {
     return this.worldEvent?.phase === "active" && this.worldEvent.def.id === id;
   }
 
-  private broadcastEvent(def: WorldEventDef, phase: "telegraph" | "active" | "end", seconds: number) {
-    this.broadcast({ t: "event", id: def.id, name: def.name, tagline: def.tagline, hex: def.hex, phase, seconds });
+  private broadcastEvent(def: WorldEventDef, phase: "telegraph" | "active" | "end", seconds: number, momentum = 0) {
+    const day = this.modDay >= 0 ? this.modDay : dayIndex();
+    const tagline = districtEventContext(this.districtIndex, def.name, day, momentum) ?? def.tagline;
+    this.broadcast({ t: "event", id: def.id, name: def.name, tagline, condition: def.condition, hex: def.hex, phase, seconds });
   }
 
   /** Dynamic world events — SERVER-authoritative version of the old SP scheduler:
@@ -3840,8 +4313,12 @@ export class WorldDO {
           break;
         }
       }
-      this.worldEvent = { def, phase: "telegraph", untilTick: this.tick + ticks(def.telegraphMs) };
-      this.broadcastEvent(def, "telegraph", Math.ceil(def.telegraphMs / 1000));
+      const eventDay = this.modDay >= 0 ? this.modDay : dayIndex();
+      const momentum = this.civicMomentum(eventDay);
+      const durationMs = Math.max(4_000, Math.round(def.durationMs * districtAftermath(this.districtIndex, eventDay, momentum).eventDurationMult));
+      this.worldEvent = { def, phase: "telegraph", untilTick: this.tick + ticks(def.telegraphMs), durationMs, momentum };
+      this.broadcastEvent(def, "telegraph", Math.ceil(def.telegraphMs / 1000), momentum);
+      this.broadcast({ t: "sys", text: `◇ EVENT CONDITION · ${def.condition}` });
       return;
     }
 
@@ -3849,20 +4326,32 @@ export class WorldDO {
     if (this.tick >= ev.untilTick) {
       if (ev.phase === "telegraph") {
         ev.phase = "active";
-        ev.untilTick = this.tick + ticks(ev.def.durationMs);
-        this.broadcastEvent(ev.def, "active", Math.ceil(ev.def.durationMs / 1000));
+        ev.untilTick = this.tick + ticks(ev.durationMs);
+        this.broadcastEvent(ev.def, "active", Math.ceil(ev.durationMs / 1000), ev.momentum);
         if (ev.def.id === "purge_wave") this.spawnEventWave();
       } else {
         // payout — everyone alive in the district rides the event out together
+        let survived = 0;
+        let fallen = 0;
         for (const p of this.players.values()) {
-          if (p.dead) continue;
-          p.xp += ev.def.reward.xp;
-          p.level = levelForXp(p.xp);
+          if (p.dead) {
+            fallen++;
+            this.sendTo(p.id, { t: "sys", text: `◇ ${ev.def.name} FAILED · ${ev.def.failure}` });
+            continue;
+          }
+          survived++;
+          this.grantXp(p, ev.def.reward.xp);
           const paid = this.grantEmit(p, "event", ev.def.reward.currency);
           this.campaignEvent(p, "event"); // SKYLINK BREAK's storm beat — survived together
+          this.districtOperationEvent(p, "event", 1);
+          this.addDistrictStanding(p, 4, `weathered ${ev.def.name}`);
           this.sendTo(p.id, { t: "sys", text: `◈ ${ev.def.name} weathered — +${ev.def.reward.xp} XP  ₵${paid}` });
         }
-        this.broadcastEvent(ev.def, "end", 0);
+        this.broadcast({
+          t: "sys",
+          text: `◆ EVENT AFTERMATH · ${ev.def.name} — ${survived} standing at resolution${fallen ? ` · ${fallen} awaiting reboot` : " · no runners left down"}`,
+        });
+        this.broadcastEvent(ev.def, "end", 0, ev.momentum);
         this.worldEvent = null;
         this.nextEventTick =
           this.tick + ticks(WORLD_EVENT.intervalMinMs + Math.random() * (WORLD_EVENT.intervalMaxMs - WORLD_EVENT.intervalMinMs));
@@ -3908,7 +4397,11 @@ export class WorldDO {
         const kind = kinds[Math.floor(Math.random() * kinds.length)];
         const id = this.nextEnemyId++;
         const hp = ENEMY_ARCHES[kind].hp;
-        this.enemies.set(id, { id, x, y, ox: x, oy: y, hp, maxHp: hp, respawnTick: 0, lastFireTick: 0, kind });
+        // `add: true` marks these as event spawns so zone cleanup can reap them. Without
+        // it every purge wave permanently bolted up to 10 respawning enemies onto the
+        // zone roster — an unbounded entity leak, a standing extra kill→credit faucet,
+        // and rising enemies.size heat that biased future event rolls.
+        this.enemies.set(id, { id, x, y, ox: x, oy: y, hp, maxHp: hp, respawnTick: 0, lastFireTick: 0, kind, add: true });
         spawned++;
       }
     }
@@ -3932,11 +4425,13 @@ export class WorldDO {
     const def = getFragment(fid);
     if (!def) return;
     const isNew = !p.fragments.includes(fid);
+    const beforeSequence = [...p.fragments];
+    let interpretations: ReturnType<typeof newlyUnlockedMemoryInterpretations> = [];
     if (isNew) {
       p.fragments.push(fid);
+      interpretations = newlyUnlockedMemoryInterpretations(beforeSequence, p.fragments);
       this.grantEmit(p, "fragment", 150);
-      p.xp += 60;
-      p.level = levelForXp(p.xp);
+      this.grantXp(p, 60);
       p.dirty = true;
       this.bumpStat(p, "dives", 1);
       // the vault's cache — a guaranteed roll whose rarity floor rises with depth
@@ -3947,11 +4442,24 @@ export class WorldDO {
         this.sendTo(p.id, { t: "sys", text: `◈ vault cache cracked — ${cache.name}` });
       }
     }
-    this.sendTo(p.id, { t: "fragment", id: fid, title: def.title, lines: def.lines, isNew });
+    this.sendTo(p.id, {
+      t: "fragment",
+      id: fid,
+      title: def.title,
+      lines: def.lines,
+      isNew,
+      interpretations: interpretations.map((i) => ({ id: i.id, title: i.title, line: i.line, district: i.district })),
+    });
     this.sendTo(p.id, {
       t: "sys",
       text: isNew ? `◈ MEMORY RECOVERED — ${def.title}  (+60 XP  ₵150)` : `◈ memory re-read — ${def.title} (already held)`,
     });
+    for (const interpretation of interpretations) {
+      this.sendTo(p.id, {
+        t: "sys",
+        text: `▤ MEMORY SYNTHESIS · ${interpretation.title} [${interpretation.positions.join("→")}] — ${interpretation.line}`,
+      });
+    }
     // THE PROVING — the weekly clear pays big, once per player per week (campaign flag
     // = persisted claim-once), and lands on the week's leaderboard
     if (this.provingVault) {
@@ -3960,8 +4468,7 @@ export class WorldDO {
       if (!p.campaign.hasFlag(flag)) {
         p.campaign.flags.add(flag);
         this.grantEmit(p, "quest", 750);
-        p.xp += 220;
-        p.level = levelForXp(p.xp);
+        this.grantXp(p, 220);
         p.dirty = true;
         this.bumpStat(p, `wk${wk % 100}`, 1);
         if (p.inventory.length < INVENTORY_CAP) {
@@ -4018,9 +4525,27 @@ export class WorldDO {
       acceptQuest(msg.id);
       return;
     }
+    if (msg.action === "choice") {
+      if (!p.campaign.fixerJudgmentPending) {
+        sys("that judgment is no longer open");
+        return;
+      }
+      const spared = msg.choice === "spare";
+      p.campaign.resolveFixerJudgment(msg.choice);
+      p.dirty = true;
+      sys(spared
+        ? "◆ JUDGMENT · THE FIXER spared — witness kept, debt remembered"
+        : "◆ JUDGMENT · THE FIXER exposed — ledger published, protection withdrawn");
+      this.campaignBeat(p);
+      return;
+    }
     if (msg.action === "talk") {
       // Returning to FIXER mid-quest: resolve talk beats; otherwise re-brief (don't dead-end).
       if (p.campaign.isTalkStage()) {
+        if (p.campaign.fixerJudgmentPending) {
+          this.sendCampaignBeat(ws, p);
+          return;
+        }
         p.campaign.onTalk();
         this.campaignBeat(p);
         return;
@@ -4038,6 +4563,10 @@ export class WorldDO {
         return;
       }
       if (p.campaign.isTalkStage()) {
+        if (p.campaign.fixerJudgmentPending) {
+          this.sendCampaignBeat(ws, p);
+          return;
+        }
         p.campaign.onTalk();
         this.campaignBeat(p);
         return;
@@ -4092,13 +4621,30 @@ export class WorldDO {
     p.tutorialDone = true;
     p.tutorialStep = tutorialTotal(mode);
     p.tutorialProgress = 0;
-    const hub = this.spreadSpawn(CITY_HUB_SPAWN, p.id);
-    p.x = hub.x;
-    p.y = hub.y;
+    // NOT spreadSpawn: this runs in the TUTORIAL DO, whose grid is the drill yard —
+    // ring-probing CITY coordinates against it fails every ring and the fallback
+    // snapped graduates to an arbitrary open drill-yard tile, which then persisted
+    // as their city position ("the portal sent me across town"). The hub commons is
+    // guaranteed open for ±4 tiles around the pad, so a tiny deterministic jitter
+    // needs no grid check; the safe DO re-validates on arrival anyway.
+    let h = 0;
+    for (let i = 0; i < p.id.length; i++) h = (h * 31 + p.id.charCodeAt(i)) >>> 0;
+    p.x = CITY_HUB_SPAWN.x + ((h % 5) - 2) * 32;
+    p.y = CITY_HUB_SPAWN.y + ((Math.floor(h / 5) % 3) - 1) * 32;
     this.ensureStarterKit(p);
     p.dirty = true;
-    // Redirect + close FIRST so a slow/failed D1 upsert never leaves the client
-    // stuck in the drill yard after SKIP (was: await upsert → no redirect on throw).
+    // Persist tutorial_done BEFORE redirect/close. Session-gated upsert after the
+    // client claims `safe` used to apply 0 rows → drill comes back / starter kit lost.
+    try {
+      await this.env.DB.prepare(
+        "UPDATE players SET tutorial_done = 1, tutorial_step = ?, tutorial_mode = ?, zone = 'safe', x = ?, y = ? WHERE id = ?",
+      )
+        .bind(p.tutorialStep, mode, p.x, p.y, p.id)
+        .run();
+    } catch (e) {
+      console.error("graduateTutorial early persist failed", e);
+    }
+    // Redirect + close so a slow full upsert never leaves the client stuck in the yard.
     const sock = ws ?? this.socketForPlayer(p.id);
     if (sock) {
       this.send(sock, {
@@ -4125,12 +4671,19 @@ export class WorldDO {
     const p = this.playerFor(ws);
     if (!p || !this.inTutorial()) return;
     if (msg.action === "mode" && (msg.mode === "quick" || msg.mode === "full")) {
-      if (p.tutorialStep === 0) {
+      // Accept a mode switch ANY time before graduation, resetting progress. The old
+      // step===0 gate trapped returning players: an abandoned quick attempt left
+      // tutorial_step > 0 in D1, so choosing FULL later was silently rejected — the
+      // server then ran the 9-step quick curriculum inside the 16-instructor full
+      // hall and progress wedged ("can't advance past a certain point").
+      if (p.tutorialMode !== msg.mode) {
         p.tutorialMode = msg.mode;
-        p.dirty = true;
-        this.ensureTutorialSupplies(p);
-        this.sendTutorialState(p);
+        p.tutorialStep = 0;
+        p.tutorialProgress = 0;
       }
+      p.dirty = true;
+      this.ensureTutorialSupplies(p);
+      this.sendTutorialState(p);
       return;
     }
     if (msg.action === "skip") {
@@ -4173,6 +4726,31 @@ export class WorldDO {
     p.stats[stat] = (p.stats[stat] ?? 0) + n;
     p.statDelta[stat] = (p.statDelta[stat] ?? 0) + n;
     this.checkAchv(p, stat as StatKey);
+  }
+
+  private sendSkills(ws: WebSocket, p: PlayerState) {
+    this.send(ws, { t: "skills", xp: skillSnapshot(p.stats) });
+  }
+
+  private pushSkills(p: PlayerState) {
+    for (const [sock, id] of this.sessions) if (id === p.id) this.sendSkills(sock, p);
+  }
+
+  /** Award only validated server outcomes; the client can never nominate XP. */
+  private awardSkill(p: PlayerState, id: RsSkillId, amount: number) {
+    const give = skillAwardAmount(p.stats, id, amount);
+    if (give <= 0) return;
+    this.bumpStat(p, skillStatKey(id), give);
+    this.pushSkills(p);
+  }
+
+  private sendArchives(ws: WebSocket, p: PlayerState) {
+    const pages = civicArchiveSnapshot(p.stats);
+    this.send(ws, { t: "archives", pages, synthesis: civicArchiveSynthesis(pages) });
+  }
+
+  private pushArchives(p: PlayerState) {
+    for (const [sock, id] of this.sessions) if (id === p.id) this.sendArchives(sock, p);
   }
 
   /** Tally a credit flow for the economy ledger (see economy_daily / /economy).
@@ -4292,6 +4870,304 @@ export class WorldDO {
     }
   }
 
+  /**
+   * District public operations are small, local acts of mutual aid layered onto
+   * the existing combat loop. Progress lives in player_stats under a day+district
+   * key, so it is authoritative across zone hops without a new schema or reset job.
+   */
+  private districtOperationEvent(p: PlayerState, objective: DistrictOperationObjective, n = 1) {
+    if (!/^d\d+$/.test(this.zoneName) || n <= 0) return;
+    const districtDay = this.modDay >= 0 ? this.modDay : dayIndex();
+    const operation = dailyDistrictOperation(this.districtIndex, districtDay);
+    if (operation.objective !== objective) return;
+    const key = districtOperationKey(this.districtIndex, districtDay);
+    const before = Math.max(0, p.stats[key] ?? 0);
+    if (before >= operation.count) return;
+    const add = Math.min(Math.max(1, Math.floor(n)), operation.count - before);
+    this.bumpStat(p, key, add);
+    const progress = before + add;
+    if (progress < operation.count) {
+      if (before === 0 || progress === operation.count - 1) {
+        this.sendTo(p.id, { t: "sys", text: `◇ ${operation.name} — ${progress}/${operation.count}` });
+      }
+      return;
+    }
+    this.grantXp(p, operation.rewardXp);
+    const paid = this.grantEmit(p, "civic_operation", operation.rewardCredits);
+    this.bumpStat(p, "rep", Math.max(2, Math.round(operation.rewardXp / 10)));
+    this.addDistrictStanding(p, 20, "public operation");
+    this.sendTo(p.id, {
+      t: "sys",
+      text: `◆ PUBLIC OP COMPLETE · ${operation.name} — ${operation.completion} (+${operation.rewardXp} XP  ₵${paid})`,
+    });
+    if (p.campaign.completed.includes("continue_q")) {
+      const echo = districtCampaignEcho(this.districtIndex, p.campaign.completed, [...p.campaign.flags]);
+      if (echo) this.sendTo(p.id, { t: "sys", text: `◈ POST-AWAKENING · ${echo}` });
+    }
+    // One player's completed work becomes shared district history. This write is
+    // deliberately detached from the personal reward path: a transient civic
+    // persistence failure must never duplicate XP/currency on a retry.
+    void this.recordCivicMomentum(districtDay);
+    void this.recordWeeklyCivic();
+  }
+
+  private civicMomentum(day = this.modDay >= 0 ? this.modDay : dayIndex()): number {
+    return civicMomentumFromMeta(this.meta, this.districtIndex, day);
+  }
+
+  private sendCivic(ws: WebSocket, day = this.modDay >= 0 ? this.modDay : dayIndex()) {
+    if (!/^d\d+(?:i\d+)?$/.test(this.zoneName)) return;
+    const operation = dailyDistrictOperation(this.districtIndex, day);
+    const aftermath = districtAftermath(this.districtIndex, day, this.civicMomentum(day));
+    this.send(ws, {
+      t: "civic",
+      district: this.districtIndex,
+      day,
+      operation: operation.name,
+      stage: aftermath.name,
+      completions: aftermath.completions,
+      line: aftermath.line,
+      eventDurationPct: Math.round(aftermath.eventDurationMult * 100),
+    });
+  }
+
+  private broadcastCivic(day = this.modDay >= 0 ? this.modDay : dayIndex()) {
+    for (const ws of this.sessions.keys()) this.sendCivic(ws, day);
+  }
+
+  /** Atomically advance today's shared district aftermath in one reusable D1 row. */
+  private async recordCivicMomentum(day: number) {
+    if (!/^d\d+$/.test(this.zoneName)) return;
+    const key = civicMomentumKey(this.districtIndex);
+    const first = encodeCivicMomentum(day, 1);
+    const dayFloor = encodeCivicMomentum(day, 0);
+    const nextDayFloor = encodeCivicMomentum(day + 1, 0);
+    const capped = encodeCivicMomentum(day, CIVIC_MOMENTUM_CAP);
+    try {
+      await this.env.DB.prepare(
+        `INSERT INTO world_meta (k, v) VALUES (?, ?)
+         ON CONFLICT(k) DO UPDATE SET v = CASE
+           WHEN v >= ? AND v < ? THEN MIN(?, v + 1)
+           ELSE ? END`,
+      )
+        .bind(key, first, dayFloor, nextDayFloor, capped, first)
+        .run();
+      const row = await this.env.DB.prepare("SELECT v FROM world_meta WHERE k = ?").bind(key).first<{ v: number }>();
+      if (!row) return;
+      this.meta[key] = row.v;
+      const aftermath = districtAftermath(this.districtIndex, day, this.civicMomentum(day));
+      this.broadcastCivic(day);
+      this.broadcast({
+        t: "sys",
+        text: `◆ ${aftermath.name} · ${aftermath.completions} public ${aftermath.completions === 1 ? "win" : "wins"} today — ${aftermath.line}`,
+      });
+    } catch {
+      this.errCount++;
+    }
+  }
+
+  private async sendChronicle(ws: WebSocket) {
+    const now = Date.now();
+    const week = currentGuildWeek(now);
+    let cellGoalsClaimed = 0;
+    let cellGoalProgress = 0;
+    try {
+      const row = await this.env.DB.prepare(
+        "SELECT COUNT(CASE WHEN claimed = 1 THEN 1 END) AS claimed, COALESCE(SUM(progress), 0) AS progress FROM guild_goal_progress WHERE week = ?",
+      ).bind(week).first<{ claimed: number; progress: number }>();
+      cellGoalsClaimed = Math.max(0, Number(row?.claimed) || 0);
+      cellGoalProgress = Math.max(0, Number(row?.progress) || 0);
+    } catch {
+      /* pre-migration: chronicle still reports war/civic/boss ledgers */
+    }
+    const chronicle = buildCityChronicle({
+      now,
+      warScores: [0, 1, 2, 3].map((f) => this.meta[warMetaKey(week, f)] ?? 0),
+      civicMomentum: Array.from({ length: DISTRICTS.length }, (_, d) =>
+        decodeChronicleCivic(this.meta[chronicleCivicKey(d)], week)),
+      bossKills: decodeChronicleBosses(this.meta[CHRONICLE_BOSS_KEY], week),
+      cellGoalsClaimed,
+      cellGoalProgress,
+      territory: Array.from({ length: DISTRICTS.length }, (_, district) =>
+        decodeTerritoryLegacy(this.meta[territoryLegacyKey(district)], district, dayIndex(now))),
+    });
+    this.send(ws, { t: "chronicle", ...chronicle });
+  }
+
+  /** One fixed row per district carries public-operation history across UTC days while
+   * resetting logically at the guild/war week boundary. */
+  private async recordWeeklyCivic() {
+    if (!/^d\d+$/.test(this.zoneName)) return;
+    const week = currentGuildWeek();
+    const key = chronicleCivicKey(this.districtIndex);
+    const first = encodeChronicleCivic(week, 1);
+    const floor = encodeChronicleCivic(week, 0);
+    const next = encodeChronicleCivic(week + 1, 0);
+    const cap = encodeChronicleCivic(week, CHRONICLE_CIVIC_CAP);
+    try {
+      await this.env.DB.prepare(
+        `INSERT INTO world_meta (k, v) VALUES (?, ?)
+         ON CONFLICT(k) DO UPDATE SET v = CASE
+           WHEN v >= ? AND v < ? THEN MIN(?, v + 1)
+           ELSE ? END`,
+      ).bind(key, first, floor, next, cap, first).run();
+      const row = await this.env.DB.prepare("SELECT v FROM world_meta WHERE k = ?")
+        .bind(key).first<{ v: number }>();
+      if (!row) return;
+      this.meta[key] = row.v;
+      // Operation completions are rare enough to refresh the edition immediately.
+      for (const sock of this.sessions.keys()) void this.sendChronicle(sock);
+    } catch {
+      this.errCount++;
+    }
+  }
+
+  /** Persist the latest daily relay charter without making history authoritative over
+   * live node ownership. One fixed row per district stores controller + bounded flips. */
+  private async recordTerritoryLegacy(controller: number, day = this.modDay >= 0 ? this.modDay : dayIndex()) {
+    if (!/^d\d+$/.test(this.zoneName) || controller < 0 || controller >= FACTION_COUNT) return;
+    const key = territoryLegacyKey(this.districtIndex);
+    const first = encodeTerritoryLegacy(day, controller, 1);
+    const floor = day * 1_000;
+    const next = (day + 1) * 1_000;
+    const controllerBase = day * 1_000 + (controller + 1) * 100;
+    try {
+      await this.env.DB.prepare(
+        `INSERT INTO world_meta (k, v) VALUES (?, ?)
+         ON CONFLICT(k) DO UPDATE SET v = CASE
+           WHEN v >= ? AND v < ? THEN ? + MIN(?, (v % 100) + 1)
+           ELSE ? END`,
+      ).bind(key, first, floor, next, controllerBase, TERRITORY_FLIP_CAP, first).run();
+      const row = await this.env.DB.prepare("SELECT v FROM world_meta WHERE k = ?")
+        .bind(key).first<{ v: number }>();
+      if (!row) return;
+      this.meta[key] = row.v;
+      const record = decodeTerritoryLegacy(row.v, this.districtIndex, day);
+      this.broadcastSys(`▣ RELAY CHARTER RECORDED · ${territoryLegacyLine(record, day)}`);
+      for (const sock of this.sessions.keys()) void this.sendChronicle(sock);
+    } catch {
+      this.errCount++;
+    }
+  }
+
+  /** One reusable row records weekly boss deaths across every district shard. */
+  private async recordChronicleBoss() {
+    const week = currentGuildWeek();
+    const first = encodeChronicleBosses(week, 1);
+    const floor = encodeChronicleBosses(week, 0);
+    const next = encodeChronicleBosses(week + 1, 0);
+    const cap = encodeChronicleBosses(week, CHRONICLE_BOSS_CAP);
+    try {
+      await this.env.DB.prepare(
+        `INSERT INTO world_meta (k, v) VALUES (?, ?)
+         ON CONFLICT(k) DO UPDATE SET v = CASE
+           WHEN v >= ? AND v < ? THEN MIN(?, v + 1)
+           ELSE ? END`,
+      ).bind(CHRONICLE_BOSS_KEY, first, floor, next, cap, first).run();
+      const row = await this.env.DB.prepare("SELECT v FROM world_meta WHERE k = ?")
+        .bind(CHRONICLE_BOSS_KEY).first<{ v: number }>();
+      if (row) {
+        this.meta[CHRONICLE_BOSS_KEY] = row.v;
+        // Boss deaths are rare, city-scale facts. Refresh the edition immediately
+        // so runners already reading a safe-zone map do not need to reconnect.
+        for (const sock of this.sessions.keys()) void this.sendChronicle(sock);
+      }
+    } catch {
+      this.errCount++;
+    }
+  }
+
+  // ── durable relationships + local standing ───────────────────────────────
+  private sendRelations(ws: WebSocket, p: PlayerState) {
+    this.send(ws, {
+      t: "relations",
+      trust: relationshipSnapshot(p.stats),
+      talks: relationshipTalkSnapshot(p.stats),
+      jobs: relationshipJobSnapshot(p.stats),
+      districts: districtStandingSnapshot(p.stats),
+      clues: residentClueSnapshot(p.stats),
+      confirmed: residentConfirmationSnapshot(p.stats),
+      reconstruction: reconstructionSnapshot(p.stats),
+      social: rescueMemorySnapshot(p.stats),
+      reprints: reprintMemoryCount(p.stats),
+      memorialStamps: reprintStampCount(p.stats),
+    });
+  }
+
+  private pushRelations(p: PlayerState) {
+    for (const [sock, id] of this.sessions) if (id === p.id) this.sendRelations(sock, p);
+  }
+
+  /** Bounded conversation memory. No XP, currency, rep, or unlock is attached. */
+  private noteNpcMet(p: PlayerState, npcId: string) {
+    const key = relationshipTalkKey(npcId);
+    let changed = false;
+    if ((p.stats[key] ?? 0) < MAX_RELATIONSHIP_TALKS) {
+      this.bumpStat(p, key, 1);
+      changed = true;
+    }
+    const clue = residentClueGrant(npcId);
+    const profile = residentProfile(npcId);
+    if (clue && profile?.district === this.districtIndex && residentZone(profile) === this.zoneName && !(p.stats[clue.key] ?? 0)) {
+      this.bumpStat(p, clue.key, 1);
+      changed = true;
+      this.sendTo(p.id, { t: "sys", text: `◇ LOCAL TESTIMONY · ${clue.line}` });
+    }
+    const confirmation = residentConfirmationGrant(npcId, residentClueSnapshot(p.stats));
+    if (confirmation && profile?.district === this.districtIndex && residentZone(profile) === this.zoneName && !(p.stats[confirmation.key] ?? 0)) {
+      const before = residentConfirmationSnapshot(p.stats).length;
+      this.bumpStat(p, confirmation.key, 1);
+      changed = true;
+      const after = before + 1;
+      this.sendTo(p.id, { t: "sys", text: `◆ CASEFILE CONFIRMED ${after}/8 · ${confirmation.line}` });
+      const milestone = CASEFILE_MILESTONES.find((m) => m.threshold === after);
+      if (milestone) {
+        this.sendTo(p.id, { t: "sys", text: `▤ FOLLOW-UP · ${milestone.title} — ${milestone.objective}` });
+      }
+    }
+    if (changed) this.pushRelations(p);
+  }
+
+  /** Completed authored work advances trust, capped so the stat row cannot grow forever. */
+  private noteNpcJobCompleted(p: PlayerState, npcId: string) {
+    const talk = p.stats[relationshipTalkKey(npcId)] ?? 0;
+    const key = relationshipJobsKey(npcId);
+    const jobs = Math.max(0, p.stats[key] ?? 0);
+    if (jobs >= MAX_RELATIONSHIP_JOBS) return;
+    const before = relationshipTier(talk, jobs);
+    this.bumpStat(p, key, 1);
+    const after = relationshipTier(talk, jobs + 1);
+    this.pushRelations(p);
+    if (after > before) {
+      const name = npcDef(npcId)?.name ?? npcId.replace(/_/g, " ").toUpperCase();
+      this.sendTo(p.id, { t: "sys", text: `◆ CONTACT · ${name} now ${relationshipTierName(after)}` });
+    }
+  }
+
+  /** Civic recognition only: bounded, additive, and deliberately not combat power. */
+  private addDistrictStanding(p: PlayerState, amount: number, reason: string) {
+    if (!/^d\d+$/.test(this.zoneName) || amount <= 0) return;
+    this.addDistrictStandingAt(p, this.districtIndex, amount, reason);
+  }
+
+  /** Attribute resident promises to the resident's neighborhood even when the final
+   * objective occurs in a dive, interior, wilderness zone, or another district. */
+  private addDistrictStandingAt(p: PlayerState, district: number, amount: number, reason: string) {
+    if (!Number.isInteger(district) || district < 0 || district >= DISTRICTS.length || amount <= 0) return;
+    const key = districtStandingKey(district);
+    const current = Math.max(0, p.stats[key] ?? 0);
+    if (current >= MAX_DISTRICT_STANDING) return;
+    const add = Math.min(MAX_DISTRICT_STANDING - current, Math.max(1, Math.floor(amount)));
+    const before = districtStandingTier(current);
+    this.bumpStat(p, key, add);
+    const after = districtStandingTier(current + add);
+    this.pushRelations(p);
+    if (after.tier > before.tier) {
+      const place = DISTRICTS[district]?.name ?? "the district";
+      this.sendTo(p.id, { t: "sys", text: `◆ LOCAL STANDING · ${after.name} in ${place} — ${reason}` });
+    }
+  }
+
   // ── authored NPC bounties (one active at a time; D1-persisted, auto-rewarded) ──
   private sendBounty(ws: WebSocket, p: PlayerState) {
     const b = p.bounty ? bountyById(p.bounty.id) : undefined;
@@ -4345,11 +5221,27 @@ export class WorldDO {
       return;
     }
     try {
-      await this.env.DB.prepare("INSERT OR IGNORE INTO player_discovered (player, zone, at, organic) VALUES (?,?,?,?)")
-        .bind(id, this.zoneName, Date.now(), organic ? 1 : 0)
+      const now = Date.now();
+      const inserted = await this.env.DB.prepare("INSERT OR IGNORE INTO player_discovered (player, zone, at, organic) VALUES (?,?,?,?)")
+        .bind(id, this.zoneName, now, organic ? 1 : 0)
         .run();
+      let firstOrganic = organic && inserted.meta.changes > 0;
       if (organic) {
-        await this.env.DB.prepare("UPDATE player_discovered SET organic = 1 WHERE player = ? AND zone = ?").bind(id, this.zoneName).run();
+        const upgraded = await this.env.DB.prepare("UPDATE player_discovered SET organic = 1 WHERE player = ? AND zone = ? AND organic = 0")
+          .bind(id, this.zoneName)
+          .run();
+        firstOrganic ||= upgraded.meta.changes > 0;
+        // Touching Metro City also unlocks free hub services + subway station for map TRAVEL
+        // so runners aren't stuck "walk via deploy gate" for clinic/shop/underline.
+        if (this.zoneName === "safe") {
+          const free = ["subway", "clinic", "shop", "bar", "den"] as const;
+          for (const z of free) {
+            await this.env.DB.prepare("INSERT OR IGNORE INTO player_discovered (player, zone, at, organic) VALUES (?,?,?,?)")
+              .bind(id, z, now, 1)
+              .run();
+            await this.env.DB.prepare("UPDATE player_discovered SET organic = 1 WHERE player = ? AND zone = ?").bind(id, z).run();
+          }
+        }
       }
       const { results } = await this.env.DB.prepare("SELECT zone, organic FROM player_discovered WHERE player = ?")
         .bind(id)
@@ -4357,8 +5249,19 @@ export class WorldDO {
       const zones = (results ?? []).map((r) => r.zone);
       const unlocked = (results ?? []).filter((r) => r.organic).map((r) => r.zone);
       this.send(ws, { t: "discovered", zones, unlocked });
+      const p = this.players.get(id);
+      if (p && firstOrganic) this.awardSkill(p, "exploration", 22);
     } catch {
       const fallback = organic ? [this.zoneName] : [];
+      // Client still gets free hub routes if D1 is mid-migration.
+      if (organic && this.zoneName === "safe") {
+        this.send(ws, {
+          t: "discovered",
+          zones: ["safe", "subway", "clinic", "shop", "bar", "den"],
+          unlocked: ["safe", "subway", "clinic", "shop", "bar", "den"],
+        });
+        return;
+      }
       this.send(ws, { t: "discovered", zones: [this.zoneName], unlocked: fallback });
     }
   }
@@ -4436,8 +5339,12 @@ export class WorldDO {
       });
   }
 
-  /** Apply damage to a player. God accounts ignore all damage sources. */
-  private hurtPlayer(p: PlayerState, dmg: number): boolean {
+  /**
+   * Apply damage to a player. God accounts ignore all damage.
+   * Credits are NEVER taken on PvE death. PvP deaths (opts.pvpKiller) drop 10% of
+   * pocket credits on the floor and flag safe-point respawn outside the arena.
+   */
+  private hurtPlayer(p: PlayerState, dmg: number, opts?: { pvpKiller?: PlayerState }): boolean {
     if (!p || p.dead || dmg <= 0) return false;
     if (p.godMode || isGodPlayerId(p.id)) {
       p.godMode = true;
@@ -4451,26 +5358,202 @@ export class WorldDO {
       p.dead = true;
       p.respawnTick = this.tick + ticks(RESPAWN_MS);
       p.dirty = true;
-      // Death tax — primary risk sink (~10% pocket, floor 12). Never leaves veterans at 0.
-      const pocket = Math.max(0, Math.floor(p.credits));
-      let tax = 0;
-      if (pocket > 30) {
-        tax = Math.min(pocket - 15, Math.max(12, Math.round(pocket * 0.1)));
-        if (tax > 0) {
-          p.credits -= tax;
-          this.eco("burn", "death_tax", tax);
+      const pvpKill = !!(opts?.pvpKiller && opts.pvpKiller.id !== p.id);
+      p.pvpDeath = pvpKill || !!p.pvpInArena;
+
+      // PvP only: 10% of credits drop on the floor at the death site (anyone can loot).
+      let drop = 0;
+      if (pvpKill) {
+        const pocket = Math.max(0, Math.floor(p.credits));
+        drop = Math.floor(pocket * PVP_CREDIT_DROP_PCT);
+        if (drop > 0) {
+          p.credits -= drop;
+          this.spawnCreditPile(p.x, p.y, drop);
         }
       }
-      // Clear death card: tax amount + where reprint happens + re-engage hint.
+
+      // World-start / hub evacuate is always available on death outside the drill yard.
+      // Default reprint keeps last standing position (PvP → outside arena).
+      const nearBoss = !pvpKill && this.nearLivingBoss(p.x, p.y, 420);
+      p.deathStreak = (p.deathStreak || 0) + 1;
+      p.deathStreakTick = this.tick;
+      const reprintsBefore = reprintMemoryCount(p.stats);
+      if (reprintsBefore < MAX_REPRINT_MEMORY) this.bumpStat(p, REPRINT_MEMORY_KEY, 1);
+      const reprints = nextReprintMemory(reprintsBefore);
+      this.pushRelations(p);
+      const worldStartZone = this.worldStartZoneForCurrent();
+      const canWorldStart = !!worldStartZone;
+      const worldStartHint = canWorldStart
+        ? ` · CITY START available (H / tap) → METRO CITY hub`
+        : "";
+      const deathLine = pvpKill
+        ? drop > 0
+          ? `DEATH · PvP · ₵${drop} dropped on the floor (10%) · reprint outside arena · bag kept${worldStartHint}`
+          : `DEATH · PvP · no credit drop · reprint outside arena · bag kept${worldStartHint}`
+        : `DEATH · no credit loss · reprint at last position · bag kept${worldStartHint}`;
+      this.sendTo(p.id, { t: "sys", text: deathLine });
       this.sendTo(p.id, {
-        t: "sys",
-        text:
-          tax > 0
-            ? `DEATH · levy −₵${tax} · reprint at zone spawn · bag kept · re-engage objective`
-            : `DEATH · no levy · reprint at zone spawn · bag kept · re-engage objective`,
+        t: "death",
+        streak: p.deathStreak,
+        extract: canWorldStart,
+        extractZone: canWorldStart ? worldStartZone! : undefined,
+        extractLabel: canWorldStart ? "RESPAWN AT CITY START" : undefined,
+        nearBoss,
+        worldStart: canWorldStart,
+        reprints,
       });
     }
     return true;
+  }
+
+  /** Spawn a looted credit pile (PvP death drop). amount is exact ₵ granted on walkover. */
+  private spawnCreditPile(x: number, y: number, amount: number) {
+    if (amount <= 0) return;
+    const pid = this.nextPickupId++;
+    // Scatter slightly so multi-kills don't stack invisibly.
+    const jx = x + (Math.random() - 0.5) * 28;
+    const jy = y + (Math.random() - 0.5) * 28;
+    this.pickups.set(pid, {
+      id: pid,
+      x: jx,
+      y: jy,
+      kind: PICKUP_CREDIT,
+      amount: Math.floor(amount),
+      dieTick: this.tick + ticks(Math.max(PICKUP_TTL_MS, 22_000)),
+      bornTick: this.tick,
+    });
+  }
+
+  /** Living boss within `range` px of a world point (spawn-camp detection). */
+  private nearLivingBoss(x: number, y: number, range: number): boolean {
+    const r2 = range * range;
+    for (const e of this.enemies.values()) {
+      if (!e.boss || e.hp <= 0) continue;
+      if (dist2(e.x, e.y, x, y) <= r2) return true;
+    }
+    return false;
+  }
+
+  /**
+   * World-start destination (new-player pad in METRO CITY).
+   * Null only in the drill yard — nowhere else to evacuate to.
+   * Already-in-safe still returns "safe" so death can snap to CITY_HUB_SPAWN in-place.
+   */
+  private worldStartZoneForCurrent(): string | null {
+    if (this.inTutorial()) return null;
+    return "safe";
+  }
+
+  /**
+   * Instant local reprint at last standing position (cancels remaining death timer).
+   * PvP deaths still bounce to nearest safe point outside the arena.
+   */
+  private respawnLocal(p: PlayerState) {
+    const wasPvp = !!p.pvpDeath;
+    const target = wasPvp
+      ? this.nearestSafeRespawn(p)
+      : resolveOpenSpawn(this.grid, { x: p.x, y: p.y });
+    p.x = target.x;
+    p.y = target.y;
+    p.hp = p.maxHp;
+    p.dead = false;
+    p.respawnTick = this.tick;
+    p.pvpDeath = false;
+    p.pvpSafeUntil = this.tick + ticks(3500); // longer grace after manual reprint
+    p.iframeUntilTick = this.tick + ticks(1500);
+    p.dirty = true;
+  }
+
+  /**
+   * Death-screen choice:
+   *  - local: reprint at last standing position (PvP → outside arena)
+   *  - start / extract: respawn at world start (METRO CITY hub pad) — always allowed
+   *    outside tutorial so runners can bail without a death-streak gate
+   */
+  private async onRespawnChoice(ws: WebSocket, msg: Extract<ClientMsg, { t: "respawn" }>) {
+    const p = this.playerFor(ws);
+    if (!p || !p.dead) return;
+    const raw = msg.mode;
+    const mode = raw === "start" || raw === "extract" ? "start" : "local";
+    if (mode === "local") {
+      const wasPvp = !!p.pvpDeath;
+      this.respawnLocal(p);
+      this.sendTo(p.id, {
+        t: "sys",
+        text: wasPvp
+          ? "◈ reprint complete — outside arena · brief immunity"
+          : "◈ reprint complete — last position · brief immunity",
+      });
+      return;
+    }
+    // WORLD START / EXTRACT → METRO CITY hub pad (new-player spawn).
+    const dest = this.worldStartZoneForCurrent();
+    if (!dest) {
+      this.sendTo(p.id, {
+        t: "sys",
+        text: "city start locked in the drill yard — finish the tutorial or wait for local reprint",
+      });
+      return;
+    }
+    // Already in hub: snap to the new-runner pad in-place (no zone handoff).
+    if (this.zoneName === "safe") {
+      const open = resolveOpenSpawn(this.grid, CITY_HUB_SPAWN);
+      p.x = open.x;
+      p.y = open.y;
+      p.hp = p.maxHp;
+      p.dead = false;
+      p.respawnTick = this.tick;
+      p.pvpDeath = false;
+      p.deathStreak = 0;
+      p.deathStreakTick = 0;
+      p.pvpInArena = false;
+      p.pvpSafeUntil = this.tick + ticks(3500);
+      p.iframeUntilTick = this.tick + ticks(1500);
+      p.dirty = true;
+      this.sendTo(p.id, {
+        t: "sys",
+        text: "◈ reprint at CITY START — METRO CITY hub pad · brief immunity",
+      });
+      return;
+    }
+    // Other zone: revive, flush, redirect to safe (spawn lands on CITY_HUB_SPAWN via travel/login).
+    p.dead = false;
+    p.hp = p.maxHp;
+    p.respawnTick = this.tick;
+    p.deathStreak = 0;
+    p.deathStreakTick = 0;
+    p.pvpDeath = false;
+    p.pvpInArena = false;
+    // Park coords on the hub pad so the next zone's loadPlayer / travel lands correctly
+    // even if travel `from` is set (we force hub via zoneOverride + explicit x,y).
+    const hub = CITY_HUB_SPAWN;
+    p.x = hub.x;
+    p.y = hub.y;
+    if (p.pvpEscrow > 0) await this.refundPvpEscrow(p, "world-start from death");
+    p.dirty = true;
+    try {
+      await this.upsertPlayer(p, { zoneOverride: "safe" });
+    } catch {
+      /* best effort */
+    }
+    this.sendTo(p.id, {
+      t: "sys",
+      text: "◈ CITY START — evacuating to METRO CITY hub pad. Bag kept. Re-arm before you dive back.",
+    });
+    this.send(ws, { t: "redirect", zone: dest, text: "city start → METRO CITY" });
+    try {
+      this.send(ws, { t: "bye" });
+    } catch {
+      /* ignore */
+    }
+    this.sessions.delete(ws);
+    if (this.ownerSocket.get(p.id) === ws) this.ownerSocket.delete(p.id);
+    this.players.delete(p.id);
+    try {
+      ws.close(1000, "world_start");
+    } catch {
+      /* ignore */
+    }
   }
 
   /** Starter melee + resources for live-city players.
@@ -4487,9 +5570,15 @@ export class WorldDO {
       while (p.inventory.length < 2) p.inventory.push(rollItem(Math.max(1, p.level), 0.35));
       changed = true;
     }
-    // Floor only for brand-new runners (no XP yet). Veterans who spent to 0 stay broke.
-    const brandNew = (p.xp | 0) === 0 && p.level <= 1;
+    // Floor only for brand-new runners. Veterans who spent to 0 stay broke.
+    // The gate is a persisted claim-once flag, not "no XP yet": nothing that spends the
+    // floor grants XP (sell_core/meal/vent/vendor are all XP-free), so an account could
+    // sit at xp=0 forever and every reconnect refilled cores to 5. Fencing them at the
+    // den and reconnecting was an unbounded ₵ faucet — into a bridge that pays real tokens.
+    const brandNew = !p.campaign.hasFlag(STARTER_FLOOR_FLAG) && (p.xp | 0) === 0 && p.level <= 1;
     if (brandNew) {
+      p.campaign.flags.add(STARTER_FLOOR_FLAG);
+      changed = true;
       if (p.cores < 5) {
         p.cores = Math.max(p.cores, 5);
         changed = true;
@@ -4497,8 +5586,8 @@ export class WorldDO {
       if (p.credits < 60) {
         const need = 60 - p.credits;
         const got = this.grantEmit(p, "floor", need);
-        // Floor is a soft guarantee for brand-new shells; if daily cap is already hit
-        // (edge: recreated accounts), still lift them to 60 without double-counting emit.
+        // Floor is a soft guarantee for brand-new shells. Keep the fallback so a future
+        // finite emit policy cannot prevent a recreated account from reaching 60.
         if (got < need) p.credits = Math.max(p.credits, 60);
         changed = true;
       }
@@ -4515,6 +5604,34 @@ export class WorldDO {
     if (msg.action === "accept") {
       const b = bountyById(msg.id);
       if (!b) return;
+      if (b.requiredConfirmation && !residentConfirmationSnapshot(p.stats).includes(b.requiredConfirmation)) {
+        this.send(ws, { t: "sys", text: "that case has not been corroborated" });
+        return;
+      }
+      if (b.requiredCampaign && !p.campaign.completed.includes(b.requiredCampaign)) {
+        this.send(ws, { t: "sys", text: "that reconstruction work has not opened yet" });
+        return;
+      }
+      if (b.requiredPhase && storyPhase(p.campaign?.activeId ?? null) !== b.requiredPhase) {
+        this.send(ws, { t: "sys", text: "that ally operation belongs to a later campaign phase" });
+        return;
+      }
+      if (b.requiredCivicWork) {
+        const week = currentGuildWeek();
+        const weeklyCivic = Array.from({ length: DISTRICTS.length }, (_, district) =>
+          decodeChronicleCivic(this.meta[chronicleCivicKey(district)], week));
+        const hasCivicWork = b.requiredCivicDistrict === undefined
+          ? weeklyCivic.some((count) => count > 0)
+          : (weeklyCivic[b.requiredCivicDistrict] ?? 0) > 0;
+        if (!hasCivicWork) {
+          this.send(ws, { t: "sys", text: "no public work has opened that courier route this week" });
+          return;
+        }
+      }
+      if (!npcPresentInZone(b.npc, this.zoneName)) {
+        this.send(ws, { t: "sys", text: "that contact is not present in this zone" });
+        return;
+      }
       // re-accepting the job you already hold is idempotent — it re-syncs the tracker
       // instead of dead-ending (a stale active job used to lock the slot forever)
       if (p.bounty?.id === b.id) {
@@ -4525,6 +5642,26 @@ export class WorldDO {
       if (p.bounty) {
         this.send(ws, { t: "sys", text: "finish your current job first" });
         return;
+      }
+      // Boss and courier jobs are character moments, not respawn/fast-travel faucets.
+      // Persist the per-job daily gate so zone travel and isolate eviction cannot reset it.
+      if (b.objective === "boss" || b.objective === "travel") {
+        let completedAt = p.bountyCompletedAt.get(b.id) ?? 0;
+        if (!completedAt) {
+          const row = await this.env.DB.prepare(
+            "SELECT completed_at FROM bounty_completions WHERE player=? AND bounty_id=?",
+          )
+            .bind(p.id, b.id)
+            .first<{ completed_at: number }>();
+          completedAt = Number(row?.completed_at ?? 0);
+          if (completedAt > 0) p.bountyCompletedAt.set(b.id, completedAt);
+        }
+        const remaining = bossBountyCooldownRemaining(completedAt);
+        if (remaining > 0) {
+          const hours = Math.max(1, Math.ceil(remaining / (60 * 60 * 1000)));
+          this.send(ws, { t: "sys", text: `${b.name} is settled — check back in ${hours}h` });
+          return;
+        }
       }
       p.bounty = { id: b.id, progress: 0 };
       p.bountyDirty = true;
@@ -4551,10 +5688,19 @@ export class WorldDO {
   private onNpcService(ws: WebSocket, msg: Extract<ClientMsg, { t: "npc" }>) {
     const p = this.playerFor(ws);
     if (!p || p.dead) return;
-    if (msg.action !== "service") return;
     const npcId = (msg.npcId || "").replace(/[^a-zA-Z0-9_:-]/g, "").slice(0, 48);
+    if (!npcId || !npcDef(npcId)) return;
+    if (!npcPresentInZone(npcId, this.zoneName)) {
+      this.send(ws, { t: "sys", text: "that contact is not present in this zone" });
+      return;
+    }
+    if (msg.action === "talk") {
+      this.noteNpcMet(p, npcId);
+      return;
+    }
+    if (msg.action !== "service") return;
     const service = (msg.service || "").replace(/[^a-z0-9_]/g, "").slice(0, 32) as NpcServiceId;
-    if (!npcId || !service) return;
+    if (!service) return;
     // Panel opens are client-side; bounty uses the dedicated path (but accept alias ok).
     if (CLIENT_OPEN_SERVICES.has(service) && service !== "bounty") return;
     const offered = servicesForNpc(npcId);
@@ -4566,7 +5712,15 @@ export class WorldDO {
     if (!def) return;
 
     if (service === "bounty") {
-      const b = bountyForNpc(npcId);
+      // Story allies escalate their jobs with the campaign's final act.
+      const b = bountyForNpc(
+        npcId,
+        storyPhase(p.campaign?.activeId ?? null),
+        residentConfirmationSnapshot(p.stats),
+        p.campaign.completed,
+        Array.from({ length: DISTRICTS.length }, (_, district) =>
+          decodeChronicleCivic(this.meta[chronicleCivicKey(district)], currentGuildWeek())),
+      );
       if (!b) {
         this.send(ws, { t: "sys", text: "no job on the table" });
         return;
@@ -4631,6 +5785,18 @@ export class WorldDO {
         line = `meal ₵${cost} — belly full, HEAT down`;
         break;
       }
+      case "rest": {
+        if (p.hp >= p.maxHp && p.heat <= 0) {
+          this.send(ws, { t: "sys", text: "you're already fully rested" });
+          return;
+        }
+        p.credits -= cost;
+        this.eco("burn", "npc_hotel_rest", cost);
+        p.hp = p.maxHp;
+        p.heat = 0;
+        line = `slept safely for ₵${cost} — health full, HEAT clear`;
+        break;
+      }
       case "cool_down": {
         if (p.heat <= 0) {
           this.send(ws, { t: "sys", text: "HEAT's already cold" });
@@ -4646,9 +5812,19 @@ export class WorldDO {
         p.credits -= cost;
         this.eco("burn", "npc_rumor", cost);
         const xp = npcServiceXp("rumor", p.level);
-        p.xp += xp;
-        p.level = levelForXp(p.xp);
-        const tip = RUMOR_TIPS[Math.floor(Math.random() * RUMOR_TIPS.length)];
+        this.grantXp(p, xp);
+        const inDistrict = /^d\d+(?:i\d+)?$/.test(this.zoneName);
+        const tip = inDistrict
+          ? districtRumorLine(
+              this.districtIndex,
+              this.modDay >= 0 ? this.modDay : dayIndex(),
+              relationshipTier(
+                p.stats[relationshipTalkKey(npcId)] ?? 0,
+                p.stats[relationshipJobsKey(npcId)] ?? 0,
+              ),
+              this.civicMomentum(this.modDay >= 0 ? this.modDay : dayIndex()),
+            )
+          : RUMOR_TIPS[Math.floor(Math.random() * RUMOR_TIPS.length)];
         line = `rumor (+${xp} XP): ${tip}`;
         break;
       }
@@ -4656,8 +5832,7 @@ export class WorldDO {
         p.credits -= cost;
         this.eco("burn", "npc_intel", cost);
         const xp = npcServiceXp("intel", p.level);
-        p.xp += xp;
-        p.level = levelForXp(p.xp);
+        this.grantXp(p, xp);
         const tip = INTEL_TIPS[Math.floor(Math.random() * INTEL_TIPS.length)];
         line = `intel (+${xp} XP): ${tip}`;
         break;
@@ -4666,8 +5841,7 @@ export class WorldDO {
         p.credits -= cost;
         this.eco("burn", "npc_train", cost);
         const xp = npcServiceXp("train", p.level);
-        p.xp += xp;
-        p.level = levelForXp(p.xp);
+        this.grantXp(p, xp);
         line = `drill complete — +${xp} XP (₵${cost})`;
         break;
       }
@@ -4693,6 +5867,25 @@ export class WorldDO {
         line = "blessing — brief invulnerability";
         break;
       }
+      case "fish": {
+        // Docks pier flavour tap. Deliberately mints NO transferable value — the NPC
+        // cooldown is in-memory (lost on DO eviction), so any currency/core here would
+        // be farmable after a server blip. Reward is exploration XP (non-transferable)
+        // plus an authored catch line.
+        this.awardSkill(p, "exploration", 6);
+        const roll = (this.tick * 2654435761 + Math.round(p.x) * 40503 + Math.round(p.y)) >>> 0;
+        const catches = [
+          "a boot full of harbour silt",
+          "a dead drone, corroded past salvage",
+          "a knot of fibre-optic weed",
+          "a cracked data-slug, unreadable",
+          "an eyeless dock-carp — still twitching",
+          "a corp ID badge, name scratched off",
+          "nothing but an oily ripple",
+        ];
+        line = `you reel up ${catches[roll % catches.length]}`;
+        break;
+      }
       default:
         ok = false;
         break;
@@ -4714,17 +5907,86 @@ export class WorldDO {
     p.bounty.progress += n;
     p.bountyDirty = true;
     if (p.bounty.progress >= b.count) {
-      const paid = this.grantEmit(p, "bounty", b.rewardCredits);
-      if (paid > 0) this.bumpStat(p, "credits", paid);
-      this.bumpStat(p, "rep", b.rewardRep);
-      this.sendTo(p.id, { t: "sys", text: `✔ BOUNTY — ${b.name} (+₵${paid} +${b.rewardRep} rep)` });
-      p.bounty = null;
+      if (b.objective === "boss" || b.objective === "travel") {
+        // Clear the in-memory job before starting IO so adjacent authoritative events
+        // cannot launch two completion claims. The D1 conditional upsert below is the
+        // cross-zone/reconnect authority and must win before any payout occurs.
+        p.bounty = null;
+        void this.completeCooldownBounty(p, b);
+      } else {
+        this.payBountyReward(p, b);
+        p.bounty = null;
+      }
     } else {
       // Completion waits for persistDirty/onClose so its reward saves before the
       // tracker row is deleted; ordinary progress has no coupled currency mutation.
       void this.flushBounty(p);
     }
     this.pushBounty(p);
+  }
+
+  /** Zone arrival is the only progress event for courier work. The client cannot
+   * forge completion: login hydration places the player in an authoritative zone,
+   * then this compares that zone with the job's authored destination. */
+  private bountyTravelEvent(p: PlayerState) {
+    if (!p.bounty) return;
+    const b = bountyById(p.bounty.id);
+    if (b?.objective !== "travel" || b.targetZone !== this.zoneName) return;
+    this.bountyEvent(p, "travel", 1);
+  }
+
+  private payBountyReward(p: PlayerState, b: NonNullable<ReturnType<typeof bountyById>>) {
+    const paid = this.grantEmit(p, "bounty", b.rewardCredits);
+    if (paid > 0) this.bumpStat(p, "credits", paid);
+    this.bumpStat(p, "rep", b.rewardRep);
+    const residentDistrict = residentProfile(b.npc)?.district;
+    if (b.requiredCampaign && residentDistrict !== undefined) {
+      const key = reconstructionKey(residentDistrict);
+      const before = Math.max(0, p.stats[key] ?? 0);
+      if (before < MAX_RECONSTRUCTION) this.bumpStat(p, key, 1);
+      const result = districtReconstruction(residentDistrict, Math.min(MAX_RECONSTRUCTION, before + 1));
+      if (result) this.sendTo(p.id, { t: "sys", text: `◆ RECONSTRUCTION · ${result.stage} — ${result.line}` });
+    }
+    this.noteNpcJobCompleted(p, b.npc);
+    if (residentDistrict === undefined) this.addDistrictStanding(p, 5, `kept a promise to ${npcDef(b.npc)?.name ?? b.npc}`);
+    else this.addDistrictStandingAt(p, residentDistrict, 5, `kept a promise to ${npcDef(b.npc)?.name ?? b.npc}`);
+    if (b.requiredConfirmation) {
+      const milestone = [...CASEFILE_MILESTONES].reverse().find((m) => residentConfirmationSnapshot(p.stats).length >= m.threshold);
+      this.sendTo(p.id, {
+        t: "sys",
+        text: `▤ CASEFILE FOLLOW-UP CLOSED · ${b.name}${milestone ? ` — ${milestone.title} remains the working theory` : ""}`,
+      });
+    }
+    this.sendTo(p.id, { t: "sys", text: `✔ BOUNTY — ${b.name} (+₵${paid} +${b.rewardRep} rep)` });
+  }
+
+  /** Atomically claim the per-job cooldown before paying a boss or courier bounty. */
+  private async completeCooldownBounty(p: PlayerState, b: NonNullable<ReturnType<typeof bountyById>>) {
+    const completedAt = Date.now();
+    try {
+      const r = await this.env.DB.prepare(
+        "INSERT INTO bounty_completions (player,bounty_id,completed_at) VALUES (?,?,?) " +
+          "ON CONFLICT(player,bounty_id) DO UPDATE SET completed_at=excluded.completed_at " +
+          "WHERE bounty_completions.completed_at <= ?",
+      )
+        .bind(p.id, b.id, completedAt, completedAt - BOSS_BOUNTY_COOLDOWN_MS)
+        .run();
+      if (Number(r.meta.changes ?? 0) < 1) {
+        this.sendTo(p.id, { t: "sys", text: `${b.name} was already settled — no duplicate payout` });
+        return;
+      }
+      p.bountyCompletedAt.set(b.id, completedAt);
+      this.payBountyReward(p, b);
+      p.bountyDirty = true;
+      this.pushBounty(p);
+    } catch {
+      // Fail closed: no durable cooldown means no reward. Restore the job just below
+      // completion so the player can retry the next authoritative objective event.
+      if (!p.bounty) p.bounty = { id: b.id, progress: Math.max(0, b.count - 1) };
+      p.bountyDirty = true;
+      this.sendTo(p.id, { t: "sys", text: "bounty registry unavailable — payout held, job restored" });
+      this.pushBounty(p);
+    }
   }
 
   /** TENEMENT lockbox — move an item between bag and personal stash. Server-authoritative:
@@ -4752,7 +6014,7 @@ export class WorldDO {
       const [it] = p.inventory.splice(i, 1);
       p.stash.push(it);
       p.dirty = true;
-      sys(`◈ stashed ${it.name} — safe from death`);
+      sys(`◈ stashed ${it.name} — moved into personal lockbox`);
     } else if (msg.action === "withdraw") {
       const i = p.stash.findIndex((it) => it.id === msg.itemId);
       if (i < 0) return sys("that item isn't in your stash");
@@ -4932,7 +6194,7 @@ export class WorldDO {
       e.forSale = false;
       // Keep furniture from prior owner; only refresh ownership columns.
       await this.persistEstate();
-      sys(`◈ home purchased for ₵${price} — press F to furnish it`);
+      sys(`◈ home purchased for ₵${price} — press U to furnish it`);
       this.broadcastEstate();
     } else if (msg.action === "list") {
       if (e.owner !== p.id) return sys("only the owner can list this home");
@@ -4949,9 +6211,38 @@ export class WorldDO {
       this.broadcastEstate();
     } else if (msg.action === "furnish") {
       if (e.owner !== p.id) return sys("only the owner can decorate this home");
-      e.furniture = sanitizeFurniture(msg.furniture ?? []);
-      this.estateBuffs = furnitureHomeBuffs(e.furniture);
-      await this.persistEstate();
+      const previous = e.furniture;
+      const next = sanitizeFurniture(msg.furniture ?? []);
+      const cost = furnitureUpgradeCost(previous, next);
+      if (p.credits < cost) return sys(`not enough credits — these furnishings cost ₵${cost}`);
+      p.credits -= cost;
+      p.dirty = true;
+      e.furniture = next;
+      this.estateBuffs = furnitureHomeBuffs(next);
+      // Persist the debit before the layout. A Worker crash can never leave the
+      // furniture/buffs saved while silently dropping their charge.
+      if (cost > 0 && !(await this.upsertPlayer(p))) {
+        p.credits += cost;
+        e.furniture = previous;
+        this.estateBuffs = furnitureHomeBuffs(previous);
+        return sys("credit ledger unavailable — your layout was not charged or saved");
+      }
+      try {
+        await this.persistEstate();
+      } catch {
+        p.credits += cost;
+        p.dirty = true;
+        e.furniture = previous;
+        this.estateBuffs = furnitureHomeBuffs(previous);
+        if (cost > 0) void this.upsertPlayer(p);
+        return sys("estate registry unavailable — your layout was not charged or saved");
+      }
+      if (cost > 0) {
+        this.eco("burn", "estate_furniture", cost);
+        sys(`◈ furnishings saved — ₵${cost}`);
+      } else {
+        sys("◈ furnishings rearranged — no charge");
+      }
       this.broadcastEstate();
     } else if (msg.action === "sign") {
       // visitors sign the book; the stamp is server-chosen so nothing player-written persists.
@@ -4990,9 +6281,30 @@ export class WorldDO {
   }
 
   private recomputeStats(p: PlayerState) {
-    p.mods = deriveMods(p.equipped);
+    p.mods = deriveMods(p.equipped, p.level);
     p.maxHp = PLAYER_HP + Math.round(p.mods.hpAdd);
     if (p.hp > p.maxHp) p.hp = p.maxHp;
+  }
+
+  /**
+   * The only way XP enters a character. A level is real power now (levelCurve),
+   * so stats must be re-derived on every grant — funnelling all XP through here
+   * is what stops p.mods/maxHp from silently going stale on level-up.
+   */
+  private grantXp(p: PlayerState, amount: number) {
+    const n = Math.round(amount);
+    if (!Number.isFinite(n) || n <= 0) return;
+    const before = p.level;
+    p.xp += n;
+    p.level = levelForXp(p.xp);
+    p.dirty = true;
+    if (p.level === before) return;
+    const prevMax = p.maxHp;
+    this.recomputeStats(p);
+    // Levelling must never read as a downgrade: bank the new headroom as healing
+    // instead of letting the HP bar drop to a smaller fraction of a bigger pool.
+    const gained = p.maxHp - prevMax;
+    if (gained > 0 && !p.dead) p.hp = Math.min(p.maxHp, p.hp + gained);
   }
 
   private sendLoadout(ws: WebSocket, p: PlayerState) {
@@ -5022,6 +6334,11 @@ export class WorldDO {
     const p = this.playerFor(ws);
     if (!p) return;
     const slot = msg.slot as Slot;
+    // `slot` is untrusted. Without this guard `{slot:"__proto__"}` reads Object.prototype
+    // (truthy, so the !it check passes) and pushes it into the bag as a junk item with no
+    // id — unequippable, unsalvageable, and persisted; "constructor" pushes a function that
+    // serializes to null and can NPE any consumer that walks the inventory.
+    if (!Object.prototype.hasOwnProperty.call(p.equipped, slot)) return;
     const it = p.equipped[slot];
     if (!it) return;
     if (p.inventory.length >= INVENTORY_CAP) {
@@ -5042,6 +6359,10 @@ export class WorldDO {
     if (!p) return;
     const sku = SHOP[msg.sku];
     if (!sku) return;
+    if (msg.sku === "reprint_chip" && reprintStampCount(p.stats) >= MAX_REPRINT_STAMPS) {
+      this.send(ws, { t: "sys", text: "memorial ledger already carries all nine public stamps" });
+      return;
+    }
     if (sku.repReq && repTier(this.repOf(p)) < sku.repReq) {
       this.send(ws, { t: "sys", text: `${sku.label} needs reputation tier ${sku.repReq} — run contracts` });
       return;
@@ -5067,8 +6388,11 @@ export class WorldDO {
       p.cores += sku.cores;
       this.send(ws, { t: "sys", text: `bought ${sku.label} — +◈${sku.cores}` });
     } else if (msg.sku === "reprint_chip") {
-      // Pure sink — insurance stamp with no refund (economy burn).
-      this.send(ws, { t: "sys", text: `bought ${sku.label} — grid insurance stamped (₵ burned)` });
+      // Pure sink with durable social provenance: no refund, protection, or stat power.
+      this.bumpStat(p, REPRINT_STAMP_KEY, 1);
+      const stamps = reprintStampCount(p.stats);
+      this.pushRelations(p);
+      this.send(ws, { t: "sys", text: `bought ${sku.label} — public return ledger ${stamps}/9 (₵ burned; no death protection)` });
     }
     if (sku.creditsGrant) {
       p.credits += sku.creditsGrant;
@@ -5100,6 +6424,59 @@ export class WorldDO {
       if (it && it.id === id) return { item: it, slot: s };
     }
     return null;
+  }
+
+  /** Metro City civic archive terminals: spatially validated, durable cooldown,
+   *  and profession-only rewards. They reveal history; they never mint economy. */
+  private async onHarvest(ws: WebSocket, msg: Extract<ClientMsg, { t: "harvest" }>) {
+    const p = this.playerFor(ws);
+    if (!p || p.dead || this.zoneName !== "safe") return;
+    const node = HUB_DATA_TERMINALS.find((n) => n.id === Math.floor(msg.node));
+    if (!node || msg.node !== node.id) return;
+    const x = CITY_HUB_SPAWN.x + node.dx * TILE;
+    const y = CITY_HUB_SPAWN.y + node.dy * TILE;
+    if (Math.hypot(p.x - x, p.y - y) > HUB_DATA_TERMINAL_RANGE) {
+      this.send(ws, { t: "sys", text: `ARCHIVE LINK · move closer to ${node.name}` });
+      return;
+    }
+    const key = `archive_terminal_${node.id}_at`;
+    const now = Date.now();
+    const remaining = terminalCooldownRemaining(p.stats[key] ?? 0, now);
+    if (remaining > 0) {
+      this.send(ws, { t: "sys", text: `ARCHIVE LINK · ${node.name} rekeys in ${Math.ceil(remaining / 60_000)}m` });
+      return;
+    }
+
+    // Reserve before awaiting D1 so rapid clicks cannot double-award. This fixed-key
+    // absolute timestamp is intentionally not routed through additive statDelta.
+    const before = p.stats[key] ?? 0;
+    p.stats[key] = now;
+    try {
+      await this.env.DB.prepare(
+        "INSERT INTO player_stats (player, stat, v) VALUES (?,?,?) ON CONFLICT(player,stat) DO UPDATE SET v = excluded.v",
+      )
+        .bind(p.id, key, now)
+        .run();
+    } catch {
+      p.stats[key] = before;
+      this.send(ws, { t: "sys", text: "ARCHIVE LINK · civic index unavailable — no record consumed" });
+      return;
+    }
+    const pageKey = civicArchivePageKey(node.id);
+    const page = Math.min(CIVIC_ARCHIVE_PAGE_CAP, Math.max(0, Math.floor(p.stats[pageKey] ?? 0)));
+    const record = civicArchiveRecord(node.id, page);
+    if (record) {
+      this.bumpStat(p, pageKey, 1);
+      this.pushArchives(p);
+    }
+    this.awardSkill(p, "mining", 28);
+    this.awardSkill(p, "crafting", 8);
+    this.send(ws, {
+      t: "sys",
+      text: record
+        ? `▣ ${node.name} ${page + 1}/${CIVIC_ARCHIVE_PAGE_CAP} · ${record.title} — ${record.text} Archive sealed for 5m.`
+        : `▣ ${node.name} · index complete. ${civicArchiveSynthesis(civicArchiveSnapshot(p.stats))} Archive sealed for 5m.`,
+    });
   }
 
   /**
@@ -5176,13 +6553,15 @@ export class WorldDO {
 
     p.dirty = true;
     if (drill) this.tutorialEvent(p, "craft");
+    else this.awardSkill(p, "crafting", msg.action === "salvage" ? 14 : 28);
     this.send(ws, { t: "inv", items: p.inventory });
     this.sendLoadout(ws, p);
   }
 
   private rollPlayerCritDamage(p: PlayerState, base: number): number {
     let dmg = base;
-    const critChance = Math.min(0.05 + p.level * 0.012, 0.3) + (p.mods.critPct || 0);
+    // Level's share of crit now arrives via p.mods (levelCurve); this is the floor.
+    const critChance = 0.05 + (p.mods.critPct || 0);
     if (Math.random() < critChance) dmg = Math.round(dmg * 1.85);
     return dmg;
   }
@@ -5255,7 +6634,9 @@ export class WorldDO {
       this.send(ws, { t: "kit_ack", slot: "q", ok: false });
       return;
     }
-    const aim = Number.isFinite(msg.aim) ? msg.aim : p.aim;
+    // normAngle, not just isFinite: a finite-but-huge aim (1e308) makes the
+    // angle-difference normalizers below spin forever and wedge the whole zone.
+    const aim = Number.isFinite(msg.aim) ? normAngle(msg.aim) : p.aim;
     p.aim = aim;
     if (this.inTutorial()) this.tutorialEvent(p, "kit");
     // DASH-STRIKE moves on the PRIMARY cast only (an echo re-blinking you would be chaos)
@@ -5312,9 +6693,7 @@ export class WorldDO {
           const dx = e.x - p.x;
           const dy = e.y - p.y;
           if (Math.hypot(dx, dy) > 270) continue;
-          let diff = Math.atan2(dy, dx) - aim;
-          while (diff > Math.PI) diff -= 2 * Math.PI;
-          while (diff < -Math.PI) diff += 2 * Math.PI;
+          const diff = normAngle(Math.atan2(dy, dx) - aim);
           if (Math.abs(diff) > halfArc) continue;
           e.stunUntilTick = this.tick + this.statusTicks(e, Math.round((e.boss ? 900 : 2000) * scale));
           this.applyPlayerHitToEnemy(e, p, dmg);
@@ -5350,7 +6729,9 @@ export class WorldDO {
       this.send(ws, { t: "kit_ack", slot: "e", ok: false });
       return;
     }
-    const aim = Number.isFinite(msg.aim) ? msg.aim : p.aim;
+    // normAngle, not just isFinite: a finite-but-huge aim (1e308) makes the
+    // angle-difference normalizers below spin forever and wedge the whole zone.
+    const aim = Number.isFinite(msg.aim) ? normAngle(msg.aim) : p.aim;
     p.aim = aim;
     if (this.inTutorial()) this.tutorialEvent(p, "kit");
     const lvl = 1 + (p.mods.dmgPct || 0);
@@ -5422,7 +6803,9 @@ export class WorldDO {
     }
     p.heat = Math.max(0, p.heat - HEAT.ultHeatCost);
     this.send(ws, { t: "kit_ack", slot: "r", ok: true });
-    const aim = Number.isFinite(msg.aim) ? msg.aim : p.aim;
+    // normAngle, not just isFinite: a finite-but-huge aim (1e308) makes the
+    // angle-difference normalizers below spin forever and wedge the whole zone.
+    const aim = Number.isFinite(msg.aim) ? normAngle(msg.aim) : p.aim;
     p.aim = aim;
     const lvl = 1 + (p.mods.dmgPct || 0);
     switch (p.classId) {
@@ -5484,7 +6867,7 @@ export class WorldDO {
   private onFire(ws: WebSocket, msg: Extract<ClientMsg, { t: "fire" }>) {
     const p = this.playerFor(ws);
     if (!p || p.dead || !p.sessionValid) return;
-    if (Number.isFinite(msg.aim)) p.aim = msg.aim;
+    if (Number.isFinite(msg.aim)) p.aim = normAngle(msg.aim);
     const weapon = p.equipped.weapon;
     const wdef = weapon?.weaponId ? getWeapon(weapon.weaponId) : undefined;
     const prim = wdef?.primary;
@@ -5506,11 +6889,11 @@ export class WorldDO {
         const dx = e.x - p.x;
         const dy = e.y - p.y;
         if (Math.hypot(dx, dy) > prim.range) continue;
-        let diff = Math.atan2(dy, dx) - p.aim;
-        while (diff > Math.PI) diff -= 2 * Math.PI;
-        while (diff < -Math.PI) diff += 2 * Math.PI;
+        const diff = normAngle(Math.atan2(dy, dx) - p.aim);
         if (Math.abs(diff) <= halfArc) this.applyPlayerHitToEnemy(e, p, dmg);
       }
+      // Melee can hit players only inside an active PvP arena (same rules as projectiles).
+      this.resolveMeleePvp(p, dmg, prim.range, halfArc);
       return;
     }
     if (prim.kind === "beam") {
@@ -5522,6 +6905,8 @@ export class WorldDO {
         if (e.hp <= 0) continue;
         if (segPointDist2(e.x, e.y, p.x, p.y, ex, ey) <= hw * hw) this.applyPlayerHitToEnemy(e, p, dmg);
       }
+      // Beams never damage players outside PvP arenas.
+      this.resolveBeamPvp(p, dmg, prim.range, hw);
       return;
     }
     const dmg = this.rollPlayerCritDamage(p, baseDmg);
@@ -5555,7 +6940,7 @@ export class WorldDO {
 
   private applyPlayerHitToEnemy(e: Enemy, killer: PlayerState, dmg: number) {
     this.addHeat(killer, dmg * HEAT.perDamage);
-    const lifesteal = Math.min(killer.level * 0.004, 0.08) + (killer.mods.lifestealPct || 0);
+    const lifesteal = killer.mods.lifestealPct || 0;
     if (lifesteal > 0 && !killer.dead && killer.hp > 0) {
       killer.hp = Math.min(killer.maxHp, killer.hp + dmg * lifesteal);
     }
@@ -5596,14 +6981,13 @@ export class WorldDO {
       const dmod = /^d\d+$/.test(this.zoneName) ? dailyDistrictMod(this.districtIndex) : null;
       const gained = Math.round(CREDITS_PER_KILL * mult * (dmod?.creditMult ?? 1) * (1 + (killer.guildBonus || 0)));
       const paid = this.grantEmit(killer, "kill", gained);
-      killer.xp += Math.round(XP_PER_KILL * mult);
-      killer.level = levelForXp(killer.xp);
-      killer.dirty = true;
+      this.grantXp(killer, XP_PER_KILL * mult);
       this.bumpMeta("f" + killer.faction, isBoss ? 10 : 1);
       this.campaignEvent(killer, "kill");
       this.sharedKillCredit(killer, e, isBoss);
       this.addHeat(killer, HEAT.perKill);
       this.bumpStat(killer, "kills", 1);
+      this.awardSkill(killer, "combat", isBoss ? 120 : 35);
       if (isBoss) this.bumpStat(killer, "bosses", 1);
       if (killer.guildId) {
         void this.bumpGuildGoal(killer.guildId, "kills", 1);
@@ -5611,9 +6995,12 @@ export class WorldDO {
       }
       if (paid > 0) this.bumpStat(killer, "credits", paid);
       this.contractEvent(killer, "kill", 1);
+      this.districtOperationEvent(killer, "kill", 1);
       this.bountyEvent(killer, "kill", 1);
       if (isBoss) {
         this.contractEvent(killer, "boss", 1);
+        this.districtOperationEvent(killer, "boss", 1);
+        this.addDistrictStanding(killer, 8, `brought down ${e.name ?? "a commander"}`);
         this.bountyEvent(killer, "boss", 1);
       }
       this.eliteDeath(e);
@@ -5638,6 +7025,7 @@ export class WorldDO {
       }
       // World-boss signature piece — guaranteed on kill (on top of the normal roll).
       if (isBoss) {
+        void this.recordChronicleBoss();
         const sig = rollBossSignature(e.name, killer.level);
         if (sig) {
           this.grantLoot(killer, sig, "bag full boss loot");
@@ -5726,7 +7114,18 @@ export class WorldDO {
   async alarm() {
     if (this.sessions.size > 0) {
       this.ensureTick();
-      for (const p of this.players.values()) await this.drainMail(p); // cross-zone payouts land here
+      // Mail: fire-and-forget so a slow D1 drain cannot delay sim resume after eviction.
+      for (const p of this.players.values()) {
+        void this.drainMail(p).catch(() => {
+          this.errCount++;
+        });
+      }
+      // Heartbeat: force a durable snapshot of every online runner (position, bag,
+      // credits, campaign…). Survives Worker redeploys + DO isolate recycle so a
+      // mid-session ship never wipes the last few seconds of play.
+      for (const p of this.players.values()) {
+        if (p.sessionValid) p.dirty = true;
+      }
       await this.persistDirty();
       await this.state.storage.setAlarm(Date.now() + SUPERVISOR_ALARM_MS);
     }
@@ -5737,8 +7136,11 @@ export class WorldDO {
     let liveEnemies = 0;
     for (const e of this.enemies.values()) if (e.hp > 0) liveEnemies++;
     const n = Math.max(1, this.sessions.size);
+    const hard = hardCapFor(this.zoneName, this.env, this.flags);
     return {
       zone: this.zoneName,
+      inst: this.instanceId,
+      doName: this.doKey(),
       players: this.sessions.size,
       enemies: liveEnemies,
       shots: this.shots.length,
@@ -5761,9 +7163,10 @@ export class WorldDO {
         claimGoal: this.flags.claimGoal,
         districtWar: this.flags.districtWar,
         hubCap: this.flags.hubCap,
-        dailyEmitCap: this.flags.dailyEmitCap,
       },
+      hardCap: hard,
       hubFull: this.zoneName === "safe" && this.sessions.size >= this.flags.hubCap,
+      instanceFull: this.sessions.size >= hard,
     };
   }
 
@@ -5785,15 +7188,33 @@ export class WorldDO {
       }
       if (p.dead) {
         if (this.tick >= p.respawnTick) {
-          const open = resolveOpenSpawn(this.grid, this.spawn);
-          p.x = open.x;
-          p.y = open.y;
+          // PvP deaths: nearest safe point outside the arena.
+          // PvE: last standing position (the space the runner existed in).
+          const wasPvp = !!p.pvpDeath;
+          const target = wasPvp
+            ? this.nearestSafeRespawn(p)
+            : resolveOpenSpawn(this.grid, { x: p.x, y: p.y });
+          p.x = target.x;
+          p.y = target.y;
           p.hp = p.maxHp; // respawn at full, including equipped +HP
           p.dead = false;
-          p.pvpSafeUntil = this.tick + ticks(2500); // brief immunity so arenas can't be spawn-camped
+          p.pvpDeath = false;
+          p.pvpSafeUntil = this.tick + ticks(wasPvp ? 3500 : 2500);
+          p.iframeUntilTick = Math.max(p.iframeUntilTick, this.tick + ticks(1200));
           p.dirty = true;
+          if (wasPvp) {
+            this.sendTo(p.id, {
+              t: "sys",
+              text: "◈ reprint outside THE CRUCIBLE — brief immunity · re-enter to contest again",
+            });
+          }
         }
         continue;
+      }
+      // Decay death-loop streak after ~25s clean so EXTRACT doesn't stick forever.
+      if ((p.deathStreak || 0) > 0 && (this.tick - (p.deathStreakTick || 0)) * NET_TICK_MS > 25_000) {
+        p.deathStreak = 0;
+        p.deathStreakTick = 0;
       }
       if (this.tick - p.lastInputTick > INTENT_EXPIRE_TICKS) {
         p.mx = 0;
@@ -5955,7 +7376,11 @@ export class WorldDO {
         e.lastFireTick = this.tick;
         const aim = Math.atan2(target.y - e.y, target.x - e.x);
         const projSpeed = arch.projSpeed * (this.provingVault ? WorldDO.weeklyAffix().shotSpeedMult : 1);
-        const dmg = e.boss ? Math.round(arch.dmg * BOSS_DMG_MULT) : arch.dmg;
+        // e.dmgMult carries per-enemy scaling (subway tunnel threat); zone mult is
+        // the district-wide factor. Unset dmgMult leaves district behaviour at 1×.
+        // Bosses never reach here — they `continue` into updateBoss above, which
+        // applies BOSS_DMG_MULT itself.
+        const dmg = Math.round(arch.dmg * this.zoneEnemyDmgMult * (e.dmgMult ?? 1));
         const fire = (a: number, dmgOverride?: number) =>
           this.shots.push({
             id: this.nextShotId++,
@@ -6014,7 +7439,9 @@ export class WorldDO {
             const owner = this.players.get(s.owner);
             const dmg = s.dmg;
             if (owner) {
-              const lifesteal = Math.min(owner.level * 0.004, 0.08) + (owner.mods.lifestealPct || 0);
+              // Level's share of lifesteal already arrives via mods (levelCurve) —
+              // adding the old inline term here healed ranged hits twice.
+              const lifesteal = owner.mods.lifestealPct || 0;
               if (lifesteal > 0 && !owner.dead && owner.hp > 0) {
                 owner.hp = Math.min(owner.maxHp, owner.hp + dmg * lifesteal);
               }
@@ -6114,9 +7541,13 @@ export class WorldDO {
             this.tutorialEvent(p, "pickup");
           } else if (pu.kind === PICKUP_CORE) {
             p.cores += 1;
-            p.xp += 8;
-            p.level = levelForXp(p.xp);
+            this.grantXp(p, 8);
             this.bountyEvent(p, "collect", 1);
+          } else if (typeof pu.amount === "number" && pu.amount > 0) {
+            // PvP floor pile — exact looted credits (not a fresh emit sink/source).
+            p.credits += Math.floor(pu.amount);
+            this.bumpStat(p, "credits", Math.floor(pu.amount));
+            this.sendTo(p.id, { t: "sys", text: `◈ looted ₵${Math.floor(pu.amount)} from the arena floor` });
           } else {
             this.grantEmit(p, "pickup", 4);
           }
@@ -6163,8 +7594,17 @@ export class WorldDO {
         const chanMult = this.eventActive("contagion_outbreak") ? 2 : 1;
         node.progress = Math.min(1, node.progress + NODE_CAPTURE_PER_SEC * chanMult * dts);
         if (node.progress >= 1) {
+          const controlBefore = !this.inTutorial() && !inDive ? this.districtControl() : NEUTRAL;
           node.owner = node.by;
-          if (!this.inTutorial() && !inDive) this.bumpMeta("f" + node.by, FACTION_CAPTURE_SCORE);
+          if (!this.inTutorial() && !inDive) {
+            this.bumpMeta("f" + node.by, FACTION_CAPTURE_SCORE);
+            const controlAfter = this.districtControl();
+            if (controlAfter !== NEUTRAL && controlAfter !== controlBefore) {
+              this.broadcastSys(factionCaptureLine(controlAfter, DISTRICTS[this.districtIndex]?.name ?? "the district"));
+              this.broadcastSys(`⬡ WEEKLY DOCTRINE · ${factionCampaignBrief(controlAfter)}`);
+              void this.recordTerritoryLegacy(controlAfter);
+            }
+          }
           // credit the players who channelled it (quest "capture" objective)
           for (const pl of this.players.values()) {
             if (!pl.dead && pl.faction === node.by && dist2(pl.x, pl.y, node.x, node.y) <= CR2) {
@@ -6177,6 +7617,8 @@ export class WorldDO {
                 this.campaignSecureCheck(pl);
                 this.bumpStat(pl, "captures", 1);
                 this.contractEvent(pl, "capture", 1);
+                this.districtOperationEvent(pl, "capture", 1);
+                this.addDistrictStanding(pl, 3, "held a public relay");
                 if (pl.guildId) void this.bumpGuildGoal(pl.guildId, "captures", 1);
                 // District War weekly bonus (focus district only, once per war week).
                 if (this.flags.districtWar) {
@@ -6219,7 +7661,10 @@ export class WorldDO {
     if (shouldBroadcastSnapshot(this.tick, this.sessions.size)) {
       const factions = Array.from({ length: FACTION_COUNT }, (_, i) => Math.round(this.meta["f" + i] ?? 0));
       const control = this.districtControl();
-      const roster = [...this.players.values()].map((p) => ({ id: p.id, faction: p.faction, level: p.level }));
+      // Roster is bulky and rarely needed every frame — ~1 Hz is enough for party UI.
+      const roster = shouldIncludeRoster(this.tick)
+        ? [...this.players.values()].map((p) => ({ id: p.id, faction: p.faction, level: p.level }))
+        : [];
       // Remote presentation is viewer-independent; compute it once per player/tick
       // instead of rebuilding/rounding the same object in the crowded-zone O(N²) loop.
       const playerViews = new Map<string, RemotePlayerView>();
@@ -6246,8 +7691,8 @@ export class WorldDO {
       // Keep session_zone warm for cross-zone Cell chat (cheap batch).
       void this.touchOnlineSessions();
     }
-    // Cross-zone mail a bit more often on Paid (auction pays land while online).
-    if (this.tick % 60 === 0) {
+    // Cross-zone mail every ~2s (was 3s) — auction pays land while online.
+    if (this.tick % 40 === 0) {
       for (const p of this.players.values()) void this.drainMail(p);
     }
     // ops metrics: EMA smoothing keeps this O(1) per tick with no storage writes
@@ -6290,19 +7735,9 @@ export class WorldDO {
     });
   }
 
-  /** Which faction holds the most nodes in this district (NEUTRAL if none). */
+  /** Unique node-count leader; empty districts and tied leads remain contested. */
   private districtControl(): number {
-    const counts = new Array(FACTION_COUNT).fill(0);
-    let any = false;
-    for (const n of this.nodes)
-      if (n.owner !== NEUTRAL) {
-        counts[n.owner]++;
-        any = true;
-      }
-    if (!any) return NEUTRAL;
-    let best = 0;
-    for (let i = 1; i < FACTION_COUNT; i++) if (counts[i] > counts[best]) best = i;
-    return best;
+    return territoryController(this.nodes.map((node) => node.owner), FACTION_COUNT);
   }
 
   /** Enter/exit THE CRUCIBLE — $METRO buy-in escrow. Called after movement each tick. */
@@ -6379,7 +7814,7 @@ export class WorldDO {
         p.dirty = true;
         this.sendTo(p.id, {
           t: "sys",
-          text: `◈ ${fmtMetro(amount)} $METRO buy-in locked — claim eliminations, leave safely to withdraw`,
+          text: `◈ ${fmtMetro(amount)} $METRO buy-in locked · ${PVP_CREDIT_DROP_NOTICE}`,
         });
       } catch {
         // Fail closed: without a durable row the player never becomes a PvP target
@@ -6474,42 +7909,97 @@ export class WorldDO {
     });
   }
 
+  /** True only when both combatants are in an active PvP arena (never elsewhere). */
+  private pvpCombatAllowed(shooter: PlayerState, victim: PlayerState): boolean {
+    if (this.interior || shooter.dead || victim.dead || victim.id === shooter.id) return false;
+    if (this.tick < victim.pvpSafeUntil) return false;
+    if (this.tick < victim.dashUntilTick) return false;
+    if (shooter.party >= 0 && victim.party === shooter.party) return false;
+    if (victim.godMode || isGodPlayerId(victim.id)) return false;
+    if (!shooter.pvpInArena || !victim.pvpInArena) return false;
+    const { worldW, worldH } = gridDims(this.grid);
+    const pvp = pvpZonesFor(worldW, worldH, this.zoneName);
+    if (!inPvpZone(shooter.x, shooter.y, pvp) || !inPvpZone(victim.x, victim.y, pvp)) return false;
+    return true;
+  }
+
+  /** Apply PvP damage + arena kill rewards. Returns true if the victim died from this hit. */
+  private applyPvpDamage(shooter: PlayerState, victim: PlayerState, dmg: number): boolean {
+    const before = victim.hp;
+    // PvP death: 10% credits drop on the floor (hurtPlayer); escrow transfers to killer.
+    this.hurtPlayer(victim, dmg, { pvpKiller: shooter });
+    if (!(victim.dead && before > 0)) return false;
+    victim.pvpEscrow = 0;
+    victim.pvpInArena = false;
+    void this.transferPvpEscrow(victim, shooter);
+    // Small arena XP bounty only — credits come from the floor drop / pickups.
+    this.grantXp(shooter, XP_PER_KILL * 2);
+    this.bumpStat(shooter, "pvp", 1);
+    return true;
+  }
+
+  /**
+   * Nearest safe respawn after a PvP death — last position outside the arena, or
+   * zone spawn if that point is still inside / invalid.
+   */
+  private nearestSafeRespawn(p: PlayerState): { x: number; y: number } {
+    const { worldW, worldH } = gridDims(this.grid);
+    const zones = pvpZonesFor(worldW, worldH, this.zoneName);
+    let sx = Number.isFinite(p.pvpSafeX) ? p.pvpSafeX : this.spawn.x;
+    let sy = Number.isFinite(p.pvpSafeY) ? p.pvpSafeY : this.spawn.y;
+    // If we never recorded a safe pos, or it still sits in the arena, use zone spawn.
+    if (zones.length && inPvpZone(sx, sy, zones)) {
+      sx = this.spawn.x;
+      sy = this.spawn.y;
+    }
+    // Push zone spawn out of arena if the default spawn was authored inside (shouldn't be).
+    if (zones.length && inPvpZone(sx, sy, zones)) {
+      const z = zones[0];
+      sx = z.x - 48;
+      sy = z.y + z.h / 2;
+      if (sx < TILE * 2) sx = z.x + z.w + 48;
+    }
+    return resolveOpenSpawn(this.grid, { x: sx, y: sy });
+  }
+
   /** Player-vs-player damage, gated to the PvP arenas. The server owns HP/death/respawn
    *  and awards an arena bounty + the victim's $METRO escrow. Returns true on a hit. */
   private resolvePvpHit(s: Shot, ax: number, ay: number): boolean {
     const shooter = this.players.get(s.owner);
-    const { worldW, worldH } = gridDims(this.grid);
-    const pvp = pvpZonesFor(worldW, worldH, this.zoneName);
-    if (this.interior || !shooter || !shooter.pvpInArena || !inPvpZone(shooter.x, shooter.y, pvp)) return false;
+    if (!shooter) return false;
     const R2 = PROJ_HIT_RADIUS * PROJ_HIT_RADIUS;
     for (const v of this.players.values()) {
-      if (v.id === s.owner || v.dead) continue;
-      if (this.tick < v.pvpSafeUntil) continue; // spawn protection
-      // PvP honors i-frames only during the blink itself (150ms), not the full 260ms
-      // grace — 43% dodge uptime vs other players would smother the arena
-      if (this.tick < v.dashUntilTick) continue;
-      if (shooter.party >= 0 && v.party === shooter.party) continue; // no team-killing
-      if (!v.pvpInArena || !inPvpZone(v.x, v.y, pvp)) continue;
-      if (v.godMode || isGodPlayerId(v.id)) continue; // god never dies in the arena
+      if (!this.pvpCombatAllowed(shooter, v)) continue;
       if (segPointDist2(v.x, v.y, ax, ay, s.x, s.y) <= R2) {
-        const before = v.hp;
-        this.hurtPlayer(v, s.dmg);
-        if (v.dead && before > 0) {
-          v.pvpEscrow = 0;
-          v.pvpInArena = false;
-          void this.transferPvpEscrow(v, shooter);
-          shooter.credits += CREDITS_PER_KILL * 3; // an arena kill pays a bounty
-          this.eco("emit", "arena", CREDITS_PER_KILL * 3);
-          shooter.xp += XP_PER_KILL * 2;
-          shooter.level = levelForXp(shooter.xp);
-          shooter.dirty = true;
-          this.bumpStat(shooter, "pvp", 1);
-          this.bumpStat(shooter, "credits", CREDITS_PER_KILL * 3);
-        }
+        this.applyPvpDamage(shooter, v, s.dmg);
         return true;
       }
     }
     return false;
+  }
+
+  /** Melee swing vs other players — arena-only (non-PvP zones never apply player damage). */
+  private resolveMeleePvp(attacker: PlayerState, dmg: number, range: number, halfArc: number) {
+    for (const v of this.players.values()) {
+      if (!this.pvpCombatAllowed(attacker, v)) continue;
+      const dx = v.x - attacker.x;
+      const dy = v.y - attacker.y;
+      if (Math.hypot(dx, dy) > range) continue;
+      const diff = normAngle(Math.atan2(dy, dx) - attacker.aim);
+      if (Math.abs(diff) <= halfArc) this.applyPvpDamage(attacker, v, dmg);
+    }
+  }
+
+  /** Beam vs other players — arena-only. */
+  private resolveBeamPvp(attacker: PlayerState, dmg: number, range: number, halfWidth: number) {
+    const ex = attacker.x + Math.cos(attacker.aim) * range;
+    const ey = attacker.y + Math.sin(attacker.aim) * range;
+    for (const v of this.players.values()) {
+      if (!this.pvpCombatAllowed(attacker, v)) continue;
+      if (segPointDist2(v.x, v.y, attacker.x, attacker.y, ex, ey) <= halfWidth * halfWidth) {
+        this.applyPvpDamage(attacker, v, dmg);
+      }
+    }
   }
 
   /** Broadcast a system line to everyone in this zone (kill feed, announcements). */
@@ -6553,80 +8043,105 @@ export class WorldDO {
   }
 
   private async persistDirty() {
-    for (const p of this.players.values()) {
-      let playerSaved = true;
-      // An escrow operation has already snapshotted (or is about to snapshot) the
-      // exact withdrawable balance it will atomically debit/refund. Do not race it
-      // with the ordinary two-second player upsert.
-      if (p.dirty && p.pvpPending === 0) {
-        p.dirty = false;
-        playerSaved = await this.upsertPlayer(p);
-        if (!playerSaved) p.dirty = true;
+    // Coalesce concurrent alarm + tick flushes — stacked persists thrash D1 and can
+    // reorder relative credit deltas under load.
+    if (this.persistInFlight) return;
+    this.persistInFlight = true;
+    try {
+      for (const p of this.players.values()) {
+        let playerSaved = true;
+        // ORDER MATTERS. The credit payout lives in the `players` row (upsertPlayer);
+        // the anti-replay guards for dailies / civic ops / district-war live in
+        // player_stats + player_dailies. These are separate D1 writes, so a failure
+        // between them cannot be atomic. Flush the GUARDS FIRST: if the isolate then
+        // dies before the credit row commits, the player is UNDER-paid (guard set,
+        // credit delta retried or lost with the isolate) — recoverable — instead of
+        // OVER-paid (credit committed, guard dropped → farmable). Under-pay beats
+        // money-printing on a bridge that settles real tokens.
+        await this.flushStats(p);
+        await this.flushDailies(p);
+        // Escrow owns its own atomic debit — skip racing the ordinary upsert.
+        if (p.dirty && p.pvpPending === 0) {
+          p.dirty = false;
+          playerSaved = await this.upsertPlayer(p);
+          if (!playerSaved) p.dirty = true;
+        }
+        if (p.bounty || (playerSaved && !p.dirty)) await this.flushBounty(p);
       }
-      await this.flushStats(p); // lifetime counters / achievements may change without `dirty`
-      await this.flushDailies(p);
-      // An active tracker is independent of the core player row. Clearing a completed
-      // tracker waits until its coupled credit reward has saved successfully.
-      if (p.bounty || (playerSaved && !p.dirty)) await this.flushBounty(p);
+      await this.syncMeta();
+    } finally {
+      this.persistInFlight = false;
     }
-    await this.syncMeta();
   }
 
-  /** Persist a player's daily-contract progress for the current day. */
+  /** Persist a player's daily-contract progress for the current day (batched). */
   private async flushDailies(p: PlayerState) {
     if (!p.dailyDirty) return;
     p.dailyDirty = false;
     try {
-      for (const d of p.dailies) {
-        await this.env.DB.prepare(
-          "INSERT INTO player_dailies (player, day, contract_id, progress, done) VALUES (?,?,?,?,?) " +
-            "ON CONFLICT(player,day,contract_id) DO UPDATE SET progress=excluded.progress, done=excluded.done",
-        )
-          .bind(p.id, p.dailyDay, d.id, d.progress, d.done ? 1 : 0)
-          .run();
-      }
+      const stmt = this.env.DB.prepare(
+        "INSERT INTO player_dailies (player, day, contract_id, progress, done) VALUES (?,?,?,?,?) " +
+          "ON CONFLICT(player,day,contract_id) DO UPDATE SET progress=excluded.progress, done=excluded.done",
+      );
+      const batch = p.dailies.map((d) => stmt.bind(p.id, p.dailyDay, d.id, d.progress, d.done ? 1 : 0));
+      if (batch.length) await this.env.DB.batch(batch);
     } catch {
-      /* table may not exist before migration */
+      /* table may not exist before migration — re-dirty so next flush retries */
+      p.dailyDirty = true;
     }
   }
 
-  /** Flush a player's queued stat increments + deepest-district + new achievements to the
-   *  shared D1 store (so leaderboards aggregate across every zone). Counters are additive
-   *  UPSERTs; deepest is a MAX; achievements insert-once. */
+  /** Flush queued stat increments + deepest + achievements (batched per player). */
   private async flushStats(p: PlayerState) {
+    const batch: D1PreparedStatement[] = [];
+    // Snapshot without consuming. Other WebSocket events may add more while the D1
+    // batch is in flight; on success we subtract exactly this captured prefix.
+    const deltas = Object.entries(p.statDelta).filter(([, d]) => !!d);
+    const deepestValue = p.deepestDirty ? p.deepest : null;
+    const achievements = [...p.achvNew];
     try {
-      for (const k of Object.keys(p.statDelta)) {
-        const d = p.statDelta[k];
-        delete p.statDelta[k];
-        if (!d) continue;
-        await this.env.DB.prepare(
-          "INSERT INTO player_stats (player, stat, v) VALUES (?,?,?) ON CONFLICT(player,stat) DO UPDATE SET v = v + excluded.v",
-        )
-          .bind(p.id, k, d)
-          .run();
+      const statStmt = this.env.DB.prepare(
+        "INSERT INTO player_stats (player, stat, v) VALUES (?,?,?) ON CONFLICT(player,stat) DO UPDATE SET v = v + excluded.v",
+      );
+      for (const [k, d] of deltas) {
+        batch.push(statStmt.bind(p.id, k, d));
       }
-      if (p.deepestDirty) {
-        p.deepestDirty = false;
-        await this.env.DB.prepare(
-          "INSERT INTO player_stats (player, stat, v) VALUES (?,?,?) ON CONFLICT(player,stat) DO UPDATE SET v = MAX(v, excluded.v)",
-        )
-          .bind(p.id, "deepest", p.deepest)
-          .run();
+      if (deepestValue !== null) {
+        batch.push(
+          this.env.DB.prepare(
+            "INSERT INTO player_stats (player, stat, v) VALUES (?,?,?) ON CONFLICT(player,stat) DO UPDATE SET v = MAX(v, excluded.v)",
+          ).bind(p.id, "deepest", deepestValue),
+        );
       }
-      if (p.achvNew.length) {
+      if (achievements.length) {
         const now = Date.now();
-        for (const a of p.achvNew.splice(0)) {
-          await this.env.DB.prepare("INSERT OR IGNORE INTO player_achv (player, ach, at) VALUES (?,?,?)").bind(p.id, a, now).run();
+        const achStmt = this.env.DB.prepare("INSERT OR IGNORE INTO player_achv (player, ach, at) VALUES (?,?,?)");
+        for (const a of achievements) {
+          batch.push(achStmt.bind(p.id, a, now));
         }
       }
+      if (batch.length) await this.env.DB.batch(batch);
+      consumeCapturedDeltas(p.statDelta, deltas);
+      if (deepestValue !== null && p.deepest <= deepestValue) p.deepestDirty = false;
+      p.achvNew = consumeCapturedAchievements(p.achvNew, achievements);
     } catch {
-      /* tables may not exist before migration */
+      // Leave every captured delta queued. The next persistence cadence retries it.
     }
   }
 
   /** Flush queued meta increments to D1 atomically (so every zone DO contributes to
    *  ONE shared set of meters), then re-read the global values. */
   private async syncMeta() {
+    const civicDay = this.modDay >= 0 ? this.modDay : dayIndex();
+    const civicBefore = /^d\d+(?:i\d+)?$/.test(this.zoneName) ? this.civicMomentum(civicDay) : -1;
+    const chronicleWeek = currentGuildWeek();
+    const weeklyCivicBefore = Array.from({ length: DISTRICTS.length }, (_, district) =>
+      decodeChronicleCivic(this.meta[chronicleCivicKey(district)], chronicleWeek)).join(",");
+    const territoryDay = this.modDay >= 0 ? this.modDay : dayIndex();
+    const territoryBefore = Array.from({ length: DISTRICTS.length }, (_, district) => {
+      const record = decodeTerritoryLegacy(this.meta[territoryLegacyKey(district)], district, territoryDay);
+      return `${record.controller}:${record.flips}`;
+    }).join(",");
     try {
       for (const k of Object.keys(this.metaDelta)) {
         const d = round2(this.metaDelta[k]);
@@ -6644,6 +8159,19 @@ export class WorldDO {
         v: number;
       }>();
       for (const r of results ?? []) this.meta[r.k] = r.v;
+      if (civicBefore >= 0 && this.civicMomentum(civicDay) !== civicBefore) this.broadcastCivic(civicDay);
+      const weeklyCivicAfter = Array.from({ length: DISTRICTS.length }, (_, district) =>
+        decodeChronicleCivic(this.meta[chronicleCivicKey(district)], chronicleWeek)).join(",");
+      if (weeklyCivicAfter !== weeklyCivicBefore) {
+        for (const sock of this.sessions.keys()) void this.sendChronicle(sock);
+      }
+      const territoryAfter = Array.from({ length: DISTRICTS.length }, (_, district) => {
+        const record = decodeTerritoryLegacy(this.meta[territoryLegacyKey(district)], district, territoryDay);
+        return `${record.controller}:${record.flips}`;
+      }).join(",");
+      if (territoryAfter !== territoryBefore) {
+        for (const sock of this.sessions.keys()) void this.sendChronicle(sock);
+      }
     } catch {
       /* world_meta missing pre-migration */
     }
@@ -6696,7 +8224,7 @@ export class WorldDO {
           null,
           "{}",
           Date.now(),
-          this.zoneName,
+          this.doKey(),
           Date.now(),
         )
         .run();
@@ -6785,7 +8313,7 @@ export class WorldDO {
               p.classId || "metrophage",
               Date.now(),
               p.id,
-              this.zoneName,
+              this.doKey(),
               p.sessionAt,
             )
             .run();
@@ -6816,7 +8344,7 @@ export class WorldDO {
               JSON.stringify(p.equipped),
               Date.now(),
               p.id,
-              this.zoneName,
+              this.doKey(),
               p.sessionAt,
             )
             .run();
@@ -6955,7 +8483,16 @@ export class WorldDO {
       if (sid === id && sock !== ws) return;
     }
     const p = this.players.get(id);
-    if (p) {
+    if (!p) return;
+    // Snapshot identity for the flush; re-check ownership after every await.
+    const stillSoleOwner = () => {
+      if (this.ownerSocket.has(id) && this.ownerSocket.get(id) !== ws) return false;
+      for (const [sock, sid] of this.sessions) {
+        if (sid === id && sock !== ws) return false;
+      }
+      return true;
+    };
+    try {
       const tr = this.tradeOf(p);
       if (tr) this.endTrade(tr, "cancelled", "trade partner left");
       this.leaveParty(p);
@@ -6964,13 +8501,26 @@ export class WorldDO {
       // A defeated player can close while their transfer is behind another zone
       // operation. Wait before the final upsert so no stale balance wins the race.
       if (p.pvpPending > 0) await this.pvpTail;
+      if (!stillSoleOwner()) return; // reconnected mid-flush — keep live state, don't delete
       // Hard disconnect path (tab close / network drop) — flush best-effort.
+      // Always write x/y/zone so a reconnect lands exactly where they left.
+      p.dirty = true;
       const playerSaved = await this.upsertPlayer(p);
       await this.flushStats(p);
       await this.flushDailies(p);
       if (p.bounty || playerSaved) await this.flushBounty(p);
       await this.syncMeta();
+    } catch {
+      /* best-effort flush */
+    }
+    // Final race check: a new login may have claimed ownership while we flushed.
+    if (!stillSoleOwner()) return;
+    // Only drop the in-memory player if this close still owns it.
+    if (this.players.get(id) === p) {
       this.players.delete(id);
+      // Beat-dedup state is per-session and was never reaped, so a long-lived hub DO
+      // kept one entry per distinct visitor forever.
+      this.lastStoryBeatKey.delete(id);
     }
   }
 }

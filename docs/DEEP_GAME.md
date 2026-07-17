@@ -18,18 +18,102 @@ Shipped without mint / CA work.
 - **District mods** expanded (`districtMods.ts`) — acid rain, drone swarm, etc.
 - **World events** expanded (`worldEvents.ts`) — heat spike, repo siren, market glitch
 - Contagion bloom day: bonus core chance
+- **Living districts** (`districtLife.ts`) — eight civic dossiers, 24 rotating public
+  operations, local landmarks/power blocs/hidden truths, district-specific paid
+  rumours, map dossiers, and server-authoritative daily contribution rewards.
+- **Cells as factions** (`factions.ts`) — the four classes now have political origins,
+  creeds, promises, methods, and internal fears. Arrival/capture messaging translates
+  territory state into an in-world outcome instead of showing only a color and score.
+- **Weekly Cell doctrines** (`factionCampaigns.ts`) — the same server goal becomes
+  four authored political projects, each with its own order, victory condition, and
+  contradiction. War banners, city pulse, arrivals, and captures carry doctrine;
+  mechanics and rewards remain faction-neutral.
 
 ## Content
 - Side quests after THE WAKE: STREET DEBTS, NODE WAR, GHOST SHEET
 - **Memory journal** (N): fragment codex (`OnlineJournal.ts`)
-- **NPC memory** (local): dialogue changes after bounties
+  - all 17 entries are paginated; authoritative recovery order unlocks eight
+    order-sensitive district syntheses surfaced in the journal, maps, and residents
+- **Durable contact trust** (`relationships.ts`): met / trusted / confidant tiers
+  persist in `player_stats`, survive devices and zone travel, unlock authored
+  disclosures, and improve paid local-intel quality without adding combat power.
+- **District standing**: public operations, captures, bosses, events, and local jobs
+  build bounded civic recognition (UNKNOWN → NEIGHBOR → ANCHOR → KEEPER), visible
+  in map dossiers and NPC conversations.
+- **Shared civic aftermath**: completed public operations advance a bounded daily
+  district state (NEED → FOOTHOLD → NETWORK → UPRISING) shared through D1 across
+  zone shards. Arrivals, maps, trusted rumours, and event telegraphs reflect the
+  outcome; preparation trims event danger windows up to 15% without reducing rewards.
+- **Residents in motion** (`residentLife.ts`): two recurring people per district
+  rotate through street, workplace, refuge, and home shifts. Map dossiers expose their
+  route; server-validated source conversations persist a bounded clue that changes the
+  paired resident's testimony across reconnects and devices. Finding that counterpart
+  in their own scheduled zone corroborates the clue; 2/4/8 confirmed districts unlock
+  a bounded casefile, authored synthesis, and follow-up fieldwork directives. Eight
+  corroboration-gated resident jobs turn those conflicts back into authoritative combat,
+  salvage, HVT, and boss loops without adding a parallel quest schema.
+- **Campaign echoes** (`campaignEchoes.ts`): all ten main acts recur through FIXER
+  briefs, allies, residents, memory annotations, arrivals, maps, and civic outcomes.
+  THE FIXER'S DEBT now has a durable server-side SPARE / EXPOSE judgment; post-Awakening
+  public operations describe what residents build without changing repeatable rewards.
+  The judgment remains present after later acts and produces authored reactions from
+  four trusted allies, eight districts, and all four political Cells.
+- **Post-Awakening reconstruction** (`reconstruction.ts`): the final act unlocks one
+  authored resident operation per district. Completed work persists as bounded
+  CREW / COMMON / INSTITUTION progress and changes maps plus resident dialogue; the
+  Worker gates campaign eligibility and all objective progress.
+- **Weekly city chronicle** (`cityChronicle.ts`): the Worker synthesizes bounded shared
+  war, civic, boss, and Cell-goal ledgers into a four-beat public edition shown at the
+  city center. Eight fixed weekly civic rows preserve public work across daily resets;
+  boss deaths and civic changes refresh it live. The edition interprets history without
+  adding rewards or client-owned truth.
+- **Civic courier situations** (`bounties.ts`): public work recorded anywhere in the
+  weekly ledger opens four low-value delivery routes through existing contacts. Routes
+  persist across zones, complete only when the Worker places the runner in the authored
+  destination, and use a durable 24-hour per-job claim before payout.
+- **Daily relay charters** (`territoryLegacy.ts`): every district reuses one bounded row
+  to remember today's latest Cell controller and number of node-control changes. Each Cell
+  gives the relay a distinct civic doctrine shown in arrivals, maps, and the chronicle;
+  live node state alone still determines control, scoring, objectives, and payouts.
+  Live control requires a unique node-count leader; tied relays remain unsettled instead
+  of being silently awarded by faction array order.
+- **Regional anchors** (`cityNpcs.ts`): all eight districts now place one stable authored
+  contact after any scheduled residents, exposing regional dialogue and jobs that formerly
+  existed only as unused data. Civic couriers require weekly work in their own source
+  district, then retain server-owned travel and settlement rules.
+- **Authoritative professions** (`rsSkills.ts`): Combat, Trading, Exploration, Crafting,
+  and Data Mining are fixed, level-99-capped D1 counters. Only validated killing blows,
+  first organic arrivals, completed forge actions, and settled trades award XP; the
+  client renders snapshots and never predicts success. Metro City's CASUALTY INDEX,
+  TRANSIT GHOSTS, and EVICTION HASH are spatially validated civic archives with durable
+  five-minute rekeys and setting disclosures, not economy faucets.
+- **Recoverable civic record** (`civicArchives.ts`): the three plaza archives hold twelve
+  ordered, bounded records. Cross-index thresholds turn individual testimony into proof;
+  DOC, RIN, SUBWAY WARDEN, the city clerk, and the map recognize what the runner has
+  recovered. Pages persist independently of profession XP and grant no economy or power.
+- **Durable conversation memory** (`relationships.ts`): contacts retain up to twelve
+  conversations separately from three completed promises. Repeated presence has authored
+  3 / 6 / 10 callbacks, while trust still requires real server-completed work. Contact UI
+  and the city ledger expose both counts; no browser-local relationship authority remains.
 
 ## Social / economy UX
 - Market filters: ALL / ₵ / ◈ / WEP / ARM / RARE
 - Cell weekly goals: D1 tallies, 50%/complete toasts, claim pays **all** members (live + mailbox)
+- Nearby party allies share narrative, contract, public-operation, and contact-job kill
+  progress; base kill currency, XP, loot, HVT payout, and Cell tally stay with the killer.
 - Share cards: Options → opt-in; fires only on your boss kill credit
 - Home furniture buffs (regen / HEAT / shield / move) while owner is home
 - Contacts (`/c`), pin, dossier (L)
+- Party rescues persist as bounded mutual-aid memory; known contacts also recognize the
+  setting provenance of equipped cosmetics without granting appearance-based power.
+- Authoritative deaths advance a bounded reprint-memory stat (3 / 10 / 25 witness tiers).
+  MAREK, recurring residents, and city center retain it across devices; the browser-local
+  counter remains only a veteran-history fallback and grants no mechanical benefit.
+- REPRINT MEMORIAL is an honest ₵260 hard sink: up to nine server-owned public stamps,
+  recognized at 1 / 3 / 7 by MAREK and recurring residents. It never protects inventory,
+  credits, PvP escrow, or respawn timing and rejects purchases after the bounded ledger.
+- Profession XP is server-owned and cross-device; archive scans expose civic history but
+  grant no credits, items, reputation, access, or combat power.
 - Build stamp toast on welcome; reconnect/offline banners + guild re-hydrate
 - City chatter + ambient runners when solo
 - Systems hint after 2nd hour (N / U / K / L / J / O)

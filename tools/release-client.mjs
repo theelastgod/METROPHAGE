@@ -6,6 +6,9 @@ import { spawnSync } from "node:child_process";
 const LIVE_SERVER_URL = "wss://metrophage-server.wendellphillips.workers.dev/ws";
 const PAGES_PROJECT = "metrophagev1";
 const PRODUCTION_BRANCH = "main";
+// Reown project IDs are public client identifiers (not secrets). Keep the production
+// fallback here so clean-shell safe deploys cannot silently ship without mobile AppKit.
+const PRODUCTION_WALLETCONNECT_PROJECT_ID = "a9ab3c36a7556559cb88bc081fc5f419";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const buildOnly = process.argv.includes("--build-only");
@@ -39,10 +42,42 @@ if (!npmCli || !existsSync(npmCli)) {
   process.exit(2);
 }
 
+const wcProjectId = (
+  process.env.VITE_WALLETCONNECT_PROJECT_ID || PRODUCTION_WALLETCONNECT_PROJECT_ID
+).trim();
+// Solana SPL is the production settlement family. Robinhood remains a dormant alternate
+// and must be armed explicitly through VITE_METRO_SETTLEMENT=robinhood.
+const metroCluster = (process.env.VITE_METRO_CLUSTER || "mainnet-beta").trim();
+const metroSettlement = (process.env.VITE_METRO_SETTLEMENT || "solana").trim();
+const metroMint = (process.env.VITE_METRO_MINT || "").trim();
 console.log(`Building production client for ${LIVE_SERVER_URL}`);
+console.log(`$METRO network: ${metroSettlement} · cluster=${metroCluster}${metroMint ? ` · mint=${metroMint.slice(0, 10)}…` : " · mint=awaiting CA"}`);
+if (wcProjectId) {
+  console.log(`WalletConnect project id: ${wcProjectId.slice(0, 8)}…`);
+} else {
+  console.warn(
+    "⚠ VITE_WALLETCONNECT_PROJECT_ID unset — mobile WalletConnect modal disabled (injected wallets + MetaMask deep-link only). Free id: https://dashboard.reown.com",
+  );
+}
+// Honest local build id: git SHA, +dirty when the tree doesn't match it. CI overrides
+// (CF_PAGES_COMMIT_SHA / GITHUB_SHA) still win inside vite.config.ts.
+const gitSha = spawnSync("git", ["rev-parse", "--short", "HEAD"], { cwd: root, encoding: "utf8" }).stdout?.trim();
+const gitDirty = (spawnSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" }).stdout || "").trim().length > 0;
+const localBuildId = gitSha ? `${gitSha}${gitDirty ? "+dirty" : ""}` : "";
+if (gitDirty) console.warn("⚠ deploying from a DIRTY tree — build id will carry +dirty; commit first for a reproducible release");
+
 run(process.execPath, [npmCli, "run", "build"], {
   ...process.env,
+  ...(localBuildId && !process.env.VITE_BUILD_ID ? { VITE_BUILD_ID: localBuildId } : {}),
   VITE_SERVER_URL: LIVE_SERVER_URL,
+  VITE_METRO_CLUSTER: metroCluster,
+  VITE_METRO_SETTLEMENT: metroSettlement,
+  // Only bake mint when explicitly provided — never invent a CA.
+  ...(metroMint ? { VITE_METRO_MINT: metroMint } : { VITE_METRO_MINT: "" }),
+  VITE_METRO_RPC: process.env.VITE_METRO_RPC || "https://api.mainnet-beta.solana.com",
+  // EVM-only; keep empty on the primary SPL build so stale shell state cannot imply RH.
+  VITE_METRO_CHAIN_ID: metroSettlement === "robinhood" ? process.env.VITE_METRO_CHAIN_ID || "4663" : "",
+  ...(wcProjectId ? { VITE_WALLETCONNECT_PROJECT_ID: wcProjectId } : {}),
 });
 
 const dist = join(root, "dist");

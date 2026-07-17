@@ -67,26 +67,43 @@ function wranglerBin() {
 
 /** Ensure wrangler.toml still points at the live D1 — never a new empty database. */
 function assertProdD1Binding() {
-  const toml = readFileSync(join(serverDir, "wrangler.toml"), "utf8");
-  if (!toml.includes(`database_id = "${PROD_D1_ID}"`)) {
+  const raw = readFileSync(join(serverDir, "wrangler.toml"), "utf8");
+  // Comments stripped FIRST, and every binding read as the single active value rather
+  // than a substring search. A bare `includes` was satisfied by the prod id sitting in a
+  // commented-out line, so pointing the live binding at a scratch DB still printed
+  // "✓ D1 binding locked to prod" — and the deploy bound players to an empty database.
+  const toml = raw.replace(/^\s*#.*$/gm, "");
+  const ids = [...toml.matchAll(/^\s*database_id\s*=\s*"([^"]+)"/gm)].map((m) => m[1]);
+  if (ids.length !== 1 || ids[0] !== PROD_D1_ID) {
     die(
-      `wrangler.toml database_id is not the production D1 (${PROD_D1_ID}). ` +
-        `Refusing deploy to protect player progression.`,
+      `wrangler.toml must declare exactly one active database_id, the production D1 ` +
+        `(${PROD_D1_ID}); found: ${ids.join(", ") || "none"}. Refusing deploy to protect player progression.`,
     );
   }
-  if (!toml.includes(`database_name = "${PROD_D1_NAME}"`)) {
-    die(`wrangler.toml database_name must be "${PROD_D1_NAME}"`);
+  const names = [...toml.matchAll(/^\s*database_name\s*=\s*"([^"]+)"/gm)].map((m) => m[1]);
+  if (names.length !== 1 || names[0] !== PROD_D1_NAME) {
+    die(`wrangler.toml must declare exactly one active database_name "${PROD_D1_NAME}" (found: ${names.join(", ") || "none"})`);
   }
   // Never allow a second [[migrations]] that recreates DO classes (would orphan storage).
-  const migTags = [...toml.matchAll(/tag\s*=\s*"([^"]+)"/g)].map((m) => m[1]);
+  const migTags = [...toml.matchAll(/^\s*tag\s*=\s*"([^"]+)"/gm)].map((m) => m[1]);
   if (migTags.length !== 1 || migTags[0] !== "v1") {
     die(
       `wrangler.toml DO migrations must remain a single tag "v1" (found: ${migTags.join(", ") || "none"}). ` +
         `Adding new_classes / deleted_classes can orphan or wipe zone state.`,
     );
   }
+  // The tag alone proves nothing about the class directive. Rewriting the SAME v1 block
+  // from new_sqlite_classes to new_classes keeps the tag count at 1 and still recreates
+  // WorldDO as a non-SQLite class, orphaning every zone's persisted state.
+  if (!/^\s*new_sqlite_classes\s*=\s*\[\s*"WorldDO"\s*\]/m.test(toml)) {
+    die(`wrangler.toml [[migrations]] must keep new_sqlite_classes = ["WorldDO"] — SQLite-backed DO storage.`);
+  }
+  const banned = toml.match(/^\s*(new_classes|deleted_classes|renamed_classes)\s*=/m);
+  if (banned) {
+    die(`wrangler.toml [[migrations]] must not declare ${banned[1]} — it recreates/destroys WorldDO storage.`);
+  }
   console.log(`✓ D1 binding locked to prod ${PROD_D1_NAME} (${PROD_D1_ID})`);
-  console.log(`✓ DO migration tag locked to v1 (no class recreate)`);
+  console.log(`✓ DO migration tag locked to v1, new_sqlite_classes intact (no class recreate)`);
 }
 
 /** Snapshot durable progression fingerprint from remote D1. */

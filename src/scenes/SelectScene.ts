@@ -26,11 +26,17 @@ import {
   walletAvailable,
   restoreWalletSession,
   walletSessionSecret,
+  walletChoiceList,
+  walletChoiceProse,
+  preferSolanaWallet,
+  walletConnectAvailable,
 } from "../economy/wallet";
 import {
   ensureWalletConnected,
   fetchWalletIdentity,
   signIdentityProof,
+  signRetireProof,
+  metaMaskSignUp,
   type WalletIdentity,
 } from "../economy/identity";
 import { lookToCustomization, bakeCustomPlayer, PLAYER_CUSTOM_KEY, type Customization } from "../game/customization";
@@ -42,14 +48,17 @@ import {
   loadLocalRunner,
   writeLocalRunner,
 } from "../systems/LocalRunner";
-import { ensureGuestDeviceSecret } from "../net/NetClient";
+import { ensureGuestDeviceSecret, readGuestDeviceSecret } from "../net/NetClient";
+import { metroApiBase, isEvmAddress } from "../economy/metro";
+import { prefersMobileUx } from "../systems/Mobile";
+import { playDeployTeaser } from "../ui/DeployTeaser";
 
 type MenuPhase = "wallet" | "returning" | "create" | "guest_returning";
 
 /**
  * Title screen — full-bleed layout.
  * Guest multiplayer: callsign + device secret → full server save, no wallet.
- * Wallet: optional permanent identity (Phantom / Solana); returning players skip customize.
+ * Wallet: optional permanent Solana identity (Phantom); returning players skip customize.
  */
 export default class SelectScene extends Phaser.Scene {
   private hover = -1;
@@ -62,9 +71,11 @@ export default class SelectScene extends Phaser.Scene {
   private walletPanel!: WalletSignInPanel;
   private walletLabel!: Phaser.GameObjects.Text;
   private bodyText!: Phaser.GameObjects.Text;
+  private tagline!: Phaser.GameObjects.Text;
   private actionLayer!: Phaser.GameObjects.Container;
   private classLayer!: Phaser.GameObjects.Container;
   private preview?: Phaser.GameObjects.Image;
+  private deploying = false;
 
   constructor() {
     super("Select");
@@ -81,6 +92,11 @@ export default class SelectScene extends Phaser.Scene {
     const boot = document.getElementById("boot");
     if (boot) boot.remove();
 
+    // Phaser reuses the scene instance, so field initializers only run once per page.
+    // Without this reset the guard stayed true after the first deploy and every later
+    // return to the menu (death, disconnect, character switch) left DEPLOY inert.
+    this.deploying = false;
+
     this.cameras.main.setBackgroundColor(COLORS.bgVoid);
     installMenuCameras(this);
     fadeInScene(this);
@@ -89,9 +105,16 @@ export default class SelectScene extends Phaser.Scene {
     drawMenuBackdrop(this);
     new MenuAtmosphere(this);
 
-    // Brand mark — slightly smaller than before so the identity card owns the center.
+    // Brand mark — phones: compact top band so the identity sheet has room;
+    // desktop: classic centered marquee.
+    const mobile = prefersMobileUx();
     const title = this.add
-      .text(VIEW_W / 2, MENU_HEADER_Y - uiDim(4), t("app.title"), displayFont(40, { color: "#ff2bd6", fontStyle: "bold" }))
+      .text(
+        VIEW_W / 2,
+        mobile ? uiDim(28) : MENU_HEADER_Y - uiDim(4),
+        t("app.title"),
+        displayFont(mobile ? 28 : 40, { color: "#ff2bd6", fontStyle: "bold" }),
+      )
       .setOrigin(0.5)
       .setShadow(0, 0, "#00e5ff", 5, true, true)
       .setAlpha(0);
@@ -108,8 +131,13 @@ export default class SelectScene extends Phaser.Scene {
       },
     });
 
-    this.add
-      .text(VIEW_W / 2, MENU_SUB_Y - uiDim(8), t("app.tagline"), bodyFont(11, { color: "#5a6172", letterSpacing: 1 }))
+    this.tagline = this.add
+      .text(
+        VIEW_W / 2,
+        mobile ? uiDim(48) : MENU_SUB_Y - uiDim(8),
+        mobile ? "NEON-NOIR ACTION RPG" : t("app.tagline"),
+        bodyFont(mobile ? 9 : 11, { color: "#5a6172", letterSpacing: 1 }),
+      )
       .setOrigin(0.5);
 
     this.walletPanel = new WalletSignInPanel(this);
@@ -141,14 +169,16 @@ export default class SelectScene extends Phaser.Scene {
     optBtn.on("pointerout", () => optBtn.setColor("#6b7184"));
     optBtn.on("pointerdown", () => this.options.toggle());
 
-    this.add
-      .text(
-        VIEW_W / 2,
-        MENU_FOOTER_Y + uiDim(4),
-        "METAMASK  ·  PERMANENT ID     ·     FREE PLAY  ·  DEVICE SAVE",
-        bodyFont(9, { color: "#3d4454" }),
-      )
-      .setOrigin(0.5);
+    if (!prefersMobileUx()) {
+      this.add
+        .text(
+          VIEW_W / 2,
+          MENU_FOOTER_Y + uiDim(4),
+          "WALLETCONNECT  ·  PERMANENT ID     ·     FREE PLAY  ·  DEVICE SAVE",
+          bodyFont(9, { color: "#3d4454" }),
+        )
+        .setOrigin(0.5);
+    }
 
     // Bottom-right: quiet support affordance, mirrors OPTIONS type style.
     const reportBtn = this.add
@@ -160,7 +190,7 @@ export default class SelectScene extends Phaser.Scene {
     reportBtn.on("pointerover", () => reportBtn.setColor("#00e5ff"));
     reportBtn.on("pointerout", () => reportBtn.setColor("#5a6578"));
     reportBtn.on("pointerdown", () => {
-      window.open("https://t.me/m/ralJIkw_OWMx", "_blank", "noopener,noreferrer");
+      window.open("https://t.me/m/K5ctxpcaNzdh", "_blank", "noopener,noreferrer");
     });
 
     this.addSocialLinks();
@@ -183,7 +213,7 @@ export default class SelectScene extends Phaser.Scene {
     pinMenuUiLayer(this);
   }
 
-  /** Restore Phantom/Solana silently if present, else guest multiplayer continue / create. */
+  /** Restore wallet silently if present, else guest multiplayer continue / create. */
   private async bootWalletGate() {
     // Bounced back because the server rejected the guest login (callsign bound to
     // another device / missing device key / reserved) — recovery menu, not a loop.
@@ -214,6 +244,7 @@ export default class SelectScene extends Phaser.Scene {
     this.classLayer.setVisible(false);
     this.clearActionLayer();
     this.bodyText.setVisible(false);
+    this.tagline?.setVisible(true); // caption borrowed the tagline's slot
     this.preview?.destroy();
     this.preview = undefined;
     const hasWallet = walletAvailable();
@@ -229,7 +260,7 @@ export default class SelectScene extends Phaser.Scene {
         reason +
         (/[.!?]$/.test(reason.trim()) ? " " : ". ") +
         (hasWallet
-          ? "Retry CONTINUE if this is your device, start a new runner, or link Phantom for a permanent identity."
+          ? "Retry CONTINUE if this is your device, start a new runner, or link a wallet for a permanent identity."
           : "Retry CONTINUE if this is your device, or start a new runner."),
       wallet: null,
       actions: this.walletActions([
@@ -254,8 +285,8 @@ export default class SelectScene extends Phaser.Scene {
         ...(hasWallet
           ? [
               {
-                label: "◈ SIGN IN WITH METAMASK",
-                sub: "permanent wallet identity · works on every device",
+                label: "◈ LINK WALLET",
+                sub: walletChoiceList(),
                 color: COLORS.neonGreen,
                 primary: false as const,
                 fn: () => void this.onMetaMaskSignUp(),
@@ -263,7 +294,7 @@ export default class SelectScene extends Phaser.Scene {
             ]
           : []),
         {
-          label: "▸ RETRY",
+          label: "▸ RETRY CONTINUE",
           sub: "try the same callsign again",
           color: 0x9aa3b2,
           primary: false,
@@ -327,63 +358,56 @@ export default class SelectScene extends Phaser.Scene {
     this.preview = undefined;
     this.clearActionLayer();
     this.bodyText.setVisible(false);
-    const hasWallet = walletAvailable();
+    this.tagline?.setVisible(true); // caption borrowed the tagline's slot
     // Wallet is the key / recommended path; guest multiplayer remains available.
+    // walletAvailable() is true for inject, WalletConnect, and mobile deep-links.
+    const mobile = prefersMobileUx();
+    const mobilePicker = mobile && walletConnectAvailable();
     this.walletPanel.show({
       step: "connect",
-      status: hasWallet ? "ready" : "offline",
-      statusText: hasWallet ? "Phantom · Solana · free sign-in" : "install Phantom · or play free",
-      headline: "Connect your wallet",
-      body: hasWallet
-        ? "Sign up with Phantom on Solana — free message, no gas. Your runner is permanently bound to your address across devices. Prefer no wallet? Play free with a device-locked multiplayer save."
-        : "Phantom is the permanent multiplayer identity for METROPHAGE. Install it to create a wallet-bound runner, or play free with a save locked to this device.",
+      status: "ready",
+      statusText: mobilePicker
+        ? "Solana wallet picker · free sign-in"
+        : mobile ? "Phantom · free Solana sign-in" : `${walletChoiceList()} · free Solana sign-in`,
+      headline: mobilePicker ? "Connect a Solana wallet" : "Connect Phantom",
+      body: mobilePicker
+        ? "Choose Phantom, Solflare, or another Solana wallet. Approval and one free signature happen in the wallet app; the game stays in this browser."
+        : mobile
+          ? "Phantom signs one free Solana message. Or play free with a device save."
+        : `Sign in with ${walletChoiceProse()}. The signature is free—no transaction and no gas. Your runner is permanently bound to that Solana address across devices. Prefer no wallet? Play free with a device-locked multiplayer save.`,
       wallet: null,
       actions: this.walletActions([
-        ...(hasWallet
-          ? [
-              {
-                label: "◈ SIGN UP WITH PHANTOM",
-                sub: "recommended · Solana · free message · permanent id",
-                color: COLORS.neonGreen,
-                primary: true as const,
-                fn: () => void this.onMetaMaskSignUp(),
-              },
-              {
-                label: "◢ PLAY FREE · NO WALLET",
-                sub: "multiplayer save on this device · link wallet later",
-                color: COLORS.neonCyan,
-                primary: false as const,
-                fn: () => this.enterGuestPlay(),
-              },
-            ]
-          : [
-              {
-                label: "◈ GET PHANTOM",
-                sub: "recommended · phantom.app · then return to sign up",
-                color: COLORS.neonGreen,
-                primary: true as const,
-                fn: () => window.open("https://phantom.app/download", "_blank", "noopener"),
-              },
-              {
-                label: "◢ PLAY FREE · NO WALLET",
-                sub: "multiplayer save on this device · link Phantom later",
-                color: COLORS.neonCyan,
-                primary: false as const,
-                fn: () => this.enterGuestPlay(),
-              },
-            ]),
+        {
+          label: mobilePicker ? "◈ CONNECT WALLET" : "◈ CONNECT PHANTOM",
+          sub: mobilePicker
+            ? "choose a Solana wallet · free message"
+            : mobile ? "open Phantom · free message" : `${walletChoiceList()} · free message`,
+          color: COLORS.neonGreen,
+          primary: true as const,
+          fn: () => void this.onMetaMaskSignUp(),
+        },
+        {
+          label: "◢ PLAY FREE · NO WALLET",
+          sub: mobile ? "device multiplayer save" : "multiplayer save on this device · link wallet later",
+          color: COLORS.neonCyan,
+          primary: false as const,
+          fn: () => this.enterGuestPlay(),
+        },
       ]),
     });
   }
 
-  /** One-click Phantom (Solana) connect + sign-in. */
+  /** One-click wallet connect (inject / WalletConnect / mobile) + sign-in. */
   private async onMetaMaskSignUp() {
+    const mobilePicker = prefersMobileUx() && walletConnectAvailable();
     this.walletPanel.show({
       step: "connect",
       status: "busy",
-      statusText: "awaiting Phantom · Solana",
-      headline: "Check Phantom",
-      body: "Approve connecting Phantom. Then sign a free login message — no gas for sign-up. Your runner is permanently bound to this Solana address.",
+      statusText: mobilePicker ? "opening Solana wallet picker" : "awaiting Phantom · Solana",
+      headline: mobilePicker ? "Choose your wallet" : "Check Phantom",
+      body: mobilePicker
+        ? "Choose a wallet, approve the connection there, then approve one free login signature. Return here to play—the game does not open inside the wallet."
+        : `Approve the connection in ${walletChoiceProse()}. Then sign a free login message — no gas. Your runner is permanently bound to this address.`,
       wallet: connectedWallet(),
       actions: [],
       showDisconnect: true,
@@ -410,15 +434,11 @@ export default class SelectScene extends Phaser.Scene {
     this.registry.remove("characterLocked");
     this.walletPanel.hide();
     this.enterCreate();
-    const cardTop = this.cardRects[0]?.y ?? VIEW_H * 0.38;
-    this.bodyText
-      .setVisible(true)
-      .setY(cardTop - uiGap("lg"))
-      .setText(
-        hasLocalRunner()
-          ? "new runner replaces the multiplayer save on this device"
-          : "pick a class · multiplayer progress saves online · no wallet",
-      );
+    this.setClassCaption(
+      hasLocalRunner()
+        ? "new runner replaces the multiplayer save on this device"
+        : "pick a class · multiplayer progress saves online · no wallet",
+    );
   }
 
   /**
@@ -464,6 +484,7 @@ export default class SelectScene extends Phaser.Scene {
     this.classLayer.setVisible(false);
     this.clearActionLayer();
     this.bodyText.setVisible(false);
+    this.tagline?.setVisible(true); // caption borrowed the tagline's slot
     this.walletPanel.hide();
 
     bakeCustomPlayer(this, cust);
@@ -482,16 +503,15 @@ export default class SelectScene extends Phaser.Scene {
       ease: "Sine.inOut",
     });
 
-    const hasWallet = walletAvailable();
     const drillLbl = () => (getSettings().tutorialMode === "full" ? "FULL TRAINING" : "QUICK");
     const resumeZone = local?.lastZone && local.lastZone !== "tutorial" ? local.lastZone : "safe";
 
     this.walletPanel.show({
       step: "play",
       status: "ready",
-      statusText: "guest multiplayer · link wallet recommended",
+      statusText: "guest multiplayer · link wallet to lock this runner",
       headline: `Welcome back, ${cust.callsign}`,
-      body: "Your multiplayer save is on the server and locked to this device. CONTINUE loads it. Link Phantom to bind this runner to your wallet permanently (portable across devices).",
+      body: "Your multiplayer save is on the server and locked to this device. CONTINUE loads it. Link a wallet to bind THIS runner to your address permanently (portable; locked until NEW RUNNER).",
       wallet: null,
       offsetY: 36,
       actions: this.walletActions([
@@ -505,25 +525,13 @@ export default class SelectScene extends Phaser.Scene {
           primary: true,
           fn: () => this.deployOnline(resumeZone),
         },
-        ...(hasWallet
-          ? [
-              {
-                label: "◈ LINK METAMASK",
-                sub: "recommended · permanent wallet identity · merge progress",
-                color: COLORS.neonGreen,
-                primary: false as const,
-                fn: () => void this.onMetaMaskSignUp(),
-              },
-            ]
-          : [
-              {
-                label: "◈ GET METAMASK",
-                sub: "recommended · permanent multiplayer identity",
-                color: COLORS.neonGreen,
-                primary: false as const,
-                fn: () => window.open("https://metamask.io/download/", "_blank", "noopener"),
-              },
-            ]),
+        {
+          label: "◈ LINK WALLET TO THIS RUNNER",
+          sub: `${walletChoiceList()} · permanent id`,
+          color: COLORS.neonGreen,
+          primary: false as const,
+          fn: () => void this.linkWalletToGuestRunner(),
+        },
         {
           label: "◢ QUICK DRILL",
           sub: "core combat · skip to city anytime",
@@ -540,7 +548,7 @@ export default class SelectScene extends Phaser.Scene {
         },
         {
           label: "◌ NEW RUNNER",
-          sub: "new callsign · new multiplayer save on this device",
+          sub: "delete this save · start over",
           color: 0x9aa3b2,
           primary: false,
           fn: () => this.startNewGuestRunner(),
@@ -549,14 +557,406 @@ export default class SelectScene extends Phaser.Scene {
     });
   }
 
-  /** Wipe guest profile and open class select. */
+  /**
+   * Bind connected wallet to the current guest runner on the server.
+   * After success, progress lives under w:<wallet> and is locked until NEW RUNNER.
+   */
+  private async linkWalletToGuestRunner() {
+    const local = loadLocalRunner();
+    if (!local?.callsign) {
+      void this.onMetaMaskSignUp();
+      return;
+    }
+    const callsign = local.callsign;
+    this.walletPanel.show({
+      step: "sign",
+      status: "busy",
+      statusText: "awaiting wallet",
+      headline: "Link wallet to this runner",
+      body: `Connect ${walletChoiceProse()} and sign a free message to lock progress to “${callsign}”. That address will always load this runner until you choose NEW RUNNER.`,
+      wallet: connectedWallet(),
+      actions: [],
+    });
+
+    const signed = await metaMaskSignUp();
+    if (!signed.ok) {
+      this.walletPanel.show({
+        step: "sign",
+        status: "error",
+        statusText: "link cancelled",
+        headline: "Wallet not linked",
+        body: signed.detail || "Connect a wallet and approve the free signature to bind this runner.",
+        wallet: connectedWallet(),
+        actions: this.walletActions([
+          {
+            label: "◈ RETRY LINK",
+            sub: "open wallet again",
+            color: COLORS.neonGreen,
+            primary: true,
+            fn: () => void this.linkWalletToGuestRunner(),
+          },
+          {
+            label: "✕ CANCEL",
+            sub: "keep guest save on this device",
+            color: 0x9aa3b2,
+            fn: () => this.enterGuestReturning(),
+          },
+        ]),
+      });
+      return;
+    }
+
+    const proof = signed.proof;
+    this.registry.set("walletProof", proof);
+    this.registry.set("walletAddress", proof.wallet);
+    walletSessionSecret(proof.wallet);
+
+    this.walletPanel.show({
+      step: "sign",
+      status: "busy",
+      statusText: "binding on server…",
+      headline: "Linking…",
+      body: "Moving your guest save onto this wallet address.",
+      wallet: proof.wallet,
+      actions: [],
+    });
+
+    const secret = ensureGuestDeviceSecret(callsign);
+    try {
+      const res = await fetch(`${metroApiBase()}/player/link-wallet`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          callsign,
+          secret,
+          wallet: proof.wallet,
+          sig: proof.sig,
+          ts: proof.ts,
+        }),
+      }).then((r) => r.json() as Promise<{ ok?: boolean; playerId?: string; name?: string; reason?: string; alreadyLinked?: boolean }>);
+
+      if (!res.ok) {
+        this.walletPanel.show({
+          step: "sign",
+          status: "error",
+          statusText: "link failed",
+          headline: "Could not link wallet",
+          body: res.reason || "Server refused the link.",
+          wallet: proof.wallet,
+          actions: this.walletActions([
+            {
+              label: "◈ RETRY",
+              sub: "sign again",
+              color: COLORS.neonGreen,
+              primary: true,
+              fn: () => void this.linkWalletToGuestRunner(),
+            },
+            {
+              label: "⊕ CONTINUE AS GUEST",
+              sub: "keep device-locked save",
+              color: COLORS.neonCyan,
+              fn: () => this.enterGuestReturning(),
+            },
+          ]),
+        });
+        return;
+      }
+
+      // Guest row is now the wallet id — clear guest-only local keys, keep look.
+      const cust = local.customization;
+      const classId = local.classId;
+      clearLocalRunner();
+      this.registry.set("guestPlay", false);
+      this.registry.set("customization", cust);
+      this.registry.set("classId", classId);
+      this.registry.set("characterLocked", true);
+      this.registry.set("walletAddress", proof.wallet);
+      this.registry.set("walletProof", proof);
+      writeLocalRunner({
+        callsign: res.name || callsign,
+        classId,
+        customization: cust,
+        lastZone: local.lastZone,
+      });
+
+      this.identity = {
+        wallet: proof.wallet,
+        playerId: res.playerId || `w:${proof.wallet}`,
+        name: res.name || callsign,
+        look: null,
+        locked: true,
+      };
+
+      this.walletPanel.show({
+        step: "play",
+        status: "ready",
+        statusText: res.alreadyLinked ? "already linked" : "wallet locked to this runner",
+        headline: "Runner locked to wallet",
+        body: `“${res.name || callsign}” is now permanent on ${this.shortWallet(proof.wallet)}. This wallet will always load this character until you choose NEW RUNNER.`,
+        wallet: proof.wallet,
+        actions: this.walletActions([
+          {
+            label: "⊕ ENTER CITY",
+            sub: "play as wallet-bound runner",
+            color: COLORS.neonGreen,
+            primary: true,
+            fn: () => this.deployOnline(local.lastZone && local.lastZone !== "tutorial" ? local.lastZone : "safe"),
+          },
+        ]),
+      });
+    } catch (e) {
+      this.walletPanel.show({
+        step: "sign",
+        status: "error",
+        statusText: "server unreachable",
+        headline: "Link failed",
+        body: String((e as Error)?.message ?? e),
+        wallet: proof.wallet,
+        actions: this.walletActions([
+          {
+            label: "↻ BACK",
+            sub: "guest save unchanged",
+            color: COLORS.neonCyan,
+            fn: () => this.enterGuestReturning(),
+          },
+        ]),
+      });
+    }
+  }
+
+  /**
+   * NEW RUNNER — confirm before wiping the last save.
+   * Guest: device secret retire. Wallet: signed retire (frees the address).
+   */
   private startNewGuestRunner() {
+    const local = loadLocalRunner();
+    const addr = connectedWallet();
+    // Linked only counts when the address belongs to the family that settles $METRO;
+    // an address from the dormant alternate cannot bind a runner.
+    const solLinked = !!addr && (preferSolanaWallet() ? !isEvmAddress(addr) : isEvmAddress(addr));
+    const hasSave = !!(local?.callsign) || !!this.identity?.locked;
+
+    // Nothing to lose — go straight to create.
+    if (!hasSave && !solLinked) {
+      void this.commitNewGuestRunner({ mode: "local_only" });
+      return;
+    }
+
+    this.phase = "wallet";
+    this.syncWalletLabel(addr);
+    this.classLayer.setVisible(false);
+    this.clearActionLayer();
+    this.bodyText.setVisible(false);
+    this.tagline?.setVisible(true); // caption borrowed the tagline's slot
+    this.preview?.destroy();
+    this.preview = undefined;
+
+    const callsign = local?.callsign || this.identity?.name || "runner";
+    const body = solLinked
+      ? `⚠ WARNING — NEW RUNNER will permanently delete the runner locked to wallet ${this.shortWallet(addr!)} (“${callsign}”).\n\nThat address can then create a different character. This cannot be undone.`
+      : `⚠ WARNING — you will permanently lose runner “${callsign}”.\n\nThe server will delete that guest save. Link a wallet first if you want permanent portable progress.`;
+
+    this.walletPanel.show({
+      step: "connect",
+      status: "error",
+      statusText: "progress will be lost",
+      headline: "Start a new runner?",
+      body,
+      wallet: addr,
+      actions: this.walletActions([
+        {
+          label: "✕ CANCEL",
+          sub: `keep ${callsign}`,
+          color: 0x9aa3b2,
+          primary: false,
+          fn: () => {
+            if (this.identity?.locked) this.enterReturning();
+            else if (hasLocalRunner()) this.enterGuestReturning();
+            else void this.refreshWalletState();
+          },
+        },
+        ...(!solLinked && walletAvailable()
+          ? [
+              {
+                label: preferSolanaWallet() ? "◈ LINK SOLANA FIRST" : "◈ LINK WALLET FIRST",
+                sub: "bind this runner to your wallet",
+                color: COLORS.neonGreen,
+                primary: true as const,
+                fn: () => void this.linkWalletToGuestRunner(),
+              },
+            ]
+          : []),
+        {
+          label: "☠ DELETE & NEW RUNNER",
+          sub: solLinked ? "sign to free this wallet · then create" : `permanently delete ${callsign}`,
+          color: 0xff3b6b,
+          primary: false,
+          fn: () => void this.commitNewGuestRunner({ mode: solLinked ? "wallet" : "guest" }),
+        },
+      ]),
+    });
+  }
+
+  /** After confirm: retire server save (guest or wallet), wipe local, open create. */
+  private async commitNewGuestRunner(opts: { mode: "local_only" | "guest" | "wallet" }) {
+    if (opts.mode === "guest") {
+      const local = loadLocalRunner();
+      if (local?.callsign) {
+        // READ, never mint. ensureGuestDeviceSecret() fabricates a fresh UUID when this
+        // device holds no key — which the server can only ever answer with "device key
+        // does not match this runner", so NEW RUNNER failed with a mismatch that was
+        // really "no key here". Without a key there is nothing to prove ownership with.
+        const secret = readGuestDeviceSecret(local.callsign);
+        if (!secret) {
+          this.walletPanel.show({
+            step: "connect",
+            status: "error",
+            statusText: "no device key",
+            headline: "Could not delete runner",
+            body:
+              `This device holds no key for ${local.callsign}, so the server can't be told the ` +
+              `delete is really yours. Guest runners can only be deleted from the device that ` +
+              `created them. Start a fresh callsign instead, or link a wallet for a portable runner.`,
+            wallet: connectedWallet(),
+            actions: this.walletActions([
+              {
+                label: "▸ NEW CALLSIGN",
+                sub: "leave the old runner on the server",
+                color: COLORS.neonGreen,
+                primary: true,
+                fn: () => void this.commitNewGuestRunner({ mode: "local_only" }),
+              },
+            ]),
+          });
+          return;
+        }
+        try {
+          const res = await fetch(`${metroApiBase()}/player/retire`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ callsign: local.callsign, secret }),
+          }).then((r) => r.json() as Promise<{ ok?: boolean; reason?: string }>);
+          if (!res.ok && res.reason && /does not match|required|invalid/i.test(res.reason)) {
+            this.walletPanel.show({
+              step: "connect",
+              status: "error",
+              statusText: "retire failed",
+              headline: "Could not delete runner",
+              body: (res.reason || "server refused") + " — try CONTINUE, or link a wallet.",
+              wallet: connectedWallet(),
+              actions: this.walletActions([
+                {
+                  label: "↻ CONTINUE",
+                  sub: "back to your runner",
+                  color: COLORS.neonCyan,
+                  primary: true,
+                  fn: () => this.enterGuestReturning(),
+                },
+              ]),
+            });
+            return;
+          }
+        } catch {
+          /* offline — still clear local */
+        }
+      }
+    } else if (opts.mode === "wallet") {
+      const addr = connectedWallet();
+      if (!addr) {
+        void this.refreshWalletState();
+        return;
+      }
+      this.walletPanel.show({
+        step: "sign",
+        status: "busy",
+        statusText: "awaiting signature",
+        headline: "Confirm delete",
+        body: "Sign once in your wallet to permanently delete the runner on this address.",
+        wallet: addr,
+        actions: [],
+      });
+      // Retire demands its own signed intent — the server rejects login proofs
+      // here, and this way the wallet shows what is actually being approved.
+      const proof = await signRetireProof(addr);
+      if (!proof) {
+        this.walletPanel.show({
+          step: "sign",
+          status: "error",
+          statusText: "cancelled",
+          headline: "Not deleted",
+          body: "Signature required to free a wallet-bound runner.",
+          wallet: addr,
+          actions: this.walletActions([
+            {
+              label: "↻ BACK",
+              sub: "keep current runner",
+              color: COLORS.neonCyan,
+              fn: () => (this.identity?.locked ? this.enterReturning() : this.enterGuestReturning()),
+            },
+          ]),
+        });
+        return;
+      }
+      try {
+        const res = await fetch(`${metroApiBase()}/player/retire`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ wallet: proof.wallet, sig: proof.sig, ts: proof.ts }),
+        }).then((r) => r.json() as Promise<{ ok?: boolean; reason?: string }>);
+        if (!res.ok) {
+          this.walletPanel.show({
+            step: "sign",
+            status: "error",
+            statusText: "retire failed",
+            headline: "Could not delete wallet runner",
+            body: res.reason || "server refused",
+            wallet: addr,
+            actions: this.walletActions([
+              {
+                label: "↻ BACK",
+                sub: "keep current runner",
+                color: COLORS.neonCyan,
+                fn: () => this.enterReturning(),
+              },
+            ]),
+          });
+          return;
+        }
+      } catch (e) {
+        this.walletPanel.show({
+          step: "sign",
+          status: "error",
+          statusText: "server unreachable",
+          headline: "Could not delete",
+          body: String((e as Error)?.message ?? e),
+          wallet: addr,
+          actions: this.walletActions([
+            {
+              label: "↻ BACK",
+              color: COLORS.neonCyan,
+              sub: "try again later",
+              fn: () => this.enterReturning(),
+            },
+          ]),
+        });
+        return;
+      }
+      this.identity = null;
+      this.registry.remove("walletProof");
+    }
+
     clearLocalRunner();
     this.registry.remove("customization");
     this.registry.remove("classId");
     this.registry.remove("characterLocked");
     this.preview?.destroy();
     this.preview = undefined;
+    // Wallet still connected → create a new character for that wallet.
+    if (opts.mode === "wallet" && connectedWallet()) {
+      this.registry.set("guestPlay", false);
+      this.enterCreate();
+      return;
+    }
     this.enterGuestPlay();
   }
 
@@ -574,6 +974,7 @@ export default class SelectScene extends Phaser.Scene {
     this.preview = undefined;
     this.clearActionLayer();
     this.bodyText.setVisible(false);
+    this.tagline?.setVisible(true); // caption borrowed the tagline's slot
     this.walletPanel.show({
       step: opts?.step ?? "sign",
       status: opts?.status ?? "ready",
@@ -590,11 +991,11 @@ export default class SelectScene extends Phaser.Scene {
   private async verifyAndAdvance(addr: string) {
     this.showConnectedPending(
       addr,
-      "Approve the login message in Phantom. This is a free signature — not a transaction. No gas, no $METRO.",
+      "Approve the login message in your wallet. This is a free signature — not a transaction. No gas, no $METRO.",
       [],
       {
         status: "busy",
-        statusText: "awaiting Phantom signature",
+        statusText: "awaiting wallet signature",
         headline: "Sign to create / resume",
       },
     );
@@ -606,7 +1007,7 @@ export default class SelectScene extends Phaser.Scene {
         [
           {
             label: "◈ RETRY SIGN UP",
-            sub: "open Phantom again",
+            sub: "open wallet again",
             color: COLORS.neonGreen,
             fn: () => void this.verifyAndAdvance(addr),
           },
@@ -640,7 +1041,35 @@ export default class SelectScene extends Phaser.Scene {
       this.identity = result.identity;
       this.registry.set("walletAddress", result.identity.wallet);
       if (result.identity.locked && result.identity.look) {
+        // Wallet already locked to a runner — always resume that character.
         this.enterReturning();
+        return;
+      }
+      // Empty wallet + local guest save → offer to bind guest → this wallet.
+      if (hasLocalRunner()) {
+        this.walletPanel.show({
+          step: "play",
+          status: "ready",
+          statusText: "wallet free · guest save on this device",
+          headline: "Bind wallet to your runner?",
+          body: `This wallet has no character yet. Link it to “${loadLocalRunner()?.callsign}” to lock the wallet to that runner permanently (until NEW RUNNER).`,
+          wallet: result.identity.wallet,
+          actions: this.walletActions([
+            {
+              label: "◈ LINK TO EXISTING RUNNER",
+              sub: "recommended · lock this wallet to your save",
+              color: COLORS.neonGreen,
+              primary: true,
+              fn: () => void this.linkWalletToGuestRunner(),
+            },
+            {
+              label: "◌ CREATE NEW ON WALLET",
+              sub: "ignore guest save · new character for this address",
+              color: 0x9aa3b2,
+              fn: () => this.enterCreate(),
+            },
+          ]),
+        });
         return;
       }
       // New wallet account — class + customize, then durable save on first online login.
@@ -651,7 +1080,7 @@ export default class SelectScene extends Phaser.Scene {
     if (result.error === "auth_failed") {
       this.showConnectedPending(
         addr,
-        "Server rejected the signature. Use Phantom on the same address, or update the client/server if you're on an old build.",
+        "Server rejected the signature. Use the same wallet address, or update the client/server if you're on an old build.",
         [
           {
             label: "◈ RETRY SIGN UP",
@@ -676,7 +1105,7 @@ export default class SelectScene extends Phaser.Scene {
 
     const serverHint =
       result.error === "server_unreachable"
-        ? "Game server unreachable. Retry Phantom, or play multiplayer as a guest (saves when the server is up)."
+        ? "Game server unreachable. Retry wallet connect, or play multiplayer as a guest (saves when the server is up)."
         : (result.detail ?? "Could not reach the identity service.");
     this.showConnectedPending(
       addr,
@@ -704,6 +1133,7 @@ export default class SelectScene extends Phaser.Scene {
     await disconnectWallet();
     this.identity = null;
     this.registry.remove("walletAddress");
+    this.registry.remove("walletProof");
     this.registry.remove("characterLocked");
     await this.refreshWalletState();
   }
@@ -737,6 +1167,7 @@ export default class SelectScene extends Phaser.Scene {
     });
 
     this.bodyText.setVisible(false);
+    this.tagline?.setVisible(true); // caption borrowed the tagline's slot
 
     const drillLbl = () => (getSettings().tutorialMode === "full" ? "FULL TRAINING" : "QUICK");
     this.walletPanel.show({
@@ -786,17 +1217,33 @@ export default class SelectScene extends Phaser.Scene {
     this.preview?.destroy();
     this.preview = undefined;
     this.classLayer.setVisible(true);
-    const cardTop = this.cardRects[0]?.y ?? VIEW_H * 0.38;
     const guest = !wallet && (!!this.registry.get("guestPlay") || !!this.registry.get("offlinePlay"));
+    this.setClassCaption(
+      guest
+        ? "choose your class · multiplayer save · no wallet"
+        : "choose your class · one-time wallet creation",
+    );
+    this.drawFrames();
+  }
+
+
+  /**
+   * Caption above the class tray. Anchored to the TRAY's top edge, bottom-aligned:
+   * both callers used to centre it on `cardTop - uiGap("lg")`, i.e. 16px above the
+   * cards — but the tray panel starts 12px above them, so a 14px centred line put its
+   * lower half inside the panel, which paints over it (tray depth 25, text depth 0).
+   * The caption read as clipped by the UI sitting on top of it.
+   */
+  private setClassCaption(text: string) {
+    // The caption IS the header line while you're picking a class, so it takes the
+    // tagline's slot rather than being squeezed between it and the tray — there is no
+    // room for both above a tray this tall, which is what caused the overlap.
+    this.tagline.setVisible(false);
     this.bodyText
       .setVisible(true)
-      .setY(cardTop - uiGap("lg"))
-      .setText(
-        guest
-          ? "choose your class · multiplayer save · no wallet"
-          : "choose your class · one-time wallet creation",
-      );
-    this.drawFrames();
+      .setOrigin(0.5, 0.5)
+      .setY(MENU_SUB_Y - uiDim(8))
+      .setText(text);
   }
 
   private buildClassCards() {
@@ -804,8 +1251,13 @@ export default class SelectScene extends Phaser.Scene {
     const margin = MENU_PAD;
     const gap = uiGap("xl");
     const cardW = (VIEW_W - margin * 2 - gap * (n - 1)) / n;
-    const cardH = uiDim(332);
-    const cardY = Math.round(VIEW_H * 0.48 - cardH / 2);
+    // The tray used to centre on VIEW_H*0.48 with no regard for the header, which put
+    // its top edge at 108 while the tagline ran 119..137 — the cards painted straight
+    // over it. Stack it under the header band instead: title, then the caption slot
+    // (which the tagline yields during class select), then the tray.
+    const captionSlotY = MENU_SUB_Y - uiDim(8);
+    const cardY = Math.round(captionSlotY + uiDim(14) + uiGap("md"));
+    const cardH = Math.round(MENU_FOOTER_Y - uiGap("xxl") - cardY - uiGap("xl"));
 
     const trayX = margin - uiGap("sm");
     const trayY = cardY - uiGap("md");
@@ -934,17 +1386,20 @@ export default class SelectScene extends Phaser.Scene {
   }
 
   private deployOnline(zone: string, tutorialMode?: "quick" | "full") {
-    if (this.options?.isOpen) return;
+    if (this.options?.isOpen || this.deploying) return;
+    this.deploying = true;
     if (tutorialMode) {
       updateSettings({ tutorialMode });
       this.registry.set("tutorialMode", tutorialMode);
     }
-    transitionTo(
-      this,
-      "Online",
-      { zone, tutorialMode: tutorialMode ?? getSettings().tutorialMode },
-      { style: "deploy", accent: 0x39ff88 },
-    );
+    playDeployTeaser(this, () => {
+      transitionTo(
+        this,
+        "Online",
+        { zone, tutorialMode: tutorialMode ?? getSettings().tutorialMode },
+        { style: "deploy", accent: 0x39ff88 },
+      );
+    });
   }
 
   private drawFrames() {
@@ -970,29 +1425,20 @@ export default class SelectScene extends Phaser.Scene {
     transitionTo(this, "Customize", undefined, { style: "glitch", accent: CLASSES[i].color });
   }
 
-  /** Official GitHub "mark-github" octicon path (viewBox 0 0 24 24), fetched from
-   *  primer/octicons — rendered white on a dark disc to sit beside the X/Telegram marks. */
-  private static readonly GH_MARK_PATH =
-    "M10.226 17.284c-2.965-.36-5.054-2.493-5.054-5.256 0-1.123.404-2.336 1.078-3.144-.292-.741-.247-2.314.09-2.965.898-.112 2.111.36 2.83 1.01.853-.269 1.752-.404 2.853-.404 1.1 0 1.999.135 2.807.382.696-.629 1.932-1.1 2.83-.988.315.606.36 2.179.067 2.942.72.854 1.101 2 1.101 3.167 0 2.763-2.089 4.852-5.098 5.234.763.494 1.28 1.572 1.28 2.807v2.336c0 .674.561 1.056 1.235.786 4.066-1.55 7.255-5.615 7.255-10.646C23.5 6.188 18.334 1 11.978 1 5.62 1 .5 6.188 .5 12.545c0 4.986 3.167 9.12 7.435 10.669.606.225 1.19-.18 1.19-.786V20.63a2.9 2.9 0 0 1-1.078.224c-1.483 0-2.359-.808-2.987-2.313-.247-.607-.517-.966-1.034-1.033-.27-.023-.359-.135-.359-.27 0-.27.45-.471.898-.471.652 0 1.213.404 1.797 1.235.45.651.921.943 1.483.943.561 0 .92-.202 1.437-.719.382-.381.674-.718.944-.943";
-  private static readonly GH_KEY = "gh_mark_tex";
-
   /** Official GitBook mark (viewBox 0 0 24 24), fetched from simple-icons —
-   *  rendered white on a dark disc, same treatment as the GitHub mark. */
+   *  rendered white on a dark disc to sit beside the X/Telegram marks. */
   private static readonly GB_MARK_PATH =
     "M12.513 1.097c-.645 0-1.233.34-2.407 1.017L3.675 5.82A7.233 7.233 0 0 0 0 12.063v.236a7.233 7.233 0 0 0 3.667 6.238L7.69 20.86c2.354 1.36 3.531 2.042 4.824 2.042 1.292.001 2.47-.678 4.825-2.038l4.251-2.453c1.177-.68 1.764-1.02 2.087-1.579.323-.56.324-1.24.323-2.6v-2.63a1.04 1.04 0 0 0-1.558-.903l-8.728 5.024c-.587.337-.88.507-1.201.507-.323 0-.616-.168-1.204-.506l-5.904-3.393c-.297-.171-.446-.256-.565-.271a.603.603 0 0 0-.634.368c-.045.111-.045.282-.043.625.002.252 0 .378.025.494.053.259.189.493.387.667.089.077.198.14.416.266l6.315 3.65c.589.34.884.51 1.207.51.324 0 .617-.17 1.206-.509l7.74-4.469c.202-.116.302-.172.377-.13.075.044.075.16.075.392v1.193c0 .34.001.51-.08.649-.08.14-.227.224-.522.394l-6.382 3.685c-1.178.68-1.767 1.02-2.413 1.02-.646 0-1.236-.34-2.412-1.022l-5.97-3.452-.043-.025a4.106 4.106 0 0 1-2.031-3.52V11.7c0-.801.427-1.541 1.12-1.944a1.979 1.979 0 0 1 1.982-.001l4.946 2.858c1.174.679 1.762 1.019 2.407 1.02.645 0 1.233-.34 2.41-1.017l7.482-4.306a1.091 1.091 0 0 0 0-1.891L14.92 2.11c-1.175-.675-1.762-1.013-2.406-1.013Z";
   private static readonly GB_KEY = "gb_mark_tex";
 
   /**
-   * Intro social row — X + Telegram (vector-drawn) + GitHub + GitBook (official marks
-   * rendered to SVG textures). Icon-only buttons; each opens in a new tab so the
-   * Phaser canvas keeps the session. Marks load async; the row builds once ready.
+   * Intro social row — X + Telegram (vector-drawn) + GitBook (official mark rendered to
+   * an SVG texture). Icon-only buttons; each opens in a new tab so the Phaser canvas
+   * keeps the session. Marks load async; the row builds once ready.
    */
   private addSocialLinks() {
     // Compose each official mark (white) on a dark disc as a self-contained SVG data URI.
-    const marks: Array<[string, string]> = [
-      [SelectScene.GH_KEY, SelectScene.GH_MARK_PATH],
-      [SelectScene.GB_KEY, SelectScene.GB_MARK_PATH],
-    ];
+    const marks: Array<[string, string]> = [[SelectScene.GB_KEY, SelectScene.GB_MARK_PATH]];
     let queued = false;
     for (const [key, path] of marks) {
       if (this.textures.exists(key)) continue;
@@ -1052,9 +1498,6 @@ export default class SelectScene extends Phaser.Scene {
           g.lineStyle(1, 0x8ad4f8, 0.75).strokeCircle(0, 0, r);
         },
       },
-      ...(this.textures.exists(SelectScene.GH_KEY)
-        ? [{ url: "https://github.com/theelastgod/METROPHAGE", texture: SelectScene.GH_KEY }]
-        : []),
       ...(this.textures.exists(SelectScene.GB_KEY)
         ? [{ url: "https://reverie.gitbook.io/metrophage", texture: SelectScene.GB_KEY }]
         : []),

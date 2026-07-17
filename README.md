@@ -38,23 +38,81 @@ Four classes, each with a full server-validated kit:
 - **THE UNDERLINE** — the subway dungeon.
 - **Dynamic world events** — NEON STORM / BLACKOUT / REPO PURGE WAVE /
   CONTAGION OUTBREAK run on the server per district: telegraph → real sim
-  effects → payout to everyone alive.
-- **Campaign** — 9 quests across 3 acts (THE WAKE → THE AWAKENING),
-  per-player progress inside the shared world, journal + waypoints.
+  effects → explicit survive-to-resolution condition → payout to everyone alive;
+  party reboots before resolution count as successful rescues.
+- **Living districts** — every district has its own history, power blocs,
+  residents, landmarks, secrets, and a rotating server-authoritative public
+  operation. Purges, captures, bosses, and event survival directly help locals;
+  completed operations build a shared daily aftermath visible in maps, rumours,
+  arrivals, and retaliatory world events across every shard of that district.
+- **Four political Cells** — classes are competing ideas of freedom, not just
+  colors on a territory score; control messages name what each Cell promises.
+- **People remember** — named contacts recognize meetings and completed work across
+  devices; trust unlocks personal disclosures and better local intelligence.
+  Districts likewise remember civic contribution as local standing. Sixteen recurring
+  residents keep visible street/work/refuge/home schedules, and local testimony learned
+  from one person changes what their district counterpart can reveal. Corroborating
+  2/4/8 districts opens a durable city casefile and cross-district fieldwork directives;
+  every confirmed counterpart has an optional evidence-driven follow-up job.
+- **Campaign** — 10-part main arc plus 3 linked side jobs (THE WAKE → THE AWAKENING),
+  per-player progress inside the shared world, journal + waypoints. Completed acts echo
+  through allies, residents, maps, and recovered memories; the FIXER judgment persists
+  as SPARE or EXPOSE and changes later callbacks, four ally positions, eight district
+  aftermaths, and each Cell's political interpretation.
+- **Reconstruction after the ending** — every district opens an authored post-Awakening
+  resident job; completed work matures from CREW to COMMON to INSTITUTION and remains
+  visible in resident dialogue and maps.
+- **Ordered memory synthesis** — the order in which dive fragments are recovered changes
+  eight district interpretations; the journal records recovery number and combination
+  readings instead of flattening memory into an unordered checklist.
+- **Weekly city chronicle** — shared Cell war, civic operations, command-chassis deaths,
+  and collective goals become a server-authored city-center edition rather than a
+  disposable client feed. Public work uses a bounded weekly district ledger, so the
+  edition no longer forgets six days of civic history at UTC midnight.
+- **Civic courier routes** — weekly public work opens four character-authored deliveries
+  between districts, city center, the Clinic, and THE UNDERLINE. Only authoritative zone
+  arrival completes them, and durable 24-hour settlements prevent fast-travel payouts.
+- **Daily relay charters** — territory flips leave a bounded public memory of the latest
+  Cell and its civic use for each district. Maps, arrivals, and the chronicle remember the
+  contest, while live nodes remain the sole authority for control and rewards.
+- **Regional anchors** — every district has a stable authored contact alongside its moving
+  residents, making the regional dialogue/jobs reachable. Civic deliveries open from
+  public work in their specific source district rather than an unrelated citywide win.
 - **Seasonal meltdown** — the save-wide Singularity tips into a new era.
+- **Co-op attribution** — nearby party allies share story/contract/public-operation/job
+  progress, while base kill value and Cell tally remain attached to the killing blow.
+- **Social memory** — party reboots persist as bounded rescuer/recipient history, and
+  contacts recognize mutual aid plus the authored provenance of equipped cosmetics.
+- **Reprint witnesses** — deaths enter a bounded server-side social record. MAREK and
+  recurring residents remember returns across devices without changing death penalties,
+  inventories, combat power, or access.
+- **Reprint memorials** — the ₵260 vendor sink registers a bounded public return stamp
+  recognized by residents. It explicitly offers no insurance, protection, or power.
+- **Authoritative professions** — Combat, Trading, Exploration, Crafting, and Data Mining
+  persist in D1 and advance only from validated outcomes. Three Metro City civic archives
+  uncover erased casualties, deleted transit routes, and ledger-converted homes on a
+  durable cooldown without becoming an economy faucet.
+- **Recoverable civic archive** — twelve ordered records connect suppressed casualties,
+  ghost transit labor, and ledger evictions into one common proof. Relevant contacts and
+  the city map recognize the server-owned record across devices.
+- **Durable conversations** — contacts remember repeated visits separately from completed
+  jobs. Dialogue and the city ledger survive devices, while trust still requires kept
+  promises rather than talk spam.
 
 ## The $METRO economy
 
 $METRO is a tradeable on-chain token bridged to server-authoritative `credits`.
-**Preferred settlement: Solana SPL** via Phantom. Robinhood Chain ERC-20 remains as legacy.
+**Preferred settlement: Solana SPL** via Phantom. Robinhood Chain ERC-20 remains in the
+tree as a dormant alternate (`METRO_SETTLEMENT=robinhood`), not the launch path.
 
 - In-game currency is off-chain `credits`.
-- Sign-up: Phantom + free message (no gas).
+- Sign-up: choose a Solana wallet (Phantom featured) + one free message (no gas);
+  mobile approval happens in the wallet app and play remains in the normal browser.
 - Cash-out pool is **100% player-funded** (starts empty). Empty/short pool →
   **"Check back later."**
-- **Rate spread**: deposit 1 ◈ → **100 ₵**, withdraw **125 ₵** → 1 ◈
-  (~20% stays in the pool). Min cash-out **250 ₵** (2 ◈). Daily cap **50k ₵** / player.
-- Cash-outs are **claims**: player pays SOL fee; treasury only signs (never spends SOL).
+- **Rate spread**: deposit 1 ◈ → **100 ₵**, withdraw **150 ₵** → 1 ◈.
+  Min cash-out **300 ₵** (2 ◈). There is no daily earn or withdrawal cap.
+- Cash-outs: treasury preferably pays SOL and sends $METRO; player-pays only if treasury SOL is empty.
 - Go-live: server `METRO_MINT` + `METRO_TREASURY_SECRET` (base64 keypair) first, then
   client `VITE_METRO_MINT`. Mainnet stays disarmed (`METRO_MAINNET_ARMED`) until counsel
   signs off. See `SHIPPING.md` §5 / `docs/METRO_CHAIN_CHOICE.md`.

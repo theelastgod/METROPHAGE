@@ -31,7 +31,18 @@ unlock. Run this on at least one iPhone (Safari) and one Android (Chrome);
 
 ## Session & performance
 - [ ] Guest login persists across a full browser kill + relaunch (device secret)
-- [ ] MetaMask mobile browser: sign-in + session resume works
+- [ ] Solana wallet picker (mobile Safari/Chrome, no injector): tap Connect → a
+      fitted, vertically scrollable picker opens in the game tab with Phantom
+      visible near the top; there is no horizontal clipping in short landscape.
+- [ ] Choose Phantom → the native app opens for connection approval → return to
+      the same Safari/Chrome tab → Phantom receives one free login signature.
+      The game must never load or become playable inside Phantom's browser.
+- [ ] Kill/relaunch Safari/Chrome after connecting: the cached address appears,
+      the WalletConnect signer rehydrates, and Retry Sign Up can sign without
+      choosing the wallet again.
+- [ ] No-WalletConnect fallback build only: Phantom's encrypted connect and
+      signMessage protocol round-trips approval through the app and returns to
+      the original browser tab.
 - [ ] 10 min in the hub: FPS acceptable, no thermal runaway, no memory crash
 - [ ] Lock screen / switch app / return: WebSocket reconnects, runner where you left it
 - [ ] Audio: music starts after first tap (autoplay policy); volume sliders apply live

@@ -91,7 +91,14 @@ export async function handleEconomy(env: { DB: D1Database }): Promise<Response> 
   const withdrawalsPerDay = ewma(wdByDay, 14);
   const netPoolPerDay = depositsPerDay - withdrawalsPerDay;
 
-  const live = await resolveBridge(db).catch(() => null);
+  const live = await resolveBridge(db, {
+    METRO_MINT: (env as { METRO_MINT?: string }).METRO_MINT,
+    METRO_DEVNET_MINT: (env as { METRO_DEVNET_MINT?: string }).METRO_DEVNET_MINT,
+    METRO_CHAIN_ID: (env as { METRO_CHAIN_ID?: string }).METRO_CHAIN_ID,
+    METRO_RPC: (env as { METRO_RPC?: string }).METRO_RPC,
+    METRO_USD_PRICE: (env as { METRO_USD_PRICE?: string }).METRO_USD_PRICE,
+    METRO_MAINNET_ARMED: (env as { METRO_MAINNET_ARMED?: string }).METRO_MAINNET_ARMED,
+  }).catch(() => null);
   const rate = live?.withdrawCreditsPerMetro ?? BRIDGE.withdrawCreditsPerMetro;
   const circulating = circ?.c ?? 0;
   const impliedLiabilityMetro = Math.round((circulating / rate) * 100) / 100;
@@ -133,6 +140,10 @@ export async function handleEconomy(env: { DB: D1Database }): Promise<Response> 
         emission7dMetro: r2(emit7 / rate),
         globalDailyWithdrawMetro: live?.policy.globalDailyWithdrawMetro ?? null,
         note: live?.policy.note ?? null,
+        metroUsd: live?.metroUsd ?? null,
+        priceMult: live?.priceMult ?? null,
+        priceSource: live?.priceSource ?? null,
+        priceStale: live?.priceStale ?? null,
       },
       forecast: {
         method: "EWMA(14d, α=0.35) on bridge history + 1% seed",

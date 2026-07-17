@@ -7,9 +7,10 @@ import {
   prefersMobileUx,
   refreshMobileUxCache,
   installLandscapeGate,
-  landscapeAspect,
+  installMobileFullscreenButton,
   mobileVisibleSize,
   isPortrait,
+  isBrowserFullscreen,
 } from "./systems/Mobile";
 import { VIEW_W, VIEW_H, COLORS, setRenderResolution } from "./config";
 
@@ -30,9 +31,12 @@ import { installQualityGovernor } from "./systems/QualityGovernor";
 import { mountMetroPanel } from "./ui/MetroPanel";
 import { getOnlinePlayer } from "./economy/session";
 import { randomCustomization } from "./game/customization";
+import { installClientUpdateWatch } from "./systems/ClientUpdate";
+import { showBetaNotice } from "./ui/BetaNotice";
 
-// Mobile landscape: ENVELOP covers the full visual viewport (parent clips any
-// tiny crop). Buffer width tracks the phone aspect so crop is usually zero.
+// Mobile landscape: FIT shows the full game (no crop). ENVELOP used to fill the
+// screen by clipping HUD/world edges — that was the "cut off" bug on phones.
+showBetaNotice();
 const mobile = prefersMobileUx();
 
 /** Pin #game-root to the real visible phone viewport (handles URL-bar show/hide). */
@@ -47,35 +51,38 @@ function sizeMobileRoot() {
   root.style.top = `${top}px`;
   root.style.right = "auto";
   root.style.bottom = "auto";
-  // Keep html/body in lockstep so iOS Safari doesn't leave letterbox gutters.
-  try {
-    document.documentElement.style.width = `${w}px`;
-    document.documentElement.style.height = `${h}px`;
-    document.body.style.width = `${w}px`;
-    document.body.style.height = `${h}px`;
-  } catch {
-    /* ignore */
-  }
+  // Do not freeze html/body to the current pixel dimensions. Phantom and other
+  // wallet webviews reuse that layout box after rotation, which can leave the
+  // page permanently portrait even though visualViewport is landscape.
+  document.documentElement.style.removeProperty("width");
+  document.documentElement.style.removeProperty("height");
+  document.body.style.removeProperty("width");
+  document.body.style.removeProperty("height");
 }
 
 // Assigned after Phaser.Game construction — resize handlers guard on this.
 let game: Phaser.Game;
 
 /**
- * Widen (or narrow) the game buffer to the live landscape aspect so ENVELOP/FIT
- * can fill edge-to-edge. Height (and RENDER_SCALE) stay fixed — only FOV width changes.
+ * Match game buffer aspect to the live phone aspect so FIT fills the whole
+ * landscape window (max width + height) without cropping HUD/world edges.
+ * Design height stays VIEW_H; width flexes to the phone's long/short ratio.
  */
 function syncMobileGameSize() {
   if (!mobile || !game || typeof window === "undefined") return;
   if (isPortrait()) return; // landscape gate owns portrait
   const root = document.getElementById("game-root");
   if (!root) return;
-  const pw = root.clientWidth || mobileVisibleSize().w;
-  const ph = root.clientHeight || mobileVisibleSize().h;
+  // Prefer live visualViewport so FS / URL-bar changes are reflected immediately.
+  const vis = mobileVisibleSize();
+  const pw = root.clientWidth || vis.w;
+  const ph = root.clientHeight || vis.h;
   if (pw < 2 || ph < 2 || pw < ph) return;
 
-  const aspect = landscapeAspect();
-  const h = game.scale.gameSize?.height || VIEW_H;
+  // Use the actual parent box aspect (post-safe-area / fullscreen) so the canvas
+  // aspect matches the phone → FIT scales to use full width with no side crop.
+  const aspect = Math.max(1.2, Math.min(2.6, pw / ph));
+  const h = VIEW_H;
   const w = Math.round((h * aspect) / 2) * 2;
   if (!(w > 0 && h > 0)) return;
   if (Math.abs(w - (game.scale.gameSize?.width || 0)) <= 2) return;
@@ -99,9 +106,9 @@ const config: Phaser.Types.Core.GameConfig = {
     powerPreference: "high-performance",
   },
   scale: {
-    // Mobile: ENVELOP = cover the parent fully (parent overflow:hidden clips).
-    // Desktop: FIT = whole game visible, letterbox OK on ultrawide windows.
-    mode: mobile ? Phaser.Scale.ENVELOP : Phaser.Scale.FIT,
+    // FIT on mobile + desktop: entire design canvas always visible (letterbox OK).
+    // Never ENVELOP on phones — that crops HUD chrome and world edges.
+    mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
     width: VIEW_W,
     height: VIEW_H,
@@ -132,7 +139,7 @@ if (mobile) sizeMobileRoot();
 
 game = new Phaser.Game(config);
 
-/** Refit canvas after rotate / chrome collapse — fill the visible phone window. */
+/** Refit canvas after rotate / chrome collapse / fullscreen — max width, nothing cut off. */
 function refreshMobileScale() {
   if (!mobile || !game) return;
   sizeMobileRoot();
@@ -142,12 +149,14 @@ function refreshMobileScale() {
   } catch {
     /* game may not be ready */
   }
-  // ENVELOP intentionally draws a canvas ≥ parent; do NOT clamp max size (that
-  // re-letterboxes). Parent #game-root overflow:hidden clips to the screen.
+  // FIT clamps to parent. When game aspect matches the phone (syncMobileGameSize),
+  // Phaser fills the full width with no crop. Don't force canvas width/height —
+  // that desyncs pointer mapping.
   const canvas = game.canvas;
   if (canvas) {
-    canvas.style.maxWidth = "none";
-    canvas.style.maxHeight = "none";
+    canvas.style.maxWidth = "100%";
+    canvas.style.maxHeight = "100%";
+    canvas.style.margin = "0 auto";
   }
 }
 
@@ -161,6 +170,10 @@ if (mobile && typeof window !== "undefined") {
   window.addEventListener("resize", () => refreshMobileScale());
   window.visualViewport?.addEventListener("resize", () => refreshMobileScale());
   window.visualViewport?.addEventListener("scroll", () => refreshMobileScale());
+  window.addEventListener("pageshow", delayedRefresh);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") delayedRefresh();
+  });
   try {
     window.matchMedia("(orientation: landscape)").addEventListener("change", delayedRefresh);
   } catch {
@@ -204,55 +217,33 @@ if (typeof document !== "undefined") {
     refreshMobileUxCache();
   });
 
-  // True browser fullscreen when supported (Android Chrome / some Chromium).
-  // iOS Safari does not allow element fullscreen for canvas — visualViewport +
-  // ENVELOP keeps us edge-to-edge inside the browser window there.
+  // Explicit FULLSCREEN control (user gesture). No auto-enter — that fought iOS
+  // and still cropped under ENVELOP. FIT + optional FS is the reliable path.
   if (prefersMobileUx()) {
-    const goFs = () => {
-      const root = document.getElementById("game-root") ?? document.documentElement;
-      const anyRoot = root as HTMLElement & {
-        webkitRequestFullscreen?: () => void;
-        requestFullscreen?: (opts?: FullscreenOptions) => Promise<void>;
-      };
-      const anyDoc = document as Document & {
-        webkitFullscreenElement?: Element | null;
-        webkitExitFullscreen?: () => void;
-      };
-      try {
-        if (document.fullscreenElement || anyDoc.webkitFullscreenElement) {
-          refreshMobileScale();
-          return;
-        }
-        if (anyRoot.requestFullscreen) {
-          void anyRoot.requestFullscreen({ navigationUI: "hide" }).catch(() => undefined);
-        } else if (anyRoot.webkitRequestFullscreen) {
-          anyRoot.webkitRequestFullscreen();
-        }
-      } catch {
-        /* denied / unsupported — stay windowed cover-fill */
-      }
-      window.setTimeout(refreshMobileScale, 100);
-      window.setTimeout(refreshMobileScale, 400);
-    };
-    // First tap + every time we enter landscape (helps after rotate-from-portrait).
-    document.addEventListener("pointerdown", goFs, { once: true, passive: true });
-    document.addEventListener("fullscreenchange", () => refreshMobileScale());
-    document.addEventListener("webkitfullscreenchange", () => refreshMobileScale());
-    try {
-      window.matchMedia("(orientation: landscape)").addEventListener("change", (e) => {
-        if (e.matches) {
-          window.setTimeout(goFs, 80);
-          window.setTimeout(refreshMobileScale, 120);
-        }
-      });
-    } catch {
-      /* ignore */
-    }
+    installMobileFullscreenButton({
+      onChange: () => {
+        window.setTimeout(refreshMobileScale, 60);
+        window.setTimeout(refreshMobileScale, 280);
+        window.setTimeout(refreshMobileScale, 600);
+      },
+    });
+    document.addEventListener("fullscreenchange", () => {
+      document.documentElement.classList.toggle("mp-fs", isBrowserFullscreen());
+      refreshMobileScale();
+    });
+    document.addEventListener("webkitfullscreenchange", () => {
+      document.documentElement.classList.toggle("mp-fs", isBrowserFullscreen());
+      refreshMobileScale();
+    });
   }
 }
 
 // $METRO bridge panel — dormant unless the on-chain layer is enabled (a valid CA).
 mountMetroPanel(getOnlinePlayer);
+
+// Long-lived tabs after a deploy: detect new client/server and hard-reload so
+// runners aren't stuck offline on a stale multiplayer protocol.
+installClientUpdateWatch();
 
 // Dev-only handle for debugging/verification in the browser console.
 if (import.meta.env.DEV) {
@@ -260,16 +251,24 @@ if (import.meta.env.DEV) {
   const w = window as unknown as {
     __game: Phaser.Game;
     __enterCity: () => void;
-    __playtest: { offline: () => void; drill: () => void };
+    __playtest: { offline: () => void; drill: () => void; gotoZone: (zone: string) => void };
   };
   w.__enterCity = () => {
     if (!game.registry.get("classId")) game.registry.set("classId", "metrophage");
     if (!game.registry.get("customization")) game.registry.set("customization", randomCustomization("metrophage"));
-    // route through the ACTIVE scene's plugin so it stops (game-level start leaves the
-    // menu running behind the world — it silently halved measured FPS in profiling)
-    const cur = game.scene.getScenes(true)[0];
-    if (cur) cur.scene.start("Online", { zone: "safe" });
-    else game.scene.start("Online", { zone: "safe" });
+    // Deterministic even mid-transition: stop every active scene, start Online at the
+    // manager level, then sweep stragglers (a queued Select start can land AFTER this
+    // call and would otherwise paint + steal input over the world — or worse, a probe
+    // catches the gap between Boot stopping and Select starting).
+    const sweep = () => {
+      for (const s of game.scene.getScenes(true)) {
+        if (s.scene.key !== "Online") s.scene.stop();
+      }
+    };
+    sweep();
+    game.scene.start("Online", { zone: "safe" });
+    window.setTimeout(sweep, 400);
+    window.setTimeout(sweep, 1500);
   };
   w.__playtest = {
     offline: () => {
@@ -280,6 +279,17 @@ if (import.meta.env.DEV) {
       game.scene.start("Select");
     },
     drill: () => game.scene.start("Online", { zone: "tutorial", tutorialMode: "quick" }),
+    // World-tour hook (tools/world-tour.mjs): jump straight to any zone for
+    // screenshot sweeps. Same deterministic sweep discipline as __enterCity.
+    gotoZone: (zone: string) => {
+      if (!game.registry.get("classId")) game.registry.set("classId", "metrophage");
+      if (!game.registry.get("customization")) game.registry.set("customization", randomCustomization("metrophage"));
+      game.registry.set("guestPlay", true);
+      for (const s of game.scene.getScenes(true)) if (s.scene.key !== "Online") s.scene.stop();
+      game.scene.getScene("Online")?.scene.isActive()
+        ? game.scene.getScene("Online")!.scene.restart({ zone })
+        : game.scene.start("Online", { zone });
+    },
   };
   // Surface the $METRO gate state so it's obvious whether the on-chain layer is live.
   const m = getMetroStatus();
@@ -287,7 +297,8 @@ if (import.meta.env.DEV) {
     `[$METRO] ${
       m.enabled
         ? `ENABLED · ${m.networkName} · ${m.cluster}${m.chainId ? ` · id ${m.chainId}` : ""}${m.mainnetLive ? " · MAINNET LIVE" : ""}`
-        : "disabled (off-chain only) · Phantom sign-up · set VITE_METRO_MINT to arm SPL bridge"
+        : // dualChainSummary already names the family, network and the env var to set.
+          m.summary
     }`,
   );
 }

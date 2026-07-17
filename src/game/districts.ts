@@ -67,7 +67,7 @@ export interface DistrictDef {
   copPosts: Array<[number, number, "patrol" | "enforcer"]>;
   /** Boss archetype guarding the node (added in later steps; undefined = none yet). */
   bossId?: string;
-  /** The HSS core — clearing it ends the cycle (meltdown victory). */
+  /** The HSS core — narrative finale district (campaign meltdown is per-player, not a world wipe). */
   isFinal?: boolean;
   /** Ambient weather (default "rain"). Sets the Atmosphere mood per district. */
   weather?: Weather;
@@ -188,7 +188,13 @@ const SPIRE: DistrictDef = {
       { x1: 4, y1: 19, x2: 11, y2: 25 },
       { x1: 28, y1: 19, x2: 35, y2: 25 },
       { x1: 18, y1: 3, x2: 21, y2: 6 },
-      { x1: 18, y1: 23, x2: 21, y2: 26 },
+      // South gate — TWO pillars with a lane between them. It used to be one slab
+      // {18,23,21,26}, which sat directly on spawnTile [19,25]: buildGrid filled the
+      // footprint, carve() opened only the spawn tile and its 4 neighbours, and runners
+      // arrived sealed in a 5-tile pocket inside the tower with no path to the plaza.
+      // Keep x=19 clear — every district spawns at x=19 on its south edge.
+      { x1: 17, y1: 23, x2: 18, y2: 26 },
+      { x1: 20, y1: 23, x2: 21, y2: 26 },
     ],
     plaza: { x1: 14, y1: 9, x2: 25, y2: 20 },
     laneRows: [14],
@@ -326,7 +332,11 @@ const RELAY: DistrictDef = {
       { x1: 5, y1: 18, x2: 12, y2: 24 },
       { x1: 27, y1: 18, x2: 34, y2: 24 },
       { x1: 17, y1: 3, x2: 22, y2: 6 },
-      { x1: 17, y1: 23, x2: 22, y2: 26 },
+      // South gate — same defect as ARGUS SPIRE, and worse: the old slab {17,23,22,26}
+      // swallowed BOTH spawnTile [19,24] and diveTile [22,24]. Split into two pillars so
+      // x=19 (spawn) and x=22 (dive) stay open.
+      { x1: 17, y1: 23, x2: 18, y2: 26 },
+      { x1: 20, y1: 23, x2: 21, y2: 26 },
     ],
     plaza: { x1: 14, y1: 11, x2: 25, y2: 18 },
     laneRows: [14],

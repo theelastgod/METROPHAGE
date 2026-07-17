@@ -1,8 +1,8 @@
 # $METRO × METROPHAGE — Higgsfield launch pack (copy)
 
 Voice: neon-noir, short, confident. **No pump language, no price talk, no promised returns.**
-$METRO = optional convertibility on Robinhood Chain. Pool is player-funded and starts honest-empty.
-Rates (from `server/src/metro.ts`): deposit 1 $METRO → 100 ₵ · cash out 125 ₵ → 1 $METRO · min 250 ₵ · 400 $METRO/day cap.
+$METRO = optional convertibility on Solana. Pool is player-funded and starts honest-empty.
+Rates (from `src/game/economyPolicy.ts`): deposit 1 $METRO → 100 ₵ · cash out 150 ₵ → 1 $METRO · min 300 ₵ · no daily cap.
 
 **Play link:** https://metrophagev1.pages.dev
 **Assets:** `marketing/higgsfield-pack/` (this doc's filenames refer there)
@@ -29,7 +29,7 @@ Rates (from `server/src/metro.ts`): deposit 1 $METRO → 100 ₵ · cash out 125
 New colors on the block.
 
 METROPHAGE — neon-noir action MMO, straight in your browser.
-₵ runs the city. $METRO is the optional bridge on Robinhood Chain.
+₵ runs the city. $METRO is the optional bridge on Solana.
 
 No downloads. No gas to play. Pool is player-funded — honest empty at launch.
 
@@ -46,7 +46,7 @@ Fresh banner + token art are live on X and DexScreener.
 METROPHAGE is playable right now in your browser — server-authoritative city,
 four class kits, ICE vaults, territory war, player housing.
 
-₵ credits run the game. $METRO on Robinhood Chain is optional convertibility,
+₵ credits run the game. $METRO on Solana is optional convertibility,
 backed only by what players deposit. Not a faucet. Not free money.
 
 ▶ Play: metrophagev1.pages.dev
@@ -96,7 +96,7 @@ Four classes. Server owns every cooldown. The city is shared.
 🌆 THE CITY IS OPEN
 
 30 enterable hub buildings. District streets. Real players in one shared sprawl.
-Play free in the browser — MetaMask optional, only for the $METRO bridge.
+Play free in the browser — Phantom optional, only for the $METRO bridge.
 
 ▶ metrophagev1.pages.dev
 ```
@@ -184,10 +184,10 @@ the board and starts a new era — get your faction on the ledger.
 **Tweet (primary — keep this exact framing):**
 ```
 ₵ runs the game.
-$METRO is optional convertibility on Robinhood Chain.
+$METRO is optional convertibility on Solana.
 
 Deposit → 1 $METRO = 100 ₵.
-Cash out → 125 ₵ = 1 $METRO, min 250 ₵.
+Cash out → 150 ₵ = 1 $METRO, min 300 ₵.
 Pool is player-funded. It starts empty. Not a faucet.
 
 METROPHAGE — earn in the city.
@@ -198,9 +198,9 @@ METROPHAGE — earn in the city.
 ```
 🌉 HOW THE BRIDGE WORKS
 
-• All live money in-game is server-side ₵ — no gas, no wallet needed to play
-• $METRO (ERC-20 on Robinhood Chain) is an optional two-way bridge
-• Deposit 1 $METRO → 100 ₵ · Cash out 125 ₵ → 1 $METRO (min 250 ₵)
+• All live money in-game is server-side ₵ — no network fees, no wallet needed to play
+• $METRO (SPL on Solana) is an optional two-way bridge
+• Deposit 1 $METRO → 100 ₵ · Cash out 150 ₵ → 1 $METRO (min 300 ₵)
 • Withdrawals come from a pool funded ONLY by player deposits
 • Pool can run dry — cash-outs cover only what it holds. No promises, no yield.
 
@@ -253,7 +253,7 @@ METROPHAGE — play it in your browser tonight.
 ```
 The bridge, animated.
 
-₵ in-game → $METRO on Robinhood Chain → back again.
+₵ in-game → $METRO on Solana → back again.
 Player-funded pool. It only pays what it holds.
 
 METROPHAGE.
@@ -263,7 +263,7 @@ METROPHAGE.
 **Announcement:**
 ```
 🌉 The $METRO bridge in motion — 8 seconds, no fine print hidden.
-Deposit 1 $METRO → 100 ₵. Cash out 125 ₵ → 1 $METRO. Pool starts empty.
+Deposit 1 $METRO → 100 ₵. Cash out 150 ₵ → 1 $METRO. Pool starts empty.
 ▶ metrophagev1.pages.dev
 ```
 
@@ -306,6 +306,6 @@ METROPHAGE — play free in your browser.
 ## Rules
 
 - Never promise cash-outs, yield, or "free money." Pool-funded framing in every economy post.
-- $METRO chain reference is **Robinhood Chain** (ERC-20) — do not say Solana/pump.fun.
+- $METRO chain reference is **Solana** (SPL) — do not say Robinhood Chain/ERC-20/pump.fun.
 - Mainnet bridge stays dark until counsel sign-off; keep copy present-tense about the GAME, bridge-tense conditional ("optional convertibility").
 - Hard-refresh links after Pages deploys; CDN can lag.

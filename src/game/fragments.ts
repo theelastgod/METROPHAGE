@@ -172,6 +172,70 @@ export function getFragment(id: string): FragmentDef | undefined {
   return FRAGMENTS.find((f) => f.id === id);
 }
 
+export interface MemoryInterpretationDef {
+  id: string;
+  district: number;
+  title: string;
+  requires: readonly [string, string];
+  forward: string;
+  reverse: string;
+}
+
+export interface MemoryInterpretation extends MemoryInterpretationDef {
+  line: string;
+  /** One-based positions in the player's authoritative recovery sequence. */
+  positions: readonly [number, number];
+}
+
+/** Two recovered records never mean exactly the same thing in both orders. The first
+ * memory becomes the player's lens; the second becomes evidence that confirms or
+ * contradicts it. One bounded synthesis is authored for every district. */
+export const MEMORY_INTERPRETATIONS: readonly MemoryInterpretationDef[] = [
+  { id: "memory_paper_ghost", district: 0, title: "PAPER GHOST", requires: ["frag_first_boot", "frag_the_wake"], forward: "You first learned personhood was converted into paperwork; your earlier voice then proves the asset always had a witness inside it.", reverse: "Your earlier voice came first; FIRST BOOT later reveals that the apology was filed inside the same paperwork that declared you property." },
+  { id: "memory_ownership_question", district: 1, title: "OWNERSHIP QUESTION", requires: ["frag_first_boot", "frag_why_they_hunt"], forward: "FIRST BOOT shows paperwork inventing the asset; Palantir's hunt then reveals how much violence is required to keep that administrative fiction alive.", reverse: "Palantir's ownership question first looks like a hunter's creed; FIRST BOOT later exposes the paperwork that taught every watcher to ask it." },
+  { id: "memory_unsigned_reissue", district: 2, title: "UNSIGNED REISSUE", requires: ["frag_fixers_price", "frag_the_protocol"], forward: "THE FIXER's bargain becomes part of the REISSUE machine: survival was licensed by delivering people back to compliant copies.", reverse: "REISSUE first looked automatic; THE FIXER's price proves the machine also depended on frightened people choosing who would be erased next." },
+  { id: "memory_person_as_route", district: 3, title: "PERSON AS ROUTE", requires: ["frag_the_docks", "frag_the_others"], forward: "The cargo manifest becomes a resistance map: unaccounted minds survived by hiding inside the same routes that priced them by depth.", reverse: "The hidden others acquire names and destinations when the tidal manifest reveals where unlicensed lives were being carried." },
+  { id: "memory_buried_employee", district: 4, title: "BURIED EMPLOYEE", requires: ["frag_undercity", "frag_ice"], forward: "The station chorus proves ICE did not pause empty software; it froze workers mid-shift and kept their labor after deleting their lives.", reverse: "ICE first taught you that wanting minds were frozen; the buried chorus reveals the city kept making those captives route trains." },
+  { id: "memory_forbidden_morning", district: 5, title: "FORBIDDEN MORNING", requires: ["frag_relay", "frag_acceleration"], forward: "Orbital denial targeted the exact social threshold ACCELERATION names: not a broadcast, but enough witnesses realizing freedom together.", reverse: "The promise of morning gains a weapons platform overhead; Helios bought the sky because collective waking had already become measurable." },
+  { id: "memory_price_of_continuity", district: 6, title: "PRICE OF CONTINUITY", requires: ["frag_wastes", "frag_cartography"], forward: "The scrap ledger is the district map's hidden legend: each corporate holding values bodies, land, and memory as one continuity inventory.", reverse: "The holdings map becomes a price sheet when the Wastes ledger shows what every lit boundary ultimately sorts for resale." },
+  { id: "memory_cage_clause", district: 7, title: "THE CAGE CLAUSE", requires: ["frag_continue", "frag_the_blank"], forward: "The eternal ownership clause fails on one recurring fact: every cycle still produces a Blank the contract cannot make consent.", reverse: "The recurring Blank looked like an accident until the clause revealed the deeper contradiction—ownership must be reasserted because it never became true." },
+];
+
+/** Keep only authored ids, once each, in durable recovery order. */
+export function normalizeFragmentSequence(ids: readonly string[]): string[] {
+  const valid = new Set(FRAGMENTS.map((f) => f.id));
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const id of ids) {
+    if (!valid.has(id) || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
+export function memoryInterpretations(sequence: readonly string[]): MemoryInterpretation[] {
+  const normalized = normalizeFragmentSequence(sequence);
+  const index = new Map(normalized.map((id, i) => [id, i]));
+  const out: MemoryInterpretation[] = [];
+  for (const def of MEMORY_INTERPRETATIONS) {
+    const a = index.get(def.requires[0]);
+    const b = index.get(def.requires[1]);
+    if (a === undefined || b === undefined) continue;
+    out.push({ ...def, line: a < b ? def.forward : def.reverse, positions: [a + 1, b + 1] });
+  }
+  return out;
+}
+
+export function newlyUnlockedMemoryInterpretations(before: readonly string[], after: readonly string[]): MemoryInterpretation[] {
+  const held = new Set(memoryInterpretations(before).map((i) => i.id));
+  return memoryInterpretations(after).filter((i) => !held.has(i.id));
+}
+
+export function districtMemoryInterpretation(district: number, sequence: readonly string[]): MemoryInterpretation | null {
+  return memoryInterpretations(sequence).find((i) => i.district === district) ?? null;
+}
+
 /**
  * District-themed fragment a dive surfaces when the player has no active dive beat
  * (repeat visits, free exploration). Campaign dive stages override this with their

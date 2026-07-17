@@ -4,7 +4,7 @@ Tone: neon-noir, short, confident. No pump language. No price talk. No guarantee
 Play is free in the browser. ₵ runs the game. $METRO is optional convertibility (player-funded pool).
 
 **Link:** https://metrophagev1.pages.dev  
-**Report bugs:** https://t.me/m/ralJIkw_OWMx  
+**Report bugs:** https://t.me/m/K5ctxpcaNzdh  
 
 Use one function per post. Lead with the “everything is live” opener, then rotate systems.
 

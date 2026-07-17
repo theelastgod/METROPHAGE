@@ -1,13 +1,17 @@
-import { stepMove, NET_TICK_MS, PLAYER_HP, PLAYER_FIRE_MS, type MoveState } from "./sim";
+import { stepMove, NET_TICK_MS, PLAYER_HP, PLAYER_FIRE_MS, resolveOpenSpawn, type MoveState } from "./sim";
 import { PLAYER } from "../config";
 import type { TileGrid } from "../world/district";
 import type { ClientMsg, ServerMsg, InputCmd, PlayerLook, Item, EstateFurniture } from "./protocol";
 import { PROTOCOL_VERSION } from "./protocol";
+import { notifyProtocolMismatch } from "../systems/ClientUpdate";
 import { tutorialReadyForPortal, tutorialStepAt } from "./tutorial";
 import { walletSessionSecret } from "../economy/wallet";
 import { setOnlinePlayer } from "../economy/session";
 import { isGodAccount } from "./godAccounts";
 import { furnitureHomeBuffs } from "../world/estates";
+import { campaignEchoLine } from "../game/campaignEchoes";
+import { normalizeFragmentSequence } from "../game/fragments";
+import { emptyRsSkills, type RsSkillXp } from "../game/rsSkills";
 
 /** True when the page is on a public host but the WS URL still points at loopback —
  *  the classic "forgot VITE_SERVER_URL" Pages footgun. */
@@ -19,6 +23,75 @@ export function isServerUrlMisconfigured(wsUrl: string): boolean {
   return /\/\/(127\.0\.0\.1|localhost)(:|\/|$)/i.test(wsUrl);
 }
 
+/** sessionStorage key for sticky zone instance (survives soft reconnects). */
+export function stickyInstKey(zone: string): string {
+  return "mp_inst_" + zone;
+}
+
+/** Read sticky instance for a logical zone (undefined = let Worker pick). */
+export function readStickyInst(zone: string): number | undefined {
+  try {
+    const raw = sessionStorage.getItem(stickyInstKey(zone));
+    if (raw == null || raw === "") return undefined;
+    const n = Math.floor(Number(raw));
+    if (!Number.isFinite(n) || n < 0 || n > 64) return undefined;
+    return n;
+  } catch {
+    return undefined;
+  }
+}
+
+export function writeStickyInst(zone: string, inst: number): void {
+  try {
+    sessionStorage.setItem(stickyInstKey(zone), String(Math.max(0, Math.floor(inst))));
+  } catch {
+    /* private mode */
+  }
+}
+
+export function clearStickyInst(zone: string): void {
+  try {
+    sessionStorage.removeItem(stickyInstKey(zone));
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Build `/ws?zone=…&inst=…` from the baked VITE_SERVER_URL base.
+ * When `rebalance` is true, sticky is cleared so the Worker load-picks a fresh shard.
+ */
+export function buildZoneWsUrl(
+  serverUrl: string,
+  zone: string,
+  opts?: { inst?: number | null; rebalance?: boolean },
+): string {
+  const base = serverUrl.includes("?") ? serverUrl : serverUrl;
+  const join = base.includes("?") ? "&" : "?";
+  let url = `${base}${join}zone=${encodeURIComponent(zone)}`;
+  if (opts?.rebalance) {
+    clearStickyInst(zone);
+  } else {
+    const sticky = opts?.inst != null && Number.isFinite(opts.inst) ? Math.floor(opts.inst) : readStickyInst(zone);
+    if (sticky != null) url += `&inst=${sticky}`;
+  }
+  return url;
+}
+
+/** Drop a stale shard pin while preserving zone and any future query fields. */
+export function withoutStickyInstance(wsUrl: string): string {
+  try {
+    const base = typeof location !== "undefined" ? location.href : "http://local";
+    const u = new URL(wsUrl, base);
+    u.searchParams.delete("inst");
+    return u.toString().replace(/^http:/, "ws:").replace(/^https:/, "wss:");
+  } catch {
+    return wsUrl
+      .replace(/([?&])inst=[^&]*&?/i, (_m, lead: string) => lead)
+      .replace(/[?&]$/, "");
+  }
+}
+
 /** Guest id form of a callsign (must match server `onLoginInner` sanitization). */
 export function guestIdFromCallsign(name: string): string {
   return (name || "").toLowerCase().replace(/[^a-z0-9_-]/g, "");
@@ -28,34 +101,42 @@ export function guestIdFromCallsign(name: string): string {
 const memoryDeviceSecrets = new Map<string, string>();
 
 /**
- * Guest-identity device secret — generated once per callsign on this device and bound
- * server-side on first login. Stops anyone else logging in as your name and selling
- * your house. Wallet sign-ins don't need it (the signature is the proof).
+ * Read this device's stored secret for a callsign, WITHOUT minting one.
  *
- * Sources (first hit wins, then all are synced):
+ * Sources (first hit wins):
  *  1. localStorage `mp_secret_<id>`
- *  2. LocalRunner profile.deviceSecret (survives partial storage clears)
- *  3. in-memory map (private mode / storage blocked)
- *  4. freshly minted UUID
+ *  2. sessionStorage (iOS private-mode / ITP wipes localStorage between navigations)
+ *  3. LocalRunner profile.deviceSecret (survives partial storage clears)
+ *  4. in-memory map (private mode / storage blocked)
  *
- * ALWAYS returns a secret when the callsign is non-empty — server guest login
- * rejects missing secrets and used to brick tutorial entry.
+ * Callers that must PROVE ownership (retire) need this: a minted secret can never match
+ * the one bound server-side, so fabricating one turns "this device has no key" into a
+ * guaranteed "device key does not match this runner".
  */
-export function ensureGuestDeviceSecret(name: string): string | undefined {
+export function readGuestDeviceSecret(name: string): string | undefined {
   const id = guestIdFromCallsign(name);
   if (!id) return undefined;
+  const found = lookupDeviceSecret(id);
+  return found && found.length >= 8 ? found : undefined;
+}
+
+/** Shared lookup for read/ensure. Never mints, never persists. */
+function lookupDeviceSecret(id: string): string | undefined {
   const key = "mp_secret_" + id;
-
+  const sessionKey = "mp_secret_sess_" + id;
   let s: string | undefined;
-
   try {
     s = localStorage.getItem(key) || undefined;
   } catch {
     /* storage blocked */
   }
-
-  // Recover from LocalRunner if the dedicated key was wiped (was regenerating a NEW
-  // secret and locking the player out of their own server save).
+  if (!s || s.length < 8) {
+    try {
+      s = sessionStorage.getItem(sessionKey) || sessionStorage.getItem(key) || undefined;
+    } catch {
+      /* ignore */
+    }
+  }
   if (!s || s.length < 8) {
     try {
       const raw = localStorage.getItem("metrophage_local_runner_v1");
@@ -70,10 +151,35 @@ export function ensureGuestDeviceSecret(name: string): string | undefined {
       /* ignore corrupt / blocked */
     }
   }
+  if (!s || s.length < 8) s = memoryDeviceSecrets.get(id);
+  return s && s.length >= 8 ? s : undefined;
+}
 
-  if (!s || s.length < 8) {
-    s = memoryDeviceSecrets.get(id);
-  }
+/**
+ * Guest-identity device secret — generated once per callsign on this device and bound
+ * server-side on first login. Stops anyone else logging in as your name and selling
+ * your house. Wallet sign-ins don't need it (the signature is the proof).
+ *
+ * Sources (first hit wins, then all are synced):
+ *  1. localStorage `mp_secret_<id>`
+ *  2. LocalRunner profile.deviceSecret (survives partial storage clears)
+ *  3. in-memory map (private mode / storage blocked)
+ *  4. freshly minted UUID
+ *
+ * ALWAYS returns a secret when the callsign is non-empty — server guest login
+ * rejects missing secrets and used to brick tutorial entry. Use
+ * `readGuestDeviceSecret` when a MISSING key must stay missing (see retire).
+ */
+export function ensureGuestDeviceSecret(name: string): string | undefined {
+  const id = guestIdFromCallsign(name);
+  if (!id) return undefined;
+  const key = "mp_secret_" + id;
+  const sessionKey = "mp_secret_sess_" + id;
+
+  // localStorage → sessionStorage (iOS private-mode / ITP) → LocalRunner profile →
+  // memory. Recovering from LocalRunner matters: regenerating a NEW secret locked
+  // players out of their own server save.
+  let s = lookupDeviceSecret(id);
 
   if (!s || s.length < 8) {
     s =
@@ -89,6 +195,12 @@ export function ensureGuestDeviceSecret(name: string): string | undefined {
     localStorage.setItem(key, s);
   } catch {
     /* quota / private mode — memory map still holds it for this tab */
+  }
+  try {
+    sessionStorage.setItem(sessionKey, s);
+    sessionStorage.setItem(key, s);
+  } catch {
+    /* ignore */
   }
   try {
     const raw = localStorage.getItem("metrophage_local_runner_v1");
@@ -180,6 +292,12 @@ export default class NetClient {
   shots = new Map<number, NetShot>();
   hp = PLAYER_HP;
   dead = false;
+  /** Server death affordance — CITY START / hub evacuate on death. */
+  deathStreak = 0;
+  deathExtract = false;
+  deathExtractZone: string | null = null;
+  deathExtractLabel = "";
+  deathNearBoss = false;
   credits = 0;
   cores = 0;
   metro = 0;
@@ -239,6 +357,8 @@ export default class NetClient {
   campaignObjective = "";
   /** Completed main-story quest ids (for the quest log). */
   campaignCompleted: string[] = [];
+  /** Durable narrative decisions and campaign-only claim flags. */
+  campaignFlags: string[] = [];
   tutorialStep = 0;
   tutorialProgress = 0;
   tutorialTotal = 9;
@@ -273,7 +393,7 @@ export default class NetClient {
     };
   } = null;
   onGuildUpdate?: () => void;
-  /** Fired for every server sys line (death tax, cell goals, boss share hooks). */
+  /** Fired for every server sys line (death result, cell goals, boss share hooks). */
   onSysMessage?: (text: string) => void;
   marketListings: Array<{ id: number; seller: string; sellerName: string; item: Item; price: number; currency: string }> = [];
   onMarket?: () => void;
@@ -287,6 +407,27 @@ export default class NetClient {
   onCosmetics?: () => void;
   bounty: { id: string; name: string; desc: string; objective: string; count: number; progress: number } | null = null;
   onBounty?: () => void;
+  relationships: Record<string, number> = {};
+  relationshipTalks: Record<string, number> = {};
+  relationshipJobs: Record<string, number> = {};
+  districtStanding: number[] = [];
+  residentClues: string[] = [];
+  residentConfirmed: string[] = [];
+  reconstruction: number[] = [];
+  socialMemory = { given: 0, received: 0, tier: 0, title: "UNTESTED LINK", line: "" };
+  reprints = 0;
+  reprintMemorialStamps = 0;
+  onRelations?: () => void;
+  skills: RsSkillXp = emptyRsSkills();
+  onSkills?: () => void;
+  civicArchivePages: number[] = [0, 0, 0];
+  civicArchiveSynthesis = "";
+  onArchives?: () => void;
+  civicMomentum: number[] = [];
+  civicAftermath: Record<number, { day: number; operation: string; stage: string; completions: number; line: string; eventDurationPct: number }> = {};
+  onCivic?: () => void;
+  chronicle: { week: number; headline: string; lines: string[]; civic: number[]; territory: Array<{ district: number; controller: number; flips: number }> } | null = null;
+  onChronicle?: () => void;
   discovered: string[] = []; // zones seen on the map (fog of war)
   unlocked: string[] = []; // zones reached organically — fast travel allowed
   /** How this connection arrived — sent on login. */
@@ -302,6 +443,9 @@ export default class NetClient {
     journal: string;
     objective: string;
     done: boolean;
+    /** Personal meltdown victory (campaign climax) — not a server wipe. */
+    meltdown?: boolean;
+    choices?: Array<{ id: "spare" | "expose"; label: string }>;
     at: number;
   } | null = null;
   lastError = 0;
@@ -316,12 +460,20 @@ export default class NetClient {
   onCampaign?: () => void; // fired when the active campaign quest changes (story allies re-react)
   /** Fired when a `story` beat arrives (FIXER dialogue / quest stage). */
   onStory?: () => void;
-  onRedirect?: (zone: string) => void;
+  /**
+   * Server-directed zone handoff (tutorial graduate, extract, instance rebalance).
+   * `rebalance` → drop sticky inst and re-enter zone so Worker picks a less-loaded shard.
+   */
+  onRedirect?: (zone: string, opts?: { inst?: number; rebalance?: boolean }) => void;
+  /** Horizontal shard index for this socket (from welcome); sticky on reconnect. */
+  inst = 0;
+  /** Logical zone this client connected for (parsed from WS URL). */
+  zone = "";
   /** Memory fragments this player has recovered (dive rewards; welcome + live updates). */
   fragments: string[] = [];
   onFragment?: (id: string, isNew: boolean) => void;
   /** The district's live world event (null when idle). */
-  worldEvent: { id: string; name: string; tagline: string; hex: string; phase: "telegraph" | "active"; untilAt: number } | null = null;
+  worldEvent: { id: string; name: string; tagline: string; condition: string; hex: string; phase: "telegraph" | "active"; untilAt: number } | null = null;
   onWorldEvent?: (phase: "telegraph" | "active" | "end", name: string) => void;
   /** Class id sent at login — selects the server-side signature ability. */
   classId = "metrophage";
@@ -338,8 +490,12 @@ export default class NetClient {
   escortActive = false;
   /** connecting | connected | reconnecting | offline */
   onConnectionState?: (state: "connecting" | "connected" | "reconnecting" | "offline") => void;
-  /** Fired once when the server rejects wallet auth (stale sig / missing session). */
-  onAuthRequired?: () => void;
+  /**
+   * Fired when wallet 4001 needs recovery.
+   * - "silent": re-assert device session only (no wallet UI)
+   * - "prompt": allow one personal_sign
+   */
+  onAuthRequired?: (mode: "silent" | "prompt") => void;
   /** Fired when a GUEST login is rejected outright (4001 with no wallet in play) —
    *  callsign bound to another device, missing device key, or reserved name. */
   onGuestAuthFailed?: (reason: string) => void;
@@ -348,7 +504,6 @@ export default class NetClient {
   private ws?: WebSocket;
   private manualClose = false;
   private reconnectAttempts = 0;
-  private authRetryUsed = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingGraduate = false;
   private pendingSkip = false;
@@ -362,6 +517,26 @@ export default class NetClient {
   private lastFireSentAt = 0;
   /** When set, protocol mismatch hard-stopped the client (no more reconnect loops). */
   protocolBlocked = false;
+  /** pagehide/beforeunload flush wired once per NetClient instance. */
+  private unloadHooked = false;
+  /** Socket generation — ignore events from superseded sockets. */
+  private socketGen = 0;
+  /** Wall time when the current socket was opened (debounce supersede). */
+  private socketOpenedAt = 0;
+  /** Last server traffic. Mobile browsers can leave a dead radio socket OPEN. */
+  private lastServerMessageAt = 0;
+  /** Periodic zombie-link detector, installed once with the lifecycle hooks. */
+  private linkWatchdog: ReturnType<typeof setInterval> | null = null;
+  /** Removes the window/document lifecycle listeners installed by hookUnloadFlush. */
+  private unhookLifecycle: (() => void) | null = null;
+  /** Timer: OPEN but no welcome → re-login / reopen. */
+  private welcomeTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Min ms a CONNECTING/OPEN socket is protected from spam-retry supersede. */
+  private static readonly SOCKET_GRACE_MS = 4500;
+  /** If no welcome after open, force re-login. */
+  private static readonly WELCOME_TIMEOUT_MS = 9000;
+  /** No snapshots/messages for this long while visible means the OPEN socket is dead. */
+  private static readonly STALE_LINK_MS = 12_000;
 
   constructor(
     private grid: TileGrid,
@@ -370,6 +545,18 @@ export default class NetClient {
     private loginFaction = 0,
     private look?: PlayerLook,
   ) {
+    // Capture logical zone + sticky inst from the connect URL for reconnect rebuilds.
+    try {
+      const u = new URL(url, typeof location !== "undefined" ? location.href : "http://local");
+      this.zone = u.searchParams.get("zone") || "";
+      const i = u.searchParams.get("inst");
+      if (i != null && i !== "") {
+        const n = Math.floor(Number(i));
+        if (Number.isFinite(n) && n >= 0) this.inst = n;
+      }
+    } catch {
+      /* relative / opaque URL — OnlineScene always passes absolute-ish ws URL */
+    }
     // Loud fail on the Pages + localhost-WS footgun — never silent empty city.
     if (isServerUrlMisconfigured(url)) {
       console.error(
@@ -383,15 +570,172 @@ export default class NetClient {
         sys: true,
       });
     }
+    this.hookUnloadFlush();
+  }
+
+  /**
+   * Best-effort durable flush on real unload — NOT on mobile tab/app switch.
+   * iOS/Android fire pagehide when backgrounding (wallet apps, notifications);
+   * leaving there killed the live link and left players stuck "retrying forever".
+   * Server heartbeat still persists; soft background only flags for resume.
+   */
+  private hookUnloadFlush() {
+    if (this.unloadHooked || typeof window === "undefined") return;
+    this.unloadHooked = true;
+    const flush = () => {
+      const ws = this.ws;
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      try {
+        ws.send(JSON.stringify({ t: "leave" } satisfies ClientMsg));
+      } catch {
+        try {
+          ws.close(1000, "unload");
+        } catch {
+          /* ignore */
+        }
+      }
+    };
+    // Hard navigation / tab close only. Do NOT leave on pagehide — iOS/Android fire
+    // pagehide on wallet app-switch and notifications; leave → bye → stuck offline
+    // was the dominant "never connect on mobile" loop. Server heartbeat + DO
+    // eviction still persist x/y/inventory; visibility resume reopens a dead socket.
+    // Resume after phone sleep / wallet app — reconnect if the socket died.
+    /**
+     * @param fromResume true for an explicit resume signal (tab visible again, network
+     *   back). Only those may jump an already-scheduled backoff; the periodic tick may
+     *   not — see the `dead` branch below.
+     */
+    const recoverIfStale = (fromResume: boolean) => {
+      if (this.protocolBlocked || this.manualClose) return;
+      const ws = this.ws;
+      const dead = !ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING;
+      const stale =
+        !!ws &&
+        ws.readyState === WebSocket.OPEN &&
+        this.lastServerMessageAt > 0 &&
+        Date.now() - this.lastServerMessageAt > NetClient.STALE_LINK_MS;
+      const stalled =
+        !!ws &&
+        !this.connected &&
+        Date.now() - this.socketOpenedAt > NetClient.WELCOME_TIMEOUT_MS * 2;
+      // Zombie link: the socket claims OPEN/CONNECTING but nothing is coming back.
+      // onclose will never fire for these, so the watchdog is the only way out.
+      if (stale || stalled) {
+        this.retryConnect(false, true);
+        return;
+      }
+      // A genuinely closed socket already has onclose's backoff ladder scheduled.
+      // Letting the 4s tick reopen it here reset `reconnectAttempts` to 0 every tick,
+      // which abolished backoff during an outage (~100 attempts/min/client against a
+      // cold DO) and meant the ladder never reached the "offline" notice at 20.
+      if (dead && fromResume) this.retryConnect(false);
+    };
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      recoverIfStale(true);
+    };
+    const onOnline = () => recoverIfStale(true);
+    window.addEventListener("beforeunload", flush);
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("online", onOnline);
+    // Kept so disconnect() can unhook them. The scene builds a fresh NetClient per zone
+    // hop, and anonymous listeners pinned every dead client (plus its grid and entity
+    // maps) for the page's life, re-running recovery across all of them on each refocus.
+    this.unhookLifecycle = () => {
+      window.removeEventListener("beforeunload", flush);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("online", onOnline);
+    };
+    // iOS often reports an OPEN WebSocket after sleep even though the TCP path is
+    // gone. Server snapshots arrive many times per second, so 12s of silence while
+    // visible is a safe, conservative reconnect signal.
+    this.linkWatchdog = setInterval(() => {
+      if (document.visibilityState === "visible") recoverIfStale(false);
+    }, 4_000);
+  }
+
+  private clearWelcomeTimer() {
+    if (this.welcomeTimer) {
+      clearTimeout(this.welcomeTimer);
+      this.welcomeTimer = null;
+    }
+  }
+
+  /** True after one re-login on an OPEN socket that never welcomed. */
+  private reloginAttempted = false;
+
+  private armWelcomeTimeout(gen: number) {
+    this.clearWelcomeTimer();
+    this.welcomeTimer = setTimeout(() => {
+      this.welcomeTimer = null;
+      if (this.socketGen !== gen || this.manualClose || this.protocolBlocked) return;
+      if (this.connected) return;
+      const ws = this.ws;
+      // Prefer re-sending login on a live OPEN socket before killing a slow D1 path.
+      if (ws && ws.readyState === WebSocket.OPEN && !this.reloginAttempted) {
+        this.reloginAttempted = true;
+        try {
+          this.sendLogin(ws);
+          this.armWelcomeTimeout(gen);
+          return;
+        } catch {
+          /* fall through to reopen */
+        }
+      }
+      this.reloginAttempted = false;
+      this.pushChat({
+        from: "",
+        ch: "sys",
+        text: "link stalled — reopening socket…",
+        faction: -1,
+        sys: true,
+      });
+      this.openSocket(true);
+    }, NetClient.WELCOME_TIMEOUT_MS);
+  }
+
+  private sendLogin(ws: WebSocket) {
+    const auth = this.auth;
+    const session = auth?.wallet ? walletSessionSecret(auth.wallet) : undefined;
+    const freshSig =
+      !!auth?.sig &&
+      Number.isFinite(auth.ts) &&
+      Math.abs(Date.now() - (auth.ts as number)) < 90_000;
+    const authFields =
+      auth?.wallet
+        ? {
+            wallet: auth.wallet,
+            ...(freshSig ? { sig: auth.sig, ts: auth.ts } : {}),
+          }
+        : {};
+    const travelFrom = this.travelFrom;
+    ws.send(
+      JSON.stringify({
+        t: "login",
+        name: this.name,
+        faction: this.loginFaction,
+        look: this.look,
+        arrival: this.arrival,
+        classId: this.classId,
+        secret: deviceSecretFor(this.name),
+        ...(session ? { session } : {}),
+        ...(travelFrom ? { from: travelFrom } : {}),
+        ...authFields,
+      } satisfies ClientMsg),
+    );
   }
 
   /** Optional signed wallet proof; when set, login is a durable wallet identity.
    *  sig/ts optional when a bound device session is enough for zone travel. */
   private auth?: { wallet: string; sig?: string; ts?: number };
+  /** How many wallet 4001 recoveries we've burned this socket generation. */
+  private walletAuthFailures = 0;
   setAuth(proof?: { wallet: string; sig?: string; ts?: number }) {
     this.auth = proof;
-    // New proof can be retried once if the previous attempt was session-only.
-    if (proof?.sig) this.authRetryUsed = false;
+    // Fresh personal_sign clears the recovery budget; session-only must not.
+    if (proof?.sig) {
+      this.walletAuthFailures = 0;
+    }
   }
 
   equip(itemId: string) {
@@ -413,18 +757,34 @@ export default class NetClient {
 
   connect() {
     this.manualClose = false;
-    this.openSocket();
+    this.openSocket(true);
   }
 
-  private openSocket() {
+  /**
+   * @param force when false, keep an in-flight socket that is still within the grace
+   * window (spam-tapping LINK used to kill every attempt before welcome arrived).
+   */
+  private openSocket(force = false) {
+    // Idempotent: re-arms the lifecycle hooks that disconnect() tore down, so a LINK tap
+    // after a manual close still gets phone-sleep resume and zombie-link detection.
+    this.hookUnloadFlush();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    this.onConnectionState?.(this.reconnectAttempts > 0 ? "reconnecting" : "connecting");
-    // Supersede any in-flight socket so spam-reconnect / retry cannot dual-login.
     const prev = this.ws;
     if (prev) {
+      const age = Date.now() - this.socketOpenedAt;
+      const stillTrying =
+        (prev.readyState === WebSocket.CONNECTING || prev.readyState === WebSocket.OPEN) &&
+        !this.connected &&
+        age < NetClient.SOCKET_GRACE_MS;
+      if (!force && stillTrying) {
+        // Leave the in-flight attempt alone; re-arm welcome timeout.
+        this.onConnectionState?.(this.reconnectAttempts > 0 ? "reconnecting" : "connecting");
+        this.armWelcomeTimeout(this.socketGen);
+        return;
+      }
       try {
         prev.onopen = null;
         prev.onmessage = null;
@@ -436,56 +796,72 @@ export default class NetClient {
       }
       this.ws = undefined;
     }
-    const ws = new WebSocket(this.url);
+    this.onConnectionState?.(this.reconnectAttempts > 0 ? "reconnecting" : "connecting");
+    const gen = ++this.socketGen;
+    this.socketOpenedAt = Date.now();
+    this.clearWelcomeTimer();
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(this.url);
+    } catch {
+      // Invalid URL / browser block — schedule retry instead of silent death.
+      this.scheduleReconnect(600);
+      return;
+    }
     this.ws = ws;
+    this.lastServerMessageAt = 0;
+    this.armWelcomeTimeout(gen);
     ws.onopen = () => {
-      if (this.ws !== ws) return; // superseded
-      const auth = this.auth;
-      const session = auth?.wallet ? walletSessionSecret(auth.wallet) : undefined;
-      // Only forward sig/ts when present (session resume sends wallet alone).
-      const authFields =
-        auth?.wallet
-          ? {
-              wallet: auth.wallet,
-              ...(auth.sig && Number.isFinite(auth.ts) ? { sig: auth.sig, ts: auth.ts } : {}),
-            }
-          : {};
-      ws.send(
-        JSON.stringify({
-          t: "login",
-          name: this.name,
-          faction: this.loginFaction,
-          look: this.look,
-          arrival: this.arrival,
-          classId: this.classId,
-          secret: deviceSecretFor(this.name),
-          ...(session ? { session } : {}),
-          ...(this.travelFrom ? { from: this.travelFrom } : {}),
-          ...authFields,
-        } satisfies ClientMsg),
-      );
+      if (this.ws !== ws || this.socketGen !== gen) return;
+      try {
+        this.sendLogin(ws);
+      } catch {
+        try {
+          ws.close();
+        } catch {
+          /* ignore */
+        }
+        this.scheduleReconnect(100);
+      }
     };
     ws.onmessage = (e) => {
-      if (this.ws !== ws) return; // ignore messages from superseded sockets
+      if (this.ws !== ws || this.socketGen !== gen) return;
+      this.lastServerMessageAt = Date.now();
       this.onMessage(e.data);
     };
     ws.onclose = (ev) => {
       if (this.ws !== ws && this.ws !== undefined) return; // a newer socket owns the client
+      if (this.socketGen !== gen && this.ws !== undefined) return;
+      this.clearWelcomeTimer();
       this.connected = false;
       setOnlinePlayer(null); // a fresh welcome re-publishes it on reconnect
-      // 4001 = wallet auth rejected — ask the host to re-sign once (no reconnect loop).
-      if (ev.code === 4001 && this.auth?.wallet && !this.authRetryUsed) {
-        this.authRetryUsed = true;
-        this.onAuthRequired?.();
-        return;
-      }
-      // Second+ wallet 4001 (re-sign failed / session still dead): STOP looping.
-      // Was infinite reconnect → stuck "LINKING…" forever with dead instructors.
-      if (ev.code === 4001 && this.auth?.wallet && this.authRetryUsed) {
+      // 4001 = wallet auth rejected.
+      // Allow at most ONE silent session re-assert, then ONE sign-prompt recovery.
+      // Never infinite-loop: walletAuthFailures hard-caps silent+prompt recoveries.
+      if (ev.code === 4001 && this.auth?.wallet) {
+        this.walletAuthFailures++;
+        if (this.walletAuthFailures === 1) {
+          // First failure: silent session re-assert (zone travel / cold DO).
+          this.onAuthRequired?.("silent");
+          return;
+        }
+        if (this.walletAuthFailures === 2) {
+          // Second failure: force a fresh personal_sign once.
+          this.onAuthRequired?.("prompt");
+          return;
+        }
+        // Third+: stop. User must return to title / explicit LINK (or press R once).
         this.manualClose = true;
         this.onConnectionState?.("offline");
+        this.pushChat({
+          from: "",
+          ch: "sys",
+          text: "⚠ wallet session expired — press R / LINK once, or CONNECT WALLET on the title screen",
+          faction: -1,
+          sys: true,
+        });
         this.onGuestAuthFailed?.(
-          this.lastSysText || "wallet session expired — re-sign from the title screen, or play as guest",
+          this.lastSysText || "wallet session expired — sign in once from the title screen, or play as guest",
         );
         return;
       }
@@ -498,21 +874,38 @@ export default class NetClient {
         this.onGuestAuthFailed?.(this.lastSysText || "sign-in rejected");
         return;
       }
-      // 4002/4003 = server replaced this session (another tab / other zone).
-      if (ev.code === 4002 || ev.code === 4003) {
+      // 4002 = another tab took this same zone — re-link after a brief settle.
+      // 4003 = session moved to a DIFFERENT zone (travel handoff) — do NOT reopen
+      // this URL or we fight the new zone and thrash session_zone.
+      if (ev.code === 4003) {
+        this.manualClose = true;
+        this.onConnectionState?.("offline");
         this.pushChat({
           from: "",
           ch: "sys",
-          text: "session replaced — another tab or zone took control; re-linking…",
+          text: "session moved to another zone — follow the handoff (or tap LINK if stuck)",
           faction: -1,
           sys: true,
         });
+        return;
+      }
+      if (ev.code === 4002) {
+        this.pushChat({
+          from: "",
+          ch: "sys",
+          text: "session replaced — another tab took control; re-linking…",
+          faction: -1,
+          sys: true,
+        });
+        if (!this.manualClose) this.scheduleReconnect(900);
+        return;
       }
       if (!this.manualClose) this.scheduleReconnect();
     };
     ws.onerror = () => {
-      if (this.ws !== ws) return;
+      if (this.ws !== ws || this.socketGen !== gen) return;
       this.connected = false;
+      // onclose will schedule reconnect; don't dual-open here.
     };
   }
 
@@ -521,31 +914,56 @@ export default class NetClient {
     return this.reconnectAttempts;
   }
 
-  private scheduleReconnect() {
+  private scheduleReconnect(minDelayMs = 0) {
     if (this.manualClose || this.protocolBlocked) return;
-    // More attempts + faster backoff — free-tier DO hibernation can take 10–20s;
-    // giving up after 8 tries left players stuck on "cold start" forever.
+    // Already waiting on a reconnect timer — don't stack opens.
+    if (this.reconnectTimer) return;
+    // After many failures, surface "offline" but keep a slow heartbeat so players
+    // don't need to mash R — Durable Object cold starts can exceed 15s.
     if (this.reconnectAttempts >= 20) {
       this.onConnectionState?.("offline");
-      this.pushChat({
-        from: "",
-        ch: "sys",
-        text: "link dead after 20 tries — press R to retry or ESC for menu",
-        faction: -1,
-        sys: true,
-      });
+      if (this.reconnectAttempts === 20) {
+        this.pushChat({
+          from: "",
+          ch: "sys",
+          text: "link slow — auto-retrying · tap LINK / press R to force",
+          faction: -1,
+          sys: true,
+        });
+      }
+      this.reconnectAttempts++;
+      this.reconnectTimer = setTimeout(() => {
+        this.reconnectTimer = null;
+        if (!this.manualClose) {
+          // Soft-reset backoff so we don't wait forever between tries.
+          this.reconnectAttempts = Math.min(this.reconnectAttempts, 8);
+          this.openSocket();
+        }
+      }, 2500);
       return;
     }
-    const delay = Math.min(10_000, Math.round(350 * Math.pow(1.4, this.reconnectAttempts)));
+    // First failures: almost immediate (80–200ms). Then gentle backoff, cap 4s.
+    const n = this.reconnectAttempts;
+    const base = n === 0 ? 80 : n === 1 ? 200 : Math.min(4_000, Math.round(280 * Math.pow(1.4, n)));
+    const delay = Math.max(minDelayMs, base);
     this.reconnectAttempts++;
     this.onConnectionState?.("reconnecting");
     this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
       if (!this.manualClose) this.openSocket();
     }, delay);
   }
 
   disconnect() {
     this.manualClose = true;
+    this.clearWelcomeTimer();
+    this.unhookLifecycle?.();
+    this.unhookLifecycle = null;
+    this.unloadHooked = false;
+    if (this.linkWatchdog) {
+      clearInterval(this.linkWatchdog);
+      this.linkWatchdog = null;
+    }
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -564,6 +982,13 @@ export default class NetClient {
    */
   disconnectAwait(timeoutMs = 2500): Promise<void> {
     this.manualClose = true;
+    this.unhookLifecycle?.();
+    this.unhookLifecycle = null;
+    this.unloadHooked = false;
+    if (this.linkWatchdog) {
+      clearInterval(this.linkWatchdog);
+      this.linkWatchdog = null;
+    }
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -636,11 +1061,39 @@ export default class NetClient {
     });
   }
 
-  retryConnect() {
+  /**
+   * Open a fresh socket now.
+   * @param userInitiated when true (LINK/R), reset the wallet 4001 recovery budget
+   *   so the user gets another silent+prompt cycle. Silent auth recovery must pass false.
+   */
+  retryConnect(userInitiated = false, forceStale = false) {
     if (this.protocolBlocked) return;
-    this.reconnectAttempts = 0;
     this.manualClose = false;
-    this.openSocket();
+    if (userInitiated) {
+      this.walletAuthFailures = 0;
+      this.reconnectAttempts = 0;
+      // LINK must escape a bad shard. Previously every tap reused `?inst=N`, so
+      // a stale/unreachable instance was retried forever even though other slices
+      // were healthy.
+      if (this.zone) clearStickyInst(this.zone);
+      this.url = withoutStickyInstance(this.url);
+      // User tap: force a fresh socket even if one is mid-handshake (but only after
+      // grace has elapsed — openSocket enforces that unless force=true after grace).
+      const age = Date.now() - this.socketOpenedAt;
+      const force = age >= NetClient.SOCKET_GRACE_MS || !this.ws || this.ws.readyState === WebSocket.CLOSED;
+      if (this.reconnectTimer) {
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
+      }
+      this.openSocket(force);
+      return;
+    }
+    this.reconnectAttempts = 0;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.openSocket(forceStale);
   }
 
   /** Set the local movement intent (called every render frame by the scene). */
@@ -780,7 +1233,9 @@ export default class NetClient {
       return;
     }
     if (msg.t === "welcome") {
-      // Hard gate: mismatched protocol half-breaks panels — stop reconnect loops.
+      this.clearWelcomeTimer();
+      // Hard gate: mismatched protocol half-breaks panels — stop reconnect loops
+      // and force a cache-busting reload so the player is not stranded offline.
       if (typeof msg.protocol === "number" && msg.protocol !== PROTOCOL_VERSION) {
         this.protocolBlocked = true;
         this.manualClose = true;
@@ -788,7 +1243,7 @@ export default class NetClient {
         this.pushChat({
           from: "",
           ch: "sys",
-          text: `⚠ CLIENT OUTDATED — hard refresh required (server protocol ${msg.protocol}, client ${PROTOCOL_VERSION}).`,
+          text: `⚠ CLIENT OUTDATED — reloading live client (server protocol ${msg.protocol}, client ${PROTOCOL_VERSION}).`,
           faction: -1,
           sys: true,
         });
@@ -798,24 +1253,54 @@ export default class NetClient {
         } catch {
           /* ignore */
         }
+        notifyProtocolMismatch(msg.protocol, PROTOCOL_VERSION);
         return;
       }
       this.id = msg.id;
+      if (typeof msg.inst === "number" && Number.isFinite(msg.inst) && msg.inst >= 0) {
+        this.inst = Math.floor(msg.inst);
+        if (this.zone) writeStickyInst(this.zone, this.inst);
+        // Keep reconnect URL sticky so DO hibernation resume lands on the same shard.
+        try {
+          const u = new URL(this.url, typeof location !== "undefined" ? location.href : "http://local");
+          u.searchParams.set("inst", String(this.inst));
+          if (msg.zone) {
+            this.zone = msg.zone;
+            u.searchParams.set("zone", msg.zone);
+          }
+          this.url = u.toString().replace(/^http/, "ws");
+        } catch {
+          /* leave url as constructed */
+        }
+      }
       // Publish the authoritative player id so the (DOM) $METRO panel can talk to the
       // server bridge. Without this the bridge never learns who is logged in.
       setOnlinePlayer(msg.id);
       this.faction = msg.faction;
       this.connected = true;
+      this.reloginAttempted = false;
       this.reconnectAttempts = 0;
       this.protocolBlocked = false;
+      this.walletAuthFailures = 0;
+      // Travel handoff consumed — further reconnects must NOT re-send `from`
+      // (that was forcing door-mat respawn every blip).
+      this.travelFrom = undefined;
+      this.arrival = "organic";
+      // Drop one-shot wallet sig after a successful login; session secret is enough.
+      if (this.auth?.wallet && this.auth.sig) {
+        this.auth = { wallet: this.auth.wallet };
+      }
       this.onConnectionState?.("connected");
-      this.pred = { x: msg.x, y: msg.y };
-      this.serverPos = { x: msg.x, y: msg.y };
+      // Never start a session inside geometry — snap even if the welcome coords were
+      // a stale D1 point inside a wall / building roof / sealed pocket.
+      const safe = resolveOpenSpawn(this.grid, { x: msg.x, y: msg.y });
+      this.pred = { x: safe.x, y: safe.y };
+      this.serverPos = { x: safe.x, y: safe.y };
       // Fresh authority — drop stale prediction history from a prior socket/session.
       this.pending = [];
       this.seq = 0;
       this.lastAck = 0;
-      this.fragments = msg.fragments ?? [];
+      this.fragments = normalizeFragmentSequence(msg.fragments ?? []);
       // Server flag OR local allowlist on player id (covers older servers / missed field).
       this.godMode = !!msg.god || isGodAccount(msg.id);
       if (this.godMode) {
@@ -860,7 +1345,15 @@ export default class NetClient {
         if (sp.id === this.id) {
           this.reconcile(sp.x, sp.y, sp.ack);
           this.hp = sp.hp;
+          const wasDead = this.dead;
           this.dead = sp.dead;
+          if (!sp.dead && wasDead) {
+            // Local reprint completed — clear extract UI until the next death.
+            this.deathExtract = false;
+            this.deathExtractZone = null;
+            this.deathExtractLabel = "";
+            this.deathNearBoss = false;
+          }
           this.credits = sp.credits;
           this.cores = sp.cores;
           this.metro = sp.metro ?? 0;
@@ -965,7 +1458,8 @@ export default class NetClient {
 
       this.factions = msg.factions;
       this.control = msg.control;
-      this.roster = msg.roster;
+      // Roster is throttled server-side (~1 Hz) — keep last list when omitted/empty.
+      if (Array.isArray(msg.roster) && msg.roster.length > 0) this.roster = msg.roster;
       this.boss = msg.boss ?? null;
     } else if (msg.t === "chat") {
       this.pushChat({
@@ -985,6 +1479,16 @@ export default class NetClient {
       } catch {
         /* UI hooks must never break the net loop */
       }
+    } else if (msg.t === "death") {
+      this.dead = true;
+      this.deathStreak = msg.streak ?? 0;
+      this.deathExtract = !!(msg.extract || msg.worldStart);
+      this.deathExtractZone = msg.extractZone ?? null;
+      this.deathExtractLabel =
+        msg.extractLabel ??
+        (msg.extract || msg.worldStart ? "RESPAWN AT CITY START" : "");
+      this.deathNearBoss = !!msg.nearBoss;
+      this.reprints = Math.max(this.reprints, Math.max(0, Math.floor(msg.reprints ?? 0)));
     } else if (msg.t === "kit_ack") {
       // Roll back optimistic CDs when the server rejected the cast.
       if (!msg.ok) {
@@ -1031,14 +1535,23 @@ export default class NetClient {
         clearTimeout(this.reconnectTimer);
         this.reconnectTimer = null;
       }
+      if (msg.rebalance && this.zone) clearStickyInst(this.zone);
+      if (msg.rebalance && msg.zone) clearStickyInst(msg.zone);
+      if (typeof msg.inst === "number" && Number.isFinite(msg.inst) && msg.zone && !msg.rebalance) {
+        writeStickyInst(msg.zone, Math.floor(msg.inst));
+      }
       this.pushChat({ from: "", ch: "sys", text: msg.text, faction: -1, sys: true });
-      this.onRedirect?.(msg.zone);
+      this.onRedirect?.(msg.zone, {
+        inst: typeof msg.inst === "number" ? Math.floor(msg.inst) : undefined,
+        rebalance: !!msg.rebalance,
+      });
     } else if (msg.t === "campaign") {
       this.campaignQuest = msg.activeId;
       this.campaignStage = msg.stage;
       this.campaignProgress = msg.progress;
       this.campaignObjective = msg.objective ?? "";
       this.campaignCompleted = Array.isArray(msg.completed) ? msg.completed : [];
+      this.campaignFlags = Array.isArray(msg.flags) ? msg.flags : [];
       this.onCampaign?.();
     } else if (msg.t === "story") {
       this.story = {
@@ -1049,18 +1562,31 @@ export default class NetClient {
         journal: msg.journal,
         objective: msg.objective,
         done: msg.done,
+        meltdown: !!msg.meltdown || msg.stage === "meltdown",
+        choices: Array.isArray(msg.choices) ? msg.choices : undefined,
         at: performance.now(),
       };
-      this.pushChat({ from: "", ch: "sys", text: `${msg.quest} — ${msg.title}`, faction: -1, sys: true });
+      this.pushChat({
+        from: "",
+        ch: "sys",
+        text: this.story.meltdown
+          ? `◈ MELTDOWN — ${msg.title} · personal victory · CITY START`
+          : `${msg.quest} — ${msg.title}`,
+        faction: -1,
+        sys: true,
+      });
       this.onStory?.();
     } else if (msg.t === "fragment") {
       // a memory recovered at a dive core — surface it through the story panel
       if (msg.isNew && !this.fragments.includes(msg.id)) this.fragments.push(msg.id);
+      const synthesis = (msg.interpretations ?? []).map((i) => `${i.title} · ${i.line}`).join("\n\n");
       this.story = {
         quest: "MEMORY RECOVERED",
         stage: msg.id,
         title: msg.title,
-        text: msg.lines.join("\n"),
+        text: [msg.lines.join("\n"), synthesis ? `MEMORY SYNTHESIS\n${synthesis}` : "", campaignEchoLine("fragment", this.campaignCompleted, this.campaignFlags)]
+          .filter(Boolean)
+          .join("\n\nANNOTATION · "),
         journal: "",
         objective: "",
         done: false,
@@ -1072,7 +1598,7 @@ export default class NetClient {
       this.worldEvent =
         msg.phase === "end"
           ? null
-          : { id: msg.id, name: msg.name, tagline: msg.tagline, hex: msg.hex, phase: msg.phase, untilAt: performance.now() + msg.seconds * 1000 };
+          : { id: msg.id, name: msg.name, tagline: msg.tagline, condition: msg.condition, hex: msg.hex, phase: msg.phase, untilAt: performance.now() + msg.seconds * 1000 };
       // Always mirror events into sys chat so they aren't missable without the banner.
       const phaseLabel = msg.phase === "telegraph" ? "incoming" : msg.phase === "active" ? "LIVE" : "ended";
       this.pushChat({
@@ -1108,6 +1634,39 @@ export default class NetClient {
     } else if (msg.t === "bounty") {
       this.bounty = msg.active;
       this.onBounty?.();
+    } else if (msg.t === "relations") {
+      this.relationships = msg.trust ?? {};
+      this.relationshipTalks = msg.talks ?? {};
+      this.relationshipJobs = msg.jobs ?? {};
+      this.districtStanding = Array.isArray(msg.districts) ? msg.districts : [];
+      this.residentClues = Array.isArray(msg.clues) ? msg.clues : [];
+      this.residentConfirmed = Array.isArray(msg.confirmed) ? msg.confirmed : [];
+      this.reconstruction = Array.isArray(msg.reconstruction) ? msg.reconstruction : [];
+      if (msg.social) this.socialMemory = msg.social;
+      this.reprints = Math.max(0, Math.floor(msg.reprints ?? this.reprints));
+      this.reprintMemorialStamps = Math.max(0, Math.floor(msg.memorialStamps ?? this.reprintMemorialStamps));
+      this.onRelations?.();
+    } else if (msg.t === "skills") {
+      this.skills = { ...msg.xp };
+      this.onSkills?.();
+    } else if (msg.t === "archives") {
+      this.civicArchivePages = Array.isArray(msg.pages) ? msg.pages.map((n) => Math.max(0, Math.floor(n))) : [0, 0, 0];
+      this.civicArchiveSynthesis = msg.synthesis || "";
+      this.onArchives?.();
+    } else if (msg.t === "civic") {
+      this.civicMomentum[msg.district] = msg.completions;
+      this.civicAftermath[msg.district] = {
+        day: msg.day,
+        operation: msg.operation,
+        stage: msg.stage,
+        completions: msg.completions,
+        line: msg.line,
+        eventDurationPct: msg.eventDurationPct,
+      };
+      this.onCivic?.();
+    } else if (msg.t === "chronicle") {
+      this.chronicle = { week: msg.week, headline: msg.headline, lines: msg.lines, civic: msg.civic, territory: msg.territory };
+      this.onChronicle?.();
     } else if (msg.t === "discovered") {
       this.discovered = msg.zones;
       this.unlocked = msg.unlocked ?? msg.zones;
@@ -1149,6 +1708,9 @@ export default class NetClient {
   }
   questTalk() {
     this.sendMsg({ t: "quest", action: "talk" });
+  }
+  questChoice(choice: "spare" | "expose") {
+    this.sendMsg({ t: "quest", action: "choice", choice });
   }
   /** FIXER interact — accept next campaign job, resolve talk beat, or re-brief. */
   questEngage() {
@@ -1264,6 +1826,10 @@ export default class NetClient {
   bountyAccept(id: string) {
     this.sendMsg({ t: "bounty", action: "accept", id });
   }
+  /** Persist that this contact has been met. Social state only; no reward attached. */
+  npcTalk(npcId: string) {
+    this.sendMsg({ t: "npc", action: "talk", npcId });
+  }
   /** Guild ("Cell") action — server validates rank/balance + owns the shared bank (D1). */
   guildAction(
     action:
@@ -1285,9 +1851,34 @@ export default class NetClient {
   sendMute(to: string) {
     this.sendMsg({ t: "mute", to });
   }
+
+  /** Instant local reprint at last standing position (while dead). */
+  respawnLocal() {
+    if (!this.connected || !this.dead) return;
+    this.sendMsg({ t: "respawn", mode: "local" });
+  }
+
+  /**
+   * Respawn at world start (METRO CITY hub pad — same pad new runners use).
+   * Always available when the death payload offered it (outside the drill yard).
+   * `extract` is a legacy alias accepted by the server.
+   */
+  respawnExtract() {
+    if (!this.connected || !this.dead || !this.deathExtract) return;
+    this.sendMsg({ t: "respawn", mode: "start" });
+  }
+
+  /** Alias for respawnExtract — world-start pad. */
+  respawnWorldStart() {
+    this.respawnExtract();
+  }
   /** Send an emote (anchored to you) or a world ping (carries the aim point). */
   sendEmote(kind: number, ping: boolean, x: number, y: number) {
     this.sendMsg({ t: "emote", kind, ping, x, y });
+  }
+  harvest(node: number) {
+    if (!this.connected || this.dead) return;
+    this.sendMsg({ t: "harvest", node });
   }
   private sendMsg(m: ClientMsg) {
     try {
@@ -1297,12 +1888,19 @@ export default class NetClient {
     }
   }
 
-  /** Send a fire intent (aim in radians). Client-throttled to ~server fire rate. */
-  fire(aim: number) {
+  /**
+   * Send a fire intent (aim in radians).
+   * Client-throttled just under the weapon cadence so hold-F always lands a shot
+   * without flooding the socket (server still enforces the real rate limit).
+   */
+  fire(aim: number, fireRateMs?: number) {
     if (!this.connected || this.dead) return;
     const now = performance.now();
-    // Stay just under server PLAYER_FIRE_MS so legit hold-fire never soft-drops.
-    if (now - this.lastFireSentAt < PLAYER_FIRE_MS * 0.92) return;
+    // Match equipped weapon cadence (defaults to PLAYER_FIRE_MS). Stay slightly under
+    // server spacing so hold-F never soft-drops a legitimate attack.
+    const cadence = fireRateMs ?? PLAYER_FIRE_MS;
+    const gap = Math.max(40, cadence * 0.88);
+    if (now - this.lastFireSentAt < gap) return;
     this.lastFireSentAt = now;
     try {
       this.ws?.send(JSON.stringify({ t: "fire", seq: this.seq, aim } satisfies ClientMsg));

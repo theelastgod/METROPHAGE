@@ -4,6 +4,34 @@ import { ESTATES } from "./estates";
 import { isWall } from "./district";
 
 describe("city hub collision (shared client/server grid)", () => {
+  it("keeps the very centre building-free but dressed (open civic court)", () => {
+    const [sx, sy] = ONLINE_CITY.spawn;
+    const nearest = Math.min(...ONLINE_CITY.buildings.map((b) =>
+      Math.hypot(
+        Math.max(b.rect.x1 - sx, 0, sx - b.rect.x2),
+        Math.max(b.rect.y1 - sy, 0, sy - b.rect.y2),
+      ),
+    ));
+    // No structure crowds the spawn court (the old inner civic ring sat 7 tiles out
+    // and read as a canyon)… but the city must still be visible from spawn, so the
+    // first street block stays within a desktop half-viewport.
+    expect(nearest).toBeGreaterThanOrEqual(12);
+    expect(nearest).toBeLessThanOrEqual(20);
+    // The freed plaza is furnished, not empty — formal dressing near spawn.
+    const nearDressing = ONLINE_CITY.decorations.filter(
+      (d) => Math.hypot(d.x - sx, d.y - sy) <= 12,
+    );
+    expect(nearDressing.length).toBeGreaterThanOrEqual(12);
+  });
+  it("does not repeat a business kind inside the same city environment", () => {
+    const seen = new Set<string>();
+    for (const b of ONLINE_CITY.buildings) {
+      if (["hospital", "hotel", "subway", "stadium", "citycenter"].includes(b.kind)) continue;
+      const key = `${b.env}:${b.kind}`;
+      expect(seen.has(key), `duplicate ${key}`).toBe(false);
+      seen.add(key);
+    }
+  });
   it("no building roof is walkable — only its door opening", () => {
     const { grid, buildings } = ONLINE_CITY;
     for (const b of buildings) {

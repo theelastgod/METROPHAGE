@@ -5,8 +5,9 @@ import { suggestedPrice, listingFee, suggestedMetroPrice, metroListingFee } from
 import { fmtMetro } from "../economy/metro";
 import { drawPanelFrame } from "./panelChrome";
 import Modal from "./Modal";
-import { closeHint, dimBackdrop, modalRect, uiDim } from "./uiLayout";
+import { closeHint, dimBackdrop, fitModalRect, uiDim } from "./uiLayout";
 import { bodyFont, displayFont, fitTextToWidth } from "./typography";
+import { prefersMobileUx } from "../systems/Mobile";
 import {
   STUDIO,
   addPanelGlow,
@@ -76,19 +77,26 @@ export default class OnlineMarket extends Modal {
       return o;
     };
     const D = 1700;
-    // design space is 960×540; the old 1120×680 rendered at ~116%×126% and overflowed
-    // the page. Keep it a compact modal with comfortable margins.
-    const { x, y, w, h } = modalRect(792, 452);
-    const listRowH = uiDim(60);
-    const listCardH = uiDim(58);
-    const stallRowH = uiDim(38);
-    const btnH = uiDim(26);
+    const mobile = prefersMobileUx();
+    // Clamp to the viewport — fixed 792×452 was larger than mobile sheets and
+    // list rows used to paint past the frame (and off the screen).
+    const { x, y, w, h } = fitModalRect(mobile ? 360 : 792, mobile ? 500 : 452, {
+      marginDesign: mobile ? 6 : 16,
+    });
+    const footerH = uiDim(28);
+    const contentBottom = y + h - footerH - uiDim(4);
+    // Pack row heights into the available column so nothing spills off-frame.
+    let listRowH = uiDim(mobile ? 52 : 56);
+    let listCardH = listRowH - uiDim(2);
+    let stallRowH = uiDim(mobile ? 34 : 36);
+    let bagRowH = stallRowH + uiDim(mobile ? 18 : 22);
+    const btnH = uiDim(mobile ? 28 : 24);
 
     add(dimBackdrop(scene, D, 0.68, () => this.close(), { x, y, w, h }).setAlpha(0));
     add(addPanelGlow(scene, x, y, w, h, COLORS.neonMagenta, 0.1).setScrollFactor(0).setDepth(D + 1).setAlpha(0));
     const g = add(scene.add.graphics().setScrollFactor(0).setDepth(D + 2).setAlpha(0));
     drawPanelFrame(g, x, y, w, h);
-    drawScanlines(g, x + uiDim(12), y + uiDim(60), w - uiDim(24), h - uiDim(72));
+    drawScanlines(g, x + uiDim(12), y + uiDim(56), w - uiDim(24), h - uiDim(68));
 
     const tx = (s: string, fx: number, fy: number, size: number, color: string, bold = false, origin = 0, maxWidth?: number) => {
       const t = add(
@@ -120,28 +128,35 @@ export default class OnlineMarket extends Modal {
       y,
       w,
       "▦ WORLD MARKET",
-      { subtitle: "cross-zone player exchange · premium $METRO listings", accent: COLORS.neonYellow, rightLabel: closeHint("K / ESC close") },
+      {
+        subtitle: mobile ? "player exchange" : "cross-zone player exchange · premium $METRO listings",
+        accent: COLORS.neonYellow,
+        rightLabel: closeHint("K / ESC close"),
+      },
       add,
     );
 
     // balance chips
-    const chipY = y + uiDim(62);
-    const chipW = uiDim(168);
-    g.fillStyle(0x0a1020, 0.9).fillRoundedRect(x + uiDim(22), chipY, chipW, uiDim(30), 5);
-    g.lineStyle(1, COLORS.neonYellow, 0.7).strokeRoundedRect(x + uiDim(22), chipY, chipW, uiDim(30), 5);
-    tx(`₵ ${this.credits.toLocaleString()}`, x + uiDim(22) + chipW / 2, chipY + uiDim(8), 12, STUDIO.credits, true, 0.5, chipW - uiDim(12));
+    const chipY = Math.min(headerEnd + uiDim(4), y + uiDim(58));
+    const chipW = Math.min(uiDim(150), (w - uiDim(56)) / 2);
+    g.fillStyle(0x0a1020, 0.9).fillRoundedRect(x + uiDim(16), chipY, chipW, uiDim(28), 5);
+    g.lineStyle(1, COLORS.neonYellow, 0.7).strokeRoundedRect(x + uiDim(16), chipY, chipW, uiDim(28), 5);
+    tx(`₵ ${this.credits.toLocaleString()}`, x + uiDim(16) + chipW / 2, chipY + uiDim(7), 11, STUDIO.credits, true, 0.5, chipW - uiDim(10));
 
-    g.fillStyle(0x120a24, 0.9).fillRoundedRect(x + uiDim(22) + chipW + uiDim(10), chipY, chipW, uiDim(30), 5);
-    g.lineStyle(1, COLORS.neonMagenta, 0.75).strokeRoundedRect(x + uiDim(22) + chipW + uiDim(10), chipY, chipW, uiDim(30), 5);
-    tx(`◈ ${fmtMetro(this.metro)} $METRO`, x + uiDim(22) + chipW + uiDim(10) + chipW / 2, chipY + uiDim(8), 12, STUDIO.metro, true, 0.5, chipW - uiDim(12));
+    g.fillStyle(0x120a24, 0.9).fillRoundedRect(x + uiDim(16) + chipW + uiDim(8), chipY, chipW, uiDim(28), 5);
+    g.lineStyle(1, COLORS.neonMagenta, 0.75).strokeRoundedRect(x + uiDim(16) + chipW + uiDim(8), chipY, chipW, uiDim(28), 5);
+    tx(`◈ ${fmtMetro(this.metro)}`, x + uiDim(16) + chipW + uiDim(8) + chipW / 2, chipY + uiDim(7), 11, STUDIO.metro, true, 0.5, chipW - uiDim(10));
 
-    tx("/list <slot> <price> [metro]", x + w - uiDim(22), chipY + uiDim(8), 10, STUDIO.dim, false, 1, w - uiDim(392));
+    if (!mobile) {
+      tx("/list <slot> <price> [metro]", x + w - uiDim(18), chipY + uiDim(7), 10, STUDIO.dim, false, 1, w - uiDim(340));
+    }
 
-    const tabY = headerEnd + uiDim(36);
+    const tabY = chipY + uiDim(34);
+    const tabW = Math.max(uiDim(48), Math.min(uiDim(72), Math.floor((w - uiDim(40)) / 6)));
     drawStudioTabs(
       g,
       scene,
-      x + uiDim(22),
+      x + uiDim(16),
       tabY,
       [
         { id: "all", label: "ALL", color: COLORS.neonCyan },
@@ -152,7 +167,7 @@ export default class OnlineMarket extends Modal {
         { id: "rare", label: "RARE", color: COLORS.neonMagenta },
       ],
       this.filter,
-      uiDim(72),
+      tabW,
       (id) => {
         this.filter = id as Filter;
         this.build();
@@ -161,18 +176,32 @@ export default class OnlineMarket extends Modal {
       D,
     );
 
-    const colMid = x + w * 0.52;
-    g.lineStyle(uiDim(1), 0x2a2440, 0.9).lineBetween(colMid, tabY + uiDim(38), colMid, y + h - uiDim(18));
+    // Two columns on desktop; stacked single column on narrow/mobile so nothing clips.
+    const dualCol = w >= uiDim(560);
+    const colMid = dualCol ? x + w * 0.52 : x + w;
+    const listTop = tabY + uiDim(40);
+    if (dualCol) {
+      g.lineStyle(uiDim(1), 0x2a2440, 0.9).lineBetween(colMid, listTop - uiDim(4), colMid, contentBottom);
+    }
 
-    tx("OPEN LISTINGS", x + uiDim(22), tabY + uiDim(44), 12, "#29e7ff", true);
+    tx("OPEN LISTINGS", x + uiDim(16), listTop - uiDim(18), 11, "#29e7ff", true);
     const others = this.listings.filter((l) => l.seller !== this.selfId && matchesFilter(l));
-    let ly = tabY + uiDim(68);
-    const lw = colMid - x - uiDim(38);
+    const leftBottom = dualCol ? contentBottom : y + h * 0.48;
+    const leftAvail = Math.max(uiDim(40), leftBottom - listTop);
+    const maxListRows = Math.max(1, Math.floor(leftAvail / listRowH));
+    // Shrink rows if needed so at least 2 listings fit.
+    if (maxListRows < 2 && leftAvail > uiDim(60)) {
+      listRowH = Math.max(uiDim(40), Math.floor(leftAvail / 2));
+      listCardH = listRowH - uiDim(2);
+    }
+    const listCap = Math.max(1, Math.floor(leftAvail / listRowH));
+    let ly = listTop;
+    const lw = dualCol ? colMid - x - uiDim(30) : w - uiDim(32);
     if (others.length === 0) {
       tx(
-        this.filter === "all" ? "no listings — be the first broker on the exchange" : `no ${this.filter === "metro" ? "$METRO" : "credit"} listings yet`,
-        x + uiDim(22),
-        ly + uiDim(12),
+        this.filter === "all" ? "no listings — be the first broker" : `no ${this.filter === "metro" ? "$METRO" : "credit"} listings yet`,
+        x + uiDim(16),
+        ly + uiDim(8),
         11,
         STUDIO.dim,
         false,
@@ -180,96 +209,199 @@ export default class OnlineMarket extends Modal {
         lw,
       );
     }
-    for (const l of others.slice(0, 8)) {
+    const shownListings = others.slice(0, listCap);
+    for (const l of shownListings) {
+      if (ly + listCardH > leftBottom) break;
       const r = RARITIES[l.item.rarity];
       const isMetro = l.currency === "metro";
-      drawStudioListCard(g, x + uiDim(22), ly, lw, listCardH, r.color, isMetro);
-      const listingTextW = lw - uiDim(134);
-      tx(l.item.name, x + uiDim(32), ly + uiDim(8), 12, r.hex, true, 0, listingTextW);
-      tx(itemLine(l.item), x + uiDim(32), ly + uiDim(24), 9, STUDIO.muted, false, 0, listingTextW);
-      tx(itemStatLines(l.item).filter((s) => !s.startsWith("◈")).join("  ") || "—", x + uiDim(32), ly + uiDim(38), 9, STUDIO.ink, false, 0, listingTextW);
-      tx(`by ${l.sellerName}`, x + uiDim(32), ly + uiDim(49), 8, STUDIO.dim, false, 0, listingTextW);
+      drawStudioListCard(g, x + uiDim(16), ly, lw, listCardH, r.color, isMetro);
+      const buyBtnW = uiDim(mobile ? 96 : 108);
+      const listingTextW = Math.max(uiDim(60), lw - buyBtnW - uiDim(20));
+      tx(l.item.name, x + uiDim(24), ly + uiDim(6), 11, r.hex, true, 0, listingTextW);
+      tx(itemLine(l.item), x + uiDim(24), ly + uiDim(20), 9, STUDIO.muted, false, 0, listingTextW);
+      if (listCardH >= uiDim(48)) {
+        tx(itemStatLines(l.item).filter((s) => !s.startsWith("◈")).join("  ") || "—", x + uiDim(24), ly + uiDim(32), 8, STUDIO.ink, false, 0, listingTextW);
+      }
+      if (listCardH >= uiDim(54)) {
+        tx(`by ${l.sellerName}`, x + uiDim(24), ly + listCardH - uiDim(12), 8, STUDIO.dim, false, 0, listingTextW);
+      }
       const afford = isMetro ? this.metro >= l.price : this.credits >= l.price;
       const buyLabel = isMetro ? `BUY ◈${fmtMetro(l.price)}` : `BUY ₵${l.price}`;
-      drawStudioBtn(g, scene, {
-        x: x + uiDim(22) + lw - uiDim(120),
-        y: ly + uiDim(16),
-        w: uiDim(112),
-        h: btnH,
-        label: buyLabel,
-        color: isMetro ? COLORS.neonMagenta : COLORS.neonGreen,
-        enabled: afford,
-        onClick: () => this.onBuy?.(l.id),
-      }, add, D);
+      drawStudioBtn(
+        g,
+        scene,
+        {
+          x: x + uiDim(16) + lw - buyBtnW - uiDim(6),
+          y: ly + Math.max(uiDim(4), (listCardH - btnH) / 2),
+          w: buyBtnW,
+          h: btnH,
+          label: buyLabel,
+          color: isMetro ? COLORS.neonMagenta : COLORS.neonGreen,
+          enabled: afford,
+          onClick: () => this.onBuy?.(l.id),
+        },
+        add,
+        D,
+      );
       ly += listRowH;
     }
+    if (others.length > shownListings.length) {
+      tx(`+${others.length - shownListings.length} more — refresh/filter`, x + uiDim(16), Math.min(ly, leftBottom - uiDim(14)), 9, STUDIO.dim, false, 0, lw);
+    }
 
-    const rx = colMid + uiDim(18);
-    const rw = x + w - uiDim(18) - rx;
+    const rx = dualCol ? colMid + uiDim(14) : x + uiDim(16);
+    const rw = dualCol ? x + w - uiDim(16) - rx : w - uiDim(32);
+    const rightTop = dualCol ? listTop : leftBottom + uiDim(12);
     const mine = this.listings.filter((l) => l.seller === this.selfId);
-    tx(`YOUR STALL (${mine.length})`, rx, tabY + uiDim(44), 12, STUDIO.metro, true);
-    let my = tabY + uiDim(68);
-    if (mine.length === 0) tx("nothing listed", rx, my + uiDim(8), 11, STUDIO.dim);
-    for (const l of mine.slice(0, 4)) {
-      const r = RARITIES[l.item.rarity];
-      const isMetro = l.currency === "metro";
-      drawStudioListCard(g, rx, my, rw, stallRowH, r.color, isMetro);
-      tx(l.item.name, rx + uiDim(12), my + uiDim(6), 11, r.hex, true, 0, rw - uiDim(112));
-      tx(priceLabel(l), rx + uiDim(12), my + uiDim(21), 10, isMetro ? STUDIO.metro : STUDIO.credits, false, 0, rw - uiDim(112));
-      drawStudioBtn(g, scene, {
-        x: rx + rw - uiDim(92),
-        y: my + uiDim(6),
-        w: uiDim(84),
-        h: btnH,
-        label: "CANCEL",
-        color: COLORS.neonMagenta,
-        enabled: true,
-        primary: false,
-        onClick: () => this.onCancel?.(l.id),
-      }, add, D);
-      my += stallRowH + uiDim(2);
+    tx(`YOUR STALL (${mine.length})`, rx, rightTop - uiDim(18), 11, STUDIO.metro, true);
+    let my = rightTop;
+
+    // Reserve room for at least one quick-list row when bag has items.
+    const bagNeed = this.bag.length > 0 ? uiDim(20) + bagRowH : 0;
+    const stallAreaBottom = Math.max(my + uiDim(40), contentBottom - bagNeed - uiDim(28));
+    const stallCap = Math.max(0, Math.floor((stallAreaBottom - my) / (stallRowH + uiDim(2))));
+    if (mine.length === 0) {
+      if (my + uiDim(20) <= contentBottom) tx("nothing listed", rx, my + uiDim(4), 11, STUDIO.dim);
+      my += uiDim(22);
+    } else {
+      const shownMine = mine.slice(0, Math.max(1, stallCap));
+      for (const l of shownMine) {
+        if (my + stallRowH > contentBottom) break;
+        const r = RARITIES[l.item.rarity];
+        const isMetro = l.currency === "metro";
+        drawStudioListCard(g, rx, my, rw, stallRowH, r.color, isMetro);
+        const cancelW = uiDim(72);
+        tx(l.item.name, rx + uiDim(10), my + uiDim(4), 11, r.hex, true, 0, rw - cancelW - uiDim(16));
+        tx(priceLabel(l), rx + uiDim(10), my + uiDim(18), 10, isMetro ? STUDIO.metro : STUDIO.credits, false, 0, rw - cancelW - uiDim(16));
+        drawStudioBtn(
+          g,
+          scene,
+          {
+            x: rx + rw - cancelW - uiDim(6),
+            y: my + Math.max(uiDim(2), (stallRowH - btnH) / 2),
+            w: cancelW,
+            h: btnH,
+            label: "✕",
+            color: COLORS.neonMagenta,
+            enabled: true,
+            primary: false,
+            onClick: () => this.onCancel?.(l.id),
+          },
+          add,
+          D,
+        );
+        my += stallRowH + uiDim(2);
+      }
+      if (mine.length > shownMine.length) {
+        tx(`+${mine.length - shownMine.length} more on stall`, rx, my, 9, STUDIO.dim, false, 0, rw);
+        my += uiDim(14);
+      }
     }
 
-    const sellY = my + uiDim(16);
-    tx("QUICK-LIST FROM BAG  (2× appraised value)", rx, sellY, 12, STUDIO.ready, true);
-    let sy = sellY + uiDim(24);
-    if (this.bag.length === 0) tx("bag empty", rx, sy + uiDim(6), 11, STUDIO.dim);
-    for (const it of this.bag.slice(0, 5)) {
-      const r = RARITIES[it.rarity];
-      const cPrice = suggestedPrice(it);
-      const cFee = listingFee(cPrice);
-      const mPrice = suggestedMetroPrice(it);
-      const mFee = metroListingFee(mPrice);
-      const cardH = stallRowH + uiDim(4);
-      drawStudioListCard(g, rx, sy, rw, cardH, r.color);
-      tx(`${it.name}${(it.ilvl ?? 0) > 0 ? ` +${it.ilvl}` : ""}`, rx + uiDim(12), sy + uiDim(6), 11, r.hex, true, 0, rw - uiDim(24));
-      tx(itemLine(it), rx + uiDim(12), sy + uiDim(21), 9, STUDIO.muted, false, 0, rw - uiDim(24));
-      drawStudioBtn(g, scene, {
-        x: rx + rw - uiDim(310),
-        y: sy + uiDim(30),
-        w: uiDim(148),
-        h: btnH,
-        label: `₵${cPrice} (fee ₵${cFee})`,
-        color: COLORS.neonGreen,
-        enabled: this.credits >= cFee,
-        primary: false,
-        onClick: () => this.onList?.(it.id, cPrice, "credits"),
-      }, add, D);
-      drawStudioBtn(g, scene, {
-        x: rx + rw - uiDim(156),
-        y: sy + uiDim(30),
-        w: uiDim(148),
-        h: btnH,
-        label: `◈${mPrice} (fee ◈${mFee})`,
-        color: COLORS.neonMagenta,
-        enabled: this.metro >= mFee,
-        onClick: () => this.onList?.(it.id, mPrice, "metro"),
-      }, add, D);
-      sy += stallRowH + uiDim(8);
+    const sellY = Math.min(my + uiDim(10), contentBottom - bagRowH - uiDim(22));
+    if (sellY + uiDim(16) < contentBottom) {
+      tx(mobile ? "QUICK-LIST" : "QUICK-LIST FROM BAG", rx, sellY, 11, STUDIO.ready, true);
+      let sy = sellY + uiDim(18);
+      if (this.bag.length === 0) {
+        if (sy + uiDim(14) <= contentBottom) tx("bag empty", rx, sy, 11, STUDIO.dim);
+      } else {
+        const bagCap = Math.max(1, Math.floor((contentBottom - sy) / bagRowH));
+        // Tighten bag rows if needed so at least one fits.
+        if (bagCap < 1 && contentBottom - sy > uiDim(36)) {
+          bagRowH = Math.max(uiDim(36), contentBottom - sy);
+        }
+        const fitBag = Math.max(1, Math.floor((contentBottom - sy) / bagRowH));
+        const shownBag = this.bag.slice(0, fitBag);
+        for (const it of shownBag) {
+          if (sy + bagRowH > contentBottom + uiDim(2)) break;
+          const r = RARITIES[it.rarity];
+          const cPrice = suggestedPrice(it);
+          const cFee = listingFee(cPrice);
+          const mPrice = suggestedMetroPrice(it);
+          const mFee = metroListingFee(mPrice);
+          const cardH = Math.min(bagRowH - uiDim(2), contentBottom - sy);
+          if (cardH < uiDim(32)) break;
+          drawStudioListCard(g, rx, sy, rw, cardH, r.color);
+          tx(`${it.name}${(it.ilvl ?? 0) > 0 ? ` +${it.ilvl}` : ""}`, rx + uiDim(10), sy + uiDim(4), 11, r.hex, true, 0, rw - uiDim(16));
+          if (cardH >= uiDim(40)) {
+            tx(itemLine(it), rx + uiDim(10), sy + uiDim(18), 9, STUDIO.muted, false, 0, rw - uiDim(16));
+          }
+          // Side-by-side list buttons when wide enough; stacked on narrow.
+          const listBtnH = Math.min(btnH, uiDim(24));
+          if (rw >= uiDim(280) && cardH >= uiDim(48)) {
+            const bw = Math.min(uiDim(130), (rw - uiDim(20)) / 2);
+            drawStudioBtn(
+              g,
+              scene,
+              {
+                x: rx + rw - bw * 2 - uiDim(12),
+                y: sy + cardH - listBtnH - uiDim(4),
+                w: bw,
+                h: listBtnH,
+                label: `₵${cPrice}`,
+                color: COLORS.neonGreen,
+                enabled: this.credits >= cFee,
+                primary: false,
+                onClick: () => this.onList?.(it.id, cPrice, "credits"),
+              },
+              add,
+              D,
+            );
+            drawStudioBtn(
+              g,
+              scene,
+              {
+                x: rx + rw - bw - uiDim(6),
+                y: sy + cardH - listBtnH - uiDim(4),
+                w: bw,
+                h: listBtnH,
+                label: `◈${mPrice}`,
+                color: COLORS.neonMagenta,
+                enabled: this.metro >= mFee,
+                onClick: () => this.onList?.(it.id, mPrice, "metro"),
+              },
+              add,
+              D,
+            );
+          } else if (cardH >= uiDim(36)) {
+            // Single credit list action on very tight rows.
+            drawStudioBtn(
+              g,
+              scene,
+              {
+                x: rx + rw - uiDim(88),
+                y: sy + Math.max(uiDim(2), (cardH - listBtnH) / 2),
+                w: uiDim(80),
+                h: listBtnH,
+                label: `₵${cPrice}`,
+                color: COLORS.neonGreen,
+                enabled: this.credits >= cFee,
+                primary: false,
+                onClick: () => this.onList?.(it.id, cPrice, "credits"),
+              },
+              add,
+              D,
+            );
+          }
+          sy += bagRowH;
+        }
+        if (this.bag.length > shownBag.length && sy <= contentBottom) {
+          tx(`+${this.bag.length - shownBag.length} in bag`, rx, Math.min(sy, contentBottom - uiDim(12)), 9, STUDIO.dim, false, 0, rw);
+        }
+      }
     }
 
-    g.fillStyle(0x0e1830, 0.45).fillRect(x + uiDim(18), y + h - uiDim(30), w - uiDim(36), uiDim(20));
-    tx("premium $METRO listings cross every combat zone · credits stay local", x + w / 2, y + h - uiDim(24), 9, STUDIO.dim, false, 0.5, w - uiDim(48));
+    g.fillStyle(0x0e1830, 0.45).fillRect(x + uiDim(14), y + h - footerH, w - uiDim(28), footerH - uiDim(4));
+    tx(
+      mobile ? "tap outside / ✕ to close" : "premium $METRO listings cross zones · credits stay local",
+      x + w / 2,
+      y + h - footerH + uiDim(6),
+      9,
+      STUDIO.dim,
+      false,
+      0.5,
+      w - uiDim(40),
+    );
 
     const animTargets = this.objs.filter((o) => "setAlpha" in o);
     animatePanelIn(scene, animTargets);

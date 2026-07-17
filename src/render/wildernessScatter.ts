@@ -10,8 +10,11 @@ import {
   PROP_BIN_KEY,
   PROP_HYDRANT_KEY,
   PROP_PLANTER_KEY,
+  HF_WILD_PROP_KEYS,
 } from "../assets/manifest";
 import { isWall, TILE_DIRT, TILE_GRASS, TILE_WATER, TILE_NEON, TILE_LANE, type TileGrid } from "../world/district";
+import { generatedAssetScale } from "./generatedAssetSizing";
+import { hasPropWallClearance } from "./propClearance";
 
 const hash = (x: number, y: number, salt = 0) => ((x * 73856093) ^ (y * 19349663) ^ salt) >>> 0;
 
@@ -81,7 +84,9 @@ function placeProp(
 ): Phaser.GameObjects.Image | null {
   if (!scene.textures.exists(key)) return null;
   groundShadow(scene, x, y + 8, depth, scale * 0.65, 0.22);
-  return scene.add.image(x, y, key).setOrigin(0.5, originY).setDepth(depth).setScale(scale).setAlpha(alpha);
+  const image = scene.add.image(x, y, key).setOrigin(0.5, originY).setDepth(depth).setAlpha(alpha);
+  image.setScale(generatedAssetScale(key, image.width, image.height, scale));
+  return image;
 }
 
 /**
@@ -106,6 +111,10 @@ export function scatterWildernessProps(
     for (let tx = 2; tx < W - 2; tx++) {
       const t = row[tx];
       if (isWall(t) || t === TILE_WATER) continue;
+      // Generated wilderness cutouts are taller/wider than their anchor tile. Give
+      // ruins the same clearance guarantee as city buildings so props cannot paint
+      // across their walls or roofs.
+      if (!hasPropWallClearance(grid, tx, ty)) continue;
       const h = hash(tx, ty, profile.salt);
       // declutter: thin the overall junk field (~60% fewer props) so trails and
       // clearings read clean instead of wall-to-wall salvage. Deterministic per tile.
@@ -114,7 +123,12 @@ export function scatterWildernessProps(
       const y = ty * TILE + TILE / 2;
 
       if (profile.salvage > 0 && h % profile.salvage === 0) {
-        const decoKey = DECO_KEYS[(h >>> 4) % DECO_KEYS.length];
+        // Prefer HF wilderness props when baked; fall back to deco pack.
+        const wild = HF_WILD_PROP_KEYS.filter((k) => scene.textures.exists(k));
+        const decoKey =
+          wild.length > 0
+            ? wild[(h >>> 4) % wild.length]
+            : DECO_KEYS[(h >>> 4) % DECO_KEYS.length];
         const scale = 0.68 + ((h >>> 8) % 20) / 100;
         scene.add
           .image(x, y - 4, GLOW_KEY)

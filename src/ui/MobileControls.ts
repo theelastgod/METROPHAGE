@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { uiDim } from "../config";
-import { UI_BTN_RING_KEY } from "../assets/manifest";
+import { UI_BTN_RING_KEY, UI_BTN_RING_ALT_KEY } from "../assets/manifest";
 import { displayFont, bodyFont } from "./typography";
 import { mobileStickSafeRegion } from "../systems/Mobile";
 
@@ -204,15 +204,24 @@ export default class MobileControls {
       const hex = "#" + color.toString(16).padStart(6, "0");
       const g = this.scene.add.graphics().setScrollFactor(0).setDepth(1301);
       // Painted neon ring behind ability pads (Higgsfield) — falls back to drawn circle.
+      // Primary ATK uses the main ring; ability/dash pads prefer the alt chrome when present.
       let ring: Phaser.GameObjects.Image | null = null;
-      if (this.scene.textures.exists(UI_BTN_RING_KEY) && !opts.holdFire) {
-        ring = this.scene.add
-          .image(x, y, UI_BTN_RING_KEY)
-          .setDisplaySize(r * 2.15, r * 2.15)
-          .setScrollFactor(0)
-          .setDepth(1300)
-          .setTint(color)
-          .setAlpha(0.9);
+      if (!opts.holdFire) {
+        const ringKey =
+          opts.track && this.scene.textures.exists(UI_BTN_RING_ALT_KEY)
+            ? UI_BTN_RING_ALT_KEY
+            : this.scene.textures.exists(UI_BTN_RING_KEY)
+              ? UI_BTN_RING_KEY
+              : null;
+        if (ringKey) {
+          ring = this.scene.add
+            .image(x, y, ringKey)
+            .setDisplaySize(r * 2.15, r * 2.15)
+            .setScrollFactor(0)
+            .setDepth(1300)
+            .setTint(color)
+            .setAlpha(0.9);
+        }
       }
       let icon: Phaser.GameObjects.Image | null = null;
       if (opts.iconKey && this.scene.textures.exists(opts.iconKey)) {

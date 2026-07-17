@@ -33,7 +33,7 @@ function ensureTextures(scene: Phaser.Scene) {
 
 const cssHex = (c: number) => "#" + (c & 0xffffff).toString(16).padStart(6, "0");
 
-/** Holographic glyphs — terse cyberpunk signage drifting above the rooftops. */
+/** Default holographic glyphs — districts pass their own themed set when available. */
 const HOLO_GLYPHS = ["システム", "0x7F", "▲HELIOS", "株式", "PALANTIR", "デ", "SEC//", "監視", "未来", "ナ"];
 
 /** A single floating holographic billboard: a projector dot, a beam, a flickering
@@ -43,7 +43,8 @@ class Hologram {
   private scan: Phaser.GameObjects.Rectangle;
   private seed = Math.random() * Math.PI * 2;
 
-  constructor(scene: Phaser.Scene, x: number, y: number, color: number) {
+  constructor(scene: Phaser.Scene, x: number, y: number, color: number, glyphs?: string[]) {
+    const pool = glyphs && glyphs.length > 0 ? glyphs : HOLO_GLYPHS;
     scene.add.circle(x, y, 3, color, 0.85).setDepth(6); // projector base on the roof
     const beam = scene.add
       .triangle(0, 0, -9, 0, 9, 0, 0, -48, color, 0.1)
@@ -52,7 +53,7 @@ class Hologram {
       .rectangle(0, -54, 34, 24, color, 0.16)
       .setStrokeStyle(1, color, 0.75);
     const glyph = scene.add
-      .text(0, -54, HOLO_GLYPHS[Math.floor(Math.random() * HOLO_GLYPHS.length)], {
+      .text(0, -54, pool[Math.floor(Math.random() * pool.length)], {
         fontFamily: "Courier New, monospace",
         fontSize: "13px",
         color: cssHex(color),
@@ -81,6 +82,18 @@ interface FogBank {
   seed: number;
 }
 
+export type AtmosphereOpts = {
+  weather?: Weather;
+  accent: number;
+  worldW: number;
+  worldH: number;
+  /** 0..1 multiplies fog bank count/alpha (district theme). */
+  fogDensity?: number;
+  fogTint?: number;
+  particleTint?: number;
+  holoGlyphs?: string[];
+};
+
 export default class Atmosphere {
   private scene: Phaser.Scene;
   private worldW: number;
@@ -89,51 +102,52 @@ export default class Atmosphere {
   private fog: FogBank[] = [];
   private emitters: Phaser.GameObjects.Particles.ParticleEmitter[] = [];
   private reduceFlashing: boolean;
+  private holoGlyphs: string[];
 
-  constructor(
-    scene: Phaser.Scene,
-    opts: { weather?: Weather; accent: number; worldW: number; worldH: number },
-  ) {
+  constructor(scene: Phaser.Scene, opts: AtmosphereOpts) {
     this.scene = scene;
     this.worldW = opts.worldW;
     this.worldH = opts.worldH;
     this.reduceFlashing = getSettings().reduceFlashing;
+    this.holoGlyphs = opts.holoGlyphs ?? HOLO_GLYPHS;
     ensureTextures(scene);
-    this.buildWeather(opts.weather ?? "rain", opts.accent);
-    this.buildFog(opts.accent, opts.weather ?? "rain");
-    this.buildHighFog(opts.accent);
+    const weather = opts.weather ?? "rain";
+    this.buildWeather(weather, opts.accent, opts.particleTint);
+    this.buildFog(opts.accent, weather, opts.fogDensity ?? 1, opts.fogTint);
+    this.buildHighFog(opts.accent, opts.fogDensity ?? 1, opts.fogTint);
   }
 
   /** High fog — banks ABOVE the street, on a >1 scroll factor so they slide faster
    *  than the ground when the camera moves. Free-floating, so the parallax
    *  displacement is pure depth cue (nothing they must stay aligned with). */
-  private buildHighFog(accent: number) {
+  private buildHighFog(accent: number, fogDensity: number, fogTint?: number) {
     if (getSettings().lowFx) return;
-    for (let i = 0; i < 3; i++) {
+    const n = Math.max(1, Math.round(3 * fogDensity));
+    for (let i = 0; i < n; i++) {
       const img = this.scene.add
         .image(Math.random() * this.worldW, Math.random() * this.worldH, GLOW_KEY)
         .setBlendMode(Phaser.BlendModes.ADD)
-        .setTint(i === 0 ? accent : 0x8fa9c8)
+        .setTint(i === 0 ? accent : fogTint ?? 0x8fa9c8)
         .setScale(8 + Math.random() * 6, 4 + Math.random() * 3)
-        .setAlpha(0.045)
+        .setAlpha(0.045 * Math.min(1.4, fogDensity))
         .setScrollFactor(1.14)
         .setDepth(13);
       this.fog.push({
         img,
         vx: (Math.random() - 0.5) * 16,
         vy: (Math.random() - 0.5) * 6,
-        baseAlpha: 0.045,
+        baseAlpha: 0.045 * Math.min(1.4, fogDensity),
         seed: Math.random() * Math.PI * 2,
       });
     }
   }
 
   /** Place an animated holographic sign at a world point (GameScene seeds rooftops). */
-  addHologram(x: number, y: number, color: number) {
-    this.holos.push(new Hologram(this.scene, x, y, color));
+  addHologram(x: number, y: number, color: number, glyphs?: string[]) {
+    this.holos.push(new Hologram(this.scene, x, y, color, glyphs ?? this.holoGlyphs));
   }
 
-  private buildWeather(weather: Weather, accent: number) {
+  private buildWeather(weather: Weather, accent: number, particleTint?: number) {
     const lowFx = getSettings().lowFx;
     const add = (key: string, cfg: Phaser.Types.GameObjects.Particles.ParticleEmitterConfig, depth: number) => {
       const e = this.scene.add.particles(0, 0, key, cfg).setScrollFactor(0).setDepth(depth);
@@ -141,6 +155,8 @@ export default class Atmosphere {
     };
 
     if (weather === "rain") {
+      const farTint = particleTint ?? 0x6fa8cc;
+      const nearTint = particleTint ?? 0x9fdcff;
       // FAR rain — smaller, slower, dimmer: a second sheet behind the near one.
       // Two speeds of the same weather is the cheapest depth cue there is.
       if (!lowFx)
@@ -153,7 +169,7 @@ export default class Atmosphere {
           scaleX: 0.6,
           scaleY: { min: 0.35, max: 0.6 },
           alpha: { start: 0.26, end: 0 },
-          tint: 0x6fa8cc,
+          tint: farTint,
           quantity: 3,
           frequency: 16,
         }, 940);
@@ -166,7 +182,7 @@ export default class Atmosphere {
         scaleX: 1,
         scaleY: { min: 0.7, max: 1.4 },
         alpha: { start: 0.5, end: 0 },
-        tint: 0x9fdcff,
+        tint: nearTint,
         quantity: lowFx ? 2 : 5,
         frequency: 12,
       }, 950);
@@ -180,7 +196,7 @@ export default class Atmosphere {
         accelerationX: { min: -10, max: 10 },
         scale: { min: 0.4, max: 1.1 },
         alpha: { start: 0.55, end: 0.05 },
-        tint: 0xc3ccd9,
+        tint: particleTint ?? 0xc3ccd9,
         quantity: lowFx ? 1 : 2,
         frequency: 55,
       }, 950);
@@ -194,7 +210,7 @@ export default class Atmosphere {
         accelerationX: { min: -14, max: 14 },
         scale: { min: 0.3, max: 0.95 },
         alpha: { start: 0.95, end: 0 },
-        tint: accent === 0xff3b6b ? 0xff7a3c : accent,
+        tint: particleTint ?? (accent === 0xff3b6b ? 0xff7a3c : accent),
         quantity: lowFx ? 1 : 2,
         frequency: 60,
         blendMode: Phaser.BlendModes.ADD,
@@ -208,18 +224,21 @@ export default class Atmosphere {
         speedX: { min: -34, max: -8 },
         scale: { min: 2.5, max: 5 },
         alpha: { start: 0.07, end: 0 },
-        tint: 0x9aa3b2,
+        tint: particleTint ?? 0x9aa3b2,
         quantity: 1,
         frequency: lowFx ? 360 : 170,
       }, 4);
     }
   }
 
-  private buildFog(accent: number, weather: Weather) {
+  private buildFog(accent: number, weather: Weather, fogDensity: number, fogTint?: number) {
     const lowFx = getSettings().lowFx;
-    const count = lowFx ? 3 : weather === "smog" ? 8 : 6;
-    const tint = weather === "smog" ? 0x8088a0 : weather === "embers" ? 0xff5a3c : accent;
-    const maxAlpha = weather === "smog" ? 0.14 : 0.08;
+    const baseCount = weather === "smog" ? 8 : weather === "ash" ? 7 : weather === "embers" ? 7 : 5;
+    const count = lowFx ? 3 : Math.max(2, Math.round(baseCount * fogDensity));
+    const tint =
+      fogTint ??
+      (weather === "smog" ? 0x8088a0 : weather === "embers" ? 0xff5a3c : weather === "ash" ? 0xa8b0c0 : accent);
+    const maxAlpha = (weather === "smog" ? 0.14 : weather === "embers" ? 0.11 : 0.08) * Math.min(1.35, fogDensity);
     for (let i = 0; i < count; i++) {
       const baseAlpha = maxAlpha * (0.5 + Math.random() * 0.5);
       const img = this.scene.add
@@ -231,7 +250,7 @@ export default class Atmosphere {
         .setDepth(3);
       this.fog.push({
         img,
-        vx: (Math.random() - 0.5) * 10 + (weather === "smog" ? -8 : 0),
+        vx: (Math.random() - 0.5) * 10 + (weather === "smog" ? -8 : weather === "ash" ? 4 : 0),
         vy: (Math.random() - 0.5) * 5,
         baseAlpha,
         seed: Math.random() * Math.PI * 2,

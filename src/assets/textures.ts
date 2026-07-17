@@ -23,9 +23,11 @@ import {
   PORTRAIT_NPC_KEY,
   UI_FRAME_KEY,
   UI_GUN_KEY,
+  ENEMY_BODIES,
+  enemyBodyKey,
 } from "./manifest";
 import { bakeCanvas } from "./pixelart";
-import { bakeWalkSheet, bakeAgentSheet } from "./anim";
+import { bakeWalkSheet, bakeAgentSheet, bakeEnemyBodySheet } from "./anim";
 import { playerKeyFor } from "./manifest";
 import { classPreviewSpec } from "../game/customization";
 import { CLASSES } from "../game/classes";
@@ -407,6 +409,14 @@ function makeBullet(scene: Phaser.Scene) {
 /** Turing Cop: grayscale armored trooper, tinted per tier. Animated walk, 32×32. */
 function makeCop(scene: Phaser.Scene) {
   bakeWalkSheet(scene, COP_KEY, COP_SPEC);
+}
+
+/** Non-humanoid enemy bodies (drone / beast / spectre) — grayscale, tinted per arch. */
+function makeEnemyBodies(scene: Phaser.Scene) {
+  for (const body of ENEMY_BODIES) {
+    const key = enemyBodyKey(body);
+    if (!scene.textures.exists(key)) bakeEnemyBodySheet(scene, key, body);
+  }
 }
 
 /** District boss: grayscale hulking sentinel, tinted per boss. Animated walk, 32×32. */
@@ -822,6 +832,7 @@ export function generatePlaceholders(scene: Phaser.Scene) {
   if (need(PLAYER_KEY)) makePlayer(scene);
   if (need(BULLET_KEY)) makeBullet(scene);
   if (need(COP_KEY)) makeCop(scene);
+  makeEnemyBodies(scene); // self-gating per body key
   if (need(BOSS_KEY)) makeBoss(scene);
   if (need(NODE_KEY)) makeNode(scene);
   if (need(NODE_INFECTED_KEY)) makeNodeInfected(scene);

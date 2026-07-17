@@ -42,9 +42,11 @@ Optional (without these, the public $METRO bridge remains read-only and fails
 closed; simulated mutation is available only through local `npm run dev:sim`):
 
 ```sh
-npx wrangler secret put METRO_TREASURY_SECRET   # base64 64-byte treasury keypair
-npx wrangler secret put METRO_DEVNET_MINT       # the $METRO mint address
-# METRO_RPC defaults to devnet; set it for a custom RPC
+# Solana is authoritative — prepare treasury first if you don't have one:
+#   node scripts/mainnet-prepare.mjs
+npx wrangler secret put METRO_TREASURY_SECRET   # base64 64-byte Solana keypair
+npx wrangler secret put METRO_MINT              # base58 SPL mint (or METRO_DEVNET_MINT)
+# METRO_RPC defaults to Solana devnet; METRO_SETTLEMENT=solana in wrangler.toml
 ```
 
 ## 2. Client — static Vite build (any static host / Cloudflare Pages)
@@ -83,42 +85,37 @@ withdrawals are pool-capped, atomic, and refunded when uncovered. Mainnet-value
 settlement additionally requires the `METRO_MAINNET_ARMED` switch — leave it off
 until counsel signs off.
 
-## 4. The low-cost Robinhood crypto launch
+## 4. Solana launch economics (authoritative)
 
-The bridge is still player-funded for $METRO liquidity, but Robinhood/EVM cash-outs
-require a small treasury ETH balance for gas:
+Player-funded $METRO pool on **Solana SPL**. Cash-outs prefer treasury-paid SOL:
 
 | Cost                           | Who pays                                                            |
 | ------------------------------ | ------------------------------------------------------------------- |
-| Token creation                 | ERC-20 deployer on Robinhood Chain                                  |
-| Treasury wallet                | a keypair — generating one is free                                  |
-| Treasury token balance         | player deposits only (fixed supply, mint revoked — dev *can't* seed it) |
-| Deposit network fees           | the depositing player's wallet                                      |
-| Withdrawal gas                 | treasury ETH float on Robinhood Chain                               |
-| Hosting                        | Cloudflare Workers/D1/DO (**Paid $5** recommended for MMO load; SQLite-backed DO); public Robinhood RPC |
+| Token / mint creation          | You (pump.fun / SPL mint)                                           |
+| Treasury wallet                | free Solana keypair (`mainnet-prepare.mjs`)                         |
+| Treasury token balance         | player deposits only                                                |
+| Deposit network fees           | depositing player's wallet (SOL)                                    |
+| Withdrawal / claim fees        | **treasury SOL** (preferred); player SOL only if treasury is dry    |
+| Hosting                        | Cloudflare Workers/D1/DO (**Paid $5** recommended)                  |
 
-The treasury never holds or spends SOL on the Robinhood path. It does need a
-small ETH gas float before cash-outs can succeed. Pending claims auto-refund
-after 10 minutes; the whole accounting flow still verifies with no chain at all:
-`npm run dev:sim` followed by `node scripts/smoke.mjs metro` (trusted local sim
-settlement). Ordinary `npm run dev` keeps simulated ledger mutations locked.
+Pending claims auto-refund after 10 minutes. Local accounting without chain:
+`npm run dev:sim` + `node scripts/smoke.mjs metro`. Ordinary `npm run dev` keeps
+simulated ledger mutations locked.
 
-## 5. Entering the $METRO contract address (when the token is live)
+Robinhood/EVM is a **dormant alternate** only (`docs/METRO_CHAIN_CHOICE.md`,
+`ROBINHOOD_GO_LIVE.md`) — not used for launch.
 
-**Full ordered checklist:** `docs/BRIDGE_GO_LIVE.md` (testnet rehearsal → mainnet arm → monitor).
+## 5. Entering the $METRO mint address (when the token is live)
 
-**Dual-path ready:** Robinhood Chain ERC-20 **or** Solana SPL — pick when the CA lands
-(`docs/METRO_CHAIN_CHOICE.md`). Auto-detect from mint shape (`0x…` → RH, base58 → SOL).
+**Full ordered checklist:** `docs/BRIDGE_GO_LIVE.md` (devnet rehearsal → mainnet arm).
 
-Preferred default for MetaMask UX: **Robinhood Chain** (ETH L2 / Arbitrum Orbit) ERC-20.
+**Authoritative path: Solana SPL** (base58 mint, Phantom). EVM remains in code for
+optional restore via `METRO_SETTLEMENT=robinhood` — see `docs/METRO_CHAIN_CHOICE.md`.
 
-| Network | Chain ID | RPC |
-| --- | --- | --- |
-| Robinhood Chain Testnet (default) | **46630** | `https://rpc.testnet.chain.robinhood.com` |
-| Robinhood Chain Mainnet | **4663** | `https://rpc.mainnet.chain.robinhood.com` |
-
-MetaMask is prompted to add/switch to this network on sign-up. Legacy Solana SPL
-still works if the mint is base58.
+| Network | RPC |
+| --- | --- |
+| Solana Devnet (rehearsal) | `https://api.devnet.solana.com` |
+| Solana Mainnet | `https://api.mainnet-beta.solana.com` |
 
 Two layers, **in this order**:
 
@@ -126,50 +123,51 @@ Two layers, **in this order**:
 
 ```sh
 cd server
-# Robinhood Chain testnet (rehearsal)
-npx wrangler secret put METRO_MINT              # ERC-20 0x… deployed on Robinhood Chain
-npx wrangler secret put METRO_TREASURY_SECRET   # treasury private key 0x… (hex)
-npx wrangler secret put METRO_RPC               # https://rpc.testnet.chain.robinhood.com
-npx wrangler secret put METRO_CHAIN_ID          # 46630
+node scripts/mainnet-prepare.mjs   # if treasury not created yet
+npx wrangler secret put METRO_TREASURY_SECRET   # base64 Solana keypair
+npx wrangler secret put METRO_MINT              # base58 SPL mint
+npx wrangler secret put METRO_RPC               # Solana RPC
+# METRO_SETTLEMENT=solana is already in wrangler.toml [vars]
 npm run deploy
 ```
 
-Mainnet (counsel): `METRO_CHAIN_ID=4663`, mainnet RPC, then `METRO_MAINNET_ARMED=1`.
+Mainnet (counsel): Solana mainnet RPC + `METRO_MAINNET_ARMED=1`.
 
-Treasury needs the ERC-20 + a **small ETH balance on Robinhood Chain** for gas.
-Deposits: players transfer ERC-20 to `/metro/pool` treasury address.
+Treasury should keep a small **SOL float** for cash-out fees (+ ATA rent when a
+player has never held $METRO). Deposits: players transfer SPL $METRO to the
+treasury (base58). Cash-outs: Worker builds a treasury-paid transfer and preferably
+broadcasts it; falls back to player-paid if SOL is empty.
 
 **Layer 2 — client build env (SECOND):**
 
 ```sh
 VITE_SERVER_URL=wss://<worker-url>/ws \
-VITE_METRO_MINT=<0x ERC-20 on Robinhood Chain> \
-VITE_METRO_CLUSTER=robinhood-testnet \
-VITE_METRO_RPC=https://rpc.testnet.chain.robinhood.com \
-VITE_METRO_CHAIN_ID=46630 \
+VITE_METRO_MINT=<base58 SPL mint> \
+VITE_METRO_CLUSTER=devnet \
+VITE_METRO_RPC=https://api.devnet.solana.com \
+VITE_METRO_SETTLEMENT=solana \
 npm run build
 npx wrangler pages deploy dist --project-name=metrophagev1 --branch=main
 ```
 
-Mainnet client: `VITE_METRO_CLUSTER=robinhood` + `VITE_METRO_MAINNET_ARMED=1` + mainnet RPC/CA.
+Mainnet client: `VITE_METRO_CLUSTER=mainnet-beta` + `VITE_METRO_MAINNET_ARMED=1` + mainnet RPC/mint.
 
 `VITE_METRO_MINT` is the master switch — set, the ◈ bridge panel appears;
-unset, the game is pure off-chain (MetaMask sign-up still uses Robinhood Chain).
+unset, the game is pure off-chain ₵ (wallet login still works via Phantom).
 
 **⚠️ Ordering rule:** never ship Layer 2 to real players without Layer 1. With
-the panel live but no server secrets, the Worker now fails closed: simulated
-settlement is read-only and every deposit/cash-out returns 503. That prevents
-fabricated credits, but still ships a visibly broken money panel. Secrets first,
+the panel live but no server secrets, the Worker fails closed: simulated
+settlement is read-only and every deposit/cash-out returns 503. Secrets first,
 CA second, always.
 
-**Mainnet arming (counsel-gated):** real-value Robinhood mainnet additionally
-requires `VITE_METRO_CLUSTER=robinhood` AND `VITE_METRO_MAINNET_ARMED=1` at
-client build, plus server secret `METRO_MAINNET_ARMED=1`. Both stay off until
-counsel signs off; nothing arms by accident.
+**Mainnet arming (counsel-gated):** real-value Solana mainnet requires
+`VITE_METRO_CLUSTER=mainnet-beta` AND `VITE_METRO_MAINNET_ARMED=1` at client
+build, plus server secret `METRO_MAINNET_ARMED=1`. Both stay off until counsel
+signs off.
 
-**Full mainnet runbook (including pre-CA treasury prep):** see `MAINNET_GO_LIVE.md`.
+**Full mainnet runbook:** `MAINNET_GO_LIVE.md` / `docs/BRIDGE_GO_LIVE.md`.
 Pre-CA: `cd server && node scripts/mainnet-prepare.mjs` then put
-`METRO_TREASURY_SECRET`. When you have the mint: `node scripts/mainnet-arm.mjs <CA>`.
+`METRO_TREASURY_SECRET`. When you have the mint: `node scripts/mainnet-arm.mjs <base58>`.
 
 ## 6. Ship checklist (every production deploy)
 
@@ -182,10 +180,10 @@ Pre-CA: `cd server && node scripts/mainnet-prepare.mjs` then put
 4. Protocol: welcome carries `protocol` (`PROTOCOL_VERSION` in `src/net/protocol.ts`).
    Stale clients print a hard-refresh sys warning — bump the constant when wire shape breaks.
 5. Smoke (trusted five, standalone): `move combat kit quest abuse` with server up.
-6. `$METRO`: secrets **before** `VITE_METRO_MINT`. Mainnet stays counsel-gated
+6. `$METRO`: Solana secrets **before** `VITE_METRO_MINT` (base58). Mainnet stays counsel-gated
    (`METRO_MAINNET_ARMED` off by default). Never arm without counsel sign-off.
-7. Rates (Robinhood launch): **100 in / 125 out**, min **250 ₵**, daily cap **50k ₵**,
-   player-funded pool — treat as launch constants; don't redesign mid-launch without a migration note.
+7. Rates: **100 in / 150 out**, min **300 ₵**, no daily cap, player-funded pool (see `economyPolicy`) —
+   treat as launch constants; don't redesign mid-launch without a migration note.
 8. PvP escrow rollout: apply `0030` before the Worker and deploy with arenas empty.
    Afterward, buy-ins, elimination transfers, disconnect refunds, and crash recovery
    are atomic in D1.

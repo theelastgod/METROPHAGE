@@ -1,5 +1,10 @@
 # $METRO on Robinhood Chain — go-live checklist
 
+> [!WARNING]
+> **DORMANT — not the launch path.** METROPHAGE launches with $METRO as a Solana SPL
+> token. This checklist is retained only for the optional Robinhood/ERC-20 settlement
+> implementation and must not be used for production launch preparation.
+
 > **Canonical ordered checklist:** [`docs/BRIDGE_GO_LIVE.md`](./docs/BRIDGE_GO_LIVE.md)
 
 ## What is live in code

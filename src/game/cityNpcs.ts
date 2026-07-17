@@ -121,6 +121,15 @@ export function campaignAllyLines(id: string, activeId: string | null | undefine
   return arc[storyPhase(activeId)];
 }
 
+/** OLD MAREK counts your reprints (he remembers what the city forgets). Past each
+ *  threshold his greeting changes — pure function of the device-local count. */
+export function marekReprintGreeting(count: number): string | null {
+  if (count >= 25) return "Twenty-five reprints. The printers know your weave by heart. So do I.";
+  if (count >= 10) return "Ten bodies the city owes you now. It won't remember. I will.";
+  if (count >= 3) return "Back again? Third time I've watched you walk out of the printer. Dying used to mean something.";
+  return null;
+}
+
 /** The four story allies who stand on the hub plaza and live the questline with you. */
 export const STORY_ALLIES = ["rin", "doc", "vex", "marek"] as const;
 
@@ -176,11 +185,38 @@ export const INTERIOR_PLAN: Record<string, string[][]> = {
   den: [["vex", "ghost"]], // the broker + the quiet one share a back room (dens are rare)
   guild: [["kessler"]],
   home: [["marek"]],
+  // Expansion venues: pair a flavour resident whose persona fits the room but whose
+  // NAME differs from the keeper's — res_nix/echo/wren/moth share names with the
+  // keepers of these exact venues, which read as one character standing twice.
+  noodle: [["res_tallow"]],
+  ripperdoc: [["res_mercy"]],
+  pawn: [["res_hollow"]],
+  arcade: [["res_rook"]],
+  garage: [["res_cinder"]],
+  radio: [["res_static"]],
 };
+
+/** Hub venues staffed from {@link INTERIOR_PLAN} by KIND. Hub zones are keyed `h{K}`
+ *  (building index), so the kind-keyed plan needs this explicit lookup. Only the
+ *  expansion venues resolve — key quest NPCs (SABLE, KESSLER, MAREK…) live in their
+ *  named venue zones and must not clone into same-kind hub duplicates. */
+const HUB_PLAN_KINDS = new Set(["noodle", "ripperdoc", "pawn", "arcade", "garage", "radio"]);
+export function themedHubOccupants(kind: string): CityNpcDef[] {
+  if (!HUB_PLAN_KINDS.has(kind)) return [];
+  return (INTERIOR_PLAN[kind]?.[0] ?? [])
+    .map((id) => npcDef(id))
+    .filter((d): d is CityNpcDef => !!d);
+}
 
 /** Generic keepers staff interiors with no named resident, so no room is empty. */
 const KEEPERS: Record<string, CityNpcDef> = {
   bar: { id: "keep_bar", name: "BARKEEP", look: look({ color: 0xff79c6, skin: 0xc98a5e, hair: "short", hairColor: 0x1b1820 }), lines: ["What'll it be, runner?", "Grid's flickered all night."] },
+  noodle: { id: "keep_noodle", name: "MAMA TSE", look: look({ color: 0xffb13c, skin: 0xc98a5e, hair: "bun", hairColor: 0x1b1820, gloves: "wraps" }), lines: ["Broth's older than you are. Don't insult it.", "Eat. You look like a debt collector's afterthought."] },
+  ripperdoc: { id: "keep_ripperdoc", name: "SPLICE", look: look({ color: 0x8dfff0, skin: 0x7c4f30, hair: "undercut", visor: "scan", decal: "cross" }), lines: ["Chrome's cheap. Nerves aren't.", "Hold still. Or don't — I bill the same either way."] },
+  pawn: { id: "keep_pawn", name: "NIX", look: look({ color: 0xf7ff3c, head: "hood", skin: 0x7c4f30, faceMark: "tattoo", cloak: "coat" }), lines: ["I buy histories and sell objects.", "Serial numbers cost extra to forget."] },
+  arcade: { id: "keep_arcade", name: "ECHO", look: look({ color: 0xb06bff, sex: "f", hair: "long", hairColor: 0xff2bd6, visor: "scan" }), lines: ["High score's been dead three years.", "The cabinet still dreams about beating it."] },
+  garage: { id: "keep_garage", name: "WREN", look: look({ color: 0x8bff6a, sex: "f", head: "cap", hair: "ponytail", gloves: "wraps" }), lines: ["If it moves, I can tune it.", "If it doesn't, I can make that permanent."] },
+  radio: { id: "keep_radio", name: "MOTH", look: look({ color: 0x29e7ff, sex: "f", hair: "braids", hairColor: 0x9dff3c, antennae: true }), lines: ["Corp weather says clear. Bring a respirator.", "You're live in five. Try to sound dangerous."] },
   shop: { id: "keep_shop", name: "CLERK", look: look({ color: 0x00e5ff, skin: 0xe6b58c, hair: "buzz", hairColor: 0x2a1d14 }), lines: ["Browse all you like. Touch nothing.", "Prices are firm."] },
   clinic: { id: "keep_clinic", name: "MEDIC", look: look({ color: 0x39ff88, skin: 0x7c4f30, hair: "ponytail", hairColor: 0x1b1820, decal: "cross" }), lines: ["Hold still, this'll sting.", "Don't bleed on my floor."] },
   guild: { id: "keep_guild", name: "QUARTERMASTER", look: look({ color: 0x4d8cff, skin: 0xf3d2b8, hair: "short", hairColor: 0x4a2f1c, cloak: "coat", beard: "stubble" }), lines: ["Contracts are on the board.", "The guild carries no deadweight."] },
@@ -238,6 +274,15 @@ const HUB_EXTRA_RESIDENTS: CityNpcDef[] = [
   { id: "res_pip", name: "PIP", look: look({ color: 0xf7ff3c, head: "cap", skin: 0xa9794a, hair: "short", hairColor: 0x1b1820, faceMark: "tattoo" }), lines: ["Runner rumors, two creds a scoop.", "Heard your name on the wire. Not saying where."] },
 ];
 const ALL_RESIDENTS = [...DISTRICT_RESIDENTS, ...HUB_EXTRA_RESIDENTS];
+// BORNE now has a stable Kernel-district route. Keep the definition in the complete
+// roster for npcDef/services, but do not clone that same named person into a hub room.
+const HUB_RESIDENTS = ALL_RESIDENTS.filter((resident) => resident.id !== "res_borne");
+
+/** Complete named resident registry for data-integrity checks and portrait preload QA.
+ * Hub placement is intentionally a subset now that some residents have stable streets. */
+export function residentNpcRoster(): readonly CityNpcDef[] {
+  return ALL_RESIDENTS;
+}
 
 /** A distinct resident for a district building interior — deterministic per building, so
  *  the same door always opens on the same character. */
@@ -248,8 +293,8 @@ export function districtResident(district: number, index: number): CityNpcDef {
 /** A distinct resident for a hub building interior. The 30 hub buildings index 0..29 into a
  *  ≥30-strong roster, so every door on the plaza opens on its own unique face. */
 export function hubResident(index: number): CityNpcDef {
-  const n = ALL_RESIDENTS.length;
-  return ALL_RESIDENTS[((index % n) + n) % n];
+  const n = HUB_RESIDENTS.length;
+  return HUB_RESIDENTS[((index % n) + n) % n];
 }
 
 /** Regional quest-givers scattered in the expanded city's outer districts. */
@@ -315,17 +360,185 @@ export const AMBIENT_NPCS: CityNpcDef[] = [
   { id: "amb_vendor", name: "NOODLE COOK", look: look({ color: 0xff7a18, skin: 0xa9794a, hair: "bun", hairColor: 0x1b1820 }), lines: ["Hot synth-noodles! Two credits!", "Eat. You look like static."] },
 ];
 
+/** Combat-zone street medics. One appears near each district arrival, rotating by
+ * district so emergency healing feels local rather than like a cloned hub service. */
+export const FIELD_MEDICS: CityNpcDef[] = [
+  { id: "field_medic_patch", name: "PATCH", look: look({ color: 0x39ff88, skin: 0x7c4f30, hair: "buzz", decal: "cross", gloves: "wraps", strap: true }), lines: ["Sit down before you fall down.", "First seal is charity. The next scar is yours."] },
+  { id: "field_medic_suture", name: "SUTURE", look: look({ color: 0x8dfff0, sex: "f", skin: 0xe6b58c, hair: "braids", hairColor: 0x1b1820, visor: "scan", decal: "cross" }), lines: ["Corp triage asks for clearance. I ask where it hurts.", "Hold still. The district already moves enough."] },
+  { id: "field_medic_gauze", name: "GAUZE", look: look({ color: 0xffb13c, skin: 0xa9794a, head: "hood", hair: "short", beard: "stubble", gloves: "wraps" }), lines: ["Clean bandage costs more than the bullet.", "You walked here. Good. Walk away too."] },
+  { id: "field_medic_needle", name: "NEEDLE", look: look({ color: 0x9dff3c, sex: "f", skin: 0x4f3220, hair: "undercut", hairColor: 0xc7cdd8, faceMark: "scar", decal: "cross" }), lines: ["No forms. No names. Arm out.", "I patch runners, not bad decisions."] },
+];
+
+export function districtFieldMedic(district: number): CityNpcDef {
+  const n = FIELD_MEDICS.length;
+  return FIELD_MEDICS[((Math.floor(district) % n) + n) % n];
+}
+
 /** Stands by the plaza and sends you down into THE UNDERLINE (the subway dungeon). */
 export const SUBWAY_WARDEN: CityNpcDef = {
   id: "subway_warden",
   name: "TRANSIT WARDEN",
   quest: "into_underline",
   look: look({ color: 0x29e7ff, head: "cap", skin: 0x7c4f30, hair: "buzz", hairColor: 0x1b1820, cloak: "coat", beard: "stubble" }),
-  lines: ["Mind the gap. And the things in it.", "Down the tunnels? Bring teeth."],
+  // Distinct from the generic keep_subway persona — this one has watched the UNDERLINE
+  // eat people and writes it down.
+  lines: ["Third rail's been dead ten years. The things down there aren't.", "I log every runner who goes down. The ink outlasts most of them."],
 };
 
-export const ALL_NPCS: CityNpcDef[] = [...KEY_NPCS, ...CITIZENS, ...REGIONAL_NPCS, ...AMBIENT_NPCS, SUBWAY_WARDEN, ...Object.values(KEEPERS)];
+// ALL_RESIDENTS belongs here: res_* ids are load-bearing in INTERIOR_PLAN,
+// NPC_SERVICE_OVERRIDES and BOUNTIES, and npcDef() is the only way to resolve them.
+// While they were missing, callers that map ids → defs and filter out the misses
+// (OnlineScene's interior roster) silently dropped every authored resident — the rooms
+// just showed their generic keeper, with no error anywhere.
+export const ALL_NPCS: CityNpcDef[] = [...KEY_NPCS, ...CITIZENS, ...REGIONAL_NPCS, ...AMBIENT_NPCS, ...FIELD_MEDICS, ...ALL_RESIDENTS, SUBWAY_WARDEN, ...Object.values(KEEPERS)];
 
 export function npcDef(id: string): CityNpcDef | undefined {
   return ALL_NPCS.find((n) => n.id === id);
+}
+
+/** One stable regional anchor per campaign district. These characters were authored
+ * long before the moving-resident pass but were never selected by scene population,
+ * leaving their dialogue and jobs unreachable. Array order follows DISTRICTS. */
+export const DISTRICT_REGIONAL_ANCHORS = [
+  "street_kid",
+  "scrap_boss",
+  "hawker",
+  "porter",
+  "tunnel_rat",
+  "arc_tech",
+  "preacher",
+  "res_borne",
+] as const;
+
+export function districtRegionalAnchor(district: number): CityNpcDef {
+  const i = Math.max(0, Math.min(DISTRICT_REGIONAL_ANCHORS.length - 1, Math.floor(district) || 0));
+  const npc = npcDef(DISTRICT_REGIONAL_ANCHORS[i]);
+  if (!npc) throw new Error(`missing regional anchor for district ${i}`);
+  return npc;
+}
+
+/** Human-readable place name for the player's current zone. */
+export function locationLabel(zone: string | null | undefined): string {
+  if (!zone || zone === "safe") return "METRO CITY";
+  if (zone === "subway") return "THE UNDERLINE";
+  if (zone === "tutorial" || zone === "tutorial_full") return "THE DRILL YARD";
+  if (zone === "estates") return "THE ESTATES";
+  if (zone === "clinic") return "THE CLINIC";
+  if (zone === "shop") return "THE MARKET";
+  if (zone === "bar") return "THE FERAL CAT";
+  if (zone === "den") return "THE DEN";
+  if (zone === "vault") return "THE VAULT";
+  if (zone === "hospital") return "THE HOSPITAL";
+  if (zone === "hotel") return "THE HOTEL";
+  // District streets (d0) and interiors (d0i3, d2i0…)
+  const dm = /^d(\d+)/.exec(zone);
+  if (dm) {
+    const i = Number(dm[1]);
+    const names = [
+      "PALANTIR PLAZA",
+      "THE STACKS",
+      "THE SPIRE",
+      "TIDAL DOCKS",
+      "THE UNDERCITY",
+      "RELAY GRID",
+      "THE WASTES",
+      "THE KERNEL",
+    ];
+    return names[i] ?? `DISTRICT ${i}`;
+  }
+  const wm = /^w(\d+)/.exec(zone);
+  if (wm) return `WILDERNESS ${wm[1]}`;
+  if (/^h\d+$/.test(zone) || /^est\d+$/.test(zone)) return "METRO CITY";
+  return zone.replace(/_/g, " ").toUpperCase();
+}
+
+/** Short flavor blurb per location for ambient / resident dialogue. */
+const LOCATION_FLAVOR: Record<string, string[]> = {
+  "METRO CITY": [
+    "Plaza never sleeps — neither do the warrants.",
+    "Hub's the only place the grid still pretends to care.",
+    "Watch the neon. It watches back.",
+  ],
+  "PALANTIR PLAZA": [
+    "Predictive policing painted this block pink.",
+    "Every camera here knows your name before you do.",
+  ],
+  "THE STACKS": [
+    "Factories don't close. They just change what they process.",
+    "Ash on the tongue means you're in the Stacks.",
+  ],
+  "THE SPIRE": [
+    "Altitude is the only real wealth up here.",
+    "They lease the sky and bill the ground.",
+  ],
+  "TIDAL DOCKS": [
+    "Tide's wrong tonight. Manifests always are.",
+    "Salt, rust, and unpaid freight — home sweet home.",
+  ],
+  "THE UNDERCITY": [
+    "Down here the lights are someone else's problem.",
+    "If the tunnel goes quiet, run.",
+  ],
+  "RELAY GRID": [
+    "Every packet through here has a price.",
+    "Uplink's loud. Secrets are louder.",
+  ],
+  "THE WASTES": [
+    "Nothing grows out here except grudges.",
+    "Scrap's currency. Flesh is optional.",
+  ],
+  "THE KERNEL": [
+    "This is where the city keeps its mind. Guarded.",
+    "You shouldn't be this deep without a death wish.",
+  ],
+  "THE UNDERLINE": [
+    "Mind the gap. And the things in it.",
+    "Trains don't run. Monsters do.",
+    "Stations still light up for ghosts.",
+  ],
+  "THE ESTATES": [
+    "Own a door and the city pretends you're someone.",
+    "Quiet blocks. Expensive quiet.",
+  ],
+  "THE CLINIC": [
+    "Bleed quiet. Docs charge for noise.",
+    "First patch is free. The second remembers you.",
+  ],
+  "THE MARKET": [
+    "Everything's for sale. Including the sellers.",
+    "Check the seals. Check them twice.",
+  ],
+  "THE FERAL CAT": [
+    "Drink until the grid looks honest.",
+    "Bar hears more truth than the FIXER.",
+  ],
+  "THE DEN": [
+    "No questions. That's the house rule.",
+    "Heat sinks here. Bring your own.",
+  ],
+};
+
+/**
+ * Pick a dialogue line that acknowledges where the player is.
+ * Mixes the NPC's own lines with location flavor so talk feels local.
+ */
+export function locationAwareLine(
+  baseLines: string[] | undefined,
+  zone: string | null | undefined,
+  lineIdx = 0,
+): string {
+  const place = locationLabel(zone);
+  const flavor = LOCATION_FLAVOR[place] ?? LOCATION_FLAVOR["METRO CITY"];
+  const base = baseLines && baseLines.length > 0 ? baseLines : ["…"];
+  // Every 3rd line leans into the location so personality still shows.
+  if (lineIdx % 3 === 2) {
+    const f = flavor[lineIdx % flavor.length];
+    return f;
+  }
+  const core = base[lineIdx % base.length];
+  // Occasionally prefix with a place tag for orientation (mobile bubbles are short).
+  if (lineIdx % 5 === 0 && place !== "METRO CITY") {
+    return `[${place}] ${core}`;
+  }
+  return core;
 }

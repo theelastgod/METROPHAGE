@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { ASSETS } from "../assets/manifest";
+import { ASSETS, DEFERRED_WORLD_CATEGORIES } from "../assets/manifest";
 import { generatePlaceholders } from "../assets/textures";
 import { applyTextureFilters } from "../assets/textureFilters";
 import { ensureItemIcons } from "../assets/itemIcons";
@@ -9,6 +9,7 @@ import MusicDirector from "../audio/MusicDirector";
 import Synth from "../audio/Synth";
 import { COLORS } from "../config";
 import { detectDeviceTier, hasSavedSettings, updateSettings } from "../systems/Settings";
+import { pumpLoaderWhileHidden } from "../systems/loaderPump";
 
 
 /**
@@ -20,14 +21,35 @@ export default class BootScene extends Phaser.Scene {
   }
 
   preload() {
+    // Background tabs stop the RAF pump; without this the bar freezes forever there.
+    pumpLoaderWhileHidden(this);
     const barEl = document.getElementById("boot-bar");
     const tagEl = document.querySelector("#boot .tag");
     this.load.on("progress", (v: number) => {
       if (barEl) barEl.style.width = `${Math.round(v * 100)}%`;
       if (tagEl) tagEl.textContent = `LOADING ASSETS ${Math.round(v * 100)}%`;
     });
+    // Wishlist / optional HF packs may 404 mid-gen — don't stall boot. But NEVER fail
+    // silently in prod: this handler used to warn only in DEV, so the entire art pack
+    // could go missing on the live site with nothing in the console to say so.
+    const failed: string[] = [];
+    this.load.on("loaderror", (file: { key?: string }) => {
+      if (file?.key) failed.push(file.key);
+    });
+    this.load.once("complete", () => {
+      // Every dresser gates on `textures.exists`, so a missing pack degrades silently:
+      // no hf_building_* → procedural façade under a dark roof cap (black buildings);
+      // no hf_prop_* → propScatter drops its pool. Report the count so "the art didn't
+      // load" is one glance at the console instead of a render-path bug hunt.
+      const hf = this.textures.getTextureKeys().filter((k) => k.startsWith("hf_")).length;
+      console.info(`[boot] ${hf} hf_* textures loaded, ${failed.length} failed`);
+      if (failed.length) {
+        console.warn(`[boot] assets failed — world art will fall back:`, failed.slice(0, 24));
+      }
+    });
 
     for (const [category, list] of Object.entries(ASSETS)) {
+      if (DEFERRED_WORLD_CATEGORIES.has(category)) continue;
       for (const a of list) {
         if (!a.file) continue;
         if (category === "audio") {
@@ -45,6 +67,9 @@ export default class BootScene extends Phaser.Scene {
   }
 
   create() {
+    // Boot-complete beacon: automation (panel smoke, probes) must wait for this
+    // instead of entering the city mid-preload, which starts Online half-loaded.
+    (window as { __bootDone?: boolean }).__bootDone = true;
     this.cameras.main.setBackgroundColor(COLORS.bgVoid);
     if (!hasSavedSettings()) {
       const tier = detectDeviceTier();
