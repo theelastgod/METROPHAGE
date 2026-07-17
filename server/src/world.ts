@@ -141,15 +141,80 @@ import {
   bossBountyCooldownRemaining,
   bountyById,
   bountyForNpc,
+  bountyIsEligible,
   type BountyObjective,
 } from "../../src/game/bounties";
-import { storyPhase } from "../../src/game/cityNpcs";
+import { npcDef, storyPhase } from "../../src/game/cityNpcs";
 import { rollBossSignature, bossLootBlurb } from "../../src/game/bossLoot";
 import { maybeNamedLoot } from "../../src/game/namedLoot";
 import { weeklyGuildGoal, currentGuildWeek } from "../../src/game/guildGoals";
 import { currentDistrictWar, warMetaKey } from "../../src/game/districtWar";
+import { factionCaptureLine, factionTerritoryLine } from "../../src/game/factions";
+import { factionCampaignBrief, factionCampaignReaction } from "../../src/game/factionCampaigns";
+import {
+  TERRITORY_FLIP_CAP,
+  decodeTerritoryLegacy,
+  encodeTerritoryLegacy,
+  territoryLegacyKey,
+  territoryLegacyLine,
+} from "../../src/game/territoryLegacy";
+import { campaignEchoLine, districtCampaignEcho } from "../../src/game/campaignEchoes";
+import {
+  CHRONICLE_BOSS_CAP,
+  CHRONICLE_BOSS_KEY,
+  CHRONICLE_CIVIC_CAP,
+  buildCityChronicle,
+  chronicleCivicKey,
+  decodeChronicleBosses,
+  decodeChronicleCivic,
+  encodeChronicleBosses,
+  encodeChronicleCivic,
+} from "../../src/game/cityChronicle";
+import {
+  CIVIC_MOMENTUM_CAP,
+  civicMomentumFromMeta,
+  civicMomentumKey,
+  dailyDistrictOperation,
+  districtAftermath,
+  districtEventContext,
+  districtOperationKey,
+  districtOperationObjectiveLabel,
+  districtRumorLine,
+  encodeCivicMomentum,
+  type DistrictOperationObjective,
+} from "../../src/game/districtLife";
+import {
+  MAX_DISTRICT_STANDING,
+  MAX_RELATIONSHIP_JOBS,
+  districtStandingKey,
+  districtStandingSnapshot,
+  districtStandingTier,
+  relationshipJobsKey,
+  relationshipSnapshot,
+  relationshipTalkKey,
+  relationshipTier,
+  relationshipTierName,
+} from "../../src/game/relationships";
+import {
+  CASEFILE_MILESTONES,
+  residentClueGrant,
+  residentClueSnapshot,
+  residentConfirmationGrant,
+  residentConfirmationSnapshot,
+  residentProfile,
+  residentZone,
+} from "../../src/game/residentLife";
+import { MAX_RECONSTRUCTION, districtReconstruction, reconstructionKey, reconstructionSnapshot } from "../../src/game/reconstruction";
+import { factionJudgmentReaction } from "../../src/game/judgmentReactions";
+import {
+  MAX_RESCUE_MEMORY,
+  RESCUES_GIVEN_KEY,
+  RESCUES_RECEIVED_KEY,
+  rescueMemorySnapshot,
+} from "../../src/game/socialMemory";
 import { launchFlagsFromEnv, emitDayKey, type LaunchFlags } from "../../src/game/featureFlags";
 import { canRebalanceZone, doName, hardCapFor, parseInstParam, reconcileInstanceId } from "./zoneRouting";
+import { consumeCapturedAchievements, consumeCapturedDeltas } from "./statQueue";
 
 import {
   BLESS_IFRAME_TICKS,
@@ -274,7 +339,12 @@ export const parseZone = (z: string | null): number => {
 /** No-combat interior zones (the safehouse hub + enterable building interiors). Each is its
  *  own DO, reuses the safehouse room grid, and runs no enemies/boss/territory/PvP. Shared with
  *  the Worker router so these zone names pass through instead of collapsing to a district. */
-import { getFragment, DIVE_DEFAULT_FRAGMENTS } from "../../src/game/fragments";
+import {
+  DIVE_DEFAULT_FRAGMENTS,
+  getFragment,
+  newlyUnlockedMemoryInterpretations,
+  normalizeFragmentSequence,
+} from "../../src/game/fragments";
 import { dailyDistrictMod, dayIndex, hvtCallsign, HVT_BOUNTY_MULT, HVT_HP_MULT, HVT_TINT } from "../../src/game/districtMods";
 import { WORLD_EVENTS, type WorldEventDef } from "../../src/game/worldEvents";
 import { WORLD_EVENT } from "../../src/config";
@@ -763,7 +833,13 @@ export class WorldDO {
   private provingVault = false; // THE PROVING — the weekly-affixed group vault
   private zoneReady = false;
   // dynamic world events (combat districts only): telegraph -> active -> reward
-  private worldEvent: { def: WorldEventDef; phase: "telegraph" | "active"; untilTick: number } | null = null;
+  private worldEvent: {
+    def: WorldEventDef;
+    phase: "telegraph" | "active";
+    untilTick: number;
+    durationMs: number;
+    momentum: number;
+  } | null = null;
   private nextEventTick = -1;
   private lastStormTick = 0;
   private interior = false; // the safehouse zone — no enemies, no PvP
@@ -1971,8 +2047,18 @@ export class WorldDO {
       target.dead = false;
       target.hp = Math.max(20, Math.floor(PLAYER_HP * 0.35));
       target.respawnTick = 0;
+      const rescuerBefore = rescueMemorySnapshot(p.stats);
+      const rescuedBefore = rescueMemorySnapshot(target.stats);
+      if (rescuerBefore.given < MAX_RESCUE_MEMORY) this.bumpStat(p, RESCUES_GIVEN_KEY, 1);
+      if (rescuedBefore.received < MAX_RESCUE_MEMORY) this.bumpStat(target, RESCUES_RECEIVED_KEY, 1);
       this.send(ws, { t: "sys", text: `revived ${target.name}` });
       this.sendTo(target.id, { t: "sys", text: `${p.name} rebooted you — stay close` });
+      const rescuerAfter = rescueMemorySnapshot(p.stats);
+      const rescuedAfter = rescueMemorySnapshot(target.stats);
+      if (rescuerAfter.tier > rescuerBefore.tier) this.sendTo(p.id, { t: "sys", text: `◇ SOCIAL MEMORY · ${rescuerAfter.title} — ${rescuerAfter.line}` });
+      if (rescuedAfter.tier > rescuedBefore.tier) this.sendTo(target.id, { t: "sys", text: `◇ SOCIAL MEMORY · ${rescuedAfter.title} — ${rescuedAfter.line}` });
+      this.pushRelations(p);
+      this.pushRelations(target);
       this.broadcastParty(p.party);
     } else {
       this.leaveParty(p);
@@ -3520,8 +3606,42 @@ export class WorldDO {
     if (this.zoneName === ESTATES_ZONE || parseEstateInterior(this.zoneName) !== null) this.campaignEvent(p, "visit");
     // district arrivals: the RUNNING condition + the day's bounty, so the hunt is known
     if (/^d\d+$/.test(this.zoneName)) {
-      const dm = dailyDistrictMod(this.districtIndex, this.modDay >= 0 ? this.modDay : dayIndex());
+      const districtDay = this.modDay >= 0 ? this.modDay : dayIndex();
+      const dm = dailyDistrictMod(this.districtIndex, districtDay);
       this.send(ws, { t: "sys", text: `◈ district condition — ${dm.name}: ${dm.blurb}` });
+      const civic = dailyDistrictOperation(this.districtIndex, districtDay);
+      const civicProgress = Math.min(civic.count, p.stats[districtOperationKey(this.districtIndex, districtDay)] ?? 0);
+      this.send(ws, {
+        t: "sys",
+        text: `◇ PUBLIC OP · ${civic.name} (${civicProgress}/${civic.count}) — ${civic.brief} Objective: ${districtOperationObjectiveLabel(civic)}.`,
+      });
+      const aftermath = districtAftermath(this.districtIndex, districtDay, this.civicMomentum(districtDay));
+      if (aftermath.completions > 0) {
+        this.send(ws, {
+          t: "sys",
+          text: `◆ ${aftermath.name} · ${aftermath.completions} public ${aftermath.completions === 1 ? "win" : "wins"} today — ${aftermath.line}`,
+        });
+      }
+      const territoryRecord = decodeTerritoryLegacy(
+        this.meta[territoryLegacyKey(this.districtIndex)],
+        this.districtIndex,
+        districtDay,
+      );
+      if (territoryRecord.flips > 0) {
+        this.send(ws, { t: "sys", text: `▣ RELAY LEDGER · ${territoryLegacyLine(territoryRecord, districtDay)}` });
+      }
+      this.send(ws, {
+        t: "sys",
+        text: `⚑ ${factionTerritoryLine(p.faction, this.districtControl(), DISTRICTS[this.districtIndex]?.name ?? "the district")}`,
+      });
+      this.send(ws, {
+        t: "sys",
+        text: `⬡ ${factionCampaignReaction(p.faction, this.districtControl(), DISTRICTS[this.districtIndex]?.name ?? "the district")}`,
+      });
+      const campaignEcho = districtCampaignEcho(this.districtIndex, p.campaign.completed, [...p.campaign.flags]);
+      if (campaignEcho) this.send(ws, { t: "sys", text: `◈ CAMPAIGN ECHO · ${campaignEcho}` });
+      const judgment = factionJudgmentReaction(p.faction, [...p.campaign.flags]);
+      if (judgment) this.send(ws, { t: "sys", text: `⚖ CELL JUDGMENT · ${judgment}` });
       await this.maybePromoteHvt();
       for (const e of this.enemies.values())
         if (e.hvt && e.hp > 0) {
@@ -3534,10 +3654,14 @@ export class WorldDO {
     this.noteDeepest(p); // arriving in this district may set a "deepest reached" milestone
     this.send(ws, { t: "achv", ids: [...p.achv] }); // hydrate the unlocked achievement set
     await this.sendGuild(ws, p); // hydrate cell membership/bank/roster (cross-zone, D1)
+    await this.sendChronicle(ws); // shared weekly history from war/civic/boss/Cell ledgers
     await this.drainMail(p); // collect any auction proceeds that arrived while away
     this.sendContracts(ws, p); // hydrate today's daily contracts + reputation
     this.sendCosmetics(ws, p); // hydrate owned cosmetics + equipped transmog
     this.sendBounty(ws, p); // hydrate any active NPC bounty
+    this.bountyTravelEvent(p); // destination arrival itself completes a courier route
+    this.sendRelations(ws, p); // hydrate durable contact trust + district standing
+    this.sendCivic(ws); // hydrate today's shared local aftermath on streets and interiors
     const organic = proof?.arrival !== "fast";
     await this.markDiscovered(ws, id, organic);
     this.ensureTick();
@@ -3623,7 +3747,9 @@ export class WorldDO {
       equipped = parseEquipped(row.equipped);
       try {
         const f = row.fragments ? (JSON.parse(row.fragments) as unknown) : [];
-        fragments = Array.isArray(f) ? f.filter((v): v is string => typeof v === "string") : [];
+        fragments = Array.isArray(f)
+          ? normalizeFragmentSequence(f.filter((v): v is string => typeof v === "string"))
+          : [];
       } catch {
         fragments = [];
       }
@@ -3733,7 +3859,15 @@ export class WorldDO {
       if (brow) {
         const def = bountyById(brow.bounty_id);
         const progress = Math.max(0, Math.floor(Number(brow.progress) || 0));
-        if (def && progress < def.count) bounty = { id: def.id, progress };
+        const eligible = def && bountyIsEligible(
+          def,
+          storyPhase(campaign?.activeId ?? null),
+          residentConfirmationSnapshot(stats),
+          campaign.completed,
+          Array.from({ length: DISTRICTS.length }, (_, district) =>
+            decodeChronicleCivic(this.meta[chronicleCivicKey(district)], currentGuildWeek())),
+        );
+        if (def && eligible && progress < def.count) bounty = { id: def.id, progress };
         else bountyDirty = true;
       }
     } catch {
@@ -3865,6 +3999,7 @@ export class WorldDO {
       progress: p.campaign.progress,
       objective: s?.objective ?? "",
       completed: [...p.campaign.completed],
+      flags: [...p.campaign.flags],
     });
   }
 
@@ -3877,6 +4012,23 @@ export class WorldDO {
     const q = p.campaign.active;
     const s = p.campaign.currentStage;
     if (q && s) {
+      if (p.campaign.fixerJudgmentPending) {
+        this.send(ws, {
+          t: "story",
+          quest: q.name,
+          stage: s.id,
+          title: "JUDGMENT",
+          text: "THE FIXER sold Blanks to keep the route open, then left your line unsigned. Mercy preserves a compromised witness. Exposure gives the city the ledger and may destroy the person who can read it.",
+          journal: s.journal,
+          objective: "Choose what THE FIXER becomes after the debt",
+          done: false,
+          choices: [
+            { id: "spare", label: "SPARE · keep the witness" },
+            { id: "expose", label: "EXPOSE · publish the ledger" },
+          ],
+        });
+        return;
+      }
       // Prefer spoken uplink; fall back to first-person journal so the FIXER always has copy.
       const spoken =
         s.onEnterLine ||
@@ -3906,12 +4058,13 @@ export class WorldDO {
     const next = p.campaign.nextOffer();
     if (next) {
       const hook = next.stages[0]?.journal ?? next.name;
+      const echo = campaignEchoLine("fixer", p.campaign.completed, [...p.campaign.flags]);
       this.send(ws, {
         t: "story",
         quest: next.name,
         stage: "offer",
         title: "THE FIXER",
-        text: `THE FIXER: ${hook}\n\n▸ Job accepted — ${next.name}. Check your objective and deploy when ready.`,
+        text: `THE FIXER: ${echo ? `${echo}\n\n` : ""}${hook}\n\n▸ Job accepted — ${next.name}. Check your objective and deploy when ready.`,
         journal: next.stages[0]?.journal ?? "",
         objective: next.stages[0]?.objective ?? "Follow THE FIXER",
         done: false,
@@ -4053,14 +4206,24 @@ export class WorldDO {
     this.campaignBeat(p);
   }
 
-  /** Shared campaign credit for a kill: party members fighting beside the killer get
-   *  the kill beat too, and a world boss pays its "boss" beat to EVERY runner still
-   *  standing — massed fire is the point of the finale, not kill-steal roulette. */
+  /** Shared narrative/objective credit for a kill. Nearby party members advance their
+   * own contracts, public operations, and contact jobs, but receive no duplicated base
+   * kill currency, XP, loot, HVT payout, or guild tally. */
   private sharedKillCredit(killer: PlayerState, e: { x: number; y: number }, isBoss: boolean) {
     if (killer.party >= 0) {
       for (const ally of this.players.values()) {
         if (ally.id === killer.id || ally.dead || ally.party !== killer.party) continue;
-        if (Math.hypot(ally.x - e.x, ally.y - e.y) <= 640) this.campaignEvent(ally, "kill");
+        if (Math.hypot(ally.x - e.x, ally.y - e.y) > 640) continue;
+        this.campaignEvent(ally, "kill");
+        this.contractEvent(ally, "kill", 1);
+        this.districtOperationEvent(ally, "kill", 1);
+        this.bountyEvent(ally, "kill", 1);
+        if (isBoss) {
+          this.contractEvent(ally, "boss", 1);
+          this.districtOperationEvent(ally, "boss", 1);
+          this.bountyEvent(ally, "boss", 1);
+          this.addDistrictStanding(ally, 3, "stood in a party against a commander");
+        }
       }
     }
     if (isBoss) for (const p of this.players.values()) if (!p.dead) this.campaignEvent(p, "boss");
@@ -4087,8 +4250,10 @@ export class WorldDO {
     return this.worldEvent?.phase === "active" && this.worldEvent.def.id === id;
   }
 
-  private broadcastEvent(def: WorldEventDef, phase: "telegraph" | "active" | "end", seconds: number) {
-    this.broadcast({ t: "event", id: def.id, name: def.name, tagline: def.tagline, hex: def.hex, phase, seconds });
+  private broadcastEvent(def: WorldEventDef, phase: "telegraph" | "active" | "end", seconds: number, momentum = 0) {
+    const day = this.modDay >= 0 ? this.modDay : dayIndex();
+    const tagline = districtEventContext(this.districtIndex, def.name, day, momentum) ?? def.tagline;
+    this.broadcast({ t: "event", id: def.id, name: def.name, tagline, condition: def.condition, hex: def.hex, phase, seconds });
   }
 
   /** Dynamic world events — SERVER-authoritative version of the old SP scheduler:
@@ -4115,8 +4280,12 @@ export class WorldDO {
           break;
         }
       }
-      this.worldEvent = { def, phase: "telegraph", untilTick: this.tick + ticks(def.telegraphMs) };
-      this.broadcastEvent(def, "telegraph", Math.ceil(def.telegraphMs / 1000));
+      const eventDay = this.modDay >= 0 ? this.modDay : dayIndex();
+      const momentum = this.civicMomentum(eventDay);
+      const durationMs = Math.max(4_000, Math.round(def.durationMs * districtAftermath(this.districtIndex, eventDay, momentum).eventDurationMult));
+      this.worldEvent = { def, phase: "telegraph", untilTick: this.tick + ticks(def.telegraphMs), durationMs, momentum };
+      this.broadcastEvent(def, "telegraph", Math.ceil(def.telegraphMs / 1000), momentum);
+      this.broadcast({ t: "sys", text: `◇ EVENT CONDITION · ${def.condition}` });
       return;
     }
 
@@ -4124,19 +4293,32 @@ export class WorldDO {
     if (this.tick >= ev.untilTick) {
       if (ev.phase === "telegraph") {
         ev.phase = "active";
-        ev.untilTick = this.tick + ticks(ev.def.durationMs);
-        this.broadcastEvent(ev.def, "active", Math.ceil(ev.def.durationMs / 1000));
+        ev.untilTick = this.tick + ticks(ev.durationMs);
+        this.broadcastEvent(ev.def, "active", Math.ceil(ev.durationMs / 1000), ev.momentum);
         if (ev.def.id === "purge_wave") this.spawnEventWave();
       } else {
         // payout — everyone alive in the district rides the event out together
+        let survived = 0;
+        let fallen = 0;
         for (const p of this.players.values()) {
-          if (p.dead) continue;
+          if (p.dead) {
+            fallen++;
+            this.sendTo(p.id, { t: "sys", text: `◇ ${ev.def.name} FAILED · ${ev.def.failure}` });
+            continue;
+          }
+          survived++;
           this.grantXp(p, ev.def.reward.xp);
           const paid = this.grantEmit(p, "event", ev.def.reward.currency);
           this.campaignEvent(p, "event"); // SKYLINK BREAK's storm beat — survived together
+          this.districtOperationEvent(p, "event", 1);
+          this.addDistrictStanding(p, 4, `weathered ${ev.def.name}`);
           this.sendTo(p.id, { t: "sys", text: `◈ ${ev.def.name} weathered — +${ev.def.reward.xp} XP  ₵${paid}` });
         }
-        this.broadcastEvent(ev.def, "end", 0);
+        this.broadcast({
+          t: "sys",
+          text: `◆ EVENT AFTERMATH · ${ev.def.name} — ${survived} standing at resolution${fallen ? ` · ${fallen} awaiting reboot` : " · no runners left down"}`,
+        });
+        this.broadcastEvent(ev.def, "end", 0, ev.momentum);
         this.worldEvent = null;
         this.nextEventTick =
           this.tick + ticks(WORLD_EVENT.intervalMinMs + Math.random() * (WORLD_EVENT.intervalMaxMs - WORLD_EVENT.intervalMinMs));
@@ -4210,8 +4392,11 @@ export class WorldDO {
     const def = getFragment(fid);
     if (!def) return;
     const isNew = !p.fragments.includes(fid);
+    const beforeSequence = [...p.fragments];
+    let interpretations: ReturnType<typeof newlyUnlockedMemoryInterpretations> = [];
     if (isNew) {
       p.fragments.push(fid);
+      interpretations = newlyUnlockedMemoryInterpretations(beforeSequence, p.fragments);
       this.grantEmit(p, "fragment", 150);
       this.grantXp(p, 60);
       p.dirty = true;
@@ -4224,11 +4409,24 @@ export class WorldDO {
         this.sendTo(p.id, { t: "sys", text: `◈ vault cache cracked — ${cache.name}` });
       }
     }
-    this.sendTo(p.id, { t: "fragment", id: fid, title: def.title, lines: def.lines, isNew });
+    this.sendTo(p.id, {
+      t: "fragment",
+      id: fid,
+      title: def.title,
+      lines: def.lines,
+      isNew,
+      interpretations: interpretations.map((i) => ({ id: i.id, title: i.title, line: i.line, district: i.district })),
+    });
     this.sendTo(p.id, {
       t: "sys",
       text: isNew ? `◈ MEMORY RECOVERED — ${def.title}  (+60 XP  ₵150)` : `◈ memory re-read — ${def.title} (already held)`,
     });
+    for (const interpretation of interpretations) {
+      this.sendTo(p.id, {
+        t: "sys",
+        text: `▤ MEMORY SYNTHESIS · ${interpretation.title} [${interpretation.positions.join("→")}] — ${interpretation.line}`,
+      });
+    }
     // THE PROVING — the weekly clear pays big, once per player per week (campaign flag
     // = persisted claim-once), and lands on the week's leaderboard
     if (this.provingVault) {
@@ -4294,9 +4492,27 @@ export class WorldDO {
       acceptQuest(msg.id);
       return;
     }
+    if (msg.action === "choice") {
+      if (!p.campaign.fixerJudgmentPending) {
+        sys("that judgment is no longer open");
+        return;
+      }
+      const spared = msg.choice === "spare";
+      p.campaign.resolveFixerJudgment(msg.choice);
+      p.dirty = true;
+      sys(spared
+        ? "◆ JUDGMENT · THE FIXER spared — witness kept, debt remembered"
+        : "◆ JUDGMENT · THE FIXER exposed — ledger published, protection withdrawn");
+      this.campaignBeat(p);
+      return;
+    }
     if (msg.action === "talk") {
       // Returning to FIXER mid-quest: resolve talk beats; otherwise re-brief (don't dead-end).
       if (p.campaign.isTalkStage()) {
+        if (p.campaign.fixerJudgmentPending) {
+          this.sendCampaignBeat(ws, p);
+          return;
+        }
         p.campaign.onTalk();
         this.campaignBeat(p);
         return;
@@ -4314,6 +4530,10 @@ export class WorldDO {
         return;
       }
       if (p.campaign.isTalkStage()) {
+        if (p.campaign.fixerJudgmentPending) {
+          this.sendCampaignBeat(ws, p);
+          return;
+        }
         p.campaign.onTalk();
         this.campaignBeat(p);
         return;
@@ -4575,6 +4795,300 @@ export class WorldDO {
     if (changed) {
       p.dailyDirty = true;
       this.pushContracts(p);
+    }
+  }
+
+  /**
+   * District public operations are small, local acts of mutual aid layered onto
+   * the existing combat loop. Progress lives in player_stats under a day+district
+   * key, so it is authoritative across zone hops without a new schema or reset job.
+   */
+  private districtOperationEvent(p: PlayerState, objective: DistrictOperationObjective, n = 1) {
+    if (!/^d\d+$/.test(this.zoneName) || n <= 0) return;
+    const districtDay = this.modDay >= 0 ? this.modDay : dayIndex();
+    const operation = dailyDistrictOperation(this.districtIndex, districtDay);
+    if (operation.objective !== objective) return;
+    const key = districtOperationKey(this.districtIndex, districtDay);
+    const before = Math.max(0, p.stats[key] ?? 0);
+    if (before >= operation.count) return;
+    const add = Math.min(Math.max(1, Math.floor(n)), operation.count - before);
+    this.bumpStat(p, key, add);
+    const progress = before + add;
+    if (progress < operation.count) {
+      if (before === 0 || progress === operation.count - 1) {
+        this.sendTo(p.id, { t: "sys", text: `◇ ${operation.name} — ${progress}/${operation.count}` });
+      }
+      return;
+    }
+    this.grantXp(p, operation.rewardXp);
+    const paid = this.grantEmit(p, "civic_operation", operation.rewardCredits);
+    this.bumpStat(p, "rep", Math.max(2, Math.round(operation.rewardXp / 10)));
+    this.addDistrictStanding(p, 20, "public operation");
+    this.sendTo(p.id, {
+      t: "sys",
+      text: `◆ PUBLIC OP COMPLETE · ${operation.name} — ${operation.completion} (+${operation.rewardXp} XP  ₵${paid})`,
+    });
+    if (p.campaign.completed.includes("continue_q")) {
+      const echo = districtCampaignEcho(this.districtIndex, p.campaign.completed, [...p.campaign.flags]);
+      if (echo) this.sendTo(p.id, { t: "sys", text: `◈ POST-AWAKENING · ${echo}` });
+    }
+    // One player's completed work becomes shared district history. This write is
+    // deliberately detached from the personal reward path: a transient civic
+    // persistence failure must never duplicate XP/currency on a retry.
+    void this.recordCivicMomentum(districtDay);
+    void this.recordWeeklyCivic();
+  }
+
+  private civicMomentum(day = this.modDay >= 0 ? this.modDay : dayIndex()): number {
+    return civicMomentumFromMeta(this.meta, this.districtIndex, day);
+  }
+
+  private sendCivic(ws: WebSocket, day = this.modDay >= 0 ? this.modDay : dayIndex()) {
+    if (!/^d\d+(?:i\d+)?$/.test(this.zoneName)) return;
+    const operation = dailyDistrictOperation(this.districtIndex, day);
+    const aftermath = districtAftermath(this.districtIndex, day, this.civicMomentum(day));
+    this.send(ws, {
+      t: "civic",
+      district: this.districtIndex,
+      day,
+      operation: operation.name,
+      stage: aftermath.name,
+      completions: aftermath.completions,
+      line: aftermath.line,
+      eventDurationPct: Math.round(aftermath.eventDurationMult * 100),
+    });
+  }
+
+  private broadcastCivic(day = this.modDay >= 0 ? this.modDay : dayIndex()) {
+    for (const ws of this.sessions.keys()) this.sendCivic(ws, day);
+  }
+
+  /** Atomically advance today's shared district aftermath in one reusable D1 row. */
+  private async recordCivicMomentum(day: number) {
+    if (!/^d\d+$/.test(this.zoneName)) return;
+    const key = civicMomentumKey(this.districtIndex);
+    const first = encodeCivicMomentum(day, 1);
+    const dayFloor = encodeCivicMomentum(day, 0);
+    const nextDayFloor = encodeCivicMomentum(day + 1, 0);
+    const capped = encodeCivicMomentum(day, CIVIC_MOMENTUM_CAP);
+    try {
+      await this.env.DB.prepare(
+        `INSERT INTO world_meta (k, v) VALUES (?, ?)
+         ON CONFLICT(k) DO UPDATE SET v = CASE
+           WHEN v >= ? AND v < ? THEN MIN(?, v + 1)
+           ELSE ? END`,
+      )
+        .bind(key, first, dayFloor, nextDayFloor, capped, first)
+        .run();
+      const row = await this.env.DB.prepare("SELECT v FROM world_meta WHERE k = ?").bind(key).first<{ v: number }>();
+      if (!row) return;
+      this.meta[key] = row.v;
+      const aftermath = districtAftermath(this.districtIndex, day, this.civicMomentum(day));
+      this.broadcastCivic(day);
+      this.broadcast({
+        t: "sys",
+        text: `◆ ${aftermath.name} · ${aftermath.completions} public ${aftermath.completions === 1 ? "win" : "wins"} today — ${aftermath.line}`,
+      });
+    } catch {
+      this.errCount++;
+    }
+  }
+
+  private async sendChronicle(ws: WebSocket) {
+    const now = Date.now();
+    const week = currentGuildWeek(now);
+    let cellGoalsClaimed = 0;
+    let cellGoalProgress = 0;
+    try {
+      const row = await this.env.DB.prepare(
+        "SELECT COUNT(CASE WHEN claimed = 1 THEN 1 END) AS claimed, COALESCE(SUM(progress), 0) AS progress FROM guild_goal_progress WHERE week = ?",
+      ).bind(week).first<{ claimed: number; progress: number }>();
+      cellGoalsClaimed = Math.max(0, Number(row?.claimed) || 0);
+      cellGoalProgress = Math.max(0, Number(row?.progress) || 0);
+    } catch {
+      /* pre-migration: chronicle still reports war/civic/boss ledgers */
+    }
+    const chronicle = buildCityChronicle({
+      now,
+      warScores: [0, 1, 2, 3].map((f) => this.meta[warMetaKey(week, f)] ?? 0),
+      civicMomentum: Array.from({ length: DISTRICTS.length }, (_, d) =>
+        decodeChronicleCivic(this.meta[chronicleCivicKey(d)], week)),
+      bossKills: decodeChronicleBosses(this.meta[CHRONICLE_BOSS_KEY], week),
+      cellGoalsClaimed,
+      cellGoalProgress,
+      territory: Array.from({ length: DISTRICTS.length }, (_, district) =>
+        decodeTerritoryLegacy(this.meta[territoryLegacyKey(district)], district, dayIndex(now))),
+    });
+    this.send(ws, { t: "chronicle", ...chronicle });
+  }
+
+  /** One fixed row per district carries public-operation history across UTC days while
+   * resetting logically at the guild/war week boundary. */
+  private async recordWeeklyCivic() {
+    if (!/^d\d+$/.test(this.zoneName)) return;
+    const week = currentGuildWeek();
+    const key = chronicleCivicKey(this.districtIndex);
+    const first = encodeChronicleCivic(week, 1);
+    const floor = encodeChronicleCivic(week, 0);
+    const next = encodeChronicleCivic(week + 1, 0);
+    const cap = encodeChronicleCivic(week, CHRONICLE_CIVIC_CAP);
+    try {
+      await this.env.DB.prepare(
+        `INSERT INTO world_meta (k, v) VALUES (?, ?)
+         ON CONFLICT(k) DO UPDATE SET v = CASE
+           WHEN v >= ? AND v < ? THEN MIN(?, v + 1)
+           ELSE ? END`,
+      ).bind(key, first, floor, next, cap, first).run();
+      const row = await this.env.DB.prepare("SELECT v FROM world_meta WHERE k = ?")
+        .bind(key).first<{ v: number }>();
+      if (!row) return;
+      this.meta[key] = row.v;
+      // Operation completions are rare enough to refresh the edition immediately.
+      for (const sock of this.sessions.keys()) void this.sendChronicle(sock);
+    } catch {
+      this.errCount++;
+    }
+  }
+
+  /** Persist the latest daily relay charter without making history authoritative over
+   * live node ownership. One fixed row per district stores controller + bounded flips. */
+  private async recordTerritoryLegacy(controller: number, day = this.modDay >= 0 ? this.modDay : dayIndex()) {
+    if (!/^d\d+$/.test(this.zoneName) || controller < 0 || controller >= FACTION_COUNT) return;
+    const key = territoryLegacyKey(this.districtIndex);
+    const first = encodeTerritoryLegacy(day, controller, 1);
+    const floor = day * 1_000;
+    const next = (day + 1) * 1_000;
+    const controllerBase = day * 1_000 + (controller + 1) * 100;
+    try {
+      await this.env.DB.prepare(
+        `INSERT INTO world_meta (k, v) VALUES (?, ?)
+         ON CONFLICT(k) DO UPDATE SET v = CASE
+           WHEN v >= ? AND v < ? THEN ? + MIN(?, (v % 100) + 1)
+           ELSE ? END`,
+      ).bind(key, first, floor, next, controllerBase, TERRITORY_FLIP_CAP, first).run();
+      const row = await this.env.DB.prepare("SELECT v FROM world_meta WHERE k = ?")
+        .bind(key).first<{ v: number }>();
+      if (!row) return;
+      this.meta[key] = row.v;
+      const record = decodeTerritoryLegacy(row.v, this.districtIndex, day);
+      this.broadcastSys(`▣ RELAY CHARTER RECORDED · ${territoryLegacyLine(record, day)}`);
+      for (const sock of this.sessions.keys()) void this.sendChronicle(sock);
+    } catch {
+      this.errCount++;
+    }
+  }
+
+  /** One reusable row records weekly boss deaths across every district shard. */
+  private async recordChronicleBoss() {
+    const week = currentGuildWeek();
+    const first = encodeChronicleBosses(week, 1);
+    const floor = encodeChronicleBosses(week, 0);
+    const next = encodeChronicleBosses(week + 1, 0);
+    const cap = encodeChronicleBosses(week, CHRONICLE_BOSS_CAP);
+    try {
+      await this.env.DB.prepare(
+        `INSERT INTO world_meta (k, v) VALUES (?, ?)
+         ON CONFLICT(k) DO UPDATE SET v = CASE
+           WHEN v >= ? AND v < ? THEN MIN(?, v + 1)
+           ELSE ? END`,
+      ).bind(CHRONICLE_BOSS_KEY, first, floor, next, cap, first).run();
+      const row = await this.env.DB.prepare("SELECT v FROM world_meta WHERE k = ?")
+        .bind(CHRONICLE_BOSS_KEY).first<{ v: number }>();
+      if (row) {
+        this.meta[CHRONICLE_BOSS_KEY] = row.v;
+        // Boss deaths are rare, city-scale facts. Refresh the edition immediately
+        // so runners already reading a safe-zone map do not need to reconnect.
+        for (const sock of this.sessions.keys()) void this.sendChronicle(sock);
+      }
+    } catch {
+      this.errCount++;
+    }
+  }
+
+  // ── durable relationships + local standing ───────────────────────────────
+  private sendRelations(ws: WebSocket, p: PlayerState) {
+    this.send(ws, {
+      t: "relations",
+      trust: relationshipSnapshot(p.stats),
+      districts: districtStandingSnapshot(p.stats),
+      clues: residentClueSnapshot(p.stats),
+      confirmed: residentConfirmationSnapshot(p.stats),
+      reconstruction: reconstructionSnapshot(p.stats),
+      social: rescueMemorySnapshot(p.stats),
+    });
+  }
+
+  private pushRelations(p: PlayerState) {
+    for (const [sock, id] of this.sessions) if (id === p.id) this.sendRelations(sock, p);
+  }
+
+  /** First conversation only. No XP, currency, rep, or unlock is attached. */
+  private noteNpcMet(p: PlayerState, npcId: string) {
+    const key = relationshipTalkKey(npcId);
+    let changed = false;
+    if ((p.stats[key] ?? 0) < 1) {
+      this.bumpStat(p, key, 1);
+      changed = true;
+    }
+    const clue = residentClueGrant(npcId);
+    const profile = residentProfile(npcId);
+    if (clue && profile?.district === this.districtIndex && residentZone(profile) === this.zoneName && !(p.stats[clue.key] ?? 0)) {
+      this.bumpStat(p, clue.key, 1);
+      changed = true;
+      this.sendTo(p.id, { t: "sys", text: `◇ LOCAL TESTIMONY · ${clue.line}` });
+    }
+    const confirmation = residentConfirmationGrant(npcId, residentClueSnapshot(p.stats));
+    if (confirmation && profile?.district === this.districtIndex && residentZone(profile) === this.zoneName && !(p.stats[confirmation.key] ?? 0)) {
+      const before = residentConfirmationSnapshot(p.stats).length;
+      this.bumpStat(p, confirmation.key, 1);
+      changed = true;
+      const after = before + 1;
+      this.sendTo(p.id, { t: "sys", text: `◆ CASEFILE CONFIRMED ${after}/8 · ${confirmation.line}` });
+      const milestone = CASEFILE_MILESTONES.find((m) => m.threshold === after);
+      if (milestone) {
+        this.sendTo(p.id, { t: "sys", text: `▤ FOLLOW-UP · ${milestone.title} — ${milestone.objective}` });
+      }
+    }
+    if (changed) this.pushRelations(p);
+  }
+
+  /** Completed authored work advances trust, capped so the stat row cannot grow forever. */
+  private noteNpcJobCompleted(p: PlayerState, npcId: string) {
+    const talk = p.stats[relationshipTalkKey(npcId)] ?? 0;
+    const key = relationshipJobsKey(npcId);
+    const jobs = Math.max(0, p.stats[key] ?? 0);
+    if (jobs >= MAX_RELATIONSHIP_JOBS) return;
+    const before = relationshipTier(talk, jobs);
+    this.bumpStat(p, key, 1);
+    const after = relationshipTier(talk, jobs + 1);
+    this.pushRelations(p);
+    if (after > before) {
+      const name = npcDef(npcId)?.name ?? npcId.replace(/_/g, " ").toUpperCase();
+      this.sendTo(p.id, { t: "sys", text: `◆ CONTACT · ${name} now ${relationshipTierName(after)}` });
+    }
+  }
+
+  /** Civic recognition only: bounded, additive, and deliberately not combat power. */
+  private addDistrictStanding(p: PlayerState, amount: number, reason: string) {
+    if (!/^d\d+$/.test(this.zoneName) || amount <= 0) return;
+    this.addDistrictStandingAt(p, this.districtIndex, amount, reason);
+  }
+
+  /** Attribute resident promises to the resident's neighborhood even when the final
+   * objective occurs in a dive, interior, wilderness zone, or another district. */
+  private addDistrictStandingAt(p: PlayerState, district: number, amount: number, reason: string) {
+    if (!Number.isInteger(district) || district < 0 || district >= DISTRICTS.length || amount <= 0) return;
+    const key = districtStandingKey(district);
+    const current = Math.max(0, p.stats[key] ?? 0);
+    if (current >= MAX_DISTRICT_STANDING) return;
+    const add = Math.min(MAX_DISTRICT_STANDING - current, Math.max(1, Math.floor(amount)));
+    const before = districtStandingTier(current);
+    this.bumpStat(p, key, add);
+    const after = districtStandingTier(current + add);
+    this.pushRelations(p);
+    if (after.tier > before.tier) {
+      const place = DISTRICTS[district]?.name ?? "the district";
+      this.sendTo(p.id, { t: "sys", text: `◆ LOCAL STANDING · ${after.name} in ${place} — ${reason}` });
     }
   }
 
@@ -5003,6 +5517,27 @@ export class WorldDO {
     if (msg.action === "accept") {
       const b = bountyById(msg.id);
       if (!b) return;
+      if (b.requiredConfirmation && !residentConfirmationSnapshot(p.stats).includes(b.requiredConfirmation)) {
+        this.send(ws, { t: "sys", text: "that case has not been corroborated" });
+        return;
+      }
+      if (b.requiredCampaign && !p.campaign.completed.includes(b.requiredCampaign)) {
+        this.send(ws, { t: "sys", text: "that reconstruction work has not opened yet" });
+        return;
+      }
+      if (b.requiredPhase && storyPhase(p.campaign?.activeId ?? null) !== b.requiredPhase) {
+        this.send(ws, { t: "sys", text: "that ally operation belongs to a later campaign phase" });
+        return;
+      }
+      if (b.requiredCivicWork) {
+        const week = currentGuildWeek();
+        const hasCivicWork = Array.from({ length: DISTRICTS.length }, (_, district) =>
+          decodeChronicleCivic(this.meta[chronicleCivicKey(district)], week)).some((count) => count > 0);
+        if (!hasCivicWork) {
+          this.send(ws, { t: "sys", text: "no public work has opened that courier route this week" });
+          return;
+        }
+      }
       // re-accepting the job you already hold is idempotent — it re-syncs the tracker
       // instead of dead-ending (a stale active job used to lock the slot forever)
       if (p.bounty?.id === b.id) {
@@ -5014,9 +5549,9 @@ export class WorldDO {
         this.send(ws, { t: "sys", text: "finish your current job first" });
         return;
       }
-      // Boss jobs are character moments, not a 30-second respawn faucet. Persist the
-      // per-job daily gate so zone travel and isolate eviction cannot reset it.
-      if (b.objective === "boss") {
+      // Boss and courier jobs are character moments, not respawn/fast-travel faucets.
+      // Persist the per-job daily gate so zone travel and isolate eviction cannot reset it.
+      if (b.objective === "boss" || b.objective === "travel") {
         let completedAt = p.bountyCompletedAt.get(b.id) ?? 0;
         if (!completedAt) {
           const row = await this.env.DB.prepare(
@@ -5059,10 +5594,15 @@ export class WorldDO {
   private onNpcService(ws: WebSocket, msg: Extract<ClientMsg, { t: "npc" }>) {
     const p = this.playerFor(ws);
     if (!p || p.dead) return;
-    if (msg.action !== "service") return;
     const npcId = (msg.npcId || "").replace(/[^a-zA-Z0-9_:-]/g, "").slice(0, 48);
+    if (!npcId || !npcDef(npcId)) return;
+    if (msg.action === "talk") {
+      this.noteNpcMet(p, npcId);
+      return;
+    }
+    if (msg.action !== "service") return;
     const service = (msg.service || "").replace(/[^a-z0-9_]/g, "").slice(0, 32) as NpcServiceId;
-    if (!npcId || !service) return;
+    if (!service) return;
     // Panel opens are client-side; bounty uses the dedicated path (but accept alias ok).
     if (CLIENT_OPEN_SERVICES.has(service) && service !== "bounty") return;
     const offered = servicesForNpc(npcId);
@@ -5075,7 +5615,14 @@ export class WorldDO {
 
     if (service === "bounty") {
       // Story allies escalate their jobs with the campaign's final act.
-      const b = bountyForNpc(npcId, storyPhase(p.campaign?.activeId ?? null));
+      const b = bountyForNpc(
+        npcId,
+        storyPhase(p.campaign?.activeId ?? null),
+        residentConfirmationSnapshot(p.stats),
+        p.campaign.completed,
+        Array.from({ length: DISTRICTS.length }, (_, district) =>
+          decodeChronicleCivic(this.meta[chronicleCivicKey(district)], currentGuildWeek())),
+      );
       if (!b) {
         this.send(ws, { t: "sys", text: "no job on the table" });
         return;
@@ -5168,7 +5715,18 @@ export class WorldDO {
         this.eco("burn", "npc_rumor", cost);
         const xp = npcServiceXp("rumor", p.level);
         this.grantXp(p, xp);
-        const tip = RUMOR_TIPS[Math.floor(Math.random() * RUMOR_TIPS.length)];
+        const inDistrict = /^d\d+(?:i\d+)?$/.test(this.zoneName);
+        const tip = inDistrict
+          ? districtRumorLine(
+              this.districtIndex,
+              this.modDay >= 0 ? this.modDay : dayIndex(),
+              relationshipTier(
+                p.stats[relationshipTalkKey(npcId)] ?? 0,
+                p.stats[relationshipJobsKey(npcId)] ?? 0,
+              ),
+              this.civicMomentum(this.modDay >= 0 ? this.modDay : dayIndex()),
+            )
+          : RUMOR_TIPS[Math.floor(Math.random() * RUMOR_TIPS.length)];
         line = `rumor (+${xp} XP): ${tip}`;
         break;
       }
@@ -5232,12 +5790,12 @@ export class WorldDO {
     p.bounty.progress += n;
     p.bountyDirty = true;
     if (p.bounty.progress >= b.count) {
-      if (b.objective === "boss") {
-        // Clear the in-memory job before starting IO so two boss deaths in adjacent
-        // ticks cannot launch two completion claims. The D1 conditional upsert below
-        // is the cross-zone/reconnect authority and must win before any payout occurs.
+      if (b.objective === "boss" || b.objective === "travel") {
+        // Clear the in-memory job before starting IO so adjacent authoritative events
+        // cannot launch two completion claims. The D1 conditional upsert below is the
+        // cross-zone/reconnect authority and must win before any payout occurs.
         p.bounty = null;
-        void this.completeBossBounty(p, b);
+        void this.completeCooldownBounty(p, b);
       } else {
         this.payBountyReward(p, b);
         p.bounty = null;
@@ -5250,15 +5808,43 @@ export class WorldDO {
     this.pushBounty(p);
   }
 
+  /** Zone arrival is the only progress event for courier work. The client cannot
+   * forge completion: login hydration places the player in an authoritative zone,
+   * then this compares that zone with the job's authored destination. */
+  private bountyTravelEvent(p: PlayerState) {
+    if (!p.bounty) return;
+    const b = bountyById(p.bounty.id);
+    if (b?.objective !== "travel" || b.targetZone !== this.zoneName) return;
+    this.bountyEvent(p, "travel", 1);
+  }
+
   private payBountyReward(p: PlayerState, b: NonNullable<ReturnType<typeof bountyById>>) {
     const paid = this.grantEmit(p, "bounty", b.rewardCredits);
     if (paid > 0) this.bumpStat(p, "credits", paid);
     this.bumpStat(p, "rep", b.rewardRep);
+    const residentDistrict = residentProfile(b.npc)?.district;
+    if (b.requiredCampaign && residentDistrict !== undefined) {
+      const key = reconstructionKey(residentDistrict);
+      const before = Math.max(0, p.stats[key] ?? 0);
+      if (before < MAX_RECONSTRUCTION) this.bumpStat(p, key, 1);
+      const result = districtReconstruction(residentDistrict, Math.min(MAX_RECONSTRUCTION, before + 1));
+      if (result) this.sendTo(p.id, { t: "sys", text: `◆ RECONSTRUCTION · ${result.stage} — ${result.line}` });
+    }
+    this.noteNpcJobCompleted(p, b.npc);
+    if (residentDistrict === undefined) this.addDistrictStanding(p, 5, `kept a promise to ${npcDef(b.npc)?.name ?? b.npc}`);
+    else this.addDistrictStandingAt(p, residentDistrict, 5, `kept a promise to ${npcDef(b.npc)?.name ?? b.npc}`);
+    if (b.requiredConfirmation) {
+      const milestone = [...CASEFILE_MILESTONES].reverse().find((m) => residentConfirmationSnapshot(p.stats).length >= m.threshold);
+      this.sendTo(p.id, {
+        t: "sys",
+        text: `▤ CASEFILE FOLLOW-UP CLOSED · ${b.name}${milestone ? ` — ${milestone.title} remains the working theory` : ""}`,
+      });
+    }
     this.sendTo(p.id, { t: "sys", text: `✔ BOUNTY — ${b.name} (+₵${paid} +${b.rewardRep} rep)` });
   }
 
-  /** Atomically claim the per-job cooldown before paying a world-boss bounty. */
-  private async completeBossBounty(p: PlayerState, b: NonNullable<ReturnType<typeof bountyById>>) {
+  /** Atomically claim the per-job cooldown before paying a boss or courier bounty. */
+  private async completeCooldownBounty(p: PlayerState, b: NonNullable<ReturnType<typeof bountyById>>) {
     const completedAt = Date.now();
     try {
       const r = await this.env.DB.prepare(
@@ -5278,7 +5864,7 @@ export class WorldDO {
       this.pushBounty(p);
     } catch {
       // Fail closed: no durable cooldown means no reward. Restore the job just below
-      // completion so the player can retry on the next boss instead of losing it.
+      // completion so the player can retry the next authoritative objective event.
       if (!p.bounty) p.bounty = { id: b.id, progress: Math.max(0, b.count - 1) };
       p.bountyDirty = true;
       this.sendTo(p.id, { t: "sys", text: "bounty registry unavailable — payout held, job restored" });
@@ -6230,9 +6816,12 @@ export class WorldDO {
       }
       if (paid > 0) this.bumpStat(killer, "credits", paid);
       this.contractEvent(killer, "kill", 1);
+      this.districtOperationEvent(killer, "kill", 1);
       this.bountyEvent(killer, "kill", 1);
       if (isBoss) {
         this.contractEvent(killer, "boss", 1);
+        this.districtOperationEvent(killer, "boss", 1);
+        this.addDistrictStanding(killer, 8, `brought down ${e.name ?? "a commander"}`);
         this.bountyEvent(killer, "boss", 1);
       }
       this.eliteDeath(e);
@@ -6257,6 +6846,7 @@ export class WorldDO {
       }
       // World-boss signature piece — guaranteed on kill (on top of the normal roll).
       if (isBoss) {
+        void this.recordChronicleBoss();
         const sig = rollBossSignature(e.name, killer.level);
         if (sig) {
           this.grantLoot(killer, sig, "bag full boss loot");
@@ -6825,8 +7415,17 @@ export class WorldDO {
         const chanMult = this.eventActive("contagion_outbreak") ? 2 : 1;
         node.progress = Math.min(1, node.progress + NODE_CAPTURE_PER_SEC * chanMult * dts);
         if (node.progress >= 1) {
+          const controlBefore = !this.inTutorial() && !inDive ? this.districtControl() : NEUTRAL;
           node.owner = node.by;
-          if (!this.inTutorial() && !inDive) this.bumpMeta("f" + node.by, FACTION_CAPTURE_SCORE);
+          if (!this.inTutorial() && !inDive) {
+            this.bumpMeta("f" + node.by, FACTION_CAPTURE_SCORE);
+            const controlAfter = this.districtControl();
+            if (controlAfter !== NEUTRAL && controlAfter !== controlBefore) {
+              this.broadcastSys(factionCaptureLine(controlAfter, DISTRICTS[this.districtIndex]?.name ?? "the district"));
+              this.broadcastSys(`⬡ WEEKLY DOCTRINE · ${factionCampaignBrief(controlAfter)}`);
+              void this.recordTerritoryLegacy(controlAfter);
+            }
+          }
           // credit the players who channelled it (quest "capture" objective)
           for (const pl of this.players.values()) {
             if (!pl.dead && pl.faction === node.by && dist2(pl.x, pl.y, node.x, node.y) <= CR2) {
@@ -6839,6 +7438,8 @@ export class WorldDO {
                 this.campaignSecureCheck(pl);
                 this.bumpStat(pl, "captures", 1);
                 this.contractEvent(pl, "capture", 1);
+                this.districtOperationEvent(pl, "capture", 1);
+                this.addDistrictStanding(pl, 3, "held a public relay");
                 if (pl.guildId) void this.bumpGuildGoal(pl.guildId, "captures", 1);
                 // District War weekly bonus (focus district only, once per war week).
                 if (this.flags.districtWar) {
@@ -7316,40 +7917,54 @@ export class WorldDO {
   /** Flush queued stat increments + deepest + achievements (batched per player). */
   private async flushStats(p: PlayerState) {
     const batch: D1PreparedStatement[] = [];
+    // Snapshot without consuming. Other WebSocket events may add more while the D1
+    // batch is in flight; on success we subtract exactly this captured prefix.
+    const deltas = Object.entries(p.statDelta).filter(([, d]) => !!d);
+    const deepestValue = p.deepestDirty ? p.deepest : null;
+    const achievements = [...p.achvNew];
     try {
       const statStmt = this.env.DB.prepare(
         "INSERT INTO player_stats (player, stat, v) VALUES (?,?,?) ON CONFLICT(player,stat) DO UPDATE SET v = v + excluded.v",
       );
-      for (const k of Object.keys(p.statDelta)) {
-        const d = p.statDelta[k];
-        delete p.statDelta[k];
-        if (!d) continue;
+      for (const [k, d] of deltas) {
         batch.push(statStmt.bind(p.id, k, d));
       }
-      if (p.deepestDirty) {
-        p.deepestDirty = false;
+      if (deepestValue !== null) {
         batch.push(
           this.env.DB.prepare(
             "INSERT INTO player_stats (player, stat, v) VALUES (?,?,?) ON CONFLICT(player,stat) DO UPDATE SET v = MAX(v, excluded.v)",
-          ).bind(p.id, "deepest", p.deepest),
+          ).bind(p.id, "deepest", deepestValue),
         );
       }
-      if (p.achvNew.length) {
+      if (achievements.length) {
         const now = Date.now();
         const achStmt = this.env.DB.prepare("INSERT OR IGNORE INTO player_achv (player, ach, at) VALUES (?,?,?)");
-        for (const a of p.achvNew.splice(0)) {
+        for (const a of achievements) {
           batch.push(achStmt.bind(p.id, a, now));
         }
       }
       if (batch.length) await this.env.DB.batch(batch);
+      consumeCapturedDeltas(p.statDelta, deltas);
+      if (deepestValue !== null && p.deepest <= deepestValue) p.deepestDirty = false;
+      p.achvNew = consumeCapturedAchievements(p.achvNew, achievements);
     } catch {
-      /* tables may not exist before migration */
+      // Leave every captured delta queued. The next persistence cadence retries it.
     }
   }
 
   /** Flush queued meta increments to D1 atomically (so every zone DO contributes to
    *  ONE shared set of meters), then re-read the global values. */
   private async syncMeta() {
+    const civicDay = this.modDay >= 0 ? this.modDay : dayIndex();
+    const civicBefore = /^d\d+(?:i\d+)?$/.test(this.zoneName) ? this.civicMomentum(civicDay) : -1;
+    const chronicleWeek = currentGuildWeek();
+    const weeklyCivicBefore = Array.from({ length: DISTRICTS.length }, (_, district) =>
+      decodeChronicleCivic(this.meta[chronicleCivicKey(district)], chronicleWeek)).join(",");
+    const territoryDay = this.modDay >= 0 ? this.modDay : dayIndex();
+    const territoryBefore = Array.from({ length: DISTRICTS.length }, (_, district) => {
+      const record = decodeTerritoryLegacy(this.meta[territoryLegacyKey(district)], district, territoryDay);
+      return `${record.controller}:${record.flips}`;
+    }).join(",");
     try {
       for (const k of Object.keys(this.metaDelta)) {
         const d = round2(this.metaDelta[k]);
@@ -7367,6 +7982,19 @@ export class WorldDO {
         v: number;
       }>();
       for (const r of results ?? []) this.meta[r.k] = r.v;
+      if (civicBefore >= 0 && this.civicMomentum(civicDay) !== civicBefore) this.broadcastCivic(civicDay);
+      const weeklyCivicAfter = Array.from({ length: DISTRICTS.length }, (_, district) =>
+        decodeChronicleCivic(this.meta[chronicleCivicKey(district)], chronicleWeek)).join(",");
+      if (weeklyCivicAfter !== weeklyCivicBefore) {
+        for (const sock of this.sessions.keys()) void this.sendChronicle(sock);
+      }
+      const territoryAfter = Array.from({ length: DISTRICTS.length }, (_, district) => {
+        const record = decodeTerritoryLegacy(this.meta[territoryLegacyKey(district)], district, territoryDay);
+        return `${record.controller}:${record.flips}`;
+      }).join(",");
+      if (territoryAfter !== territoryBefore) {
+        for (const sock of this.sessions.keys()) void this.sendChronicle(sock);
+      }
     } catch {
       /* world_meta missing pre-migration */
     }

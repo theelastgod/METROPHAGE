@@ -27,7 +27,14 @@ export default class FixerBrief {
     return this.open;
   }
 
-  show(opts: { quest: string; title: string; text: string; objective: string }) {
+  show(opts: {
+    quest: string;
+    title: string;
+    text: string;
+    objective: string;
+    choices?: Array<{ id: "spare" | "expose"; label: string }>;
+    onChoice?: (id: "spare" | "expose") => void;
+  }) {
     this.clear();
     this.open = true;
     const D = 1750;
@@ -91,33 +98,54 @@ export default class FixerBrief {
       this.bodyText.setText(tighter);
     }
 
-    const btnW = uiDim(140);
-    const bx = x + w / 2 - btnW / 2;
+    const choiceMode = !!opts.choices?.length;
+    const btnW = choiceMode ? (w - pad * 3) / 2 : uiDim(140);
+    const bx = choiceMode ? x + pad : x + w / 2 - btnW / 2;
     const by = y + h - uiDim(14) - btnH;
     g.fillStyle(0x39ff88, 0.2).fillRoundedRect(bx, by, btnW, btnH, uiDim(4));
     g.lineStyle(uiDim(1.5), 0x39ff88, 0.95).strokeRoundedRect(bx, by, btnW, btnH, uiDim(4));
-    const btn = add(
-      this.scene.add
-        .text(x + w / 2, by + btnH / 2, "GOT IT →", displayFont(11, { color: "#39ff88", fontStyle: "bold" }))
-        .setOrigin(0.5)
-        .setScrollFactor(0)
-        .setDepth(D + 4)
-        .setInteractive({ useHandCursor: true }),
-    );
-    btn.on("pointerdown", () => this.close());
-    const zone = add(
-      this.scene.add
-        .zone(bx, by, btnW, btnH)
-        .setOrigin(0)
-        .setScrollFactor(0)
-        .setDepth(D + 5)
-        .setInteractive({ useHandCursor: true }),
-    );
-    zone.on("pointerdown", () => this.close());
+    const buttons = choiceMode ? opts.choices!.slice(0, 2) : [{ id: null, label: "GOT IT →" }];
+    buttons.forEach((choice, i) => {
+      const cx = choiceMode ? bx + i * (btnW + pad) : bx;
+      if (i > 0) {
+        g.fillStyle(0x39ff88, 0.2).fillRoundedRect(cx, by, btnW, btnH, uiDim(4));
+        g.lineStyle(uiDim(1.5), 0x39ff88, 0.95).strokeRoundedRect(cx, by, btnW, btnH, uiDim(4));
+      }
+      add(
+        this.scene.add
+          .text(cx + btnW / 2, by + btnH / 2, choice.label, displayFont(choiceMode ? 8 : 11, { color: "#39ff88", fontStyle: "bold" }))
+          .setOrigin(0.5)
+          .setScrollFactor(0)
+          .setDepth(D + 4),
+      );
+      const zone = add(
+        this.scene.add
+          .zone(cx, by, btnW, btnH)
+          .setOrigin(0)
+          .setScrollFactor(0)
+          .setDepth(D + 5)
+          .setInteractive({ useHandCursor: true }),
+      );
+      zone.on("pointerdown", () => {
+        this.close();
+        if (choice.id) opts.onChoice?.(choice.id);
+      });
+    });
   }
 
   /** Update copy if the brief is already open (story arrived after engage). */
-  update(opts: { quest: string; title: string; text: string; objective: string }) {
+  update(opts: {
+    quest: string;
+    title: string;
+    text: string;
+    objective: string;
+    choices?: Array<{ id: "spare" | "expose"; label: string }>;
+    onChoice?: (id: "spare" | "expose") => void;
+  }) {
+    if (opts.choices?.length) {
+      this.show(opts);
+      return;
+    }
     if (!this.open) {
       this.show(opts);
       return;

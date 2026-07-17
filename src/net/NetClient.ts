@@ -9,6 +9,8 @@ import { walletSessionSecret } from "../economy/wallet";
 import { setOnlinePlayer } from "../economy/session";
 import { isGodAccount } from "./godAccounts";
 import { furnitureHomeBuffs } from "../world/estates";
+import { campaignEchoLine } from "../game/campaignEchoes";
+import { normalizeFragmentSequence } from "../game/fragments";
 
 /** True when the page is on a public host but the WS URL still points at loopback —
  *  the classic "forgot VITE_SERVER_URL" Pages footgun. */
@@ -354,6 +356,8 @@ export default class NetClient {
   campaignObjective = "";
   /** Completed main-story quest ids (for the quest log). */
   campaignCompleted: string[] = [];
+  /** Durable narrative decisions and campaign-only claim flags. */
+  campaignFlags: string[] = [];
   tutorialStep = 0;
   tutorialProgress = 0;
   tutorialTotal = 9;
@@ -402,6 +406,18 @@ export default class NetClient {
   onCosmetics?: () => void;
   bounty: { id: string; name: string; desc: string; objective: string; count: number; progress: number } | null = null;
   onBounty?: () => void;
+  relationships: Record<string, number> = {};
+  districtStanding: number[] = [];
+  residentClues: string[] = [];
+  residentConfirmed: string[] = [];
+  reconstruction: number[] = [];
+  socialMemory = { given: 0, received: 0, tier: 0, title: "UNTESTED LINK", line: "" };
+  onRelations?: () => void;
+  civicMomentum: number[] = [];
+  civicAftermath: Record<number, { day: number; operation: string; stage: string; completions: number; line: string; eventDurationPct: number }> = {};
+  onCivic?: () => void;
+  chronicle: { week: number; headline: string; lines: string[]; civic: number[]; territory: Array<{ district: number; controller: number; flips: number }> } | null = null;
+  onChronicle?: () => void;
   discovered: string[] = []; // zones seen on the map (fog of war)
   unlocked: string[] = []; // zones reached organically — fast travel allowed
   /** How this connection arrived — sent on login. */
@@ -419,6 +435,7 @@ export default class NetClient {
     done: boolean;
     /** Personal meltdown victory (campaign climax) — not a server wipe. */
     meltdown?: boolean;
+    choices?: Array<{ id: "spare" | "expose"; label: string }>;
     at: number;
   } | null = null;
   lastError = 0;
@@ -446,7 +463,7 @@ export default class NetClient {
   fragments: string[] = [];
   onFragment?: (id: string, isNew: boolean) => void;
   /** The district's live world event (null when idle). */
-  worldEvent: { id: string; name: string; tagline: string; hex: string; phase: "telegraph" | "active"; untilAt: number } | null = null;
+  worldEvent: { id: string; name: string; tagline: string; condition: string; hex: string; phase: "telegraph" | "active"; untilAt: number } | null = null;
   onWorldEvent?: (phase: "telegraph" | "active" | "end", name: string) => void;
   /** Class id sent at login — selects the server-side signature ability. */
   classId = "metrophage";
@@ -1273,7 +1290,7 @@ export default class NetClient {
       this.pending = [];
       this.seq = 0;
       this.lastAck = 0;
-      this.fragments = msg.fragments ?? [];
+      this.fragments = normalizeFragmentSequence(msg.fragments ?? []);
       // Server flag OR local allowlist on player id (covers older servers / missed field).
       this.godMode = !!msg.god || isGodAccount(msg.id);
       if (this.godMode) {
@@ -1523,6 +1540,7 @@ export default class NetClient {
       this.campaignProgress = msg.progress;
       this.campaignObjective = msg.objective ?? "";
       this.campaignCompleted = Array.isArray(msg.completed) ? msg.completed : [];
+      this.campaignFlags = Array.isArray(msg.flags) ? msg.flags : [];
       this.onCampaign?.();
     } else if (msg.t === "story") {
       this.story = {
@@ -1534,6 +1552,7 @@ export default class NetClient {
         objective: msg.objective,
         done: msg.done,
         meltdown: !!msg.meltdown || msg.stage === "meltdown",
+        choices: Array.isArray(msg.choices) ? msg.choices : undefined,
         at: performance.now(),
       };
       this.pushChat({
@@ -1549,11 +1568,14 @@ export default class NetClient {
     } else if (msg.t === "fragment") {
       // a memory recovered at a dive core — surface it through the story panel
       if (msg.isNew && !this.fragments.includes(msg.id)) this.fragments.push(msg.id);
+      const synthesis = (msg.interpretations ?? []).map((i) => `${i.title} · ${i.line}`).join("\n\n");
       this.story = {
         quest: "MEMORY RECOVERED",
         stage: msg.id,
         title: msg.title,
-        text: msg.lines.join("\n"),
+        text: [msg.lines.join("\n"), synthesis ? `MEMORY SYNTHESIS\n${synthesis}` : "", campaignEchoLine("fragment", this.campaignCompleted, this.campaignFlags)]
+          .filter(Boolean)
+          .join("\n\nANNOTATION · "),
         journal: "",
         objective: "",
         done: false,
@@ -1565,7 +1587,7 @@ export default class NetClient {
       this.worldEvent =
         msg.phase === "end"
           ? null
-          : { id: msg.id, name: msg.name, tagline: msg.tagline, hex: msg.hex, phase: msg.phase, untilAt: performance.now() + msg.seconds * 1000 };
+          : { id: msg.id, name: msg.name, tagline: msg.tagline, condition: msg.condition, hex: msg.hex, phase: msg.phase, untilAt: performance.now() + msg.seconds * 1000 };
       // Always mirror events into sys chat so they aren't missable without the banner.
       const phaseLabel = msg.phase === "telegraph" ? "incoming" : msg.phase === "active" ? "LIVE" : "ended";
       this.pushChat({
@@ -1601,6 +1623,28 @@ export default class NetClient {
     } else if (msg.t === "bounty") {
       this.bounty = msg.active;
       this.onBounty?.();
+    } else if (msg.t === "relations") {
+      this.relationships = msg.trust ?? {};
+      this.districtStanding = Array.isArray(msg.districts) ? msg.districts : [];
+      this.residentClues = Array.isArray(msg.clues) ? msg.clues : [];
+      this.residentConfirmed = Array.isArray(msg.confirmed) ? msg.confirmed : [];
+      this.reconstruction = Array.isArray(msg.reconstruction) ? msg.reconstruction : [];
+      if (msg.social) this.socialMemory = msg.social;
+      this.onRelations?.();
+    } else if (msg.t === "civic") {
+      this.civicMomentum[msg.district] = msg.completions;
+      this.civicAftermath[msg.district] = {
+        day: msg.day,
+        operation: msg.operation,
+        stage: msg.stage,
+        completions: msg.completions,
+        line: msg.line,
+        eventDurationPct: msg.eventDurationPct,
+      };
+      this.onCivic?.();
+    } else if (msg.t === "chronicle") {
+      this.chronicle = { week: msg.week, headline: msg.headline, lines: msg.lines, civic: msg.civic, territory: msg.territory };
+      this.onChronicle?.();
     } else if (msg.t === "discovered") {
       this.discovered = msg.zones;
       this.unlocked = msg.unlocked ?? msg.zones;
@@ -1642,6 +1686,9 @@ export default class NetClient {
   }
   questTalk() {
     this.sendMsg({ t: "quest", action: "talk" });
+  }
+  questChoice(choice: "spare" | "expose") {
+    this.sendMsg({ t: "quest", action: "choice", choice });
   }
   /** FIXER interact — accept next campaign job, resolve talk beat, or re-brief. */
   questEngage() {
@@ -1756,6 +1803,10 @@ export default class NetClient {
   /** Accept an authored NPC bounty (server validates one-at-a-time + grants on completion). */
   bountyAccept(id: string) {
     this.sendMsg({ t: "bounty", action: "accept", id });
+  }
+  /** Persist that this contact has been met. Social state only; no reward attached. */
+  npcTalk(npcId: string) {
+    this.sendMsg({ t: "npc", action: "talk", npcId });
   }
   /** Guild ("Cell") action — server validates rank/balance + owns the shared bank (D1). */
   guildAction(

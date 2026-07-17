@@ -152,11 +152,15 @@ import { downloadShareCard } from "../ui/ShareCard";
 import { systemsHintLine, dismissSystemsHint, cityChatterLine } from "../game/systemsHint";
 import { thirdHourLine, noteThirdWarCapture, noteThirdHomeVisit, noteThirdCellDeposit, noteThirdMarketList } from "../game/thirdHour";
 import { currentDistrictWar } from "../game/districtWar";
+import { factionCampaignBrief } from "../game/factionCampaigns";
+import { campaignEchoLine, districtCampaignEcho } from "../game/campaignEchoes";
 import { cityPulseAt } from "../game/cityPulse";
-import { noteNpcTalk, noteNpcBountyDone, npcMemoryLine } from "../game/npcMemory";
+import { noteNpcTalk, npcMemoryLine } from "../game/npcMemory";
+import { relationshipLine } from "../game/relationships";
 import { buildStamp } from "../buildInfo";
 import { raidScriptFor } from "../game/raid";
 import { dailyDistrictMod, districtBarIntelLine } from "../game/districtMods";
+import { districtAftermath, districtCivicRoleLine } from "../game/districtLife";
 import { fadeInScene, transitionTo } from "../systems/transitions";
 import { dismissZoneLoadingSplash, showZoneLoadingSplash } from "../ui/ZoneLoadingSplash";
 import { juiceShake, juiceFlash, juiceHitStop, juiceZoomPunch, juiceNeonPulse } from "../systems/juice";
@@ -248,8 +252,15 @@ import {
   wildernessShackZone,
   wildernessShacks,
 } from "../game/districtVenues";
-import { applyCosmetic } from "../game/cosmetics";
-import { npcDef, AMBIENT_NPCS, INTERIOR_PLAN, keeperFor, districtResident, districtFieldMedic, hubResident, themedHubOccupants, campaignAllyLines, marekReprintGreeting, STORY_ALLIES, locationAwareLine } from "../game/cityNpcs";
+import { applyCosmetic, cosmeticAcknowledgement } from "../game/cosmetics";
+import { npcDef, AMBIENT_NPCS, INTERIOR_PLAN, keeperFor, districtResident, districtFieldMedic, hubResident, themedHubOccupants, campaignAllyLines, marekReprintGreeting, STORY_ALLIES, locationAwareLine, storyPhase } from "../game/cityNpcs";
+import { linkedResidentLine, residentConvergenceLine, residentProfile, residentScheduleLine, scheduledResidents } from "../game/residentLife";
+import { districtReconstruction } from "../game/reconstruction";
+import { districtMemoryInterpretation } from "../game/fragments";
+import { contactJudgmentReaction, districtJudgmentReaction } from "../game/judgmentReactions";
+import { rescueMemoryContactLine } from "../game/socialMemory";
+import { rotatingContextLine } from "../game/narrativeCadence";
+import { residentTerritoryLegacyLine } from "../game/territoryLegacy";
 import { localReprintCount, recordLocalReprint } from "../systems/reprintMemory";
 import { portraitFor, portraitForName, portraitForBoss, portraitSheetFallback, type PortraitRef } from "../game/portraits";
 import { bountyForNpc } from "../game/bounties";
@@ -453,6 +464,7 @@ export default class OnlineScene extends Phaser.Scene {
   // painted bust chip shown beside the bubble when an authored NPC speaks
   private speechPortrait?: Phaser.GameObjects.Image;
   private speechPortraitRing?: Phaser.GameObjects.Graphics;
+  private transitCivicLabels: Phaser.GameObjects.Text[] = [];
 
   // THE ESTATES — home interior state (ownership prompt + furniture editor)
   private homeIdx = -1;
@@ -661,6 +673,7 @@ export default class OnlineScene extends Phaser.Scene {
     // scene.start reuses the instance (field initializers don't re-run) — reset per-zone
     // interactables so NPCs/doors don't accumulate across travel between zones.
     this.npcs = [];
+    this.transitCivicLabels = [];
     this.nearNpc = null;
     const bridgeDef = this.isBridge ? getBridge(this.bridgeIndex) : undefined;
     const def = DISTRICTS[this.districtIndex];
@@ -894,7 +907,7 @@ export default class OnlineScene extends Phaser.Scene {
     // Extra footprints are scenery-only (district kit / small blocks — no second shop).
     if (!this.interior && !this.isSubway && !this.isDive && !this.isTutorial && !this.isCityHub && !this.isBridge) {
       districtBuildings(def).forEach((b, i) => {
-        const kind = districtBuildingKind(i);
+        const kind = districtBuildingKind(i, this.districtIndex);
         if (!kind) return; // scenery block — no door
         const doorColor = buildingExteriorAccent(kind);
         const tx = Math.round((b.x1 + b.x2) / 2) * DISTRICT_SCALE;
@@ -974,6 +987,8 @@ export default class OnlineScene extends Phaser.Scene {
           // story allies react to the player's questline act; ambient citizens keep static lines
           const isAlly = (STORY_ALLIES as readonly string[]).includes(c.id);
           let lines = isAlly ? campaignAllyLines(c.id, this.net?.campaignQuest) : cdef.lines;
+          const allyEcho = isAlly ? campaignEchoLine("ally", this.net?.campaignCompleted ?? [], this.net?.campaignFlags ?? []) : null;
+          if (allyEcho) lines = [allyEcho, ...lines];
           // MAREK counts your reprints — enough of them and his greeting changes.
           if (c.id === "marek") {
             const g = marekReprintGreeting(localReprintCount());
@@ -1024,7 +1039,7 @@ export default class OnlineScene extends Phaser.Scene {
         // venue rooms too now — same art-traced plan their district counterparts get, so
         // they take the venue seats/mat/dressing path rather than the 40×30 safehouse one.
         const isBldg = !!bi || hb !== null || HUB_SERVICE_ROOMS.has(this.zone);
-        const kindRaw = bi ? districtBuildingKind(bi.index) : hb !== null ? ONLINE_CITY.buildings[hb].kind : this.zone;
+        const kindRaw = bi ? districtBuildingKind(bi.index, bi.district) : hb !== null ? ONLINE_CITY.buildings[hb].kind : this.zone;
         const kind = kindRaw ?? "home";
         const accent = bi
           ? (DISTRICTS[bi.district]?.accent ?? 0x39ff88)
@@ -1073,8 +1088,13 @@ export default class OnlineScene extends Phaser.Scene {
         // bar, MERCY in the ripperdoc…) — hub zones are h{K}, so look the plan up by
         // KIND here; the rotating generic resident is only the fallback.
         const themed = hb !== null ? themedHubOccupants(String(kind)) : [];
+        const scheduled = scheduledResidents(this.zone).map(({ profile, npc }) => ({
+          ...npc,
+          lines: [residentScheduleLine(profile), ...npc.lines],
+        }));
+        const fallbackResident = bi ? districtResident(bi.district, bi.index) : null;
         const talkers = bi
-          ? [districtResident(bi.district, bi.index)]
+          ? (scheduled.length ? scheduled : [fallbackResident && !residentProfile(fallbackResident.id) ? fallbackResident : keeperFor(String(kind))])
           : hb !== null
             ? (themed.length ? themed : [hubResident(hb)])
             : [keeperFor(kind), ...residents.map((id) => npcDef(id)).filter((d): d is NonNullable<typeof d> => !!d)];
@@ -1168,10 +1188,14 @@ export default class OnlineScene extends Phaser.Scene {
         [sx * S + 4, sy * S + 4],
       ];
       let placed = 0;
+      const locals = scheduledResidents(this.zone).map(({ profile, npc }) => ({
+        ...npc,
+        lines: [residentScheduleLine(profile), ...npc.lines],
+      }));
       for (const [tx, ty] of spots) {
         if (placed >= 3) break;
         if (isWall(grid[ty]?.[tx])) continue;
-        const adef = AMBIENT_NPCS[(this.districtIndex * 3 + placed) % AMBIENT_NPCS.length];
+        const adef = locals[placed] ?? AMBIENT_NPCS[(this.districtIndex * 3 + placed) % AMBIENT_NPCS.length];
         this.makeTalkNpc(adef.name, adef.look, adef.lines, tx * TILE + TILE / 2, ty * TILE + TILE / 2, adef.id);
         placed++;
       }
@@ -1387,13 +1411,6 @@ export default class OnlineScene extends Phaser.Scene {
     };
     this.net.onStory = () => this.presentStoryBeat();
     this.net.onBounty = () => {
-      const b = this.net.bounty;
-      if (b && b.progress >= b.count) {
-        noteSecondBountyDone();
-        const npcId = b.id.includes("_") ? b.id.split("_")[0] : "";
-        // Best-effort memory key from bounty id prefix
-        if (npcId) noteNpcBountyDone(npcId);
-      }
       this.journal?.setOwned(this.net.fragments);
     };
     const tutorialMode =
@@ -1454,7 +1471,7 @@ export default class OnlineScene extends Phaser.Scene {
       try {
         const war = currentDistrictWar();
         this.pushKillFeed(`⚔ ${war.name}`);
-        this.rsGameMessage?.show(war.blurb, { ttlMs: 4200, color: "#ff9d3c" });
+        this.rsGameMessage?.show(`${war.blurb} · ${factionCampaignBrief(this.net.faction)}`, { ttlMs: 5600, color: "#ff9d3c" });
       } catch {
         /* */
       }
@@ -1589,7 +1606,27 @@ export default class OnlineScene extends Phaser.Scene {
     this.mapPanel.standingProvider = () => ({
       completed: this.net.campaignCompleted ?? [],
       level: this.net.level,
+      flags: this.net.campaignFlags ?? [],
     });
+    this.mapPanel.localStandingProvider = () => this.net.districtStanding;
+    this.mapPanel.testimonyProvider = () => ({ clues: this.net.residentClues, confirmed: this.net.residentConfirmed });
+    this.mapPanel.reconstructionProvider = () => this.net.reconstruction;
+    this.mapPanel.fragmentSequenceProvider = () => this.net.fragments;
+    this.mapPanel.socialMemoryProvider = () => this.net.socialMemory;
+    this.mapPanel.civicMomentumProvider = () => this.net.civicMomentum;
+    this.mapPanel.chronicleProvider = () => this.net.chronicle;
+    this.net.onRelations = () => {
+      if (this.mapPanel.open) this.mapPanel.setState(this.net.discovered, this.net.unlocked, this.zone);
+    };
+    this.net.onCivic = () => {
+      if (this.mapPanel.open) this.mapPanel.setState(this.net.discovered, this.net.unlocked, this.zone);
+      this.refreshTransitCivicLabels();
+    };
+    this.net.onChronicle = () => {
+      if (this.mapPanel.open) this.mapPanel.setState(this.net.discovered, this.net.unlocked, this.zone);
+      const chronicle = this.net.chronicle;
+      if (chronicle) this.pushKillFeed(`▤ WEEK ${chronicle.week} · ${chronicle.headline}`);
+    };
     this.net.onDiscovered = () => {
       this.mapPanel.godMode = !!this.net.godMode;
       if (this.mapPanel.open) this.mapPanel.setState(this.net.discovered, this.net.unlocked, this.zone);
@@ -1651,7 +1688,7 @@ export default class OnlineScene extends Phaser.Scene {
         juiceShake(this, 160, 0.004);
         this.rsGameMessage?.show(`⚠ ${name} — NOW`, { ttlMs: 2600, color: this.net.worldEvent?.hex ?? "#f7ff3c" });
       } else if (phase === "end") {
-        this.rsGameMessage?.show("event weathered — payout issued", { ttlMs: 2600, color: "#39ff88" });
+        this.rsGameMessage?.show("event resolved — check aftermath", { ttlMs: 2600, color: "#39ff88" });
       }
     };
     this.connectStartedAt = Date.now(); // wall clock — robust to frame-rate throttling
@@ -2631,7 +2668,7 @@ export default class OnlineScene extends Phaser.Scene {
     if (hubInt !== null) return `METRO CITY · ${HUB_INTERIOR_TITLE[ONLINE_CITY.buildings[hubInt].kind] ?? "BUILDING"}`;
     const bldgInt = parseBuildingInterior(this.zone);
     if (bldgInt) {
-      const k = districtBuildingKind(bldgInt.index);
+      const k = districtBuildingKind(bldgInt.index, bldgInt.district);
       return `${DISTRICTS[bldgInt.district]?.name?.toUpperCase() ?? "DISTRICT"} · ${k ? DISTRICT_VENUE_TITLE[k] : "BUILDING"}`;
     }
     const wsh = parseWildernessShack(this.zone);
@@ -2658,7 +2695,7 @@ export default class OnlineScene extends Phaser.Scene {
     if (hb !== null) return HUB_INTERIOR_TITLE[ONLINE_CITY.buildings[hb].kind] ?? "BUILDING";
     const bi = parseBuildingInterior(z);
     if (bi) {
-      const k = districtBuildingKind(bi.index);
+      const k = districtBuildingKind(bi.index, bi.district);
       return k ? DISTRICT_VENUE_TITLE[k] : "BUILDING";
     }
     const wsh = parseWildernessShack(z);
@@ -3743,7 +3780,7 @@ export default class OnlineScene extends Phaser.Scene {
       .setInteractive({ useHandCursor: true });
     spr.on("pointerdown", () => this.talkNpc(npc));
     // Labels: job givers and story allies only — not every tip/meal NPC.
-    const givesBounty = !!(npcId && bountyForNpc(npcId));
+    const givesBounty = !!(npcId && bountyForNpc(npcId, storyPhase(this.net.campaignQuest), this.net.residentConfirmed, this.net.campaignCompleted, this.net.chronicle?.civic ?? []));
     const marked = important || givesBounty;
     const label = this.add
       .text(px, py - 26, givesBounty ? `${name} ·` : important ? name : name, {
@@ -3762,16 +3799,63 @@ export default class OnlineScene extends Phaser.Scene {
 
   /** Talk: most people bark a line; a few open a small choice menu. */
   private talkNpc(npc: { npcId?: string; name: string; lines?: string[]; lineIdx?: number; x: number; y: number }) {
-    if (npc.npcId) noteNpcTalk(npc.npcId);
-    const mem = npc.npcId ? npcMemoryLine(npc.npcId, npc.name) : null;
+    if (npc.npcId) {
+      noteNpcTalk(npc.npcId); // local cadence/fallback; durable trust comes from server
+      if (this.net.connected) this.net.npcTalk(npc.npcId);
+    }
+    const trust = npc.npcId ? this.net.relationships[npc.npcId] ?? 0 : 0;
+    const profile = npc.npcId ? residentProfile(npc.npcId) : undefined;
+    const linked = npc.npcId && !(profile?.respondsTo && this.net.residentConfirmed.includes(profile.respondsTo))
+      ? linkedResidentLine(npc.npcId, this.net.residentClues)
+      : null;
+    const convergence = npc.npcId ? residentConvergenceLine(npc.npcId, this.net.residentConfirmed) : null;
+    const districtMatch = /^d(\d+)/.exec(this.zone);
+    const civic = npc.npcId && districtMatch
+      ? districtCivicRoleLine(npc.npcId, Number(districtMatch[1]), undefined, this.net.civicMomentum[Number(districtMatch[1])] ?? 0)
+      : null;
+    const territory = npc.npcId && districtMatch
+      ? residentTerritoryLegacyLine(
+          npc.npcId,
+          this.net.chronicle?.territory?.[Number(districtMatch[1])]
+            ?? { district: Number(districtMatch[1]), controller: -1, flips: 0 },
+        )
+      : null;
+    const campaignResident = npc.npcId && districtMatch && residentProfile(npc.npcId)
+      ? districtCampaignEcho(Number(districtMatch[1]), this.net.campaignCompleted, this.net.campaignFlags)
+      : null;
+    const reconstruction = npc.npcId && districtMatch && residentProfile(npc.npcId)
+      ? districtReconstruction(Number(districtMatch[1]), this.net.reconstruction[Number(districtMatch[1])] ?? 0)?.line ?? null
+      : null;
+    const memory = npc.npcId && districtMatch && residentProfile(npc.npcId)
+      ? districtMemoryInterpretation(Number(districtMatch[1]), this.net.fragments)?.line ?? null
+      : null;
+    const judgment = npc.npcId
+      ? contactJudgmentReaction(npc.npcId, this.net.campaignFlags, trust)
+        ?? (districtMatch && residentProfile(npc.npcId)
+          ? districtJudgmentReaction(Number(districtMatch[1]), this.net.campaignFlags)
+          : null)
+      : null;
+    const rescueMemory = npc.npcId ? rescueMemoryContactLine(this.net.socialMemory, trust) : null;
+    const cosmetic = npc.npcId ? cosmeticAcknowledgement(this.net.cosmeticEquipped, trust) : null;
+    const durable = npc.npcId && trust > 0
+      ? relationshipLine(npc.npcId, npc.name, trust, npc.lineIdx ?? 0)
+      : null;
+    const mem = npc.npcId && trust === 0 ? npcMemoryLine(npc.npcId, npc.name) : null;
+    // Persistent contexts rotate instead of starving everything below the first truthy
+    // layer. An unconfirmed counterpart testimony stays urgent until corroborated.
+    const contextual = rotatingContextLine(
+      [convergence, judgment, memory, reconstruction, rescueMemory, cosmetic, civic, territory, campaignResident, durable],
+      npc.lineIdx ?? 0,
+    );
     // One advance per talk — bubble + service menu share the same line (was double-advance).
-    const spoken = mem ?? this.advanceLine(npc);
+    const spoken = linked ?? contextual ?? mem ?? this.advanceLine(npc);
+    if (linked || contextual || mem) npc.lineIdx = (npc.lineIdx ?? 0) + 1;
     const prefix = `${npc.name}: `;
     const bare = spoken.startsWith(prefix) ? spoken.slice(prefix.length) : spoken.startsWith(npc.name) ? spoken.slice(npc.name.length).replace(/^:\s*/, "") : spoken;
     this.showBubble(npc.x, npc.y, `${npc.name}: ${bare}`, this.bubblePortrait(npc.npcId, npc.name));
 
     if (!npc.npcId) return;
-    const hasBounty = !!bountyForNpc(npc.npcId);
+    const hasBounty = !!bountyForNpc(npc.npcId, storyPhase(this.net.campaignQuest), this.net.residentConfirmed, this.net.campaignCompleted, this.net.chronicle?.civic ?? []);
     if (!npcHasMenu(npc.npcId, hasBounty)) return;
 
     if (this.npcTalk?.isOpen) this.npcTalk.close();
@@ -3784,6 +3868,14 @@ export default class OnlineScene extends Phaser.Scene {
       hasBountyActive: !!this.net.bounty,
       activeBountyId: this.net.bounty?.id ?? null,
       campaignQuest: this.net.campaignQuest ?? null,
+      trust,
+      districtStanding: (() => {
+        const m = /^d(\d+)/.exec(this.zone);
+        return m ? this.net.districtStanding[Number(m[1])] ?? 0 : undefined;
+      })(),
+      confirmed: this.net.residentConfirmed,
+      campaignCompleted: this.net.campaignCompleted,
+      weeklyCivic: this.net.chronicle?.civic ?? [],
     });
   }
 
@@ -3825,7 +3917,7 @@ export default class OnlineScene extends Phaser.Scene {
         this.showBubble(px, py, `${npcName}: …link the city first — I don't hand jobs offline.`, face);
         return;
       }
-      const b = bountyForNpc(npcId);
+      const b = bountyForNpc(npcId, storyPhase(this.net.campaignQuest), this.net.residentConfirmed, this.net.campaignCompleted, this.net.chronicle?.civic ?? []);
       if (!b) {
         this.showBubble(px, py, `${npcName}: nothing on the board right now.`, face);
         return;
@@ -3961,6 +4053,8 @@ export default class OnlineScene extends Phaser.Scene {
         title: story.title,
         text: story.text,
         objective: story.objective,
+        choices: story.choices,
+        onChoice: (choice) => this.net.questChoice(choice),
       });
     }
     // Personal meltdown victory — VFX only for THIS client; server already
@@ -4118,15 +4212,24 @@ export default class OnlineScene extends Phaser.Scene {
     this.add.image(px, py, GLOW_KEY).setBlendMode(Phaser.BlendModes.ADD).setTint(color).setDepth(8).setScale(0.55).setAlpha(0.45);
     const spr = this.add.sprite(px, py, key, 0).setTint(0xffffff).setDepth(9).setInteractive({ useHandCursor: true });
     spr.on("pointerdown", () => this.enterZone(dest));
-    this.add
-      .text(px, py - 40, "TRANSIT", { fontFamily: "Courier New, monospace", fontSize: "10px", color: "#cfe8ff", fontStyle: "bold" })
+    const transitMomentum = this.net?.civicMomentum?.[this.districtIndex] ?? 0;
+    const transitAftermath = transitMomentum > 0 ? districtAftermath(this.districtIndex, undefined, transitMomentum).name : "";
+    const transitLabel = this.add
+      .text(px, py - 40, transitAftermath ? `TRANSIT · ${transitAftermath}` : "TRANSIT", { fontFamily: "Courier New, monospace", fontSize: "10px", color: "#cfe8ff", fontStyle: "bold" })
       .setOrigin(0.5)
       .setDepth(9);
+    this.transitCivicLabels.push(transitLabel);
     this.add
       .text(px, py + 22, label, { fontFamily: "Courier New, monospace", fontSize: "10px", color: "#" + (color & 0xffffff).toString(16).padStart(6, "0"), fontStyle: "bold" })
       .setOrigin(0.5)
       .setDepth(9);
     this.npcs.push({ kind: "transit", dest, name: label, label, color, x: px, y: py });
+  }
+
+  private refreshTransitCivicLabels() {
+    const momentum = this.net?.civicMomentum?.[this.districtIndex] ?? 0;
+    const stage = momentum > 0 ? districtAftermath(this.districtIndex, undefined, momentum).name : "";
+    for (const label of this.transitCivicLabels) if (label.active) label.setText(stage ? `TRANSIT · ${stage}` : "TRANSIT");
   }
 
   /** Furnish an FRLG venue room so it reads as a lived-in place, not an empty box:
@@ -4734,6 +4837,8 @@ export default class OnlineScene extends Phaser.Scene {
     for (const n of this.npcs) {
       if (n.kind === "talk" && n.npcId && (STORY_ALLIES as readonly string[]).includes(n.npcId)) {
         n.lines = campaignAllyLines(n.npcId, this.net.campaignQuest);
+        const echo = campaignEchoLine("ally", this.net.campaignCompleted, this.net.campaignFlags);
+        if (echo) n.lines = [echo, ...n.lines];
         if (n.npcId === "marek") {
           const g = marekReprintGreeting(localReprintCount());
           if (g) n.lines = [g, ...n.lines];
@@ -7142,6 +7247,12 @@ export default class OnlineScene extends Phaser.Scene {
   /** Sys-line hooks: death card, cell goal refresh, opt-in boss share cards. */
   private handleSysMessage(text: string) {
     if (!text) return;
+    if (text.startsWith("✔ BOUNTY —")) {
+      // Completion snapshots correctly clear the active bounty, so the old
+      // onBounty `progress >= count` hook could never observe success.
+      noteSecondBountyDone();
+      this.pushKillFeed(text.slice(0, 48));
+    }
     if (text.startsWith("DEATH ·")) {
       this.lastDeathTaxLine = text;
       // Re-engage: point quest waypoint at nearest node / boss if present.
@@ -7786,8 +7897,8 @@ export default class OnlineScene extends Phaser.Scene {
     const secs = Math.max(0, Math.ceil((ev.untilAt - performance.now()) / 1000));
     const line =
       ev.phase === "telegraph"
-        ? `EVENT // ⚠ ${ev.name} · IN ${secs}s — ${ev.tagline}`
-        : `EVENT // ◆ ${ev.name} · LIVE ${secs}s — ${ev.tagline}`;
+        ? `EVENT // ⚠ ${ev.name} · IN ${secs}s — ${ev.condition}`
+        : `EVENT // ◆ ${ev.name} · LIVE ${secs}s — SURVIVE TO RESOLUTION · ${ev.tagline}`;
     this.eventBanner
       .setVisible(true)
       .setColor(ev.hex)

@@ -351,8 +351,8 @@ ROOM_PLANS.hotel = {
  */
 export function venueKindForZone(zone?: string | null): BuildingKind | null {
   if (!zone) return null;
-  const district = /^d\d+i(\d+)$/.exec(zone);
-  if (district) return districtBuildingKind(Number(district[1]));
+  const district = /^d(\d+)i(\d+)$/.exec(zone);
+  if (district) return districtBuildingKind(Number(district[2]), Number(district[1]));
   const hub = /^h(\d+)$/.exec(zone);
   if (hub) return ONLINE_CITY.buildings[Number(hub[1])]?.kind ?? null;
   // The hub's named service venues are just that kind of venue: THE FERAL CAT is a bar.

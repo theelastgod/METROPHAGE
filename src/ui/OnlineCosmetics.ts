@@ -32,10 +32,10 @@ export default class OnlineCosmetics extends Modal {
       return o;
     };
     const D = 1700;
-    const rowH = uiDim(58);
-    const cardH = uiDim(50);
+    const rowH = uiDim(68);
+    const cardH = uiDim(60);
     const btnH = uiDim(26);
-    const { x, y, w, h } = modalRect(740, 126 + COSMETICS.length * 58);
+    const { x, y, w, h } = modalRect(740, 126 + COSMETICS.length * 68);
 
     add(dimBackdrop(scene, D, 0.64, () => this.close(), { x, y, w, h }));
     const g = add(scene.add.graphics().setScrollFactor(0).setDepth(D + 1));
@@ -95,6 +95,8 @@ export default class OnlineCosmetics extends Modal {
       }
       tx(`${isEq ? "✓ " : ""}${c.name}`, x + uiDim(66), ry + uiDim(10), 14, locked ? "#5a6172" : "#" + (c.swatch & 0xffffff).toString(16).padStart(6, "0"), true);
       tx(c.desc, x + uiDim(66), ry + uiDim(29), 11, locked ? "#4a5266" : "#9aa3b2");
+      const provenance = c.provenance.length > 62 ? c.provenance.slice(0, 61) + "…" : c.provenance;
+      tx(provenance, x + uiDim(66), ry + uiDim(43), 8, locked ? "#3c4252" : "#706982");
 
       const bx = x + w - uiDim(18) - uiDim(136);
       if (locked) {

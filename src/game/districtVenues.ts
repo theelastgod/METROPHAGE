@@ -4,14 +4,32 @@
 import { BRIDGES, type BridgeDef } from "./bridges";
 import type { PlayerLook } from "../net/protocol";
 
-/** Enterable venue kinds — at most ONE of each appears as a door in a district.
- *  Order matters: building index K gets kind K, so appending kinds is additive (old
- *  doors keep their venues); reordering would shuffle every district's rooms.
- *  Two of the nine district buildings stay scenery so the per-district exterior
- *  kits (hf_building_dist_*) keep carrying the street's identity. */
-export const DISTRICT_VENUE_KINDS = ["shop", "home", "guild", "den", "bar", "noodle", "ripperdoc"] as const;
+/** The kind universe districts may host (also the legacy default lineup order). */
+export const DISTRICT_VENUE_KINDS = [
+  "shop", "home", "guild", "den", "bar", "noodle", "ripperdoc", "pawn", "arcade", "garage", "radio",
+] as const;
 export type DistrictVenueKind = (typeof DISTRICT_VENUE_KINDS)[number];
-export const DISTRICT_VENUE_COUNT = DISTRICT_VENUE_KINDS.length;
+
+/** Every district keeps the same first five doors (shop/home/guild/den/bar — the
+ *  PREFIX IS LOAD-BEARING: building index K = lineup[K] forever, so editing slots
+ *  0–4 would shuffle every runner's known doors). Slots 5–6 are the district's
+ *  SPECIALTIES, chosen by identity — a pawn fence in the scrap sprawl, a ripperdoc
+ *  under the corporate spire, radio at the relay. Indexed by district index
+ *  (DISTRICTS order: downtown, stacks, spire, docks, undercity, relay, wastes, core). */
+const BASE_LINEUP = ["shop", "home", "guild", "den", "bar"] as const;
+export const DISTRICT_VENUE_LINEUP: ReadonlyArray<readonly DistrictVenueKind[]> = [
+  [...BASE_LINEUP, "noodle", "arcade"], // downtown — street food + nightlife
+  [...BASE_LINEUP, "pawn", "garage"], // stacks — scrap, fences, chop shops
+  [...BASE_LINEUP, "ripperdoc", "radio"], // spire — corporate chrome + pirate media
+  [...BASE_LINEUP, "garage", "noodle"], // docks — freight repair + dockside broth
+  [...BASE_LINEUP, "pawn", "ripperdoc"], // undercity — black market surgery
+  [...BASE_LINEUP, "radio", "arcade"], // relay — the signal district
+  [...BASE_LINEUP, "garage"], // wastes — six buildings; scavengers fix their own
+  [...BASE_LINEUP, "radio", "noodle"], // core — the Kernel hums; someone still cooks
+];
+
+/** Max lineup length — the zone-id bound (`d{N}i{K}` accepts K < this). */
+export const DISTRICT_VENUE_COUNT = 7;
 
 export const DISTRICT_VENUE_TITLE: Record<DistrictVenueKind, string> = {
   shop: "MARKET STALL",
@@ -21,19 +39,28 @@ export const DISTRICT_VENUE_TITLE: Record<DistrictVenueKind, string> = {
   bar: "DIVE BAR",
   noodle: "NOODLE COUNTER",
   ripperdoc: "RIPPERDOC",
+  pawn: "PAWN EXCHANGE",
+  arcade: "ARCADE",
+  garage: "CHOP GARAGE",
+  radio: "PIRATE RADIO",
 };
 
-/**
- * Kind for district building index, or null when the footprint is scenery only
- * (no enterable door — small blocks / district-kit roofs without a second shop).
- */
-export function districtBuildingKind(index: number): DistrictVenueKind | null {
-  if (index < 0 || index >= DISTRICT_VENUE_COUNT) return null;
-  return DISTRICT_VENUE_KINDS[index];
+export function districtVenueLineup(district: number): readonly DistrictVenueKind[] {
+  return DISTRICT_VENUE_LINEUP[district] ?? BASE_LINEUP;
 }
 
-export function isDistrictEnterable(index: number): boolean {
-  return districtBuildingKind(index) !== null;
+/**
+ * Kind for a district building index, or null when the footprint is scenery only.
+ * `district` is the DISTRICTS array index (the N in zone id `d{N}`).
+ */
+export function districtBuildingKind(index: number, district: number): DistrictVenueKind | null {
+  const lineup = districtVenueLineup(district);
+  if (index < 0 || index >= lineup.length) return null;
+  return lineup[index];
+}
+
+export function isDistrictEnterable(index: number, district: number): boolean {
+  return districtBuildingKind(index, district) !== null;
 }
 
 // ── Wilderness shacks ───────────────────────────────────────────────────────

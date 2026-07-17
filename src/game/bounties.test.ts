@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BOSS_BOUNTY_COOLDOWN_MS, BOUNTIES, LATE_BOUNTIES, bossBountyCooldownRemaining, bountyById, bountyForNpc } from "./bounties";
+import { BOSS_BOUNTY_COOLDOWN_MS, BOUNTIES, CASEFILE_BOUNTIES, LATE_BOUNTIES, POST_AWAKENING_BOUNTIES, bossBountyCooldownRemaining, bountyById, bountyForNpc, bountyIsEligible } from "./bounties";
 import { servicesForNpc } from "./npcServices";
 
 describe("bounty ↔ service-menu coherence", () => {
@@ -10,8 +10,53 @@ describe("bounty ↔ service-menu coherence", () => {
   });
 
   it("bounty ids are unique across base and late-act tables", () => {
-    const ids = [...Object.values(BOUNTIES), ...Object.values(LATE_BOUNTIES)].map((b) => b.id);
+    const ids = [...Object.values(BOUNTIES), ...Object.values(LATE_BOUNTIES), ...Object.values(CASEFILE_BOUNTIES), ...Object.values(POST_AWAKENING_BOUNTIES)].map((b) => b.id);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("keeps casefile follow-ups hidden until their testimony is corroborated", () => {
+    for (const [npc, b] of Object.entries(CASEFILE_BOUNTIES)) {
+      expect(b.requiredConfirmation, npc).toBeTruthy();
+      expect(bountyForNpc(npc, "pre", []), npc).toBeUndefined();
+      expect(bountyForNpc(npc, "pre", [b.requiredConfirmation!]), npc).toEqual(b);
+      expect(bountyById(b.id), npc).toEqual(b);
+      expect(servicesForNpc(npc, true), npc).toContain("bounty");
+      expect(servicesForNpc(npc, false), npc).not.toContain("bounty");
+    }
+  });
+
+  it("replaces source-resident work with reconstruction only after THE AWAKENING", () => {
+    for (const [npc, b] of Object.entries(POST_AWAKENING_BOUNTIES)) {
+      expect(b.requiredCampaign).toBe("continue_q");
+      expect(bountyForNpc(npc, "pre", [], []), npc).not.toEqual(b);
+      expect(bountyForNpc(npc, "pre", [], ["continue_q"]), npc).toEqual(b);
+      expect(bountyById(b.id), npc).toEqual(b);
+      expect(servicesForNpc(npc, true), npc).toContain("bounty");
+    }
+  });
+
+  it("uses the same authority predicate for direct accepts and persisted hydration", () => {
+    expect(bountyIsEligible(LATE_BOUNTIES.rin, "pre")).toBe(false);
+    expect(bountyIsEligible(LATE_BOUNTIES.rin, "late")).toBe(true);
+    expect(bountyIsEligible(CASEFILE_BOUNTIES.res_solenne, "pre", [])).toBe(false);
+    expect(bountyIsEligible(CASEFILE_BOUNTIES.res_solenne, "pre", ["forecast_children"])).toBe(true);
+    expect(bountyIsEligible(POST_AWAKENING_BOUNTIES.res_nix, "pre", [], [])).toBe(false);
+    expect(bountyIsEligible(POST_AWAKENING_BOUNTIES.res_nix, "pre", [], ["continue_q"])).toBe(true);
+  });
+
+  it("opens authored courier routes only after this week's public work", () => {
+    const couriers = Object.values(BOUNTIES).filter((b) => b.objective === "travel");
+    expect(couriers).toHaveLength(4);
+    for (const b of couriers) {
+      expect(b.requiredCivicWork, b.id).toBe(true);
+      expect(b.targetZone, b.id).toBeTruthy();
+      expect(b.rewardCredits, b.id).toBeLessThanOrEqual(360);
+      expect(bountyForNpc(b.npc, "pre", [], [], []), b.id).toBeUndefined();
+      expect(bountyForNpc(b.npc, "pre", [], [], [1, 0, 0, 0, 0, 0, 0, 0]), b.id).toEqual(b);
+      expect(bountyIsEligible(b, "pre", [], [], []), b.id).toBe(false);
+      expect(bountyIsEligible(b, "pre", [], [], [0, 0, 0, 1]), b.id).toBe(true);
+      expect(bountyById(b.id), b.id).toEqual(b);
+    }
   });
 
   it("story allies escalate in the late act, and completion can find both variants", () => {
@@ -21,6 +66,7 @@ describe("bounty ↔ service-menu coherence", () => {
       expect(base, ally).toBeTruthy();
       expect(late, ally).toBeTruthy();
       expect(late!.id, ally).not.toBe(base!.id);
+      expect(late!.requiredPhase, ally).toBe("late");
       expect(late!.rewardCredits, ally).toBeGreaterThan(base!.rewardCredits);
       expect(bountyById(late!.id), ally).toEqual(late);
       expect(bountyById(base!.id), ally).toEqual(base);
@@ -30,8 +76,8 @@ describe("bounty ↔ service-menu coherence", () => {
   });
 });
 
-describe("boss bounty cooldown", () => {
-  it("blocks the same boss job for 24 hours", () => {
+describe("durable bounty cooldown", () => {
+  it("blocks the same boss or courier job for 24 hours", () => {
     const now = 1_800_000_000_000;
     expect(bossBountyCooldownRemaining(now, now)).toBe(BOSS_BOUNTY_COOLDOWN_MS);
     expect(bossBountyCooldownRemaining(now - BOSS_BOUNTY_COOLDOWN_MS + 1, now)).toBe(1);

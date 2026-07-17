@@ -106,7 +106,9 @@ function trackState(ws, id, store) {
       store.nodes = m.nodes || [];
       store.factions = m.factions || [];
       store.control = m.control ?? -1;
-      store.roster = m.roster || [];
+      // Roster is intentionally sparse (~1 Hz); retain the last authoritative list on
+      // snapshots where the field is omitted instead of erasing presence every tick.
+      if (Array.isArray(m.roster) && m.roster.length > 0) store.roster = m.roster;
 
     }
   });
@@ -1509,11 +1511,13 @@ async function bounty() {
     return u.toString();
   };
   let ws = await connect(zoneUrl("d0"));
-  const store = { x: 0, y: 0, enemies: [], bounty: null, sys: [] };
+  const store = { x: 0, y: 0, enemies: [], bounty: null, relations: null, civic: null, sys: [] };
   const wire = (socket) =>
     socket.addEventListener("message", (ev) => {
       const m = JSON.parse(ev.data);
       if (m.t === "bounty") store.bounty = m.active;
+      if (m.t === "relations") store.relations = m;
+      if (m.t === "civic") store.civic = m;
       if (m.t === "sys") store.sys.push(m.text);
     });
   wire(ws);
@@ -1522,6 +1526,7 @@ async function bounty() {
   store.y = w.y;
   trackState(ws, w.id, store);
   await sleep(400);
+  const civicHydrated = store.civic?.district === 0 && Number.isInteger(store.civic?.completions) && !!store.civic?.stage;
 
   // Use the ordinary kill-sheet job here: persistence is what this mode owns, and
   // waiting for a high-HP world boss made a passing persistence check seed-dependent.
@@ -1597,13 +1602,25 @@ async function bounty() {
   }
   const completed = store.bounty === null && store.sys.some((t) => /BOUNTY —/.test(t));
   const progressed = maxProg > 0 || completed;
+  const contactTrusted = (store.relations?.trust?.kessler ?? 0) >= 2;
+  const localStanding = (store.relations?.districts?.[0] ?? 0) >= 5;
 
   ws.close();
+  await sleep(500);
+  // Relationship/standing must rehydrate from D1, not merely survive in this DO.
+  store.relations = null;
+  ws = await connect(zoneUrl("d0"));
+  wire(ws);
+  await login(ws, name);
+  await sleep(500);
+  const relationshipPersisted = (store.relations?.trust?.kessler ?? 0) >= 2;
+  const standingPersisted = (store.relations?.districts?.[0] ?? 0) >= 5;
+  ws.close();
   await sleep(200);
-  const checks = { accepted, persistedAcrossZone, secondRejected, persistedOnReturn, progressed, completed };
+  const checks = { civicHydrated, accepted, persistedAcrossZone, secondRejected, persistedOnReturn, progressed, completed, contactTrusted, localStanding, relationshipPersisted, standingPersisted };
   report(
     "BOUNTY — accept one NPC job, persist across zone DOs, progress on kills, auto-reward",
-    { maxProgress: maxProg, lastSys: store.sys.slice(-2) },
+    { maxProgress: maxProg, civic: store.civic, trust: store.relations?.trust?.kessler, local: store.relations?.districts?.[0], lastSys: store.sys.slice(-3) },
     Object.values(checks).every(Boolean),
     checks,
   );
@@ -1998,6 +2015,11 @@ async function zones() {
 async function territory() {
   const myFac = 2; // WINTERMUTE
   const ws = await connect(WS_URL + "?zone=d0");
+  let chronicle = null;
+  ws.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "chronicle") chronicle = m;
+  });
   const w = await login(ws, "holdr", myFac);
   const store = { x: w.x, y: w.y, nodes: [], factions: [], control: -1 };
   trackState(ws, w.id, store);
@@ -2049,12 +2071,13 @@ async function territory() {
     capturedForFaction: captured,
     factionContributionRose: endScore > startScore,
     districtControlTaken: controlMine,
+    dailyRelayRecorded: chronicle?.territory?.[0]?.controller === myFac && chronicle.territory[0].flips >= 1,
   };
   ws.close();
   await sleep(300);
   report(
     "TERRITORY — capture a node for your faction; score + district control",
-    { nodes: (store.nodes || []).length, myFaction: myFac, score: [round(startScore), round(endScore)], captured, controlMine },
+    { nodes: (store.nodes || []).length, myFaction: myFac, score: [round(startScore), round(endScore)], captured, controlMine, relay: chronicle?.territory?.[0] },
     Object.values(checks).every(Boolean),
     checks,
   );
@@ -2064,9 +2087,19 @@ async function social() {
   const suffix = String(Date.now() % 1_000_000);
   const alice = "sa" + suffix;
   const bob = "sb" + suffix;
+  let aSocial = null;
+  let bSocial = null;
   const a = await connect();
+  a.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "relations") aSocial = m.social;
+  });
   const wa = await login(a, alice, 0);
   const b = await connect();
+  b.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "relations") bSocial = m.social;
+  });
   const wb = await login(b, bob, 1);
   const sa = { roster: [] };
   const sb = { roster: [] };
@@ -2107,14 +2140,15 @@ async function social() {
   const partyChat = bChat.some((c) => c.ch === "party" && c.text === "team up");
 
   const presence = (sa.roster || []).some((r) => r.id === alice) && (sa.roster || []).some((r) => r.id === bob);
+  const socialMemory = [aSocial, bSocial].every((s) => s && Number.isInteger(s.given) && Number.isInteger(s.received) && typeof s.title === "string");
 
-  const checks = { zoneChat, whisper, party: inParty, partyChat, presence };
+  const checks = { zoneChat, whisper, party: inParty, partyChat, presence, socialMemory };
   a.close();
   b.close();
   await sleep(300);
   report(
     "SOCIAL — chat (zone/whisper/party) + party invite/accept + presence roster",
-    { zoneChat, whisper, inParty, partyChat, rosterCount: (sa.roster || []).length },
+    { zoneChat, whisper, inParty, partyChat, rosterCount: (sa.roster || []).length, aSocial, bSocial },
     Object.values(checks).every(Boolean),
     checks,
   );
@@ -2784,6 +2818,7 @@ async function dive() {
     await sleep(50);
   }
   const recovered = fragments.length >= 1 && fragments[0].isNew === true && Array.isArray(fragments[0].lines);
+  const synthesisShape = recovered && Array.isArray(fragments[0].interpretations);
 
   // persistence — reconnect: the welcome payload must carry the recovered fragment
   ws.close();
@@ -2791,11 +2826,57 @@ async function dive() {
   const ws2 = await connect(DIVE);
   const w2 = await login(ws2, name, 0);
   await sleep(400);
-  const persisted = recovered && (w2.fragments ?? []).includes(fragments[0].id);
+  const persisted = recovered && JSON.stringify(w2.fragments ?? []) === JSON.stringify([fragments[0].id]);
   ws2.close();
+  await sleep(500);
+
+  // Recover a second district default with the same identity. This must preserve order
+  // and unlock the v0+v1 OWNERSHIP QUESTION synthesis on the authoritative Worker path.
+  const DIVE_2 = WS_URL + (WS_URL.includes("?") ? "&" : "?") + "zone=v1";
+  const ws3 = await connect(DIVE_2);
+  const w3 = await login(ws3, name, 0);
+  const store2 = { x: w3.x, y: w3.y, enemies: [], nodes: [] };
+  const fragments2 = [];
+  trackState(ws3, w3.id, store2);
+  ws3.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "fragment") fragments2.push(m);
+  });
+  await sleep(700);
+  let seq2 = 0;
+  const t1 = Date.now();
+  while (Date.now() - t1 < 45000 && fragments2.length === 0) {
+    const core = store2.nodes[0];
+    if (core) {
+      const dx = core.x - store2.x;
+      const dy = core.y - store2.y;
+      const d = Math.hypot(dx, dy);
+      seq2++;
+      ws3.send(JSON.stringify({ t: "input", seq: seq2, mx: d > 50 ? dx / d : 0, my: d > 50 ? dy / d : 0 }));
+      let near = null;
+      let nd = Infinity;
+      for (const e of store2.enemies) {
+        const ed = Math.hypot(e.x - store2.x, e.y - store2.y);
+        if (ed < nd) {
+          nd = ed;
+          near = e;
+        }
+      }
+      if (near && nd < 320) ws3.send(JSON.stringify({ t: "fire", seq: seq2, aim: Math.atan2(near.y - store2.y, near.x - store2.x) }));
+    }
+    await sleep(50);
+  }
+  const recoveredSecond = fragments2[0]?.isNew === true && fragments2[0]?.id === "frag_why_they_hunt";
+  const synthesisUnlocked = (fragments2[0]?.interpretations ?? []).some((i) => i.id === "memory_ownership_question");
+  ws3.close();
+  await sleep(600);
+  const ws4 = await connect(DIVE_2);
+  const w4 = await login(ws4, name, 0);
+  const orderedPair = JSON.stringify(w4.fragments ?? []) === JSON.stringify(["frag_first_boot", "frag_why_they_hunt"]);
+  ws4.close();
   await sleep(300);
 
-  const checks = { hasGuardians, oneCore, startedEmpty, recovered, persisted };
+  const checks = { hasGuardians, oneCore, startedEmpty, recovered, synthesisShape, orderedPersistence: persisted, recoveredSecond, synthesisUnlocked, orderedPair };
   report(
     "DIVE — ICE VAULT instance: guardians + fragment core -> memory recovered + persists",
     {
@@ -2804,7 +2885,10 @@ async function dive() {
       nodes: store.nodes.length,
       fragment: fragments[0]?.id,
       title: fragments[0]?.title,
-      reloadedFragments: w2.fragments ?? [],
+      interpretations: fragments[0]?.interpretations ?? [],
+      secondFragment: fragments2[0]?.id,
+      secondInterpretations: fragments2[0]?.interpretations ?? [],
+      reloadedFragments: w4.fragments ?? [],
     },
     Object.values(checks).every(Boolean),
     checks,
@@ -3140,7 +3224,7 @@ async function worldevent() {
   const sys = [];
   ws.addEventListener("message", (ev) => {
     const m = JSON.parse(ev.data);
-    if (m.t === "event") phases.push({ phase: m.phase, id: m.id, seconds: m.seconds });
+    if (m.t === "event") phases.push({ phase: m.phase, id: m.id, seconds: m.seconds, condition: m.condition });
     if (m.t === "sys") sys.push(m.text);
   });
   await sleep(600);
@@ -3160,11 +3244,13 @@ async function worldevent() {
   const sawTelegraph = phases.some((p) => p.phase === "telegraph");
   const sawActive = phases.some((p) => p.phase === "active");
   const sawEnd = phases.some((p) => p.phase === "end");
-  const paidOut = store.dead || sys.some((s) => /weathered/.test(s));
+  const conditionExplicit = phases.some((p) => /Remain alive/.test(p.condition || "") && /party reboot/.test(p.condition || ""));
+  const resolvedPersonally = sys.some((s) => /weathered|FAILED/.test(s));
+  const aftermath = sys.some((s) => /EVENT AFTERMATH/.test(s));
   ws.close();
   await sleep(300);
 
-  const checks = { sawTelegraph, sawActive, sawEnd, paidOut };
+  const checks = { sawTelegraph, sawActive, sawEnd, conditionExplicit, resolvedPersonally, aftermath };
   report(
     "EVENT — world events: telegraph -> active -> end + payout in a live district",
     { name, phases, credits: { start: startCredits, end: store.credits }, died: store.dead },
@@ -3336,6 +3422,200 @@ async function stash() {
   );
 }
 
+/** Scheduled resident testimony: source is accepted only in their current zone,
+ * then the bounded clue survives a fresh connection. */
+async function resident() {
+  const name = "rs" + String(Date.now() % 1_000_000);
+  const shift = Math.floor(Date.now() / (6 * 60 * 60 * 1000)) % 4;
+  const zone = shift === 1 ? "d0i3" : shift === 3 ? "d0i1" : "d0";
+  const targetZone = shift === 1 ? "d0i1" : shift === 3 ? "d0i2" : "d0";
+  const base = (process.env.WS_URL || "ws://127.0.0.1:8787/ws").replace(/\?.*$/, "");
+  const url = `${base}?zone=${zone}`;
+  let relations = null;
+  let testimony = false;
+  let forgedRejected = false;
+  let ws = await connect(url);
+  ws.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "relations") relations = m;
+    if (m.t === "sys" && /LOCAL TESTIMONY/.test(m.text || "")) testimony = true;
+    if (m.t === "sys" && /case has not been corroborated/.test(m.text || "")) forgedRejected = true;
+  });
+  await login(ws, name, 0);
+  await sleep(350);
+  ws.send(JSON.stringify({ t: "bounty", action: "accept", id: "case_blind_time" }));
+  await sleep(250);
+  ws.send(JSON.stringify({ t: "npc", action: "talk", npcId: "res_nix" }));
+  await sleep(500);
+  const granted = testimony && (relations?.clues || []).includes("forecast_children");
+  ws.close();
+  await sleep(350);
+
+  relations = null;
+  let confirmedLine = false;
+  let activeBounty = null;
+  ws = await connect(`${base}?zone=${targetZone}`);
+  ws.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "relations") relations = m;
+    if (m.t === "bounty") activeBounty = m.active;
+    if (m.t === "sys" && /CASEFILE CONFIRMED 1\/8/.test(m.text || "")) confirmedLine = true;
+  });
+  await login(ws, name, 0);
+  await sleep(350);
+  ws.send(JSON.stringify({ t: "npc", action: "talk", npcId: "res_solenne" }));
+  await sleep(500);
+  const confirmed = confirmedLine && (relations?.confirmed || []).includes("forecast_children");
+  ws.send(JSON.stringify({ t: "bounty", action: "accept", id: "case_blind_time" }));
+  await sleep(450);
+  const followupAccepted = activeBounty?.id === "case_blind_time";
+  ws.close();
+  await sleep(350);
+
+  relations = null;
+  activeBounty = null;
+  ws = await connect(url);
+  ws.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "relations") relations = m;
+    if (m.t === "bounty") activeBounty = m.active;
+  });
+  await login(ws, name, 0);
+  await sleep(450);
+  const persisted = (relations?.clues || []).includes("forecast_children")
+    && (relations?.confirmed || []).includes("forecast_children")
+    && activeBounty?.id === "case_blind_time";
+  ws.close();
+  await sleep(200);
+  report(
+    "RESIDENT — scheduled testimony is corroborated by its counterpart and persists",
+    { zone, targetZone, shift, clues: relations?.clues || [], confirmed: relations?.confirmed || [], testimony, confirmedLine, forgedRejected, followup: activeBounty?.id },
+    forgedRejected && granted && confirmed && followupAccepted && persisted,
+    { forgedRejected, granted, confirmed, followupAccepted, persisted },
+  );
+}
+
+/** Moral-choice protocol guard: a client cannot forge the late-campaign decision. */
+async function judgment() {
+  const name = "jd" + String(Date.now() % 1_000_000);
+  const ws = await connect();
+  let campaign = null;
+  let rejected = false;
+  let reconstructionRejected = false;
+  let lateBountyRejected = false;
+  ws.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "campaign") campaign = m;
+    if (m.t === "sys" && /judgment is no longer open/.test(m.text || "")) rejected = true;
+    if (m.t === "sys" && /reconstruction work has not opened yet/.test(m.text || "")) reconstructionRejected = true;
+    if (m.t === "sys" && /ally operation belongs to a later campaign phase/.test(m.text || "")) lateBountyRejected = true;
+  });
+  await login(ws, name, 0);
+  await sleep(350);
+  ws.send(JSON.stringify({ t: "quest", action: "choice", choice: "expose" }));
+  ws.send(JSON.stringify({ t: "bounty", action: "accept", id: "wake_unmodeled_routes" }));
+  ws.send(JSON.stringify({ t: "bounty", action: "accept", id: "rin_last_shipment" }));
+  await sleep(400);
+  const unchanged = !(campaign?.flags || []).includes("fixer_exposed");
+  ws.close();
+  await sleep(200);
+  report(
+    "JUDGMENT — out-of-stage FIXER choice is rejected without a flag",
+    { rejected, reconstructionRejected, lateBountyRejected, flags: campaign?.flags || [] },
+    rejected && reconstructionRejected && lateBountyRejected && unchanged,
+    { rejected, reconstructionRejected, lateBountyRejected, unchanged },
+  );
+}
+
+/** Weekly city chronicle: authoritative shared ledgers arrive as one bounded edition. */
+async function chronicle() {
+  const name = "ch" + String(Date.now() % 1_000_000);
+  const base = (process.env.WS_URL || "ws://127.0.0.1:8787/ws").replace(/\?.*$/, "");
+  const ws = await connect(base + "?zone=safe");
+  let edition = null;
+  ws.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "chronicle") edition = m;
+  });
+  await login(ws, name, 0);
+  await sleep(650);
+  const weekOk = Number.isInteger(edition?.week) && edition.week >= 0;
+  const headlineOk = typeof edition?.headline === "string" && edition.headline.length >= 12;
+  const linesOk = Array.isArray(edition?.lines)
+    && edition.lines.length === 4
+    && edition.lines.every((line) => typeof line === "string" && line.length >= 20);
+  const civicOk = Array.isArray(edition?.civic) && edition.civic.length === 8
+    && edition.civic.every((n) => Number.isInteger(n) && n >= 0);
+  const territoryOk = Array.isArray(edition?.territory) && edition.territory.length === 8
+    && edition.territory.every((r, district) => r?.district === district && Number.isInteger(r.controller) && Number.isInteger(r.flips));
+  const weeklyCopy = edition?.lines?.some((line) => /this week|weekly civic ledger/.test(line));
+  ws.close();
+  await sleep(200);
+  report(
+    "CHRONICLE — war, civic, boss, and Cell ledgers assemble into one edition",
+    edition,
+    weekOk && headlineOk && linesOk && civicOk && territoryOk && weeklyCopy,
+    { weekOk, headlineOk, linesOk, civicOk, territoryOk, weeklyCopy },
+  );
+}
+
+/** Civic courier: closed weeks reject forged ids; open weeks settle only on server arrival. */
+async function courier() {
+  const name = "cu" + String(Date.now() % 1_000_000);
+  const base = (process.env.WS_URL || "ws://127.0.0.1:8787/ws").replace(/\?.*$/, "");
+  let ws = await connect(base + "?zone=safe");
+  let edition = null;
+  let active = null;
+  let rejected = false;
+  ws.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "chronicle") edition = m;
+    if (m.t === "bounty") active = m.active;
+    if (m.t === "sys" && /no public work has opened that courier route/.test(m.text || "")) rejected = true;
+  });
+  await login(ws, name, 0);
+  await sleep(650);
+  const civicOpen = Array.isArray(edition?.civic) && edition.civic.some((n) => n > 0);
+  ws.send(JSON.stringify({ t: "bounty", action: "accept", id: "courier_run" }));
+  await sleep(650);
+
+  if (!civicOpen) {
+    ws.close();
+    await sleep(200);
+    report(
+      "COURIER — a closed weekly civic ledger rejects direct job-id forgery",
+      { civic: edition?.civic || [], rejected, active },
+      rejected && !active,
+      { civicOpen, rejected, inactive: !active },
+    );
+    return;
+  }
+
+  const accepted = active?.id === "courier_run";
+  ws.close();
+  await sleep(300);
+  ws = await connect(base + "?zone=subway");
+  let hydrated = false;
+  let completed = false;
+  let settled = false;
+  ws.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "bounty" && m.active?.id === "courier_run") hydrated = true;
+    if (m.t === "bounty" && hydrated && m.active === null) completed = true;
+    if (m.t === "sys" && /BOUNTY — CIVIC RELAY/.test(m.text || "")) settled = true;
+  });
+  await login(ws, name, 0);
+  await sleep(950);
+  ws.close();
+  await sleep(200);
+  report(
+    "COURIER — an open civic route persists and settles on authoritative destination arrival",
+    { civic: edition?.civic || [], accepted, hydrated, completed, settled },
+    accepted && hydrated && completed && settled,
+    { civicOpen, accepted, hydrated, completed, settled },
+  );
+}
+
 /** Dual connect: first session replaced cleanly; credits survive. */
 async function reconnect() {
   const name = "rc" + String(Date.now() % 1_000_000);
@@ -3449,6 +3729,10 @@ try {
   else if (mode === "rest") await rest();
   else if (mode === "death") await death();
   else if (mode === "stash") await stash();
+  else if (mode === "resident") await resident();
+  else if (mode === "judgment") await judgment();
+  else if (mode === "chronicle") await chronicle();
+  else if (mode === "courier") await courier();
   else if (mode === "reconnect") await reconnect();
   else if (mode === "launch") await launch();
   else await move();

@@ -166,9 +166,12 @@ export type ClientMsg =
   | { t: "bounty"; action: "accept"; id: string }
   /** City NPC services (heal / meal / rumor / train / fence…) — server validates price + cooldown. */
   | { t: "npc"; action: "service"; npcId: string; service: string }
+  /** Social-only contact acknowledgement. Persists "met" state; never grants value. */
+  | { t: "npc"; action: "talk"; npcId: string }
   // personal campaign — accept a quest from THE FIXER or resolve a talk beat
   | { t: "quest"; action: "accept"; id?: string }
   | { t: "quest"; action: "talk" }
+  | { t: "quest"; action: "choice"; choice: "spare" | "expose" }
   /** Unified FIXER interact: accept next offer, resolve talk beat, or re-send current story. */
   | { t: "quest"; action: "engage" }
   | { t: "tutorial"; action: "skip" | "graduate" | "progress" | "mode"; kind?: string; mode?: "quick" | "full"; n?: number }
@@ -337,6 +340,7 @@ export type ServerMsg =
       done: boolean;
       /** Personal campaign meltdown victory — client plays VFX; server already queued city-center redirect. */
       meltdown?: boolean;
+      choices?: Array<{ id: "spare" | "expose"; label: string }>;
     }
   /** Full campaign journal for the quest log (main + completed). */
   | {
@@ -346,11 +350,22 @@ export type ServerMsg =
       progress: number;
       objective: string;
       completed: string[];
+      flags?: string[];
     }
   // a memory fragment recovered at an ICE-dive core (new=false when already held)
-  | { t: "fragment"; id: string; title: string; lines: string[]; isNew: boolean }
+  | {
+      t: "fragment";
+      id: string;
+      title: string;
+      lines: string[];
+      isNew: boolean;
+      interpretations?: Array<{ id: string; title: string; line: string; district: number }>;
+    }
   // dynamic world event phase change in this district (telegraph -> active -> end)
-  | { t: "event"; id: string; name: string; tagline: string; hex: string; phase: "telegraph" | "active" | "end"; seconds: number }
+  | { t: "event"; id: string; name: string; tagline: string; condition: string; hex: string; phase: "telegraph" | "active" | "end"; seconds: number }
+  // shared daily civic aftermath for a district; all zone shards contribute to it
+  | { t: "civic"; district: number; day: number; operation: string; stage: string; completions: number; line: string; eventDurationPct: number }
+  | { t: "chronicle"; week: number; headline: string; lines: string[]; civic: number[]; territory: Array<{ district: number; controller: number; flips: number }> }
   | { t: "inv"; items: Item[] } // the owning client's full inventory (login + on change)
   | { t: "stashv"; items: Item[] } // owning client's personal stash (login + on change)
   // player housing — the current estate's ownership + furniture + visitor book (sent on entering an est{K} home + on change)
@@ -397,6 +412,16 @@ export type ServerMsg =
   | { t: "cosmetics"; owned: string[]; equipped: string | null }
   // authored NPC bounty — the player's active job (or null), sent on login + on change
   | { t: "bounty"; active: { id: string; name: string; desc: string; objective: string; count: number; progress: number } | null }
+  // durable social memory: trust tier per met contact + civic standing per district
+  | {
+      t: "relations";
+      trust: Record<string, number>;
+      districts: number[];
+      clues?: string[];
+      confirmed?: string[];
+      reconstruction?: number[];
+      social?: { given: number; received: number; tier: number; title: string; line: string };
+    }
   // map discovery — the set of zones this account has arrived at (drives fast travel), on login
   | { t: "discovered"; zones: string[]; unlocked: string[] }
   // guild ("Cell") state — full summary + roster, or "none" when not in a cell

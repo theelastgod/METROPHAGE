@@ -61,12 +61,21 @@ describe("online scene configuration", () => {
   });
 
   it("keeps building titles and appearance defaults deterministic", () => {
-    // Exactly one of each kind — no wrap / no second shop. Order is append-only:
-    // building index K keeps kind K forever, so old district doors never shuffle.
-    expect([0, 1, 2, 3, 4, 5, 6, 7].map(districtBuildingKind)).toEqual([
-      "shop", "home", "guild", "den", "bar", "noodle", "ripperdoc", null,
-    ]);
-    expect(DISTRICT_VENUE_TITLE[districtBuildingKind(3)!]).toBe("THE DEN");
+    // The first five doors are identical in EVERY district (the prefix is
+    // load-bearing — editing it would shuffle every runner's known doors);
+    // slots 5-6 are the district's specialties.
+    for (let district = 0; district < 8; district++) {
+      expect([0, 1, 2, 3, 4].map((i) => districtBuildingKind(i, district)), `d${district}`).toEqual([
+        "shop", "home", "guild", "den", "bar",
+      ]);
+      expect(districtBuildingKind(9, district)).toBeNull();
+    }
+    // Specialty spot-checks: scrap district fences, spire chrome, the relay's signal.
+    expect([5, 6].map((i) => districtBuildingKind(i, 1))).toEqual(["pawn", "garage"]);
+    expect([5, 6].map((i) => districtBuildingKind(i, 2))).toEqual(["ripperdoc", "radio"]);
+    expect(districtBuildingKind(5, 5)).toBe("radio");
+    expect(districtBuildingKind(6, 6)).toBeNull(); // wastes: six buildings, six doors
+    expect(DISTRICT_VENUE_TITLE[districtBuildingKind(3, 0)!]).toBe("THE DEN");
     expect(hubLook({ color: 0x123456, hair: "buzz" })).toMatchObject({
       color: 0x123456,
       hair: "buzz",

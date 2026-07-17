@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { GLOW_KEY } from "../assets/manifest";
 import { TILE, DISTRICT_SCALE } from "../config";
 import type { Rect } from "../game/districts";
+import { DISTRICTS } from "../game/districts";
 import {
   LANDMARK_KINDS,
   type BuildingKind,
@@ -366,9 +367,10 @@ export function paintDistrictBuildingFacades(
   const S = DISTRICT_SCALE;
   const g = scene.add.graphics().setDepth(depth);
   const hfRects: Rect[] = [];
+  const districtIdx = DISTRICTS.findIndex((d) => d.id === opts?.districtId);
   for (let i = 0; i < buildings.length; i++) {
     const b = buildings[i];
-    const venueKind = districtBuildingKind(i);
+    const venueKind = districtBuildingKind(i, districtIdx);
     // Scenery (no door): always district kit. Venues: one unique kind art each.
     const kind: BuildingKind = venueKind ?? "home";
     const { accent, sign } = KIND_STYLE[kind];

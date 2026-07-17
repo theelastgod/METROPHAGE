@@ -38,10 +38,48 @@ Four classes, each with a full server-validated kit:
 - **THE UNDERLINE** — the subway dungeon.
 - **Dynamic world events** — NEON STORM / BLACKOUT / REPO PURGE WAVE /
   CONTAGION OUTBREAK run on the server per district: telegraph → real sim
-  effects → payout to everyone alive.
-- **Campaign** — 9 quests across 3 acts (THE WAKE → THE AWAKENING),
-  per-player progress inside the shared world, journal + waypoints.
+  effects → explicit survive-to-resolution condition → payout to everyone alive;
+  party reboots before resolution count as successful rescues.
+- **Living districts** — every district has its own history, power blocs,
+  residents, landmarks, secrets, and a rotating server-authoritative public
+  operation. Purges, captures, bosses, and event survival directly help locals;
+  completed operations build a shared daily aftermath visible in maps, rumours,
+  arrivals, and retaliatory world events across every shard of that district.
+- **Four political Cells** — classes are competing ideas of freedom, not just
+  colors on a territory score; control messages name what each Cell promises.
+- **People remember** — named contacts recognize meetings and completed work across
+  devices; trust unlocks personal disclosures and better local intelligence.
+  Districts likewise remember civic contribution as local standing. Sixteen recurring
+  residents keep visible street/work/refuge/home schedules, and local testimony learned
+  from one person changes what their district counterpart can reveal. Corroborating
+  2/4/8 districts opens a durable city casefile and cross-district fieldwork directives;
+  every confirmed counterpart has an optional evidence-driven follow-up job.
+- **Campaign** — 10-part main arc plus 3 linked side jobs (THE WAKE → THE AWAKENING),
+  per-player progress inside the shared world, journal + waypoints. Completed acts echo
+  through allies, residents, maps, and recovered memories; the FIXER judgment persists
+  as SPARE or EXPOSE and changes later callbacks, four ally positions, eight district
+  aftermaths, and each Cell's political interpretation.
+- **Reconstruction after the ending** — every district opens an authored post-Awakening
+  resident job; completed work matures from CREW to COMMON to INSTITUTION and remains
+  visible in resident dialogue and maps.
+- **Ordered memory synthesis** — the order in which dive fragments are recovered changes
+  eight district interpretations; the journal records recovery number and combination
+  readings instead of flattening memory into an unordered checklist.
+- **Weekly city chronicle** — shared Cell war, civic operations, command-chassis deaths,
+  and collective goals become a server-authored city-center edition rather than a
+  disposable client feed. Public work uses a bounded weekly district ledger, so the
+  edition no longer forgets six days of civic history at UTC midnight.
+- **Civic courier routes** — weekly public work opens four character-authored deliveries
+  between districts, city center, the Clinic, and THE UNDERLINE. Only authoritative zone
+  arrival completes them, and durable 24-hour settlements prevent fast-travel payouts.
+- **Daily relay charters** — territory flips leave a bounded public memory of the latest
+  Cell and its civic use for each district. Maps, arrivals, and the chronicle remember the
+  contest, while live nodes remain the sole authority for control and rewards.
 - **Seasonal meltdown** — the save-wide Singularity tips into a new era.
+- **Co-op attribution** — nearby party allies share story/contract/public-operation/job
+  progress, while base kill value and Cell tally remain attached to the killing blow.
+- **Social memory** — party reboots persist as bounded rescuer/recipient history, and
+  contacts recognize mutual aid plus the authored provenance of equipped cosmetics.
 
 ## The $METRO economy
 

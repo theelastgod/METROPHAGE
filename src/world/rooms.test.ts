@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ROOM_PLANS, buildVenueRoom, venueKindForZone, venueLayoutFor, venueSpawnFor } from "./rooms";
 import { buildVenueRoomFromLayout, isWall } from "./district";
-import { DISTRICT_VENUE_KINDS } from "../game/districtVenues";
+import { DISTRICT_VENUE_KINDS, districtVenueLineup } from "../game/districtVenues";
 import { ONLINE_CITY } from "./city";
 import { TILE } from "../config";
 
@@ -67,11 +67,12 @@ describe("art-traced room plans", () => {
 });
 
 describe("venue kind resolution (client and server must agree)", () => {
-  it("district venue zones resolve to the authored kind per index", () => {
-    DISTRICT_VENUE_KINDS.forEach((kind, i) => {
-      expect(venueKindForZone(`d0i${i}`)).toBe(kind);
-      expect(venueKindForZone(`d3i${i}`)).toBe(kind);
-    });
+  it("district venue zones resolve to the authored per-district lineup", () => {
+    for (let district = 0; district < 8; district++) {
+      districtVenueLineup(district).forEach((kind, i) => {
+        expect(venueKindForZone(`d${district}i${i}`), `d${district}i${i}`).toBe(kind);
+      });
+    }
   });
 
   it("hub zones resolve to that building's kind", () => {
@@ -88,7 +89,7 @@ describe("venue kind resolution (client and server must agree)", () => {
       const L = venueLayoutFor(zone);
       expect(L.art, `${zone} should be art-traced`).toBeTruthy();
       // The hub venue and its district counterpart are literally the same room.
-      const districtIdx = DISTRICT_VENUE_KINDS.indexOf(kind as never);
+      const districtIdx = districtVenueLineup(0).indexOf(kind as never);
       if (districtIdx >= 0) expect(venueLayoutFor(`d0i${districtIdx}`)).toBe(L);
       // and the grid must be the room's size, not the 40×30 safehouse
       const g = buildVenueRoom(zone);
@@ -117,10 +118,12 @@ describe("venue kind resolution (client and server must agree)", () => {
     expect(venueLayoutFor(`d5i${barIdx}`)).toBe(venueLayoutFor(`d0i${barIdx}`));
   });
 
-  it("every district venue kind now has an art room", () => {
-    DISTRICT_VENUE_KINDS.forEach((kind, i) => {
-      expect(venueLayoutFor(`d0i${i}`).art, `${kind} should be art-traced`).toBeTruthy();
-    });
+  it("every venue in every district lineup has an art-traced room", () => {
+    for (let district = 0; district < 8; district++) {
+      districtVenueLineup(district).forEach((kind, i) => {
+        expect(venueLayoutFor(`d${district}i${i}`).art, `d${district} ${kind} should be art-traced`).toBeTruthy();
+      });
+    }
   });
 
   it("the hotel resolves to its dedicated sleep-pod interior", () => {

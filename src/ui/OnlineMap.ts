@@ -2,7 +2,14 @@ import Phaser from "phaser";
 import { COLORS } from "../config";
 import { DISTRICTS } from "../game/districts";
 import { BRIDGES } from "../game/bridges";
-import { dailyDistrictMod } from "../game/districtMods";
+import { districtAftermath, districtMapSummary } from "../game/districtLife";
+import { districtStandingSummary } from "../game/relationships";
+import { casefileMilestone, districtResidentScheduleLine, districtTestimonyStatus } from "../game/residentLife";
+import { districtReconstruction } from "../game/reconstruction";
+import { districtMemoryInterpretation, memoryInterpretations } from "../game/fragments";
+import { districtJudgmentReaction } from "../game/judgmentReactions";
+import { territoryLegacyLine } from "../game/territoryLegacy";
+import { districtCampaignEcho } from "../game/campaignEchoes";
 import { zoneAccess, zoneNeedsWarning, zoneWarning, type ZoneAccess } from "../game/zoneAccess";
 import { ESTATES_ZONE } from "../world/estates";
 import { getSettings } from "../systems/Settings";
@@ -149,7 +156,16 @@ export default class OnlineMap extends Modal {
    * NetClient handle of its own). Drives story/level advisories only: travel is
    * never blocked, the runner just gets told what they're walking into.
    */
-  standingProvider?: () => { completed: string[]; level: number };
+  standingProvider?: () => { completed: string[]; level: number; flags?: string[] };
+  /** Durable civic recognition, indexed by district. */
+  localStandingProvider?: () => number[];
+  testimonyProvider?: () => { clues: string[]; confirmed: string[] };
+  reconstructionProvider?: () => number[];
+  fragmentSequenceProvider?: () => string[];
+  socialMemoryProvider?: () => { given: number; received: number; tier: number; title: string; line: string };
+  /** Shared daily public-operation completions, indexed by district. */
+  civicMomentumProvider?: () => number[];
+  chronicleProvider?: () => { week: number; headline: string; lines: string[]; civic: number[]; territory: Array<{ district: number; controller: number; flips: number }> } | null;
 
   /** Zone armed by a first click on a warned route; a second click commits. */
   private pendingTravel: string | null = null;
@@ -187,7 +203,16 @@ export default class OnlineMap extends Modal {
   }
 
   private zoneBlurb(zone: string, label: string): string {
-    if (zone === "safe") return "Metro City hub pad — city spawn for new runners and safe return.";
+    if (zone === "safe") {
+      const chronicle = this.chronicleProvider?.();
+      const testimony = this.testimonyProvider?.() ?? { clues: [], confirmed: [] };
+      const reconstruction = this.reconstructionProvider?.() ?? [];
+      const memories = memoryInterpretations(this.fragmentSequenceProvider?.() ?? []);
+      const social = this.socialMemoryProvider?.();
+      const casefile = casefileMilestone(testimony.confirmed);
+      const rebuilt = reconstruction.filter((n) => n > 0).length;
+      return `Metro City hub pad — city spawn for new runners and safe return.${chronicle ? ` WEEKLY CHRONICLE · ${chronicle.headline}. ${chronicle.lines.join(" ")}` : ""}${casefile ? ` CASEFILE ${testimony.confirmed.length}/8 · ${casefile.title}: ${casefile.objective}` : ""}${memories.length ? ` MEMORY SYNTHESIS · ${memories.length}/8 district readings reconstructed.` : ""}${social?.tier ? ` SOCIAL MEMORY · ${social.title} (${social.given} lifted / ${social.received} received). ${social.line}` : ""}${rebuilt ? ` RECONSTRUCTION · ${rebuilt}/8 districts have a working crew.` : ""}`;
+    }
     if (zone === "clinic") return "The Clinic — patch wounds and recover between sorties.";
     if (zone === "shop") return "Market Stall — buy caches and vendor stock.";
     if (zone === "bar") return "The Feral Cat — drinks, rumours, and city flavour.";
@@ -199,9 +224,24 @@ export default class OnlineMap extends Modal {
     if (m) {
       const di = parseInt(m[1], 10);
       const d = DISTRICTS[di];
-      const mod = dailyDistrictMod(di);
+      const local = this.localStandingProvider?.()[di] ?? 0;
+      const aftermath = districtAftermath(di, undefined, this.civicMomentumProvider?.()[di] ?? 0);
+      const civic = aftermath.completions > 0
+        ? ` ${aftermath.name} (${aftermath.completions}): ${aftermath.line}`
+        : "";
+      const campaign = this.standingProvider?.();
+      const echo = campaign ? districtCampaignEcho(di, campaign.completed, campaign.flags ?? []) : null;
+      const judgment = campaign ? districtJudgmentReaction(di, campaign.flags ?? []) : null;
+      const testimony = this.testimonyProvider?.() ?? { clues: [], confirmed: [] };
+      const reconstruction = districtReconstruction(di, this.reconstructionProvider?.()[di] ?? 0);
+      const memory = districtMemoryInterpretation(di, this.fragmentSequenceProvider?.() ?? []);
+      const weeklyCivic = this.chronicleProvider?.()?.civic?.[di] ?? 0;
+      const territory = this.chronicleProvider?.()?.territory?.[di];
+      const relayLedger = territory?.flips
+        ? ` RELAY LEDGER · ${territoryLegacyLine(territory)} `
+        : "";
       return d
-        ? `${d.name} — ${d.subtitle}. Threat ${d.threat}.${this.accessBlurb(zone)} Today: ${mod.name} (${mod.blurb}). ⚔ PvP: THE CRUCIBLE in the SE corner.`
+        ? `${districtMapSummary(di)} ${districtStandingSummary(di, local)}${civic}${weeklyCivic ? ` WEEKLY LEGACY · ${weeklyCivic} public ${weeklyCivic === 1 ? "operation" : "operations"} entered in the city chronicle.` : ""}${relayLedger}${echo ? ` CAMPAIGN ECHO · ${echo}` : ""}${judgment ? ` JUDGMENT AFTERMATH · ${judgment}` : ""}${memory ? ` MEMORY ${memory.title} [${memory.positions.join("→")}] · ${memory.line}` : ""}${reconstruction ? ` RECONSTRUCTION ${reconstruction.stage} · ${reconstruction.line}` : ""} ${districtTestimonyStatus(di, testimony.clues, testimony.confirmed)}. RESIDENT ROUTES · ${districtResidentScheduleLine(di)}. THREAT ${d.threat}.${this.accessBlurb(zone)} ⚔ PvP: THE CRUCIBLE in the SE corner.`
         : label;
     }
     const w = zone.match(/^w(\d+)$/);

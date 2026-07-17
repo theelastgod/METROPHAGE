@@ -10,9 +10,10 @@ export default class RsGameMessage {
   private g: Phaser.GameObjects.Graphics;
   private label: Phaser.GameObjects.Text;
   private readonly x: number;
-  private readonly y: number;
+  private y: number;
   private readonly w: number;
-  private readonly h = uiDim(28);
+  private h = uiDim(28);
+  private readonly bottomY: number;
   private fadeTimer?: Phaser.Time.TimerEvent;
 
   constructor(scene: Phaser.Scene) {
@@ -20,7 +21,8 @@ export default class RsGameMessage {
     const margin = uiDim(14);
     this.w = Math.min(uiDim(520), scene.scale.width - margin * 2);
     this.x = (scene.scale.width - this.w) / 2;
-    this.y = scene.scale.height - uiDim(118);
+    this.bottomY = scene.scale.height - uiDim(90);
+    this.y = this.bottomY - this.h;
     this.g = scene.add.graphics().setScrollFactor(0).setDepth(1045);
     this.label = scene.add
       .text(this.x + uiDim(12), this.y + uiDim(7), "", bodyFont(11, { color: "#f7ff3c", wordWrap: { width: this.w - uiDim(24) } }))
@@ -45,6 +47,12 @@ export default class RsGameMessage {
       this.fadeTimer = undefined;
     }
     this.label.setText(text).setColor(opts?.color ?? "#f7ff3c").setAlpha(1);
+    // Examine copy can now carry a compact district dossier. Grow upward from the
+    // same HUD anchor instead of drawing wrapped text outside a fixed 28px strip.
+    this.h = Math.min(uiDim(180), Math.max(uiDim(28), this.label.height + uiDim(14)));
+    this.y = this.bottomY - this.h;
+    this.label.setPosition(this.x + uiDim(12), this.y + uiDim(7));
+    this.drawFrame();
     this.scene.tweens.killTweensOf([this.label, this.g]);
     this.g.setAlpha(1);
     if (opts?.ttlMs) {

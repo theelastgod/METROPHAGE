@@ -106,6 +106,20 @@ export class Campaign {
     return !!this.active && this.currentStage?.on.type === "talk";
   }
 
+  get fixerJudgmentPending(): boolean {
+    return this.activeId === "fixers_debt" && this.currentStage?.id === "judgment" &&
+      !this.hasFlag("fixer_spared") && !this.hasFlag("fixer_exposed");
+  }
+
+  /** Resolve the campaign's durable moral choice and advance its talk stage once. */
+  resolveFixerJudgment(choice: "spare" | "expose"): boolean {
+    if (!this.fixerJudgmentPending) return false;
+    this.flags.add(choice === "spare" ? "fixer_spared" : "fixer_exposed");
+    this.stage++;
+    this.progress = 0;
+    return true;
+  }
+
   accept(id: string): QuestDef | null {
     const q = getQuest(id);
     if (!q || !this.isOffered(id)) return null;

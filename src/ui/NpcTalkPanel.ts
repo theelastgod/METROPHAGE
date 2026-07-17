@@ -15,6 +15,7 @@ import {
 import { bountyForNpc } from "../game/bounties";
 import { storyPhase } from "../game/cityNpcs";
 import { prefersMobileUx } from "../systems/Mobile";
+import { districtStandingTier, relationshipTierName } from "../game/relationships";
 
 export interface NpcTalkOption {
   id: NpcServiceId;
@@ -57,6 +58,12 @@ export default class NpcTalkPanel {
     activeBountyId: string | null;
     /** Active campaign quest id — story allies escalate their jobs in the late act. */
     campaignQuest?: string | null;
+    trust?: number;
+    districtStanding?: number;
+    confirmed?: string[];
+    campaignCompleted?: string[];
+    /** Current weekly public-work ledger; civic courier jobs stay hidden at zero. */
+    weeklyCivic?: number[];
   }) {
     this.clear();
     this.open = true;
@@ -64,14 +71,15 @@ export default class NpcTalkPanel {
     this.npcName = opts.name;
 
     const phase = storyPhase(opts.campaignQuest ?? null);
-    const hasBountyDef = !!bountyForNpc(opts.npcId, phase);
+    const hasBountyDef = !!bountyForNpc(opts.npcId, phase, opts.confirmed, opts.campaignCompleted, opts.weeklyCivic);
     const services = servicesForNpc(opts.npcId, hasBountyDef);
+    const trustTier = Math.max(0, Math.min(3, Math.floor(opts.trust ?? 0)));
     const options: NpcTalkOption[] = [];
     for (const id of services) {
       const def = NPC_SERVICES[id];
       if (!def) continue;
       if (id === "bounty") {
-        const b = bountyForNpc(opts.npcId, phase);
+        const b = bountyForNpc(opts.npcId, phase, opts.confirmed, opts.campaignCompleted, opts.weeklyCivic);
         if (!b) continue;
         if (opts.hasBountyActive && opts.activeBountyId !== b.id) {
           options.push({
@@ -105,7 +113,12 @@ export default class NpcTalkPanel {
         });
         continue;
       }
-      options.push({ id, label: def.label, hint: def.hint, color: def.color });
+      const hint = id === "rumor" && trustTier >= 3
+        ? "confidant truth"
+        : id === "rumor" && trustTier >= 2
+          ? "trusted local intel"
+          : def.hint;
+      options.push({ id, label: def.label, hint, color: def.color });
     }
     if (!options.some((o) => o.id === "chat")) {
       options.unshift({ id: "chat", label: "Talk", hint: "just talk", color: "#9aa3b2" });
@@ -136,6 +149,7 @@ export default class NpcTalkPanel {
 
     const pad = uiDim(12);
     const role = npcRoleLabel(opts.npcId);
+    const trust = relationshipTierName(trustTier);
     add(
       this.scene.add
         .text(x + pad, y + uiDim(8), `${opts.name}`, displayFont(mobile ? 11 : 12, { color: "#c8d0dc", fontStyle: "bold" }))
@@ -144,16 +158,17 @@ export default class NpcTalkPanel {
     );
     add(
       this.scene.add
-        .text(x + w - pad, y + uiDim(10), role, bodyFont(8, { color: "#5a6478" }))
+        .text(x + w - pad, y + uiDim(10), `${role} · ${trust}`, bodyFont(8, { color: "#5a6478" }))
         .setOrigin(1, 0)
         .setScrollFactor(0)
         .setDepth(D + 3),
     );
 
     const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
+    const local = opts.districtStanding === undefined ? "" : `[LOCAL ${districtStandingTier(opts.districtStanding).name}] `;
     const quote = add(
       this.scene.add
-        .text(x + pad, y + uiDim(28), clip(opts.line, mobile ? 72 : 100), {
+        .text(x + pad, y + uiDim(28), clip(local + opts.line, mobile ? 72 : 100), {
           fontFamily: "Courier New, monospace",
           fontSize: `${uiDim(mobile ? 9 : 10)}px`,
           color: "#8a94a8",
@@ -167,7 +182,7 @@ export default class NpcTalkPanel {
     // Cap quote height so buttons stay visible.
     const quoteMaxH = uiDim(32);
     if (quote.height > quoteMaxH) {
-      quote.setText(clip(opts.line, mobile ? 48 : 70));
+      quote.setText(clip(local + opts.line, mobile ? 48 : 70));
     }
 
     const btnStart = Math.max(y + uiDim(52), quote.y + Math.min(quote.height, quoteMaxH) + uiDim(6));
