@@ -616,7 +616,8 @@ export const ASSETS: Record<string, AssetEntry[]> = {
     ...HF_SUBWAY_EXPANSION_PROP_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
     ...HF_SUBWAY_IDENTITY_PROP_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
     ...HF_BUSINESS_PROP_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
-    ...HF_SUBWAY_TILE_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
+    // Full-bleed plates ship as WebP (~8× smaller, alpha preserved; see tools/plates-to-webp.mjs).
+    ...HF_SUBWAY_TILE_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".webp" })),
     ...HF_DIST_PROP_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
     ...HF_WORLD_PROP_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
     ...HF_EARLY_WORLD_PROP_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
@@ -627,8 +628,8 @@ export const ASSETS: Record<string, AssetEntry[]> = {
     ...HF_LANDMARK_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
     ...HF_WILD_PROP_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
     ...HF_DUNGEON_PROP_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
-    ...HF_INT_ROOM_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
-    ...HF_LAYOUT_PLATE_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
+    ...HF_INT_ROOM_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".webp" })),
+    ...HF_LAYOUT_PLATE_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".webp" })),
     // Holistic tier — env-identity kits, estates, per-biome wilderness plates.
     ...HF_ENV_KIT_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),
     ...HF_ESTATE_KEYS.map((k) => ({ key: k, file: "assets/objects/" + k + ".png" })),

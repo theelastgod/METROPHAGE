@@ -127,9 +127,11 @@ export default defineConfig(({ command, mode }) => {
         output: {
           manualChunks(id) {
             if (id.includes("node_modules/phaser")) return "phaser";
-            if (id.includes("node_modules/@walletconnect") || id.includes("node_modules/@reown")) {
-              return "walletconnect";
-            }
+            // Do NOT force @walletconnect/@reown into one named chunk: rollup then
+            // parks its shared preload helper inside it, index.js gains a STATIC
+            // import of the 4 MB bundle, and every guest downloads the whole wallet
+            // stack at boot. The dynamic import() boundaries in solanaWalletModal /
+            // walletConnect already split it into lazy chunks on their own.
           },
         },
       },
