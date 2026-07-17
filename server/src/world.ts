@@ -2467,6 +2467,14 @@ export class WorldDO {
         p.credits -= c;
         p.cores -= k;
         p.dirty = true;
+        // Persist the debit BEFORE the durable bank credit. A DO eviction between the
+        // guilds UPDATE and the next player snapshot would rehydrate the pre-debit
+        // balance while the bank kept the deposit — minting on every crash window.
+        if (!(await this.upsertPlayer(p))) {
+          p.credits += c;
+          p.cores += k;
+          return sys("credit ledger unavailable — deposit not taken");
+        }
         try {
           await DB.prepare("UPDATE guilds SET bank_credits = bank_credits + ?, bank_cores = bank_cores + ?, xp = xp + ? WHERE id = ?")
             .bind(c, k, c, p.guildId)
@@ -2474,6 +2482,8 @@ export class WorldDO {
         } catch {
           p.credits += c;
           p.cores += k;
+          p.dirty = true;
+          void this.upsertPlayer(p); // failure leaves an under-pay, never a mint
           return sys("cell bank unavailable — deposit refunded");
         }
         await this.refreshGuildBonus(p.guildId); // deposits raise XP → maybe a new level + perk
@@ -6148,6 +6158,19 @@ export class WorldDO {
       // after a successful D1 ownership claim.
       p.credits -= price;
       p.dirty = true;
+      // Persist the debit BEFORE any durable side of the sale (ownership claim, seller
+      // mailbox credit). A DO eviction after those commit but before the next player
+      // snapshot would rehydrate the buyer's pre-debit balance — home + seller payout
+      // + full refund, ₵price minted. Same pattern as furnish below and PvP escrow.
+      if (!(await this.upsertPlayer(p))) {
+        p.credits += price;
+        return sys("credit ledger unavailable — try again");
+      }
+      const refundDurably = () => {
+        p.credits += price;
+        p.dirty = true;
+        void this.upsertPlayer(p); // failure direction is under-pay, never a mint
+      };
       try {
         let won = false;
         if (prevOwner) {
@@ -6172,11 +6195,11 @@ export class WorldDO {
           won = (claim.meta.changes ?? 0) > 0;
         }
         if (!won) {
-          p.credits += price;
+          refundDurably();
           return sys("someone else just bought this home");
         }
       } catch {
-        p.credits += price;
+        refundDurably();
         return sys("estate registry unavailable — try again");
       }
       if (!prevOwner) this.eco("burn", "estates", price); // resale is a transfer (mailbox), not a burn

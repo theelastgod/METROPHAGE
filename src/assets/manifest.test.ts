@@ -1,5 +1,7 @@
+import { existsSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { deferredWorldAssetsForZone } from "./manifest";
+import { ASSETS, deferredWorldAssetsForZone } from "./manifest";
 
 const keys = (zone: string) => new Set(deferredWorldAssetsForZone(zone).map((a) => a.key));
 
@@ -37,5 +39,47 @@ describe("deferred world asset routing", () => {
     expect(generatedSubway.length).toBeLessThanOrEqual(70);
     expect(generatedSubway.some((key) => key.startsWith("hf_subway_tile_"))).toBe(true);
     expect(generatedSubway.some((key) => key.startsWith("hf_subway_identity_"))).toBe(true);
+  });
+});
+
+describe("art coverage — every file-backed manifest entry resolves to a real asset", () => {
+  // Missing art degrades SILENTLY (dressers gate on textures.exists), and the browser
+  // probe only sees the boot payload now that world art is zone-deferred. This static
+  // check is the one that actually proves coverage, so it gates verify:ship via vitest.
+  const root = resolve(__dirname, "..", "..");
+  // Plain paths live under public/; import.meta.glob-resolved entries (music beds)
+  // carry Vite-rooted "/src/…" URLs in dev — both must point at a real file.
+  const diskPath = (file: string) =>
+    file.startsWith("/src/") ? join(root, file.slice(1)) : join(root, "public", file);
+
+  it("has a real file behind every non-procedural entry", () => {
+    const missing: string[] = [];
+    for (const [category, list] of Object.entries(ASSETS)) {
+      for (const a of list) {
+        if (!a.file) continue;
+        if (!existsSync(diskPath(a.file))) missing.push(`${category}/${a.key} → ${a.file}`);
+      }
+    }
+    expect(missing, `manifest entries with no file on disk:\n${missing.join("\n")}`).toEqual([]);
+  });
+
+  it("every spritesheet's pixel dimensions divide evenly by its declared frame size", async () => {
+    // A stub or wrong-sized file "loads successfully" and suppresses the code-baked
+    // fallback — cop.png shipped as a 460-byte pill for exactly this reason. Frame
+    // divisibility catches stubs, mis-exports, and bad slices; byte size does not.
+    const sharp = (await import("sharp")).default;
+    const bad: string[] = [];
+    for (const list of Object.values(ASSETS)) {
+      for (const a of list) {
+        if (!a.file || !a.frameWidth || !a.frameHeight) continue;
+        const p = diskPath(a.file);
+        if (!existsSync(p)) continue; // reported by the coverage test above
+        const m = await sharp(p).metadata();
+        if (!m.width || !m.height || m.width % a.frameWidth !== 0 || m.height % a.frameHeight !== 0) {
+          bad.push(`${a.key} → ${a.file}: ${m.width}x${m.height} not divisible by ${a.frameWidth}x${a.frameHeight}`);
+        }
+      }
+    }
+    expect(bad, `spritesheets whose size does not match their frame grid:\n${bad.join("\n")}`).toEqual([]);
   });
 });

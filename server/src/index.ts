@@ -873,6 +873,8 @@ export default {
         if (ecoRes.ok) {
           const body = (await ecoRes.json()) as {
             credits?: { emittedToday?: number; burnedToday?: number; sinkEfficiency7d?: number; emitted7d?: number; burned7d?: number };
+            token?: { poolMetro?: number; coverageRatio?: number | null };
+            forecast?: { daysUntilDry?: number | null };
           };
           const c = body.credits ?? {};
           economy = {
@@ -881,7 +883,18 @@ export default {
             emitted7d: c.emitted7d ?? 0,
             burned7d: c.burned7d ?? 0,
             sinkEfficiency7d: c.sinkEfficiency7d ?? 0,
+            // Pool-empty is a player-visible outage ("Check back later.") — surface it
+            // on /health so ops sees it coming instead of hearing about it in chat.
+            poolMetro: body.token?.poolMetro ?? null,
+            coverageRatio: body.token?.coverageRatio ?? null,
+            daysUntilDry: body.forecast?.daysUntilDry ?? null,
           };
+          const pool = Number(body.token?.poolMetro);
+          const dry = body.forecast?.daysUntilDry;
+          if (Number.isFinite(pool) && pool <= 0) warnings.push("pool_empty");
+          else if (typeof dry === "number" && dry <= 7) warnings.push("pool_dry_soon");
+          const cover = body.token?.coverageRatio;
+          if (typeof cover === "number" && cover < 0.5) warnings.push("coverage_low");
           const sink = Number(c.sinkEfficiency7d) || 0;
           const emit7 = Number(c.emitted7d) || 0;
           if (emit7 > 500 && sink < 0.05) warnings.push("sink_efficiency_low");

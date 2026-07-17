@@ -15,6 +15,7 @@
  *   node tools/safe-redeploy.mjs --server     # Worker only
  *   node tools/safe-redeploy.mjs --client     # Pages only
  *   node tools/safe-redeploy.mjs --dry-run    # checks only
+ *   node tools/safe-redeploy.mjs --skip-verify # skip verify:ship gate (emergencies only)
  */
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -31,6 +32,7 @@ const PAGES_PROJECT = "metrophagev1";
 
 const args = new Set(process.argv.slice(2));
 const dryRun = args.has("--dry-run");
+const skipVerify = args.has("--skip-verify");
 const serverOnly = args.has("--server");
 const clientOnly = args.has("--client");
 const doServer = !clientOnly;
@@ -203,6 +205,15 @@ run(process.execPath, [join(root, "tools", "scrub-ship.mjs")], {
 run(process.execPath, [join(root, "tools", "check-migrations-safe.mjs")], {
   failMsg: "destructive migrations blocked",
 });
+
+// Red gate: a ship that fails typecheck, unit tests, or the panel smoke does not go out.
+// --skip-verify exists for emergency rollforwards only; dry-run already skips the deploy.
+if (!dryRun && !skipVerify) {
+  console.log("\n→ verify:ship (typecheck + vitest + panel smoke)…");
+  run("npm", ["run", "verify:ship"], {
+    failMsg: "verify:ship failed — fix red checks or rerun with --skip-verify (emergencies only)",
+  });
+}
 
 const before = progressFingerprint();
 printFp("before", before);
