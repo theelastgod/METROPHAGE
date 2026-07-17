@@ -3698,6 +3698,7 @@ export class WorldDO {
     await this.sendChronicle(ws); // shared weekly history from war/civic/boss/Cell ledgers
     await this.drainMail(p); // collect any auction proceeds that arrived while away
     this.sendContracts(ws, p); // hydrate today's daily contracts + reputation
+    await this.grantLoginStreak(ws, p); // consecutive-day return reward (D1-guarded)
     this.sendCosmetics(ws, p); // hydrate owned cosmetics + equipped transmog
     this.sendBounty(ws, p); // hydrate any active NPC bounty
     this.bountyTravelEvent(p); // destination arrival itself completes a courier route
@@ -4765,6 +4766,39 @@ export class WorldDO {
 
   /** Tally a credit flow for the economy ledger (see economy_daily / /economy).
    *  flow 'emit' = the game created credits; 'burn' = a sink destroyed them. */
+  /**
+   * Consecutive-day login streak reward: ₵20 × day, capped at day 7 (₵140).
+   * The guard is the D1 streak_day column — never DO memory (restarts reset it) —
+   * and the guarded UPDATE flushes BEFORE the credit, so a crash in between
+   * under-pays (no reward today), never double-grants. `changes()=1` also makes
+   * it cross-shard safe: exactly one zone DO wins the day per player.
+   */
+  private async grantLoginStreak(ws: WebSocket, p: PlayerState) {
+    try {
+      const today = currentDay();
+      const row = await this.env.DB.prepare("SELECT streak_day, streak_days FROM players WHERE id = ?")
+        .bind(p.id)
+        .first<{ streak_day: number; streak_days: number }>();
+      if (!row) return; // defensive only — loadPlayer's ensure-INSERT means day 1 grants on first login
+      const last = Number(row.streak_day) || 0;
+      if (last >= today) return; // already granted today (or clock skew — do nothing)
+      const streak = last === today - 1 ? (Number(row.streak_days) || 0) + 1 : 1;
+      const claim = await this.env.DB.prepare(
+        "UPDATE players SET streak_day = ?, streak_days = ? WHERE id = ? AND streak_day < ?",
+      )
+        .bind(today, streak, p.id, today)
+        .run();
+      if ((claim.meta.changes ?? 0) !== 1) return; // another shard already won the day
+      const reward = this.grantEmit(p, "streak", 20 * Math.min(streak, 7));
+      this.send(ws, {
+        t: "sys",
+        text: `◈ day ${streak} streak — ₵${reward}${streak < 7 ? " (grows daily through day 7)" : ""}`,
+      });
+    } catch {
+      /* streak columns not migrated yet, or D1 hiccup — never block login */
+    }
+  }
+
   private eco(flow: "emit" | "burn", kind: string, credits: number) {
     if (!(credits > 0)) return;
     const k = flow + ":" + kind;
