@@ -189,9 +189,20 @@ function placeFullBuildingArt(
   pad.fillStyle(accent, 0.48).fillRect(X1, Y1, w, 1);
   const img = scene.add
     .image(X1 + w / 2, Y1 + h / 2, spriteKey)
-    .setDisplaySize(w, h)
     .setDepth(depth + 0.05)
     .setAlpha(1);
+  // Fit vs cover: mild mismatch stretches invisibly, but square art forced onto a
+  // tall/narrow tower footprint (Argus Spire venues are 4×10 tiles) collapses into
+  // an unreadable flat slab. Past ~1.4× aspect mismatch, COVER the footprint at the
+  // art's own aspect and centre-crop the overflow so the pixels stay legible.
+  const aspectMismatch = Math.max((w / h) / (img.width / img.height), (img.width / img.height) / (w / h));
+  if (aspectMismatch > 1.4) {
+    const scale = Math.max(w / img.width, h / img.height);
+    img.setScale(scale);
+    img.setCrop((img.width - w / scale) / 2, (img.height - h / scale) / 2, w / scale, h / scale);
+  } else {
+    img.setDisplaySize(w, h);
+  }
   // Environment sources are already enhanced to their display size. LINEAR filtering
   // softened them a second time (especially under camera zoom), making hub buildings
   // look blurred despite the larger PNGs. Keep hard detail at the pixel-art renderer's

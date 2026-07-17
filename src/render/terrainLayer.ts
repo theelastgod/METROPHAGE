@@ -82,7 +82,12 @@ export function createTerrainLayer(
   if (opts.ambientFloors ?? d.ambientFloors) paintAmbientFloors(scene, grid, accent);
   let hfBuildingRects: Rect[] = [];
   if (opts.buildings?.length) {
-    hfBuildingRects = paintDistrictBuildingFacades(scene, opts.buildings, accent, 3.2, {
+    // Depth 4.0, NOT the ground band: installDecorCulling adopts Images at depth
+    // 0.5–3.9 into depth-3 cell containers, which dropped district facade art
+    // UNDER its own opaque Graphics pad (pads are never adopted) — every district
+    // venue rendered as a blank accent-tinted slab. The hub paints at 4.0 for the
+    // same reason.
+    hfBuildingRects = paintDistrictBuildingFacades(scene, opts.buildings, accent, 4.0, {
       districtId: opts.districtId,
       infected: opts.infected,
     });

@@ -36,7 +36,12 @@ export function paintGeneratedGroundArt(scene: Phaser.Scene, opts: GeneratedGrou
   };
 
   if (opts.profile === "city") {
-    addRepeat(numberedKey("hf_ground_city_tile", seed), 0.2);
+    // Curated NON-DIRECTIONAL variants only. The full 16-tile atlas includes road
+    // lanes (13), pipe corners (09) and plank decking (07); seeded free-pick tiled
+    // those across the civic spawn court, reading as street tiles pointing in
+    // random directions. Concrete/panel textures carry no orientation.
+    const CITY_NEUTRAL = [1, 2, 5, 11] as const;
+    addRepeat(numberedKey("hf_ground_city_tile", CITY_NEUTRAL[seed % CITY_NEUTRAL.length] - 1), 0.2);
     // The old full-screen spawn plate painted a magenta quadrant over the civic
     // square and fought the authoritative paving. The compact plaza now gets its
     // identity from its clean tile bands and physical fountain/street furniture.

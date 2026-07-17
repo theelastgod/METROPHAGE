@@ -143,13 +143,25 @@ export function dressSubwayWishlistArt(scene: Phaser.Scene, stations: SubwayStat
     const px = st.tx * TILE + TILE / 2;
     const py = st.ty * TILE + TILE / 2;
 
+    // The platform/apron plates are authored as WHOLE-ROOM top-down paintings. The
+    // reference-px sizing tables cap them at prop scale (~160px), which left them
+    // hanging like posters in the middle of a bare 15×13-tile carved chamber. Build
+    // the room out of the art instead: stretch each plate to the exact station
+    // footprint buildSubway carves (tx±7 / ty±STATION_HALF) so no open tile shows.
+    const CHAMBER_W = 15 * TILE;
+    const CHAMBER_H = 13 * TILE;
     const stationTileFamily = tier >= 2 ? "hf_subway_tile_stationdeep_" : "hf_subway_tile_station_";
     const stationTile = liveKey(scene, HF_SUBWAY_TILE_KEYS.filter((k) => k.startsWith(stationTileFamily)), salt);
-    if (stationTile) place(scene, stationTile, px, py, depth - 0.25, 0.9, 0.42, false, 0xffffff, 0.5);
+    if (stationTile) {
+      const plate = place(scene, stationTile, px, py, depth - 0.25, 0.9, 0.55, false, 0xffffff, 0.5);
+      plate?.setOrigin(0.5, 0.5).setDisplaySize(CHAMBER_W, CHAMBER_H);
+    }
 
-    // Floor apron under platform (structure plate)
-    place(scene, apron, px, py, depth - 0.15, 1.05, 0.75, false, 0xffffff, 0.5);
-    place(scene, platform, px, py, depth, 0.95, 0.92, false, 0xffffff, 0.55);
+    // Floor apron under platform (structure plate) — both fill the carved chamber.
+    const apronImg = place(scene, apron, px, py, depth - 0.15, 1.05, 0.8, false, 0xffffff, 0.5);
+    apronImg?.setOrigin(0.5, 0.5).setDisplaySize(CHAMBER_W, CHAMBER_H);
+    const platformImg = place(scene, platform, px, py, depth, 0.95, 0.92, false, 0xffffff, 0.55);
+    platformImg?.setOrigin(0.5, 0.5).setDisplaySize(CHAMBER_W * 0.94, CHAMBER_H * 0.94);
 
     if (st.major) {
       // Ticket hall sits NORTH of platform — matches carve north spur chamber
