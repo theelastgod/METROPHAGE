@@ -270,7 +270,8 @@ async function rest() {
     if (m.t === "sys") hs.sys.push(m.text);
     if (m.t === "state") { const me = (m.players || []).find((p) => p.id === wh.id); if (me) hs.credits = me.credits; }
   });
-  await sleep(600);
+  // Poll for the starter grant (see plaza leg below) so c0 is the settled balance.
+  for (let i = 0; i < 30 && hs.credits <= 0; i++) await sleep(100);
   const c0 = hs.credits;
   const s0 = hs.sys.length;
   wsHotel.send(svcMsg);
@@ -291,7 +292,9 @@ async function rest() {
     if (m.t === "sys") ss.sys.push(m.text);
     if (m.t === "state") { const me = (m.players || []).find((p) => p.id === wsafe.id); if (me) ss.credits = me.credits; }
   });
-  await sleep(600);
+  // Poll until the starter grant settles (same false-flaky as reconnect: a fixed
+  // wait can sample 0 before the ₵60 grant broadcasts, misreading it as a charge).
+  for (let i = 0; i < 30 && ss.credits <= 0; i++) await sleep(100);
   const pc0 = ss.credits;
   const ps0 = ss.sys.length;
   wsSafe.send(svcMsg);
