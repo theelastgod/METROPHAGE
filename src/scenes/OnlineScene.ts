@@ -155,8 +155,7 @@ import { currentDistrictWar } from "../game/districtWar";
 import { factionCampaignBrief } from "../game/factionCampaigns";
 import { campaignEchoLine, districtCampaignEcho } from "../game/campaignEchoes";
 import { cityPulseAt } from "../game/cityPulse";
-import { noteNpcTalk, npcMemoryLine } from "../game/npcMemory";
-import { relationshipLine } from "../game/relationships";
+import { relationshipConversationLine, relationshipLine } from "../game/relationships";
 import { buildStamp } from "../buildInfo";
 import { raidScriptFor } from "../game/raid";
 import { dailyDistrictMod, districtBarIntelLine } from "../game/districtMods";
@@ -186,7 +185,9 @@ import TileCursor, { type TileCursorHint } from "../ui/TileCursor";
 import RsSkillsPanel from "../ui/RsSkillsPanel";
 import RsActionBar from "../ui/RsActionBar";
 import RsGameMessage from "../ui/RsGameMessage";
-import { grantSkillXp, loadRsSkills, type RsSkillXp } from "../game/rsSkills";
+import { emptyRsSkills, levelForXp, type RsSkillXp } from "../game/rsSkills";
+import { HUB_DATA_TERMINALS } from "../game/hubDataTerminals";
+import { civicArchiveContactLine } from "../game/civicArchives";
 import { scatterWorldProps } from "../render/propScatter";
 import { envForDistrict, type DistrictEnvTheme } from "../game/districtEnv";
 import OnlineMinimap from "../ui/OnlineMinimap";
@@ -261,7 +262,7 @@ import { contactJudgmentReaction, districtJudgmentReaction } from "../game/judgm
 import { rescueMemoryContactLine } from "../game/socialMemory";
 import { rotatingContextLine } from "../game/narrativeCadence";
 import { residentTerritoryLegacyLine } from "../game/territoryLegacy";
-import { residentReprintWitnessLine } from "../game/reprintHistory";
+import { reprintMemorialLine, residentReprintWitnessLine } from "../game/reprintHistory";
 import { localReprintCount, recordLocalReprint } from "../systems/reprintMemory";
 import { portraitFor, portraitForName, portraitForBoss, portraitSheetFallback, type PortraitRef } from "../game/portraits";
 import { bountyForNpc } from "../game/bounties";
@@ -1560,9 +1561,6 @@ export default class OnlineScene extends Phaser.Scene {
     this.market.onBuy = (id) => {
       this.net.marketBuy(id);
       noteThirdMarketList();
-      const r = grantSkillXp(this.rsSkills, "trading", 18);
-      this.rsSkillsPanel.setSkills(this.rsSkills);
-      if (r.leveled) this.pops?.popHeal(this.me.x, this.me.y - 30, `Trading ${r.level}!`);
     };
     this.market.onCancel = (id) => this.net.marketCancel(id);
     this.market.onList = (itemId, price, currency) => {
@@ -1615,7 +1613,16 @@ export default class OnlineScene extends Phaser.Scene {
     this.mapPanel.reconstructionProvider = () => this.net.reconstruction;
     this.mapPanel.fragmentSequenceProvider = () => this.net.fragments;
     this.mapPanel.socialMemoryProvider = () => this.net.socialMemory;
-    this.mapPanel.reprintMemoryProvider = () => Math.max(this.net.reprints, localReprintCount());
+    this.mapPanel.reprintMemoryProvider = () => ({
+      returns: Math.max(this.net.reprints, localReprintCount()),
+      stamps: this.net.reprintMemorialStamps,
+    });
+    this.mapPanel.civicArchiveProvider = () => ({ pages: this.net.civicArchivePages, synthesis: this.net.civicArchiveSynthesis });
+    this.mapPanel.contactLedgerProvider = () => ({
+      trust: this.net.relationships,
+      talks: this.net.relationshipTalks,
+      jobs: this.net.relationshipJobs,
+    });
     this.mapPanel.civicMomentumProvider = () => this.net.civicMomentum;
     this.mapPanel.chronicleProvider = () => this.net.chronicle;
     this.net.onRelations = () => {
@@ -1813,8 +1820,20 @@ export default class OnlineScene extends Phaser.Scene {
     };
     this.questLog = new RsQuestLog(this);
     this.tileCursor.setGrid(this.zoneGrid);
-    this.rsSkills = loadRsSkills();
+    this.rsSkills = emptyRsSkills();
     this.rsSkillsPanel = new RsSkillsPanel(this, this.rsSkills);
+    this.net.onSkills = () => {
+      const before = this.rsSkills;
+      const next = { ...this.net.skills };
+      this.rsSkills = next;
+      this.rsSkillsPanel.setSkills(next);
+      for (const id of ["combat", "trading", "exploration", "crafting", "mining"] as const) {
+        const prior = levelForXp(before[id]);
+        const level = levelForXp(next[id]);
+        if (level > prior) this.pops?.popHeal(this.me.x, this.me.y - 36, `${id[0].toUpperCase() + id.slice(1)} ${level}!`);
+      }
+    };
+    this.net.onSkills?.();
     const simpleHud = getSettings().uiDensity === "new";
     // Simple HUD: Bag / Map / Quests only — market & skills open via keys once you need them.
     const mobile = this.mobileUx();
@@ -1942,7 +1961,7 @@ export default class OnlineScene extends Phaser.Scene {
         this.longPressTimer = undefined;
       }
     });
-    if (this.isCityHub) this.spawnMiningNodes([hubT(-2, 2), hubT(2, 6), hubT(-4, 8)]);
+    if (this.isCityHub) this.spawnMiningNodes();
 
     const mapChain = this.registry.get("pendingMapDest") as string | undefined;
     if (mapChain && mapChain !== this.zone && this.usingRsControls() && !this.isTutorial) {
@@ -3806,7 +3825,6 @@ export default class OnlineScene extends Phaser.Scene {
   /** Talk: most people bark a line; a few open a small choice menu. */
   private talkNpc(npc: { npcId?: string; name: string; lines?: string[]; lineIdx?: number; x: number; y: number }) {
     if (npc.npcId) {
-      noteNpcTalk(npc.npcId); // local cadence/fallback; durable trust comes from server
       if (this.net.connected) this.net.npcTalk(npc.npcId);
     }
     const trust = npc.npcId ? this.net.relationships[npc.npcId] ?? 0 : 0;
@@ -3847,20 +3865,24 @@ export default class OnlineScene extends Phaser.Scene {
       ? residentReprintWitnessLine(npc.npcId, rememberedReprints)
         ?? (npc.npcId === "marek" ? marekReprintGreeting(rememberedReprints) : null)
       : null;
+    const reprintMemorial = npc.npcId ? reprintMemorialLine(npc.npcId, this.net.reprintMemorialStamps) : null;
+    const civicArchive = npc.npcId ? civicArchiveContactLine(npc.npcId, this.net.civicArchivePages) : null;
     const cosmetic = npc.npcId ? cosmeticAcknowledgement(this.net.cosmeticEquipped, trust) : null;
     const durable = npc.npcId && trust > 0
       ? relationshipLine(npc.npcId, npc.name, trust, npc.lineIdx ?? 0)
       : null;
-    const mem = npc.npcId && trust === 0 ? npcMemoryLine(npc.npcId, npc.name) : null;
+    const conversation = npc.npcId
+      ? relationshipConversationLine(npc.name, this.net.relationshipTalks[npc.npcId] ?? 0, this.net.relationshipJobs[npc.npcId] ?? 0)
+      : null;
     // Persistent contexts rotate instead of starving everything below the first truthy
     // layer. An unconfirmed counterpart testimony stays urgent until corroborated.
     const contextual = rotatingContextLine(
-      [convergence, judgment, memory, reconstruction, rescueMemory, reprintMemory, cosmetic, civic, territory, campaignResident, durable],
+      [convergence, judgment, memory, reconstruction, rescueMemory, reprintMemory, reprintMemorial, civicArchive, conversation, cosmetic, civic, territory, campaignResident, durable],
       npc.lineIdx ?? 0,
     );
     // One advance per talk — bubble + service menu share the same line (was double-advance).
-    const spoken = linked ?? contextual ?? mem ?? this.advanceLine(npc);
-    if (linked || contextual || mem) npc.lineIdx = (npc.lineIdx ?? 0) + 1;
+    const spoken = linked ?? contextual ?? this.advanceLine(npc);
+    if (linked || contextual) npc.lineIdx = (npc.lineIdx ?? 0) + 1;
     const prefix = `${npc.name}: `;
     const bare = spoken.startsWith(prefix) ? spoken.slice(prefix.length) : spoken.startsWith(npc.name) ? spoken.slice(npc.name.length).replace(/^:\s*/, "") : spoken;
     this.showBubble(npc.x, npc.y, `${npc.name}: ${bare}`, this.bubblePortrait(npc.npcId, npc.name));
@@ -3880,6 +3902,8 @@ export default class OnlineScene extends Phaser.Scene {
       activeBountyId: this.net.bounty?.id ?? null,
       campaignQuest: this.net.campaignQuest ?? null,
       trust,
+      talks: this.net.relationshipTalks[npc.npcId] ?? 0,
+      jobs: this.net.relationshipJobs[npc.npcId] ?? 0,
       districtStanding: (() => {
         const m = /^d(\d+)/.exec(this.zone);
         return m ? this.net.districtStanding[Number(m[1])] ?? 0 : undefined;
@@ -3944,7 +3968,6 @@ export default class OnlineScene extends Phaser.Scene {
       }
       this.net.bountyAccept(b.id);
       noteAcceptedBounty();
-      noteNpcTalk(npcId);
       this.showBubble(px, py, `${npcName}: ${b.offer}`, face);
       this.net.story = {
         quest: b.name,
@@ -4507,10 +4530,12 @@ export default class OnlineScene extends Phaser.Scene {
       // Story standing reads before raw threat: "you're early" is more useful to
       // a runner reading a platform sign than "this is dangerous".
       const acc = zoneAccess(st.zone, {
-        completed: this.net.campaignCompleted ?? [],
-        level: this.net.level,
+        // create() builds stations BEFORE the NetClient exists — every net read in
+        // this pass must be optional or subway creation crashes to a wall-paint base.
+        completed: this.net?.campaignCompleted ?? [],
+        level: this.net?.level ?? 1,
       });
-      const early = !this.net.godMode && acc.story === "ahead";
+      const early = !this.net?.godMode && acc.story === "ahead";
       const line = early
         ? `AHEAD OF STORY${acc.requiredQuestName ? ` · ${acc.requiredQuestName} FIRST` : ""}`
         : tier >= 3
@@ -5418,9 +5443,6 @@ export default class OnlineScene extends Phaser.Scene {
   /** Travel into another zone (door/interior/transit) — organic arrival unlocks fast travel. */
   private enterZone(dest: string) {
     if (isTutorialZone(dest)) return;
-    const r = grantSkillXp(this.rsSkills, "exploration", 22);
-    this.rsSkillsPanel.setSkills(this.rsSkills);
-    if (r.leveled) this.pops?.popHeal(this.me.x, this.me.y - 36, `Exploration ${r.level}!`);
     if (dest === "d0" && this.zone === "safe") {
       this.deployOrganic(dest);
       return;
@@ -5843,9 +5865,6 @@ export default class OnlineScene extends Phaser.Scene {
           juiceNeonPulse(this, 0.12 + Math.min(0.22, this.killStreak * 0.05), 140);
         }
         this.pops?.popCrit(prev.x, prev.y - 20, prev.boss ? t("combat.bossDown") : t("combat.purged"));
-        const r = grantSkillXp(this.rsSkills, "combat", prev.boss ? 120 : 35);
-        this.rsSkillsPanel.setSkills(this.rsSkills);
-        if (r.leveled) this.pops?.popHeal(this.me.x, this.me.y - 36, `Combat ${r.level}!`);
       }
     }
     for (const id of [...this.prevEnemyHp.keys()]) {
@@ -8162,9 +8181,10 @@ export default class OnlineScene extends Phaser.Scene {
     }
   }
 
-  /** RS-style harvest nodes — click to mine data for crafting XP. */
-  private spawnMiningNodes(tiles: Array<[number, number]>) {
-    for (const [tx, ty] of tiles) {
+  /** Civic archive terminals — the Worker validates range, cooldown, and rewards. */
+  private spawnMiningNodes() {
+    for (const node of HUB_DATA_TERMINALS) {
+      const [tx, ty] = hubT(node.dx, node.dy);
       const px = tx * TILE + TILE / 2;
       const py = ty * TILE + TILE / 2;
       this.add
@@ -8175,19 +8195,15 @@ export default class OnlineScene extends Phaser.Scene {
         .setScale(1.4)
         .setAlpha(0.35);
       this.add
-        .text(px, py - 16, "▣", bodyFont(11, { color: "#39ff88", fontStyle: "bold" }))
+        .text(px, py - 16, `▣ ${node.name}`, bodyFont(8, { color: "#39ff88", fontStyle: "bold" }))
         .setOrigin(0.5)
         .setDepth(8)
         .setAlpha(0.7);
       const z = this.add.zone(px - 16, py - 16, 32, 32).setOrigin(0).setInteractive({ useHandCursor: true }).setDepth(9);
       z.on("pointerdown", () => {
         if (!this.usingRsControls()) return;
-        const r = grantSkillXp(this.rsSkills, "mining", 28);
-        this.rsSkillsPanel.setSkills(this.rsSkills);
-        const craft = grantSkillXp(this.rsSkills, "crafting", 8);
-        this.rsSkillsPanel.setSkills(this.rsSkills);
-        this.showBubble(px, py, r.leveled ? `Data mined — Mining ${r.level}!` : craft.leveled ? `Refined — Crafting ${craft.level}!` : "Data fragment harvested.");
-        this.synth?.pickup();
+        this.net.harvest(node.id);
+        this.showBubble(px, py, `Linking ${node.name}…`);
       });
     }
   }

@@ -385,6 +385,98 @@ server rules, progression, and consequences.
   requires matching death-packet and relations counts whenever combat actually kills its
   fresh runner.
 
+## Batch 21 — honest reprint memorial sink (implemented foundation)
+
+- The ₵260 REPRINT CHIP formerly claimed to stamp grid insurance but persisted nothing,
+  protected nothing, and could be repurchased indefinitely. It was a useful hard sink
+  wrapped in a false system promise.
+- The SKU is now REPRINT MEMORIAL and states its contract plainly: one voluntary public
+  return stamp, social sink, no death protection. Purchases advance one fixed bounded
+  `player_stats` row to 9; the server rejects a tenth before deducting credits. Existing
+  vendor burn accounting, price, and unlimited earning/withdrawal policy are unchanged.
+- Relations hydration carries the ledger across devices. MAREK and all sixteen recurring
+  residents interpret it at 1 / 3 / 7 stamps, city center displays the count, and dialogue
+  rotates through the existing durable cadence rather than becoming a permanent bark.
+- Memorial registration grants no refund, payout, achievement, reputation, trust,
+  standing, inventory protection, faster respawn, PvP credit protection, combat stat, or
+  bridge advantage. It gives an intentional economy sink durable narrative provenance.
+- Tests cover cap/tier behavior and all 51 MAREK/resident reactions; server validation
+  derives the visible count from its own bounded stat after the successful burn.
+
+## Batch 22 — truthful death and lockbox copy (implemented)
+
+- City pulse still warned runners to spend credits or lose them to a “death tax,” despite
+  the authoritative rule that PvE death never takes credits. It now names vendor burns
+  as the sink and states that street reprints take no ₵; THE CRUCIBLE's separately
+  documented 10% floor drop remains a player-transfer rule, not an economy burn.
+- Lockbox UI and server confirmation implied stashed items alone survived death, while
+  every death result explicitly keeps the carried bag. The lockbox now describes its real
+  purpose—personal overflow and organization—and states that both sides survive reprint.
+- Source comments and the remaining-fix economy ledger use the same accounting language.
+  Tests prevent the obsolete “death tax” pulse or stash implication from returning.
+
+## Batch 23 — authoritative professions and civic archives (implemented foundation)
+
+- The five visible profession tracks formerly persisted in browser `localStorage` and
+  inferred success from presentation: entering any door awarded Exploration, seeing an
+  enemy vanish awarded Combat, clicking Buy awarded Trading before settlement, and plaza
+  props granted unlimited Mining/Crafting. None was authoritative.
+- Profession XP now occupies five fixed, capped `player_stats` rows and hydrates through
+  one server snapshot. Combat belongs only to the validated killing blow; Exploration to
+  the first organic unlock of a zone; Crafting to a completed non-drill forge mutation;
+  and Trading to completed listings, purchases, sales, or direct swaps. Rejected intents
+  and nearby observation award nothing.
+- Three shared Metro City fixtures are now named civic archives: CASUALTY INDEX, TRANSIT
+  GHOSTS, and EVICTION HASH. The client renders shared geometry while the Worker validates
+  zone, life state, terminal id, and distance. Each archive stores one absolute cooldown
+  timestamp in a fixed D1 row, reserves before its write, fails without consuming the
+  record, and awards only profession XP—never credits, items, reputation, or combat power.
+- Archive text exposes erased casualties, deleted transit routes, and ledger-converted
+  homes. A five-minute durable rekey prevents reconnect farming; level 99 is a hard cap.
+- Shared progression/cooldown helpers are DOM-free. Pure tests cover the curve, sanitizer,
+  cap, fixed terminal identity, and clock rollback; the standalone `skills` smoke proves
+  award, repeat rejection, wire hydration, and reconnect persistence against the Worker.
+
+## Batch 24 — recoverable civic record (implemented foundation)
+
+- Archive interactions no longer repeat one flavor sentence forever. CASUALTY INDEX,
+  TRANSIT GHOSTS, and EVICTION HASH each expose four ordered records in fixed bounded
+  `player_stats` rows: REISSUE casualty suppression, Clinic duplicate identities, Blank
+  cohort evidence, erased neighborhoods, ghost payroll, witness trains, predictive
+  evictions, converted holding cells, freight-coded families, and a common civic title.
+- A successful, cooldown-protected terminal link advances at most one page and pushes an
+  authoritative 0–12 archive snapshot. At 1 / 3 / 6 / 9 / 12 pages, the city synthesizes
+  testimony into partial index, coordinated pattern, cross-index, public proof, and a
+  common record tying medical, transit, and property systems to the same institutional
+  theft. Completed terminals remain profession nodes but cannot grow lore rows forever.
+- DOC, SUBWAY WARDEN, RIN, and the CITY CENTER clerk recognize relevant recovered pages
+  through the existing rotating dialogue cadence. Metro City's map dossier shows page
+  count and current synthesis across devices and reconnects.
+- Recovery grants no additional credits, items, reputation, trust, standing, access,
+  combat power, or bridge benefit. The same scan XP and five-minute rekey from Batch 23
+  remain unchanged; this batch makes their repeated play reveal bounded setting evidence.
+- Pure tests cover all twelve unique records, counter caps, synthesis, and character
+  callbacks. The live `skills` smoke now proves page advance and reconnect persistence in
+  addition to profession award and cooldown rejection.
+
+## Batch 25 — durable conversation memory (implemented foundation)
+
+- Repeated-contact dialogue formerly read a browser-only `npcMemory` cache. A third visit
+  could produce “you keep showing up” on one device while another device—and the Worker—
+  knew only that the contact had been met once. The unused local bounty-memory path also
+  implied a second relationship authority that never received real completion events.
+- Every validated contact conversation now advances the existing `rel_t_*` row up to a
+  fixed cap of 12. Completed work remains independently bounded at three `rel_j_*` entries;
+  talk spam cannot become a trusted or confidant relationship, counterfeit a kept promise,
+  grant service quality, or trigger a reward.
+- Relations snapshots expose both ledgers alongside the existing derived tier. Contact UI
+  shows compact T/J counts, city center summarizes known/trusted people, conversations,
+  and promises kept, and repeated-presence lines recognize 3 / 6 / 10 conversations across
+  devices. Existing authored trust disclosures and rotating context retain priority.
+- The client-side NPC memory file and all local writes are removed. Pure tests cover caps
+  and cadence; the standalone `contacts` smoke proves three talks, zero forged jobs, tier
+  separation, D1 flush, and reconnect hydration.
+
 ## Validation gates for every batch
 
 - Root and Worker TypeScript checks.

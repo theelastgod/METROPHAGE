@@ -86,6 +86,18 @@ Four classes, each with a full server-validated kit:
 - **Reprint witnesses** — deaths enter a bounded server-side social record. MAREK and
   recurring residents remember returns across devices without changing death penalties,
   inventories, combat power, or access.
+- **Reprint memorials** — the ₵260 vendor sink registers a bounded public return stamp
+  recognized by residents. It explicitly offers no insurance, protection, or power.
+- **Authoritative professions** — Combat, Trading, Exploration, Crafting, and Data Mining
+  persist in D1 and advance only from validated outcomes. Three Metro City civic archives
+  uncover erased casualties, deleted transit routes, and ledger-converted homes on a
+  durable cooldown without becoming an economy faucet.
+- **Recoverable civic archive** — twelve ordered records connect suppressed casualties,
+  ghost transit labor, and ledger evictions into one common proof. Relevant contacts and
+  the city map recognize the server-owned record across devices.
+- **Durable conversations** — contacts remember repeated visits separately from completed
+  jobs. Dialogue and the city ledger survive devices, while trust still requires kept
+  promises rather than talk spam.
 
 ## The $METRO economy
 

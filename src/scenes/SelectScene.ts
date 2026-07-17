@@ -29,6 +29,7 @@ import {
   walletChoiceList,
   walletChoiceProse,
   preferSolanaWallet,
+  walletConnectAvailable,
 } from "../economy/wallet";
 import {
   ensureWalletConnected,
@@ -361,19 +362,26 @@ export default class SelectScene extends Phaser.Scene {
     // Wallet is the key / recommended path; guest multiplayer remains available.
     // walletAvailable() is true for inject, WalletConnect, and mobile deep-links.
     const mobile = prefersMobileUx();
+    const mobilePicker = mobile && walletConnectAvailable();
     this.walletPanel.show({
       step: "connect",
       status: "ready",
-      statusText: mobile ? "Phantom · free Solana sign-in" : `${walletChoiceList()} · free Solana sign-in`,
-      headline: "Connect Phantom",
-      body: mobile
-        ? "Phantom signs one free Solana message. Or play free with a device save."
+      statusText: mobilePicker
+        ? "Solana wallet picker · free sign-in"
+        : mobile ? "Phantom · free Solana sign-in" : `${walletChoiceList()} · free Solana sign-in`,
+      headline: mobilePicker ? "Connect a Solana wallet" : "Connect Phantom",
+      body: mobilePicker
+        ? "Choose Phantom, Solflare, or another Solana wallet. Approval and one free signature happen in the wallet app; the game stays in this browser."
+        : mobile
+          ? "Phantom signs one free Solana message. Or play free with a device save."
         : `Sign in with ${walletChoiceProse()}. The signature is free—no transaction and no gas. Your runner is permanently bound to that Solana address across devices. Prefer no wallet? Play free with a device-locked multiplayer save.`,
       wallet: null,
       actions: this.walletActions([
         {
-          label: "◈ CONNECT PHANTOM",
-          sub: mobile ? "open Phantom · free message" : `${walletChoiceList()} · free message`,
+          label: mobilePicker ? "◈ CONNECT WALLET" : "◈ CONNECT PHANTOM",
+          sub: mobilePicker
+            ? "choose a Solana wallet · free message"
+            : mobile ? "open Phantom · free message" : `${walletChoiceList()} · free message`,
           color: COLORS.neonGreen,
           primary: true as const,
           fn: () => void this.onMetaMaskSignUp(),
@@ -391,12 +399,15 @@ export default class SelectScene extends Phaser.Scene {
 
   /** One-click wallet connect (inject / WalletConnect / mobile) + sign-in. */
   private async onMetaMaskSignUp() {
+    const mobilePicker = prefersMobileUx() && walletConnectAvailable();
     this.walletPanel.show({
       step: "connect",
       status: "busy",
-      statusText: "awaiting Phantom · Solana",
-      headline: "Check Phantom",
-      body: `Approve the connection in ${walletChoiceProse()}. Then sign a free login message — no gas. Your runner is permanently bound to this address.`,
+      statusText: mobilePicker ? "opening Solana wallet picker" : "awaiting Phantom · Solana",
+      headline: mobilePicker ? "Choose your wallet" : "Check Phantom",
+      body: mobilePicker
+        ? "Choose a wallet, approve the connection there, then approve one free login signature. Return here to play—the game does not open inside the wallet."
+        : `Approve the connection in ${walletChoiceProse()}. Then sign a free login message — no gas. Your runner is permanently bound to this address.`,
       wallet: connectedWallet(),
       actions: [],
       showDisconnect: true,

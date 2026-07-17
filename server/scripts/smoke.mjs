@@ -1510,7 +1510,7 @@ async function bounty() {
     u.searchParams.set("zone", zone);
     return u.toString();
   };
-  let ws = await connect(zoneUrl("d0"));
+  let ws = await connect(zoneUrl("safe"));
   const store = { x: 0, y: 0, enemies: [], bounty: null, relations: null, civic: null, sys: [] };
   const wire = (socket) =>
     socket.addEventListener("message", (ev) => {
@@ -1528,6 +1528,7 @@ async function bounty() {
   await sleep(400);
   const civicHydrated = store.civic?.district === 0 && Number.isInteger(store.civic?.completions) && !!store.civic?.stage;
 
+  // KESSLER is a stable Metro City contact; accept in their actual zone, then deploy.
   // Use the ordinary kill-sheet job here: persistence is what this mode owns, and
   // waiting for a high-HP world boss made a passing persistence check seed-dependent.
   const bountyId = "kessler_hold"; // purge 10 ordinary HSS units
@@ -1540,15 +1541,15 @@ async function bounty() {
   ws.close();
   await sleep(300);
   store.bounty = null;
-  ws = await connect(zoneUrl("safe"));
+  ws = await connect(zoneUrl("d0"));
   wire(ws);
-  await login(ws, name, undefined, undefined, { from: "d0" });
+  await login(ws, name, undefined, undefined, { from: "safe" });
   await sleep(400);
   const persistedAcrossZone = !!store.bounty && store.bounty.id === bountyId;
 
   ws.send(JSON.stringify({ t: "bounty", action: "accept", id: "doc_cores" })); // already have one
   await sleep(400);
-  const secondRejected = !!store.bounty && store.bounty.id === bountyId && store.sys.some((t) => /finish your current/i.test(t));
+  const secondRejected = !!store.bounty && store.bounty.id === bountyId && store.sys.some((t) => /contact is not present/i.test(t));
 
   ws.close();
   await sleep(300);
@@ -3567,7 +3568,7 @@ async function chronicle() {
 async function courier() {
   const name = "cu" + String(Date.now() % 1_000_000);
   const base = (process.env.WS_URL || "ws://127.0.0.1:8787/ws").replace(/\?.*$/, "");
-  let ws = await connect(base + "?zone=safe");
+  let ws = await connect(base + "?zone=w3");
   let edition = null;
   let active = null;
   let rejected = false;
@@ -3618,6 +3619,110 @@ async function courier() {
     accepted && hydrated && completed && settled,
     { civicOpen, accepted, hydrated, completed, settled },
   );
+}
+
+/** Profession authority: terminal proximity, award snapshot, cooldown, and reconnect persistence. */
+async function skills() {
+  const name = "sk" + String(Date.now() % 1_000_000);
+  const base = (process.env.WS_URL || "ws://127.0.0.1:8787/ws").replace(/\?.*$/, "");
+  let ws = await connect(base + "?zone=safe");
+  let latest = null;
+  let archive = null;
+  const sys = [];
+  const w = await login(ws, name, 0);
+  const store = { x: w.x, y: w.y, ack: 0 };
+  trackState(ws, w.id, store);
+  ws.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "skills") latest = m.xp;
+    if (m.t === "archives") archive = m;
+    if (m.t === "sys") sys.push(m.text || "");
+  });
+  await sleep(650);
+  const before = { ...(latest || {}) };
+  const archiveBefore = [...(archive?.pages || [])];
+
+  // Welcome precedes the cosmetic spawn spread and therefore carries exact hub centre.
+  const target = { x: w.x - 2 * 32, y: w.y + 2 * 32 };
+  let seq = 0;
+  const until = Date.now() + 2500;
+  while (Date.now() < until && Math.hypot(store.x - target.x, store.y - target.y) > 45) {
+    const dx = target.x - store.x;
+    const dy = target.y - store.y;
+    const mag = Math.max(1, Math.hypot(dx, dy));
+    ws.send(JSON.stringify({ t: "input", seq: ++seq, mx: dx / mag, my: dy / mag }));
+    await sleep(50);
+  }
+  ws.send(JSON.stringify({ t: "input", seq: ++seq, mx: 0, my: 0 }));
+  ws.send(JSON.stringify({ t: "harvest", node: 0 }));
+  await sleep(650);
+  const after = { ...(latest || {}) };
+  const archiveAfter = [...(archive?.pages || [])];
+  ws.send(JSON.stringify({ t: "harvest", node: 0 }));
+  await sleep(350);
+  const afterRepeat = { ...(latest || {}) };
+  const cooledDown = sys.some((line) => /rekeys in/.test(line));
+  ws.close();
+  await sleep(300);
+
+  ws = await connect(base + "?zone=safe");
+  let persisted = null;
+  let archivePersisted = null;
+  ws.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "skills") persisted = m.xp;
+    if (m.t === "archives") archivePersisted = m;
+  });
+  await login(ws, name, 0);
+  await sleep(650);
+  ws.close();
+  const checks = {
+    miningAwarded: (after.mining ?? 0) === (before.mining ?? 0) + 28,
+    craftingAwarded: (after.crafting ?? 0) === (before.crafting ?? 0) + 8,
+    repeatBlocked: afterRepeat.mining === after.mining && afterRepeat.crafting === after.crafting && cooledDown,
+    persisted: persisted?.mining === after.mining && persisted?.crafting === after.crafting,
+    archiveAdvanced: (archiveAfter[0] ?? 0) === Math.min(4, (archiveBefore[0] ?? 0) + 1),
+    archivePersisted: archivePersisted?.pages?.[0] === archiveAfter[0] && typeof archivePersisted?.synthesis === "string",
+  };
+  report("SKILLS — civic archive awards and records are authoritative, cooled down, and durable", { before, after, afterRepeat, persisted, archiveBefore, archiveAfter, archivePersisted, sys: sys.slice(-3) }, Object.values(checks).every(Boolean), checks);
+}
+
+/** Contact memory: repeated conversations are bounded server state, not browser storage. */
+async function contacts() {
+  const name = "ct" + String(Date.now() % 1_000_000);
+  const base = (process.env.WS_URL || "ws://127.0.0.1:8787/ws").replace(/\?.*$/, "");
+  let ws = await connect(base + "?zone=safe");
+  let relations = null;
+  ws.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "relations") relations = m;
+  });
+  await login(ws, name, 0);
+  await sleep(450);
+  for (let i = 0; i < 3; i++) {
+    ws.send(JSON.stringify({ t: "npc", action: "talk", npcId: "marek" }));
+    await sleep(160);
+  }
+  const live = relations;
+  ws.close();
+  await sleep(450);
+
+  ws = await connect(base + "?zone=safe");
+  let persisted = null;
+  ws.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.t === "relations") persisted = m;
+  });
+  await login(ws, name, 0);
+  await sleep(650);
+  ws.close();
+  const checks = {
+    known: live?.trust?.marek === 1,
+    counted: live?.talks?.marek === 3,
+    noForgedJob: (live?.jobs?.marek ?? 0) === 0,
+    persisted: persisted?.talks?.marek === 3 && persisted?.trust?.marek === 1,
+  };
+  report("CONTACTS — repeated conversation memory is bounded, durable, and separate from jobs", { live: { trust: live?.trust?.marek, talks: live?.talks?.marek, jobs: live?.jobs?.marek }, persisted: { trust: persisted?.trust?.marek, talks: persisted?.talks?.marek, jobs: persisted?.jobs?.marek } }, Object.values(checks).every(Boolean), checks);
 }
 
 /** Dual connect: first session replaced cleanly; credits survive. */
@@ -3737,6 +3842,8 @@ try {
   else if (mode === "judgment") await judgment();
   else if (mode === "chronicle") await chronicle();
   else if (mode === "courier") await courier();
+  else if (mode === "skills") await skills();
+  else if (mode === "contacts") await contacts();
   else if (mode === "reconnect") await reconnect();
   else if (mode === "launch") await launch();
   else await move();

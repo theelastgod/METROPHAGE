@@ -251,7 +251,7 @@ if (import.meta.env.DEV) {
   const w = window as unknown as {
     __game: Phaser.Game;
     __enterCity: () => void;
-    __playtest: { offline: () => void; drill: () => void };
+    __playtest: { offline: () => void; drill: () => void; gotoZone: (zone: string) => void };
   };
   w.__enterCity = () => {
     if (!game.registry.get("classId")) game.registry.set("classId", "metrophage");
@@ -279,6 +279,17 @@ if (import.meta.env.DEV) {
       game.scene.start("Select");
     },
     drill: () => game.scene.start("Online", { zone: "tutorial", tutorialMode: "quick" }),
+    // World-tour hook (tools/world-tour.mjs): jump straight to any zone for
+    // screenshot sweeps. Same deterministic sweep discipline as __enterCity.
+    gotoZone: (zone: string) => {
+      if (!game.registry.get("classId")) game.registry.set("classId", "metrophage");
+      if (!game.registry.get("customization")) game.registry.set("customization", randomCustomization("metrophage"));
+      game.registry.set("guestPlay", true);
+      for (const s of game.scene.getScenes(true)) if (s.scene.key !== "Online") s.scene.stop();
+      game.scene.getScene("Online")?.scene.isActive()
+        ? game.scene.getScene("Online")!.scene.restart({ zone })
+        : game.scene.start("Online", { zone });
+    },
   };
   // Surface the $METRO gate state so it's obvious whether the on-chain layer is live.
   const m = getMetroStatus();

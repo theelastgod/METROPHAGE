@@ -150,7 +150,7 @@ function noWalletDetail(): string {
   const sol = preferSolanaWallet();
   if (walletConnectAvailable()) {
     return sol
-      ? "Open Phantom or Solflare, then approve the connection."
+      ? "Open the Solana wallet picker, choose Phantom, Solflare, or another wallet, then approve in its app."
       : "Open the wallet picker, choose MetaMask / Phantom / any WalletConnect wallet, then approve.";
   }
   if (isLikelyMobile()) {
@@ -177,7 +177,7 @@ export async function walletSignUp(): Promise<
       ok: false,
       error: "connect_failed",
       detail: isLikelyMobile() && !walletConnectAvailable()
-        ? "Opening your wallet browser… return here after it loads, then tap Connect again."
+        ? "Opening Phantom for native approval… approve there, then return to this browser."
         : "Wallet connection cancelled",
     };
   }

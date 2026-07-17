@@ -1,7 +1,7 @@
 // METROPHAGE — wallet connector.
 // **Robinhood / EVM first** for identity + $METRO ERC-20 bridge.
 // Connects: injected browsers (MetaMask, Phantom, Rabby, …) + WalletConnect
-// (any mobile wallet) + mobile deep-link fallbacks into wallet browsers.
+// (any mobile wallet) + native Phantom approval as a last-resort fallback.
 // Phantom / Solana remains available when settlement is forced to SPL.
 
 import {
@@ -37,6 +37,7 @@ import {
   connectViaSolanaWalletModal,
   disconnectSolanaWalletModal,
   getActiveAppKitSolanaProvider,
+  mobileSolanaConnectRoute,
 } from "./solanaWalletModal";
 
 interface EvmProvider extends EvmRequestProvider {
@@ -279,7 +280,7 @@ function getSolana(): SolanaProvider | null {
 export function walletAvailable(): boolean {
   if (getInjectedEvm() || getSolana()) return true;
   if (walletConnectEnabled()) return true;
-  // Mobile Safari / Chrome without extension: deep-link into wallet browsers.
+  // Mobile Safari / Chrome can use native wallet approval/deep-link flows.
   if (isLikelyMobile()) return true;
   return false;
 }
@@ -452,11 +453,22 @@ export async function ensureRobinhoodNetwork(
 async function connectSolana(): Promise<string | null> {
   const sol = getSolana();
   if (!sol) {
-    // Normal mobile Safari/Chrome has no injector. Phantom deeplinks FIRST: the
-    // approval round-trips through the Phantom app and the game stays in this
-    // browser. The old `ul/browse` handoff loaded the whole game inside Phantom's
-    // portrait-locked in-app browser, where the landscape gate makes it unplayable.
-    if (isLikelyMobile() && phantomDeeplinkUsable()) {
+    const mobile = isLikelyMobile();
+    const route = mobileSolanaConnectRoute(
+      mobile && walletConnectEnabled(),
+      mobile && phantomDeeplinkUsable(),
+    );
+    // AppKit is the normal mobile path: choose an installed Solana wallet, approve
+    // there, and return to this browser for the game. Cancellation is final for
+    // this click; it must not surprise-navigate the player into another app.
+    if (route === "wallet_picker") {
+      const address = await connectViaSolanaWalletModal();
+      if (address) persistConnection(address, "solana", "solana");
+      return address;
+    }
+    // If WalletConnect is not configured, Phantom's connect/sign protocol still
+    // round-trips approval through the native app without loading the game there.
+    if (route === "phantom_protocol") {
       const dl = phantomDeeplinkSession();
       if (dl) {
         persistConnection(dl.wallet, "solana", "solana");
@@ -465,12 +477,6 @@ async function connectSolana(): Promise<string | null> {
       beginPhantomConnect(); // page navigates to the Phantom app and back
       return null;
     }
-    if (isLikelyMobile() && walletConnectEnabled()) {
-      const address = await connectViaSolanaWalletModal();
-      if (address) persistConnection(address, "solana", "solana");
-      return address;
-    }
-    if (isLikelyMobile()) openInWalletBrowser("phantom");
     return null;
   }
   try {
@@ -696,7 +702,9 @@ export function walletChoiceProse(): string {
 }
 
 export function connectWalletLabel(): string {
-  if (preferSolanaWallet()) return "Connect Phantom";
+  if (preferSolanaWallet()) {
+    return walletConnectEnabled() && isLikelyMobile() ? "Connect Solana Wallet" : "Connect Phantom";
+  }
   if (walletConnectEnabled() || isLikelyMobile()) return "Connect Wallet";
   if (getInjectedEvm()?.isMetaMask) return "Connect MetaMask";
   return "Connect Wallet";

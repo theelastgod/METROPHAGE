@@ -232,19 +232,18 @@ export function getActiveWalletConnectProvider(): EvmRequestProvider | null {
 }
 
 /**
- * Mobile deep-link fallback when no injected provider is present.
- * The production path opens Phantom's in-app browser for a Solana injector.
+ * EVM-only mobile browser fallback when no injected provider is present.
+ * Solana uses AppKit or Phantom's approval protocol and never loads the game in
+ * a wallet's embedded browser.
  */
 export function walletBrowserUrl(
-  wallet: "metamask" | "phantom" | "coinbase" | "trust",
+  wallet: "metamask" | "coinbase" | "trust",
   url: string,
 ): string {
   const encoded = encodeURIComponent(url);
   const parsed = new URL(url);
   const hostPath = `${parsed.host}${parsed.pathname}${parsed.search}${parsed.hash}`;
   switch (wallet) {
-    case "phantom":
-      return `https://phantom.app/ul/browse/${encoded}?ref=https://${parsed.host}`;
     case "coinbase":
       return `https://go.cb-w.com/dapp?cb_url=${encoded}`;
     case "trust":
@@ -255,7 +254,7 @@ export function walletBrowserUrl(
   }
 }
 
-export function openInWalletBrowser(wallet: "metamask" | "phantom" | "coinbase" | "trust" = "phantom"): void {
+export function openInWalletBrowser(wallet: "metamask" | "coinbase" | "trust" = "metamask"): void {
   if (typeof window === "undefined") return;
   const target = walletBrowserUrl(wallet, window.location.href);
   window.open(target, "_blank", "noopener,noreferrer");
@@ -263,7 +262,21 @@ export function openInWalletBrowser(wallet: "metamask" | "phantom" | "coinbase" 
 
 export function isLikelyMobile(): boolean {
   if (typeof navigator === "undefined") return false;
-  return /Android|iPhone|iPad|iPod|Mobile|webOS|BlackBerry|IEMobile|Opera Mini/i.test(
-    navigator.userAgent || "",
-  );
+  try {
+    // Match the game's mobile QA override so the complete wallet path can be
+    // exercised in a desktop browser without pretending to own a real wallet.
+    const forced = typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search).get("mobile")
+      : null;
+    if (forced === "1") return true;
+    if (forced === "0") return false;
+    const ua = navigator.userAgent || "";
+    if (/Android|iPhone|iPad|iPod|Mobile|webOS|BlackBerry|IEMobile|Opera Mini/i.test(ua)) {
+      return true;
+    }
+    // iPadOS 13+ commonly identifies itself as desktop Safari.
+    return navigator.platform === "MacIntel" && (navigator.maxTouchPoints ?? 0) > 1;
+  } catch {
+    return false;
+  }
 }

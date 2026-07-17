@@ -136,6 +136,7 @@ export const CITY_HUB_CITIZENS: { id: string; tile: [number, number] }[] = [
   { id: "vex", tile: hubT(-5, -3) },
   { id: "marek", tile: hubT(5, -3) },
   { id: "amb_tech", tile: hubT(9, 2) },
+  { id: "kessler", tile: hubT(0, 10) },
 ];
 
 /** Titles shown atop each interior zone. */

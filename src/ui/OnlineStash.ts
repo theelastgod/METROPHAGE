@@ -71,7 +71,7 @@ export default class OnlineStash extends Modal {
 
     tx("▣ LOCKBOX — PERSONAL STASH", x + uiDim(22), y + uiDim(16), 17, "#ffb13c", true);
     tx(closeHint("ESC close"), x + w - uiDim(20), y + uiDim(18), 12, "#9aa3b2", false, 1);
-    tx("safe from death · click a stashed item to take it · click a bag item to stash it", x + uiDim(22), y + uiDim(42), 11, "#9aa3b2", false, 0, w - uiDim(44));
+    tx("personal overflow · bag also survives reprint · click either side to move", x + uiDim(22), y + uiDim(42), 11, "#9aa3b2", false, 0, w - uiDim(44));
 
     const colMid = x + w * 0.5;
     g.lineStyle(uiDim(1), 0x2a2440, 0.9).lineBetween(colMid, y + uiDim(66), colMid, y + h - uiDim(18));

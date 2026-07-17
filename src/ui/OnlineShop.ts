@@ -19,7 +19,7 @@ const SKUS: {
   // Keep in sync with server SHOP (world.ts) — credit sinks vs CREDITS_PER_KILL.
   { sku: "heal", label: "FIELD PATCH", price: 120, desc: "Restore to full HP", color: "#39ff88" },
   { sku: "supply_kit", label: "SUPPLY KIT", price: 165, desc: "+2 data cores", color: "#f7ff3c" },
-  { sku: "reprint_chip", label: "REPRINT CHIP", price: 260, desc: "Insurance stamp (sink)", color: "#ff9d3c" },
+  { sku: "reprint_chip", label: "REPRINT MEMORIAL", price: 260, desc: "Public return stamp · social sink · no protection", color: "#ff9d3c" },
   { sku: "core_bundle", label: "CORE BUNDLE", price: 280, desc: "+3 data cores", color: "#29e7ff" },
   { sku: "cache_standard", label: "SALVAGE CACHE", price: 220, desc: "Standard gear roll", color: "#9aa3b2" },
   { sku: "cache_tuned", label: "TUNED CACHE", price: 480, desc: "Tuned gear roll", color: "#39ff88" },

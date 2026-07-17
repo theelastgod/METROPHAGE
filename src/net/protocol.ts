@@ -3,6 +3,7 @@
 
 import { NET_TICK_MS } from "./sim";
 import type { Item } from "../game/items";
+import type { RsSkillXp } from "../game/rsSkills";
 
 export { NET_TICK_MS };
 export type { Item };
@@ -158,6 +159,8 @@ export type ClientMsg =
   | { t: "unequip"; slot: string }
   // gear forge — server validates legality + deducts credits/cores (itemId2 = fuse partner)
   | { t: "craft"; action: "upgrade" | "reforge" | "salvage" | "fuse"; itemId: string; itemId2?: string }
+  /** Inspect one of Metro City's civic archive terminals; server validates range + durable cooldown. */
+  | { t: "harvest"; node: number }
   // auction house — server escrows the item + settles atomically (cross-zone, D1)
   | { t: "market"; action: "list" | "cancel" | "buy" | "browse"; id?: number; itemId?: string; price?: number; currency?: "credits" | "metro" }
   // cosmetics / transmog — appearance overrides (zero power); NFT tier gated server-side
@@ -385,6 +388,10 @@ export type ServerMsg =
   | { t: "equipped"; items: Item[]; maxHp: number } // owning client's equipped gear + derived max HP
   | { t: "achv"; ids: string[] } // full unlocked achievement set (sent on login)
   | { t: "ach"; id: string; name: string; reward: number } // a freshly-unlocked achievement
+  /** Server-owned profession XP snapshot; pushed on login and every validated award. */
+  | { t: "skills"; xp: RsSkillXp }
+  /** Bounded civic archive pages recovered at the three Metro City terminals. */
+  | { t: "archives"; pages: number[]; synthesis: string }
   // daily contracts + reputation — pushed on login + whenever progress changes
   | {
       t: "contracts";
@@ -416,12 +423,15 @@ export type ServerMsg =
   | {
       t: "relations";
       trust: Record<string, number>;
+      talks?: Record<string, number>;
+      jobs?: Record<string, number>;
       districts: number[];
       clues?: string[];
       confirmed?: string[];
       reconstruction?: number[];
       social?: { given: number; received: number; tier: number; title: string; line: string };
       reprints?: number;
+      memorialStamps?: number;
     }
   // map discovery — the set of zones this account has arrived at (drives fast travel), on login
   | { t: "discovered"; zones: string[]; unlocked: string[] }

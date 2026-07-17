@@ -4,13 +4,48 @@
 import { walletConnectEnabled, walletConnectProjectId } from "./walletConnect";
 import type { SolanaProvider } from "./wallet";
 
-interface RawAppKitSolanaProvider {
+const PHANTOM_WALLETCONNECT_ID =
+  "a797aa35c0fadbfc1a53e7f675162ed5226968b44a19ee3d24385c64d1d3c393";
+
+export type MobileSolanaConnectRoute = "wallet_picker" | "phantom_protocol" | "unavailable";
+
+/** Keep ordinary mobile browsers in control of the game page. */
+export function mobileSolanaConnectRoute(
+  walletPickerEnabled: boolean,
+  phantomProtocolEnabled: boolean,
+): MobileSolanaConnectRoute {
+  if (walletPickerEnabled) return "wallet_picker";
+  if (phantomProtocolEnabled) return "phantom_protocol";
+  return "unavailable";
+}
+
+export interface RawAppKitSolanaProvider {
   signMessage?(message: Uint8Array): Promise<{ signature: Uint8Array } | Uint8Array>;
   signAndSendTransaction?(transaction: unknown): Promise<{ signature: string }>;
   signTransaction?(transaction: unknown): Promise<{ serialize(): Uint8Array }>;
 }
 
 let activeProvider: SolanaProvider | null = null;
+
+/** Normalize AppKit's provider into the interface used by login and SPL actions. */
+export function appKitSolanaProvider(
+  address: string,
+  provider: RawAppKitSolanaProvider,
+  disconnect: () => Promise<void>,
+): SolanaProvider {
+  return {
+    publicKey: { toString: () => address },
+    connect: async () => ({ publicKey: { toString: () => address } }),
+    disconnect,
+    signMessage: async (message) => {
+      if (!provider.signMessage) throw new Error("Solana wallet cannot sign messages");
+      const signed = await provider.signMessage(message);
+      return { signature: signed instanceof Uint8Array ? signed : signed.signature };
+    },
+    signAndSendTransaction: provider.signAndSendTransaction?.bind(provider),
+    signTransaction: provider.signTransaction?.bind(provider),
+  };
+}
 
 async function createSolanaModal() {
   const [{ createAppKit }, { SolanaAdapter }, { solana }] = await Promise.all([
@@ -24,6 +59,8 @@ async function createSolanaModal() {
     networks: [solana],
     defaultNetwork: solana,
     projectId: walletConnectProjectId(),
+    // Keep the wallet named by the primary mobile CTA above the generic catalog.
+    featuredWalletIds: [PHANTOM_WALLETCONNECT_ID],
     metadata: {
       name: "METROPHAGE",
       description: "Neon-noir cyberpunk MMO — free Solana wallet sign-in",
@@ -62,23 +99,27 @@ async function getModal() {
 export async function connectViaSolanaWalletModal(): Promise<string | null> {
   const modal = await getModal();
   if (!modal) return null;
+  // createAppKit starts initialization but does not await it. Opening immediately
+  // can race its custom-element registration and leave an empty, invisible
+  // <w3m-modal class="open"> in the document on slower phones.
+  await modal.ready();
+  // AppKit already becomes a bottom sheet on narrow phones. This cap also keeps
+  // its wallet list inside short landscape viewports instead of clipping offscreen.
+  document.documentElement.style.setProperty(
+    "--apkt-modal-width",
+    "min(360px, calc(100vw - 24px))",
+  );
   await modal.open({ view: "Connect", namespace: "solana" });
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
     const address = modal.getAddressByChainNamespace("solana");
     const provider = modal.getProvider<RawAppKitSolanaProvider>("solana");
     if (address && provider?.signMessage) {
-      activeProvider = {
-        publicKey: { toString: () => address },
-        connect: async () => ({ publicKey: { toString: () => address } }),
-        disconnect: async () => { await modal.disconnect("solana"); },
-        signMessage: async (message) => {
-          const signed = await provider.signMessage!(message);
-          return { signature: signed instanceof Uint8Array ? signed : signed.signature };
-        },
-        signAndSendTransaction: provider.signAndSendTransaction?.bind(provider),
-        signTransaction: provider.signTransaction?.bind(provider),
-      };
+      activeProvider = appKitSolanaProvider(
+        address,
+        provider,
+        async () => { await modal.disconnect("solana"); },
+      );
       return address;
     }
     if (!modal.getState().open) return null;

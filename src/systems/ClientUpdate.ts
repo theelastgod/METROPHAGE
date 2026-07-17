@@ -208,6 +208,13 @@ async function runChecks() {
  */
 export function installClientUpdateWatch(): void {
   if (installed || typeof window === "undefined") return;
+  // Probe/tour opt-out: a dev client pointed at the live worker always "mismatches"
+  // and would hard-reload mid-run, wiping the harness's page state.
+  try {
+    if (new URLSearchParams(location.search).has("noUpdateWatch")) return;
+  } catch {
+    /* ignore */
+  }
   installed = true;
 
   // First paint: after a short delay so boot/assets aren't fighting for bandwidth.

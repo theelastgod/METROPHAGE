@@ -22,6 +22,7 @@ export const RELATIONSHIP_TIERS: readonly RelationshipTierDef[] = [
 ];
 
 export const MAX_RELATIONSHIP_JOBS = 3;
+export const MAX_RELATIONSHIP_TALKS = 12;
 export const MAX_DISTRICT_STANDING = 200;
 
 export function safeRelationshipNpcId(npcId: string): string {
@@ -60,6 +61,35 @@ export function relationshipSnapshot(stats: Record<string, number>): Record<stri
     if (trust > 0) out[id] = trust;
   }
   return out;
+}
+
+export function relationshipTalkSnapshot(stats: Record<string, number>): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [key, value] of Object.entries(stats)) {
+    if (!key.startsWith("rel_t_")) continue;
+    const count = Math.min(MAX_RELATIONSHIP_TALKS, Math.max(0, Math.floor(value ?? 0)));
+    if (count > 0) out[key.slice(6)] = count;
+  }
+  return out;
+}
+
+export function relationshipJobSnapshot(stats: Record<string, number>): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [key, value] of Object.entries(stats)) {
+    if (!key.startsWith("rel_j_")) continue;
+    const count = Math.min(MAX_RELATIONSHIP_JOBS, Math.max(0, Math.floor(value ?? 0)));
+    if (count > 0) out[key.slice(6)] = count;
+  }
+  return out;
+}
+
+/** Repeated presence is social memory, not a reward gate. */
+export function relationshipConversationLine(displayName: string, talks: number, jobs: number): string | null {
+  const n = Math.max(0, Math.floor(talks) || 0);
+  if (n >= 10) return `${displayName}: If the grid asks, you were here and I saw you. That's what ten conversations buy.`;
+  if (n >= 6) return `${displayName}: You come when there isn't a board payment waiting. People notice that.`;
+  if (n >= 3 && jobs <= 0) return `${displayName}: Third conversation and no invoice. Either loyalty or a useful bad habit.`;
+  return null;
 }
 
 export interface DistrictStandingTierDef {

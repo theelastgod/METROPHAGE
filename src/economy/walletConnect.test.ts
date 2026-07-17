@@ -1,12 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { walletBrowserUrl } from "./walletConnect";
 
-describe("Phantom mobile deep link", () => {
-  it("opens the exact live dapp URL in Phantom with an origin ref", () => {
+describe("EVM mobile browser fallback", () => {
+  it("opens the exact live dapp URL in MetaMask", () => {
     const page = "https://metrophagev1.pages.dev/?from=mobile#play";
-    const link = walletBrowserUrl("phantom", page);
-    expect(link).toContain("https://phantom.app/ul/browse/");
-    expect(link).toContain(encodeURIComponent(page));
-    expect(link).toContain("ref=https://metrophagev1.pages.dev");
+    const link = walletBrowserUrl("metamask", page);
+    expect(link).toBe("https://metamask.app.link/dapp/metrophagev1.pages.dev/?from=mobile#play");
+    expect(link).not.toContain("phantom.app/ul/browse");
   });
 });

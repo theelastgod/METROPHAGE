@@ -81,6 +81,20 @@ Shipped without mint / CA work.
   contact after any scheduled residents, exposing regional dialogue and jobs that formerly
   existed only as unused data. Civic couriers require weekly work in their own source
   district, then retain server-owned travel and settlement rules.
+- **Authoritative professions** (`rsSkills.ts`): Combat, Trading, Exploration, Crafting,
+  and Data Mining are fixed, level-99-capped D1 counters. Only validated killing blows,
+  first organic arrivals, completed forge actions, and settled trades award XP; the
+  client renders snapshots and never predicts success. Metro City's CASUALTY INDEX,
+  TRANSIT GHOSTS, and EVICTION HASH are spatially validated civic archives with durable
+  five-minute rekeys and setting disclosures, not economy faucets.
+- **Recoverable civic record** (`civicArchives.ts`): the three plaza archives hold twelve
+  ordered, bounded records. Cross-index thresholds turn individual testimony into proof;
+  DOC, RIN, SUBWAY WARDEN, the city clerk, and the map recognize what the runner has
+  recovered. Pages persist independently of profession XP and grant no economy or power.
+- **Durable conversation memory** (`relationships.ts`): contacts retain up to twelve
+  conversations separately from three completed promises. Repeated presence has authored
+  3 / 6 / 10 callbacks, while trust still requires real server-completed work. Contact UI
+  and the city ledger expose both counts; no browser-local relationship authority remains.
 
 ## Social / economy UX
 - Market filters: ALL / ₵ / ◈ / WEP / ARM / RARE
@@ -95,6 +109,11 @@ Shipped without mint / CA work.
 - Authoritative deaths advance a bounded reprint-memory stat (3 / 10 / 25 witness tiers).
   MAREK, recurring residents, and city center retain it across devices; the browser-local
   counter remains only a veteran-history fallback and grants no mechanical benefit.
+- REPRINT MEMORIAL is an honest ₵260 hard sink: up to nine server-owned public stamps,
+  recognized at 1 / 3 / 7 by MAREK and recurring residents. It never protects inventory,
+  credits, PvP escrow, or respawn timing and rejects purchases after the bounded ledger.
+- Profession XP is server-owned and cross-device; archive scans expose civic history but
+  grant no credits, items, reputation, access, or combat power.
 - Build stamp toast on welcome; reconnect/offline banners + guild re-hydrate
 - City chatter + ambient runners when solo
 - Systems hint after 2nd hour (N / U / K / L / J / O)

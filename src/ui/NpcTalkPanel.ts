@@ -59,6 +59,8 @@ export default class NpcTalkPanel {
     /** Active campaign quest id — story allies escalate their jobs in the late act. */
     campaignQuest?: string | null;
     trust?: number;
+    talks?: number;
+    jobs?: number;
     districtStanding?: number;
     confirmed?: string[];
     campaignCompleted?: string[];
@@ -158,7 +160,7 @@ export default class NpcTalkPanel {
     );
     add(
       this.scene.add
-        .text(x + w - pad, y + uiDim(10), `${role} · ${trust}`, bodyFont(8, { color: "#5a6478" }))
+        .text(x + w - pad, y + uiDim(10), `${role} · ${trust} · T${Math.max(0, Math.floor(opts.talks ?? 0))} · J${Math.max(0, Math.floor(opts.jobs ?? 0))}`, bodyFont(8, { color: "#5a6478" }))
         .setOrigin(1, 0)
         .setScrollFactor(0)
         .setDepth(D + 3),

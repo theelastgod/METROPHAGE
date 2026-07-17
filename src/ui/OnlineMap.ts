@@ -163,7 +163,9 @@ export default class OnlineMap extends Modal {
   reconstructionProvider?: () => number[];
   fragmentSequenceProvider?: () => string[];
   socialMemoryProvider?: () => { given: number; received: number; tier: number; title: string; line: string };
-  reprintMemoryProvider?: () => number;
+  reprintMemoryProvider?: () => { returns: number; stamps: number };
+  civicArchiveProvider?: () => { pages: number[]; synthesis: string };
+  contactLedgerProvider?: () => { trust: Record<string, number>; talks: Record<string, number>; jobs: Record<string, number> };
   /** Shared daily public-operation completions, indexed by district. */
   civicMomentumProvider?: () => number[];
   chronicleProvider?: () => { week: number; headline: string; lines: string[]; civic: number[]; territory: Array<{ district: number; controller: number; flips: number }> } | null;
@@ -210,10 +212,19 @@ export default class OnlineMap extends Modal {
       const reconstruction = this.reconstructionProvider?.() ?? [];
       const memories = memoryInterpretations(this.fragmentSequenceProvider?.() ?? []);
       const social = this.socialMemoryProvider?.();
-      const reprints = Math.max(0, Math.floor(this.reprintMemoryProvider?.() ?? 0));
+      const reprintRecord = this.reprintMemoryProvider?.() ?? { returns: 0, stamps: 0 };
+      const reprints = Math.max(0, Math.floor(reprintRecord.returns));
+      const memorialStamps = Math.max(0, Math.floor(reprintRecord.stamps));
+      const archive = this.civicArchiveProvider?.();
+      const archivePages = archive?.pages.reduce((sum, n) => sum + Math.max(0, Math.floor(n)), 0) ?? 0;
+      const contacts = this.contactLedgerProvider?.();
+      const knownContacts = contacts ? Object.keys(contacts.trust).length : 0;
+      const trustedContacts = contacts ? Object.values(contacts.trust).filter((tier) => tier >= 2).length : 0;
+      const conversations = contacts ? Object.values(contacts.talks).reduce((sum, n) => sum + Math.max(0, Math.floor(n)), 0) : 0;
+      const promises = contacts ? Object.values(contacts.jobs).reduce((sum, n) => sum + Math.max(0, Math.floor(n)), 0) : 0;
       const casefile = casefileMilestone(testimony.confirmed);
       const rebuilt = reconstruction.filter((n) => n > 0).length;
-      return `Metro City hub pad — city spawn for new runners and safe return.${chronicle ? ` WEEKLY CHRONICLE · ${chronicle.headline}. ${chronicle.lines.join(" ")}` : ""}${casefile ? ` CASEFILE ${testimony.confirmed.length}/8 · ${casefile.title}: ${casefile.objective}` : ""}${memories.length ? ` MEMORY SYNTHESIS · ${memories.length}/8 district readings reconstructed.` : ""}${social?.tier ? ` SOCIAL MEMORY · ${social.title} (${social.given} lifted / ${social.received} received). ${social.line}` : ""}${reprints ? ` REPRINT MEMORY · ${reprints}${reprints >= 25 ? "+" : ""} returns retained in the social record.` : ""}${rebuilt ? ` RECONSTRUCTION · ${rebuilt}/8 districts have a working crew.` : ""}`;
+      return `Metro City hub pad — city spawn for new runners and safe return.${chronicle ? ` WEEKLY CHRONICLE · ${chronicle.headline}. ${chronicle.lines.join(" ")}` : ""}${archive ? ` CIVIC ARCHIVE ${archivePages}/12 · ${archive.synthesis}` : ""}${knownContacts ? ` CONTACT LEDGER · ${knownContacts} known / ${trustedContacts} trusted · ${conversations} conversations · ${promises} promises kept.` : ""}${casefile ? ` CASEFILE ${testimony.confirmed.length}/8 · ${casefile.title}: ${casefile.objective}` : ""}${memories.length ? ` MEMORY SYNTHESIS · ${memories.length}/8 district readings reconstructed.` : ""}${social?.tier ? ` SOCIAL MEMORY · ${social.title} (${social.given} lifted / ${social.received} received). ${social.line}` : ""}${reprints ? ` REPRINT MEMORY · ${reprints}${reprints >= 25 ? "+" : ""} returns retained in the social record.` : ""}${memorialStamps ? ` MEMORIAL LEDGER · ${memorialStamps}/9 voluntary return stamps registered.` : ""}${rebuilt ? ` RECONSTRUCTION · ${rebuilt}/8 districts have a working crew.` : ""}`;
     }
     if (zone === "clinic") return "The Clinic — patch wounds and recover between sorties.";
     if (zone === "shop") return "Market Stall — buy caches and vendor stock.";

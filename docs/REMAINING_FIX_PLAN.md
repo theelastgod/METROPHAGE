@@ -61,7 +61,7 @@
 | Area | Status |
 |------|--------|
 | Soul Character | **Dropped** — no HF credits; use `public/assets/promo/` stills |
-| Economy sinks | Tuned (vendor/NPC/forge/market/death tax) — recheck `/economy` after traffic |
+| Economy sinks | Tuned (vendor/NPC/forge/market fees; death is not a burn) — recheck `/economy` after traffic |
 | Bridge pre-CA | Dual-path checklist live; mint CA still ops-configured |
 | Content | Bounties/dailies/boss roster expanded; per-boss raid variants |
 | Social | Context menu + pin + `/contacts` |
@@ -73,6 +73,7 @@
 | Death UX | Levy + spawn + bag clarity on reboot card |
 | Solo presence | Ambient roster + rotating city chatter |
 | Discoverability | Systems hint strip after 2nd hour |
+| Professions | Server-owned D1 XP; validated combat/trade/craft/discovery/archive awards |
 | Boss telegraphs | Thicker pulsing rings |
 | Economy sinks | Kill 10₵, death ~10%, vendor/forge/market/furniture up; dailies/ach down |
 | Mid-game spine | District War + 3rd hour coach |

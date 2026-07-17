@@ -333,9 +333,9 @@ function mountStandbyMetroPanel(getPlayerId: () => string | null): void {
   document.head.appendChild(style);
 
   const solPrimary = preferSolanaWallet();
-  const walletLabel = solPrimary ? "Phantom" : walletUiLabel();
-  const connectLabel = solPrimary ? "Connect Phantom" : connectWalletLabel();
-  const sendLabel = solPrimary ? "Send via Phantom" : "Send via Wallet";
+  const walletLabel = solPrimary ? "Solana wallet" : walletUiLabel();
+  const connectLabel = connectWalletLabel();
+  const sendLabel = "Send via Wallet";
 
   const fab = document.createElement("button");
   fab.id = "metro-fab";
@@ -595,7 +595,7 @@ function mountStandbyMetroPanel(getPlayerId: () => string | null): void {
 
   if (!walletAvailable()) {
     ($("m-connect") as HTMLButtonElement).textContent = solPrimary
-      ? "No Phantom — paste address"
+      ? "No Solana wallet — paste address"
       : "Connect Wallet / paste 0x";
     addrInput.style.display = "block";
   }
@@ -605,7 +605,7 @@ function mountStandbyMetroPanel(getPlayerId: () => string | null): void {
       addrInput.style.display = "block";
       status(
         solPrimary
-          ? "install Phantom or paste an address"
+          ? "install a Solana wallet or paste an address"
           : walletConnectAvailable()
             ? "open WalletConnect or paste 0x"
             : "install a wallet, open in MetaMask, or paste 0x",
@@ -621,7 +621,7 @@ function mountStandbyMetroPanel(getPlayerId: () => string | null): void {
       status("disconnected");
       return;
     }
-    status(solPrimary ? "opening Phantom…" : "opening wallet…");
+    status("opening wallet…");
     const addr = await connectWallet(solPrimary ? "solana" : "evm");
     if (addr) {
       $("m-wallet").textContent = short(addr);
@@ -766,9 +766,9 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
   const st = getMetroStatus();
   // Solana primary — EVM UX only when mint/settlement is explicitly the 0x alternate.
   const solPrimary = metroIsSolana || preferSolanaWallet();
-  const walletLabel = solPrimary ? "Phantom" : walletUiLabel();
-  const connectLabel = solPrimary ? "Connect Phantom" : connectWalletLabel();
-  const sendLabel = solPrimary ? "Send via Phantom" : "Send via Wallet";
+  const walletLabel = solPrimary ? "Solana wallet" : walletUiLabel();
+  const connectLabel = connectWalletLabel();
+  const sendLabel = "Send via Wallet";
 
   const style = document.createElement("style");
   style.textContent = STYLE;
@@ -820,7 +820,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
       </div>
 
       <div class="section">
-        <div class="section-title"><span>Wallet</span><span class="hint">${solPrimary ? "Phantom · Solana" : "WalletConnect · Robinhood"}</span></div>
+        <div class="section-title"><span>Wallet</span><span class="hint">${solPrimary ? "Solana wallet" : "WalletConnect · Robinhood"}</span></div>
         <div class="row"><span class="muted">wallet</span><span id="m-wallet" class="mono-value">—</span></div>
         <div class="field-row two"><button id="m-connect">${connectLabel}</button><input id="m-addr" placeholder="${solPrimary ? "or paste Solana address" : "or paste 0x address"}" style="display:none"/></div>
         <div class="row"><span class="muted">player</span><span id="m-player" class="mono-value">—</span></div>
@@ -880,7 +880,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
 
   if (!walletAvailable()) {
     ($("m-connect") as HTMLButtonElement).textContent = solPrimary
-      ? "No Phantom — paste address"
+      ? "No Solana wallet — paste address"
       : "No MetaMask — paste 0x";
     addrInput.style.display = "block";
   }
@@ -1184,7 +1184,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
       addrInput.style.display = "block";
       status(
         solPrimary
-          ? "paste a Solana address or install Phantom"
+          ? "paste a Solana address or install a wallet"
           : walletConnectAvailable()
             ? "open WalletConnect or paste 0x"
             : "paste a 0x address or open in MetaMask",
@@ -1199,13 +1199,13 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
       syncFab();
       return;
     }
-    status(solPrimary ? "opening Phantom…" : "opening wallet…");
+    status("opening wallet…");
     const addr = await connectWallet(solPrimary ? "solana" : "evm");
     if (addr) {
       $("m-wallet").textContent = short(addr);
       ($("m-connect") as HTMLButtonElement).textContent = "Disconnect";
       const chain = connectedChain();
-      status(chain === "solana" ? "Phantom connected (Solana)" : `${walletUiLabel()} connected`);
+      status(chain === "solana" ? "Solana wallet connected" : `${walletUiLabel()} connected`);
       syncFab();
     } else status(isLikelyMobile() ? "approve in your wallet app, then retry" : "connect cancelled");
   };
@@ -1216,7 +1216,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
     void navigator.clipboard?.writeText(full);
     status(
       solPrimary
-        ? "treasury copied — Send via Phantom or transfer $METRO SPL there"
+        ? "treasury copied — send from your Solana wallet or transfer $METRO SPL there"
         : "treasury copied — send $METRO from your wallet, then claim",
     );
   };
@@ -1253,7 +1253,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
     return { sig: signed.signature, ts };
   }
 
-  // One-click deposit: Solana SPL (Phantom) or legacy ERC-20 (MetaMask)
+  // One-click deposit: Solana SPL wallet or legacy ERC-20 wallet.
   // Latched: this fires a REAL on-chain transfer. Unguarded, a double-tap (easy on a
   // laggy canvas or a phone) queued two wallet approvals and sent two transfers, but both
   // callbacks write the one #m-txsig field — so only the last signature was ever claimed
@@ -1277,9 +1277,9 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
     try {
       if (solPrimary || metroIsSolana || !metroIsEvm) {
         if (!solanaWalletAvailable() && connectedChain() === "evm") {
-          return status("connect Phantom (Solana) for SPL deposits");
+          return status("connect a Solana wallet for SPL deposits");
         }
-        status("approve $METRO transfer in Phantom (you pay SOL fee)…");
+        status("approve the $METRO transfer in your Solana wallet (you pay the SOL fee)…");
         const sent = await sendSplDeposit({ treasury, amount, rpc: metroRpc() });
         if (!sent.ok || !sent.txHash) {
           status(`✗ ${sent.reason ?? "send failed"}`);

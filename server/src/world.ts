@@ -151,7 +151,21 @@ import { weeklyGuildGoal, currentGuildWeek } from "../../src/game/guildGoals";
 import { currentDistrictWar, warMetaKey } from "../../src/game/districtWar";
 import { factionCaptureLine, factionTerritoryLine } from "../../src/game/factions";
 import { factionCampaignBrief, factionCampaignReaction } from "../../src/game/factionCampaigns";
-import { MAX_REPRINT_MEMORY, REPRINT_MEMORY_KEY, reprintMemoryCount } from "../../src/game/reprintHistory";
+import { MAX_REPRINT_MEMORY, MAX_REPRINT_STAMPS, REPRINT_MEMORY_KEY, REPRINT_STAMP_KEY, nextReprintMemory, reprintMemoryCount, reprintStampCount } from "../../src/game/reprintHistory";
+import { skillAwardAmount, skillSnapshot, skillStatKey, type RsSkillId } from "../../src/game/rsSkills";
+import {
+  HUB_DATA_TERMINAL_RANGE,
+  HUB_DATA_TERMINALS,
+  terminalCooldownRemaining,
+} from "../../src/game/hubDataTerminals";
+import {
+  CIVIC_ARCHIVE_PAGE_CAP,
+  civicArchivePageKey,
+  civicArchiveRecord,
+  civicArchiveSnapshot,
+  civicArchiveSynthesis,
+} from "../../src/game/civicArchives";
+import { npcPresentInZone } from "../../src/game/npcPresence";
 import {
   TERRITORY_FLIP_CAP,
   decodeTerritoryLegacy,
@@ -188,11 +202,14 @@ import {
 import {
   MAX_DISTRICT_STANDING,
   MAX_RELATIONSHIP_JOBS,
+  MAX_RELATIONSHIP_TALKS,
   districtStandingKey,
   districtStandingSnapshot,
   districtStandingTier,
   relationshipJobsKey,
   relationshipSnapshot,
+  relationshipTalkSnapshot,
+  relationshipJobSnapshot,
   relationshipTalkKey,
   relationshipTier,
   relationshipTierName,
@@ -507,7 +524,7 @@ interface PlayerState {
   /** False after another zone claimed the session — freeze inputs and stop balance writes. */
   sessionValid: boolean;
   inventory: Item[]; // server-authoritative loot, persisted as JSON (capped FIFO)
-  stash: Item[]; // personal safe storage (TENEMENT lockbox) — survives death, persisted as JSON
+  stash: Item[]; // personal overflow (TENEMENT lockbox); bag and stash both survive death
   equipped: Partial<Record<Slot, Item>>; // gear by slot; its mods boost combat
   mods: ModBag; // aggregate of the equipped mods (cached; recomputed on change)
   maxHp: number; // PLAYER_HP + mods.hpAdd
@@ -745,8 +762,8 @@ const SHOP: Record<string, ShopItem> = {
   core_crate: { price: 720, label: "CORE CRATE", cores: 8, repReq: 1 },
   // Pure sink kit (no credit refund) — cores only.
   supply_kit: { price: 165, label: "SUPPLY KIT", cores: 2 },
-  // Mid-game sink: insurance reprint chip (no heal — pure burn for QoL buff later sessions).
-  reprint_chip: { price: 260, label: "REPRINT CHIP", creditsGrant: 0 },
+  // Mid-game hard sink: a durable social memorial, never death protection or power.
+  reprint_chip: { price: 260, label: "REPRINT MEMORIAL", creditsGrant: 0 },
 };
 
 interface Shot {
@@ -1862,6 +1879,7 @@ export class WorldDO {
     if (msg.t === "stash") return this.onStash(ws, msg);
     if (msg.t === "estate") return this.onEstate(ws, msg);
     if (msg.t === "craft") return this.onCraft(ws, msg);
+    if (msg.t === "harvest") return void this.onHarvest(ws, msg);
     if (msg.t === "buy") return this.onBuy(ws, msg);
     if (msg.t === "chat") return this.onChat(ws, msg);
     if (msg.t === "guild") return this.onGuild(ws, msg);
@@ -2772,6 +2790,7 @@ export class WorldDO {
           return sys("market listing failed — item returned to bag");
         }
         sys(currency === "metro" ? `listed ${item.name} for ◈${price} $METRO (fee ◈${fee})` : `listed ${item.name} for ₵${price} (fee ₵${fee})`);
+        this.awardSkill(p, "trading", 12);
         this.send(ws, { t: "inv", items: p.inventory });
         await this.sendMarket(ws);
         return;
@@ -2839,6 +2858,7 @@ export class WorldDO {
               this.bumpStat(seller, "credits", price);
             }
             seller.dirty = true;
+            this.awardSkill(seller, "trading", 18);
             this.sendTo(seller.id, {
               t: "sys",
               text: isMetro ? `✦ sold ${item.name} for ◈${price} $METRO` : `✦ sold ${item.name} for ₵${price}`,
@@ -2865,6 +2885,7 @@ export class WorldDO {
             }
           }
         }
+        this.awardSkill(p, "trading", 18);
         sys(isMetro ? `bought ${item.name} for ◈${price} $METRO` : `bought ${item.name} for ₵${price}`);
         await this.sendMarket(ws);
         return;
@@ -2890,11 +2911,13 @@ export class WorldDO {
       let dc = 0;
       let dk = 0;
       let dm = 0;
+      let auctionSales = 0;
       const items: Item[] = [];
       for (const r of results) {
         dc += r.credits || 0;
         dk += r.cores || 0;
         dm += r.metro || 0;
+        if ((r.reason || "").startsWith("auction sale")) auctionSales++;
         const it = this.parseItemJson(r.item);
         if (it) items.push(it);
       }
@@ -2917,6 +2940,7 @@ export class WorldDO {
         }
       }
       p.dirty = true;
+      if (auctionSales > 0) this.awardSkill(p, "trading", auctionSales * 18);
       if (dc || dk || dm) {
         const parts = [];
         if (dc) parts.push(`₵${dc}`);
@@ -3139,6 +3163,11 @@ export class WorldDO {
     b.cores += oA.cores - oB.cores;
     a.dirty = true;
     b.dirty = true;
+    // Empty handshakes remain legal for social UX, but are not profession work.
+    if (oA.credits + oA.cores + oB.credits + oB.cores > 0) {
+      this.awardSkill(a, "trading", 20);
+      this.awardSkill(b, "trading", 20);
+    }
     this.endTrade(tr, "done", "trade complete");
   }
 
@@ -3663,6 +3692,8 @@ export class WorldDO {
     this.sendBounty(ws, p); // hydrate any active NPC bounty
     this.bountyTravelEvent(p); // destination arrival itself completes a courier route
     this.sendRelations(ws, p); // hydrate durable contact trust + district standing
+    this.sendSkills(ws, p); // hydrate server-owned profession progression
+    this.sendArchives(ws, p); // hydrate bounded civic records recovered at hub terminals
     this.sendCivic(ws); // hydrate today's shared local aftermath on streets and interiors
     const organic = proof?.arrival !== "fast";
     await this.markDiscovered(ws, id, organic);
@@ -4683,6 +4714,31 @@ export class WorldDO {
     this.checkAchv(p, stat as StatKey);
   }
 
+  private sendSkills(ws: WebSocket, p: PlayerState) {
+    this.send(ws, { t: "skills", xp: skillSnapshot(p.stats) });
+  }
+
+  private pushSkills(p: PlayerState) {
+    for (const [sock, id] of this.sessions) if (id === p.id) this.sendSkills(sock, p);
+  }
+
+  /** Award only validated server outcomes; the client can never nominate XP. */
+  private awardSkill(p: PlayerState, id: RsSkillId, amount: number) {
+    const give = skillAwardAmount(p.stats, id, amount);
+    if (give <= 0) return;
+    this.bumpStat(p, skillStatKey(id), give);
+    this.pushSkills(p);
+  }
+
+  private sendArchives(ws: WebSocket, p: PlayerState) {
+    const pages = civicArchiveSnapshot(p.stats);
+    this.send(ws, { t: "archives", pages, synthesis: civicArchiveSynthesis(pages) });
+  }
+
+  private pushArchives(p: PlayerState) {
+    for (const [sock, id] of this.sessions) if (id === p.id) this.sendArchives(sock, p);
+  }
+
   /** Tally a credit flow for the economy ledger (see economy_daily / /economy).
    *  flow 'emit' = the game created credits; 'burn' = a sink destroyed them. */
   private eco(flow: "emit" | "burn", kind: string, credits: number) {
@@ -5012,12 +5068,15 @@ export class WorldDO {
     this.send(ws, {
       t: "relations",
       trust: relationshipSnapshot(p.stats),
+      talks: relationshipTalkSnapshot(p.stats),
+      jobs: relationshipJobSnapshot(p.stats),
       districts: districtStandingSnapshot(p.stats),
       clues: residentClueSnapshot(p.stats),
       confirmed: residentConfirmationSnapshot(p.stats),
       reconstruction: reconstructionSnapshot(p.stats),
       social: rescueMemorySnapshot(p.stats),
       reprints: reprintMemoryCount(p.stats),
+      memorialStamps: reprintStampCount(p.stats),
     });
   }
 
@@ -5025,11 +5084,11 @@ export class WorldDO {
     for (const [sock, id] of this.sessions) if (id === p.id) this.sendRelations(sock, p);
   }
 
-  /** First conversation only. No XP, currency, rep, or unlock is attached. */
+  /** Bounded conversation memory. No XP, currency, rep, or unlock is attached. */
   private noteNpcMet(p: PlayerState, npcId: string) {
     const key = relationshipTalkKey(npcId);
     let changed = false;
-    if ((p.stats[key] ?? 0) < 1) {
+    if ((p.stats[key] ?? 0) < MAX_RELATIONSHIP_TALKS) {
       this.bumpStat(p, key, 1);
       changed = true;
     }
@@ -5149,11 +5208,15 @@ export class WorldDO {
     }
     try {
       const now = Date.now();
-      await this.env.DB.prepare("INSERT OR IGNORE INTO player_discovered (player, zone, at, organic) VALUES (?,?,?,?)")
+      const inserted = await this.env.DB.prepare("INSERT OR IGNORE INTO player_discovered (player, zone, at, organic) VALUES (?,?,?,?)")
         .bind(id, this.zoneName, now, organic ? 1 : 0)
         .run();
+      let firstOrganic = organic && inserted.meta.changes > 0;
       if (organic) {
-        await this.env.DB.prepare("UPDATE player_discovered SET organic = 1 WHERE player = ? AND zone = ?").bind(id, this.zoneName).run();
+        const upgraded = await this.env.DB.prepare("UPDATE player_discovered SET organic = 1 WHERE player = ? AND zone = ? AND organic = 0")
+          .bind(id, this.zoneName)
+          .run();
+        firstOrganic ||= upgraded.meta.changes > 0;
         // Touching Metro City also unlocks free hub services + subway station for map TRAVEL
         // so runners aren't stuck "walk via deploy gate" for clinic/shop/underline.
         if (this.zoneName === "safe") {
@@ -5172,6 +5235,8 @@ export class WorldDO {
       const zones = (results ?? []).map((r) => r.zone);
       const unlocked = (results ?? []).filter((r) => r.organic).map((r) => r.zone);
       this.send(ws, { t: "discovered", zones, unlocked });
+      const p = this.players.get(id);
+      if (p && firstOrganic) this.awardSkill(p, "exploration", 22);
     } catch {
       const fallback = organic ? [this.zoneName] : [];
       // Client still gets free hub routes if D1 is mid-migration.
@@ -5300,7 +5365,7 @@ export class WorldDO {
       p.deathStreakTick = this.tick;
       const reprintsBefore = reprintMemoryCount(p.stats);
       if (reprintsBefore < MAX_REPRINT_MEMORY) this.bumpStat(p, REPRINT_MEMORY_KEY, 1);
-      const reprints = Math.min(MAX_REPRINT_MEMORY, reprintsBefore + 1);
+      const reprints = nextReprintMemory(reprintsBefore);
       this.pushRelations(p);
       const worldStartZone = this.worldStartZoneForCurrent();
       const canWorldStart = !!worldStartZone;
@@ -5549,6 +5614,10 @@ export class WorldDO {
           return;
         }
       }
+      if (!npcPresentInZone(b.npc, this.zoneName)) {
+        this.send(ws, { t: "sys", text: "that contact is not present in this zone" });
+        return;
+      }
       // re-accepting the job you already hold is idempotent — it re-syncs the tracker
       // instead of dead-ending (a stale active job used to lock the slot forever)
       if (p.bounty?.id === b.id) {
@@ -5607,6 +5676,10 @@ export class WorldDO {
     if (!p || p.dead) return;
     const npcId = (msg.npcId || "").replace(/[^a-zA-Z0-9_:-]/g, "").slice(0, 48);
     if (!npcId || !npcDef(npcId)) return;
+    if (!npcPresentInZone(npcId, this.zoneName)) {
+      this.send(ws, { t: "sys", text: "that contact is not present in this zone" });
+      return;
+    }
     if (msg.action === "talk") {
       this.noteNpcMet(p, npcId);
       return;
@@ -5908,7 +5981,7 @@ export class WorldDO {
       const [it] = p.inventory.splice(i, 1);
       p.stash.push(it);
       p.dirty = true;
-      sys(`◈ stashed ${it.name} — safe from death`);
+      sys(`◈ stashed ${it.name} — moved into personal lockbox`);
     } else if (msg.action === "withdraw") {
       const i = p.stash.findIndex((it) => it.id === msg.itemId);
       if (i < 0) return sys("that item isn't in your stash");
@@ -6253,6 +6326,10 @@ export class WorldDO {
     if (!p) return;
     const sku = SHOP[msg.sku];
     if (!sku) return;
+    if (msg.sku === "reprint_chip" && reprintStampCount(p.stats) >= MAX_REPRINT_STAMPS) {
+      this.send(ws, { t: "sys", text: "memorial ledger already carries all nine public stamps" });
+      return;
+    }
     if (sku.repReq && repTier(this.repOf(p)) < sku.repReq) {
       this.send(ws, { t: "sys", text: `${sku.label} needs reputation tier ${sku.repReq} — run contracts` });
       return;
@@ -6278,8 +6355,11 @@ export class WorldDO {
       p.cores += sku.cores;
       this.send(ws, { t: "sys", text: `bought ${sku.label} — +◈${sku.cores}` });
     } else if (msg.sku === "reprint_chip") {
-      // Pure sink — insurance stamp with no refund (economy burn).
-      this.send(ws, { t: "sys", text: `bought ${sku.label} — grid insurance stamped (₵ burned)` });
+      // Pure sink with durable social provenance: no refund, protection, or stat power.
+      this.bumpStat(p, REPRINT_STAMP_KEY, 1);
+      const stamps = reprintStampCount(p.stats);
+      this.pushRelations(p);
+      this.send(ws, { t: "sys", text: `bought ${sku.label} — public return ledger ${stamps}/9 (₵ burned; no death protection)` });
     }
     if (sku.creditsGrant) {
       p.credits += sku.creditsGrant;
@@ -6311,6 +6391,59 @@ export class WorldDO {
       if (it && it.id === id) return { item: it, slot: s };
     }
     return null;
+  }
+
+  /** Metro City civic archive terminals: spatially validated, durable cooldown,
+   *  and profession-only rewards. They reveal history; they never mint economy. */
+  private async onHarvest(ws: WebSocket, msg: Extract<ClientMsg, { t: "harvest" }>) {
+    const p = this.playerFor(ws);
+    if (!p || p.dead || this.zoneName !== "safe") return;
+    const node = HUB_DATA_TERMINALS.find((n) => n.id === Math.floor(msg.node));
+    if (!node || msg.node !== node.id) return;
+    const x = CITY_HUB_SPAWN.x + node.dx * TILE;
+    const y = CITY_HUB_SPAWN.y + node.dy * TILE;
+    if (Math.hypot(p.x - x, p.y - y) > HUB_DATA_TERMINAL_RANGE) {
+      this.send(ws, { t: "sys", text: `ARCHIVE LINK · move closer to ${node.name}` });
+      return;
+    }
+    const key = `archive_terminal_${node.id}_at`;
+    const now = Date.now();
+    const remaining = terminalCooldownRemaining(p.stats[key] ?? 0, now);
+    if (remaining > 0) {
+      this.send(ws, { t: "sys", text: `ARCHIVE LINK · ${node.name} rekeys in ${Math.ceil(remaining / 60_000)}m` });
+      return;
+    }
+
+    // Reserve before awaiting D1 so rapid clicks cannot double-award. This fixed-key
+    // absolute timestamp is intentionally not routed through additive statDelta.
+    const before = p.stats[key] ?? 0;
+    p.stats[key] = now;
+    try {
+      await this.env.DB.prepare(
+        "INSERT INTO player_stats (player, stat, v) VALUES (?,?,?) ON CONFLICT(player,stat) DO UPDATE SET v = excluded.v",
+      )
+        .bind(p.id, key, now)
+        .run();
+    } catch {
+      p.stats[key] = before;
+      this.send(ws, { t: "sys", text: "ARCHIVE LINK · civic index unavailable — no record consumed" });
+      return;
+    }
+    const pageKey = civicArchivePageKey(node.id);
+    const page = Math.min(CIVIC_ARCHIVE_PAGE_CAP, Math.max(0, Math.floor(p.stats[pageKey] ?? 0)));
+    const record = civicArchiveRecord(node.id, page);
+    if (record) {
+      this.bumpStat(p, pageKey, 1);
+      this.pushArchives(p);
+    }
+    this.awardSkill(p, "mining", 28);
+    this.awardSkill(p, "crafting", 8);
+    this.send(ws, {
+      t: "sys",
+      text: record
+        ? `▣ ${node.name} ${page + 1}/${CIVIC_ARCHIVE_PAGE_CAP} · ${record.title} — ${record.text} Archive sealed for 5m.`
+        : `▣ ${node.name} · index complete. ${civicArchiveSynthesis(civicArchiveSnapshot(p.stats))} Archive sealed for 5m.`,
+    });
   }
 
   /**
@@ -6387,6 +6520,7 @@ export class WorldDO {
 
     p.dirty = true;
     if (drill) this.tutorialEvent(p, "craft");
+    else this.awardSkill(p, "crafting", msg.action === "salvage" ? 14 : 28);
     this.send(ws, { t: "inv", items: p.inventory });
     this.sendLoadout(ws, p);
   }
@@ -6820,6 +6954,7 @@ export class WorldDO {
       this.sharedKillCredit(killer, e, isBoss);
       this.addHeat(killer, HEAT.perKill);
       this.bumpStat(killer, "kills", 1);
+      this.awardSkill(killer, "combat", isBoss ? 120 : 35);
       if (isBoss) this.bumpStat(killer, "bosses", 1);
       if (killer.guildId) {
         void this.bumpGuildGoal(killer.guildId, "kills", 1);

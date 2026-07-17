@@ -11,6 +11,7 @@ import { isGodAccount } from "./godAccounts";
 import { furnitureHomeBuffs } from "../world/estates";
 import { campaignEchoLine } from "../game/campaignEchoes";
 import { normalizeFragmentSequence } from "../game/fragments";
+import { emptyRsSkills, type RsSkillXp } from "../game/rsSkills";
 
 /** True when the page is on a public host but the WS URL still points at loopback —
  *  the classic "forgot VITE_SERVER_URL" Pages footgun. */
@@ -392,7 +393,7 @@ export default class NetClient {
     };
   } = null;
   onGuildUpdate?: () => void;
-  /** Fired for every server sys line (death tax, cell goals, boss share hooks). */
+  /** Fired for every server sys line (death result, cell goals, boss share hooks). */
   onSysMessage?: (text: string) => void;
   marketListings: Array<{ id: number; seller: string; sellerName: string; item: Item; price: number; currency: string }> = [];
   onMarket?: () => void;
@@ -407,13 +408,21 @@ export default class NetClient {
   bounty: { id: string; name: string; desc: string; objective: string; count: number; progress: number } | null = null;
   onBounty?: () => void;
   relationships: Record<string, number> = {};
+  relationshipTalks: Record<string, number> = {};
+  relationshipJobs: Record<string, number> = {};
   districtStanding: number[] = [];
   residentClues: string[] = [];
   residentConfirmed: string[] = [];
   reconstruction: number[] = [];
   socialMemory = { given: 0, received: 0, tier: 0, title: "UNTESTED LINK", line: "" };
   reprints = 0;
+  reprintMemorialStamps = 0;
   onRelations?: () => void;
+  skills: RsSkillXp = emptyRsSkills();
+  onSkills?: () => void;
+  civicArchivePages: number[] = [0, 0, 0];
+  civicArchiveSynthesis = "";
+  onArchives?: () => void;
   civicMomentum: number[] = [];
   civicAftermath: Record<number, { day: number; operation: string; stage: string; completions: number; line: string; eventDurationPct: number }> = {};
   onCivic?: () => void;
@@ -1627,13 +1636,23 @@ export default class NetClient {
       this.onBounty?.();
     } else if (msg.t === "relations") {
       this.relationships = msg.trust ?? {};
+      this.relationshipTalks = msg.talks ?? {};
+      this.relationshipJobs = msg.jobs ?? {};
       this.districtStanding = Array.isArray(msg.districts) ? msg.districts : [];
       this.residentClues = Array.isArray(msg.clues) ? msg.clues : [];
       this.residentConfirmed = Array.isArray(msg.confirmed) ? msg.confirmed : [];
       this.reconstruction = Array.isArray(msg.reconstruction) ? msg.reconstruction : [];
       if (msg.social) this.socialMemory = msg.social;
       this.reprints = Math.max(0, Math.floor(msg.reprints ?? this.reprints));
+      this.reprintMemorialStamps = Math.max(0, Math.floor(msg.memorialStamps ?? this.reprintMemorialStamps));
       this.onRelations?.();
+    } else if (msg.t === "skills") {
+      this.skills = { ...msg.xp };
+      this.onSkills?.();
+    } else if (msg.t === "archives") {
+      this.civicArchivePages = Array.isArray(msg.pages) ? msg.pages.map((n) => Math.max(0, Math.floor(n))) : [0, 0, 0];
+      this.civicArchiveSynthesis = msg.synthesis || "";
+      this.onArchives?.();
     } else if (msg.t === "civic") {
       this.civicMomentum[msg.district] = msg.completions;
       this.civicAftermath[msg.district] = {
@@ -1856,6 +1875,10 @@ export default class NetClient {
   /** Send an emote (anchored to you) or a world ping (carries the aim point). */
   sendEmote(kind: number, ping: boolean, x: number, y: number) {
     this.sendMsg({ t: "emote", kind, ping, x, y });
+  }
+  harvest(node: number) {
+    if (!this.connected || this.dead) return;
+    this.sendMsg({ t: "harvest", node });
   }
   private sendMsg(m: ClientMsg) {
     try {

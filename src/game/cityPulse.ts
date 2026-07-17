@@ -16,14 +16,14 @@ export function cityPulseLines(now = Date.now()): string[] {
     `pulse · ${operation.name} in the war district — ${districtOperationObjectiveLabel(operation)}`,
     `pulse · Cell goal this week: ${goal.name} (${goal.desc})`,
     ...[0, 1, 2, 3].map((f) => `pulse · ${factionCampaignBrief(f, now)}`),
-    "pulse · vendor prices are hard sinks — spend ₵ or lose it to death tax",
+    "pulse · vendor prices are hard sinks; street reprints never take ₵",
     "pulse · forge upgrades burn cores + credits; salvage is for cores, not profit",
     "pulse · THE ESTATES · tip a guestbook to leave a mark",
     "pulse · world bosses reform — signature loot only once per kill credit",
     "pulse · Map (M) · Cell (U) · Market (K) · Journal (N)",
     "pulse · HEAT fuels ultimates — stay cold only if you're running",
     "pulse · deeper districts pay more but HSS scales hard",
-    "pulse · stash in TENEMENT / home lockbox survives death",
+    "pulse · TENEMENT lockboxes organize overflow; your carried bag also survives reprint",
   ];
 }
 

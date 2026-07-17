@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  relationshipConversationLine,
+  relationshipJobSnapshot,
+  relationshipTalkSnapshot,
   districtStandingKey,
   districtStandingSnapshot,
   districtStandingSummary,
@@ -22,6 +25,14 @@ describe("relationships", () => {
   it("hydrates only contacts the runner has met", () => {
     const stats = { [relationshipTalkKey("doc")]: 1, [relationshipJobsKey("doc")]: 1, kills: 99 };
     expect(relationshipSnapshot(stats)).toEqual({ doc: 2 });
+  });
+
+  it("bounds conversation and completed-job ledgers", () => {
+    const stats = { [relationshipTalkKey("doc")]: 99, [relationshipJobsKey("doc")]: 8 };
+    expect(relationshipTalkSnapshot(stats)).toEqual({ doc: 12 });
+    expect(relationshipJobSnapshot(stats)).toEqual({ doc: 3 });
+    expect(relationshipConversationLine("DOC", 10, 2)).toContain("ten conversations");
+    expect(relationshipConversationLine("DOC", 2, 0)).toBeNull();
   });
 
   it("clamps district standing and names its social tier", () => {
