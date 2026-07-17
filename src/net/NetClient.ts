@@ -412,6 +412,7 @@ export default class NetClient {
   residentConfirmed: string[] = [];
   reconstruction: number[] = [];
   socialMemory = { given: 0, received: 0, tier: 0, title: "UNTESTED LINK", line: "" };
+  reprints = 0;
   onRelations?: () => void;
   civicMomentum: number[] = [];
   civicAftermath: Record<number, { day: number; operation: string; stage: string; completions: number; line: string; eventDurationPct: number }> = {};
@@ -1478,6 +1479,7 @@ export default class NetClient {
         msg.extractLabel ??
         (msg.extract || msg.worldStart ? "RESPAWN AT CITY START" : "");
       this.deathNearBoss = !!msg.nearBoss;
+      this.reprints = Math.max(this.reprints, Math.max(0, Math.floor(msg.reprints ?? 0)));
     } else if (msg.t === "kit_ack") {
       // Roll back optimistic CDs when the server rejected the cast.
       if (!msg.ok) {
@@ -1630,6 +1632,7 @@ export default class NetClient {
       this.residentConfirmed = Array.isArray(msg.confirmed) ? msg.confirmed : [];
       this.reconstruction = Array.isArray(msg.reconstruction) ? msg.reconstruction : [];
       if (msg.social) this.socialMemory = msg.social;
+      this.reprints = Math.max(0, Math.floor(msg.reprints ?? this.reprints));
       this.onRelations?.();
     } else if (msg.t === "civic") {
       this.civicMomentum[msg.district] = msg.completions;

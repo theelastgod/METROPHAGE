@@ -1,8 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { TERRITORY_FLIP_CAP, decodeTerritoryLegacy, encodeTerritoryLegacy, residentTerritoryLegacyLine, territoryLegacyKey, territoryLegacyLine } from "./territoryLegacy";
+import { TERRITORY_FLIP_CAP, decodeTerritoryLegacy, encodeTerritoryLegacy, residentTerritoryLegacyLine, territoryController, territoryLegacyKey, territoryLegacyLine } from "./territoryLegacy";
 import { DISTRICT_CAST } from "./residentLife";
 
 describe("daily territory legacy", () => {
+  it("requires a unique live node leader instead of awarding ties by array order", () => {
+    expect(territoryController([-1, -1, -1])).toBe(-1);
+    expect(territoryController([0, 1, -1])).toBe(-1);
+    expect(territoryController([3, 3, 1])).toBe(3);
+    expect(territoryController([0, 1, 2, 0, 1, 2])).toBe(-1);
+  });
+
   it("reuses one bounded row per district and expires logically by day", () => {
     expect(territoryLegacyKey(4)).toBe("territory_daily_d4");
     expect(decodeTerritoryLegacy(encodeTerritoryLegacy(20, 2, 500), 4, 20)).toEqual({ district: 4, controller: 2, flips: TERRITORY_FLIP_CAP });

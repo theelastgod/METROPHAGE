@@ -18,6 +18,21 @@ export interface TerritoryLegacy {
   flips: number;
 }
 
+/** Live district control requires a unique node-count leader. No participants and a
+ * tied lead both remain neutral; array order must never award a political outcome. */
+export function territoryController(owners: readonly number[], factionCount = 4): number {
+  const count = Math.max(1, Math.floor(factionCount) || 4);
+  const totals = Array(count).fill(0) as number[];
+  for (const owner of owners) if (Number.isInteger(owner) && owner >= 0 && owner < count) totals[owner]++;
+  const max = Math.max(...totals);
+  if (max <= 0) return -1;
+  const leaders = totals.reduce<number[]>((out, total, faction) => {
+    if (total === max) out.push(faction);
+    return out;
+  }, []);
+  return leaders.length === 1 ? leaders[0] : -1;
+}
+
 export const TERRITORY_CHARTERS = [
   "routes the relays as a strike commons: copies first, ownership never",
   "hands the relay keys toward rotating block assemblies under armed protection",

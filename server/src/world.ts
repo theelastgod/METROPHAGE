@@ -151,12 +151,14 @@ import { weeklyGuildGoal, currentGuildWeek } from "../../src/game/guildGoals";
 import { currentDistrictWar, warMetaKey } from "../../src/game/districtWar";
 import { factionCaptureLine, factionTerritoryLine } from "../../src/game/factions";
 import { factionCampaignBrief, factionCampaignReaction } from "../../src/game/factionCampaigns";
+import { MAX_REPRINT_MEMORY, REPRINT_MEMORY_KEY, reprintMemoryCount } from "../../src/game/reprintHistory";
 import {
   TERRITORY_FLIP_CAP,
   decodeTerritoryLegacy,
   encodeTerritoryLegacy,
   territoryLegacyKey,
   territoryLegacyLine,
+  territoryController,
 } from "../../src/game/territoryLegacy";
 import { campaignEchoLine, districtCampaignEcho } from "../../src/game/campaignEchoes";
 import {
@@ -5015,6 +5017,7 @@ export class WorldDO {
       confirmed: residentConfirmationSnapshot(p.stats),
       reconstruction: reconstructionSnapshot(p.stats),
       social: rescueMemorySnapshot(p.stats),
+      reprints: reprintMemoryCount(p.stats),
     });
   }
 
@@ -5295,6 +5298,10 @@ export class WorldDO {
       const nearBoss = !pvpKill && this.nearLivingBoss(p.x, p.y, 420);
       p.deathStreak = (p.deathStreak || 0) + 1;
       p.deathStreakTick = this.tick;
+      const reprintsBefore = reprintMemoryCount(p.stats);
+      if (reprintsBefore < MAX_REPRINT_MEMORY) this.bumpStat(p, REPRINT_MEMORY_KEY, 1);
+      const reprints = Math.min(MAX_REPRINT_MEMORY, reprintsBefore + 1);
+      this.pushRelations(p);
       const worldStartZone = this.worldStartZoneForCurrent();
       const canWorldStart = !!worldStartZone;
       const worldStartHint = canWorldStart
@@ -5314,6 +5321,7 @@ export class WorldDO {
         extractLabel: canWorldStart ? "RESPAWN AT CITY START" : undefined,
         nearBoss,
         worldStart: canWorldStart,
+        reprints,
       });
     }
     return true;
@@ -5531,8 +5539,11 @@ export class WorldDO {
       }
       if (b.requiredCivicWork) {
         const week = currentGuildWeek();
-        const hasCivicWork = Array.from({ length: DISTRICTS.length }, (_, district) =>
-          decodeChronicleCivic(this.meta[chronicleCivicKey(district)], week)).some((count) => count > 0);
+        const weeklyCivic = Array.from({ length: DISTRICTS.length }, (_, district) =>
+          decodeChronicleCivic(this.meta[chronicleCivicKey(district)], week));
+        const hasCivicWork = b.requiredCivicDistrict === undefined
+          ? weeklyCivic.some((count) => count > 0)
+          : (weeklyCivic[b.requiredCivicDistrict] ?? 0) > 0;
         if (!hasCivicWork) {
           this.send(ws, { t: "sys", text: "no public work has opened that courier route this week" });
           return;
@@ -7556,19 +7567,9 @@ export class WorldDO {
     });
   }
 
-  /** Which faction holds the most nodes in this district (NEUTRAL if none). */
+  /** Unique node-count leader; empty districts and tied leads remain contested. */
   private districtControl(): number {
-    const counts = new Array(FACTION_COUNT).fill(0);
-    let any = false;
-    for (const n of this.nodes)
-      if (n.owner !== NEUTRAL) {
-        counts[n.owner]++;
-        any = true;
-      }
-    if (!any) return NEUTRAL;
-    let best = 0;
-    for (let i = 1; i < FACTION_COUNT; i++) if (counts[i] > counts[best]) best = i;
-    return best;
+    return territoryController(this.nodes.map((node) => node.owner), FACTION_COUNT);
   }
 
   /** Enter/exit THE CRUCIBLE — $METRO buy-in escrow. Called after movement each tick. */

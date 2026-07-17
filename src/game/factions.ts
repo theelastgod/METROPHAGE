@@ -68,7 +68,7 @@ export function factionDef(faction: number): FactionDef {
 
 export function factionTerritoryLine(playerFaction: number, controller: number, districtName: string): string {
   const own = factionDef(playerFaction);
-  if (controller < 0) return `${districtName} is unclaimed. ${own.cellName}: ${own.creed}`;
+  if (controller < 0) return `${districtName} is unsettled — no unique relay majority. ${own.cellName}: ${own.creed}`;
   const held = factionDef(controller);
   if (controller === playerFaction) return `${own.cellName} holds ${districtName}. ${own.promise}`;
   return `${held.cellName} holds ${districtName}. Their promise: ${held.promise}`;

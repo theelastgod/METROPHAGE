@@ -274,6 +274,15 @@ const HUB_EXTRA_RESIDENTS: CityNpcDef[] = [
   { id: "res_pip", name: "PIP", look: look({ color: 0xf7ff3c, head: "cap", skin: 0xa9794a, hair: "short", hairColor: 0x1b1820, faceMark: "tattoo" }), lines: ["Runner rumors, two creds a scoop.", "Heard your name on the wire. Not saying where."] },
 ];
 const ALL_RESIDENTS = [...DISTRICT_RESIDENTS, ...HUB_EXTRA_RESIDENTS];
+// BORNE now has a stable Kernel-district route. Keep the definition in the complete
+// roster for npcDef/services, but do not clone that same named person into a hub room.
+const HUB_RESIDENTS = ALL_RESIDENTS.filter((resident) => resident.id !== "res_borne");
+
+/** Complete named resident registry for data-integrity checks and portrait preload QA.
+ * Hub placement is intentionally a subset now that some residents have stable streets. */
+export function residentNpcRoster(): readonly CityNpcDef[] {
+  return ALL_RESIDENTS;
+}
 
 /** A distinct resident for a district building interior — deterministic per building, so
  *  the same door always opens on the same character. */
@@ -284,8 +293,8 @@ export function districtResident(district: number, index: number): CityNpcDef {
 /** A distinct resident for a hub building interior. The 30 hub buildings index 0..29 into a
  *  ≥30-strong roster, so every door on the plaza opens on its own unique face. */
 export function hubResident(index: number): CityNpcDef {
-  const n = ALL_RESIDENTS.length;
-  return ALL_RESIDENTS[((index % n) + n) % n];
+  const n = HUB_RESIDENTS.length;
+  return HUB_RESIDENTS[((index % n) + n) % n];
 }
 
 /** Regional quest-givers scattered in the expanded city's outer districts. */
@@ -385,6 +394,27 @@ export const ALL_NPCS: CityNpcDef[] = [...KEY_NPCS, ...CITIZENS, ...REGIONAL_NPC
 
 export function npcDef(id: string): CityNpcDef | undefined {
   return ALL_NPCS.find((n) => n.id === id);
+}
+
+/** One stable regional anchor per campaign district. These characters were authored
+ * long before the moving-resident pass but were never selected by scene population,
+ * leaving their dialogue and jobs unreachable. Array order follows DISTRICTS. */
+export const DISTRICT_REGIONAL_ANCHORS = [
+  "street_kid",
+  "scrap_boss",
+  "hawker",
+  "porter",
+  "tunnel_rat",
+  "arc_tech",
+  "preacher",
+  "res_borne",
+] as const;
+
+export function districtRegionalAnchor(district: number): CityNpcDef {
+  const i = Math.max(0, Math.min(DISTRICT_REGIONAL_ANCHORS.length - 1, Math.floor(district) || 0));
+  const npc = npcDef(DISTRICT_REGIONAL_ANCHORS[i]);
+  if (!npc) throw new Error(`missing regional anchor for district ${i}`);
+  return npc;
 }
 
 /** Human-readable place name for the player's current zone. */

@@ -1,10 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { BOSS_BOUNTY_COOLDOWN_MS, BOUNTIES, CASEFILE_BOUNTIES, LATE_BOUNTIES, POST_AWAKENING_BOUNTIES, bossBountyCooldownRemaining, bountyById, bountyForNpc, bountyIsEligible } from "./bounties";
 import { servicesForNpc } from "./npcServices";
+import { DISTRICT_REGIONAL_ANCHORS } from "./cityNpcs";
 
 describe("bounty ↔ service-menu coherence", () => {
   it("every NPC whose menu shows Job actually has a job to give", () => {
     for (const npc of Object.keys(BOUNTIES)) {
+      expect(servicesForNpc(npc, true), npc).toContain("bounty");
+    }
+  });
+
+  it("every stable regional anchor exposes an authored job when its civic route is open", () => {
+    for (const npc of DISTRICT_REGIONAL_ANCHORS) {
+      const bounty = bountyForNpc(npc, "pre", [], [], Array(8).fill(1));
+      expect(bounty, npc).toBeTruthy();
       expect(servicesForNpc(npc, true), npc).toContain("bounty");
     }
   });
@@ -49,12 +58,19 @@ describe("bounty ↔ service-menu coherence", () => {
     expect(couriers).toHaveLength(4);
     for (const b of couriers) {
       expect(b.requiredCivicWork, b.id).toBe(true);
+      expect(b.requiredCivicDistrict, b.id).toBeGreaterThanOrEqual(0);
+      expect(b.requiredCivicDistrict, b.id).toBeLessThan(8);
       expect(b.targetZone, b.id).toBeTruthy();
       expect(b.rewardCredits, b.id).toBeLessThanOrEqual(360);
       expect(bountyForNpc(b.npc, "pre", [], [], []), b.id).toBeUndefined();
-      expect(bountyForNpc(b.npc, "pre", [], [], [1, 0, 0, 0, 0, 0, 0, 0]), b.id).toEqual(b);
+      const opened = Array(8).fill(0);
+      opened[b.requiredCivicDistrict!] = 1;
+      const wrongDistrict = Array(8).fill(0);
+      wrongDistrict[(b.requiredCivicDistrict! + 1) % 8] = 1;
+      expect(bountyForNpc(b.npc, "pre", [], [], opened), b.id).toEqual(b);
+      expect(bountyForNpc(b.npc, "pre", [], [], wrongDistrict), b.id).toBeUndefined();
       expect(bountyIsEligible(b, "pre", [], [], []), b.id).toBe(false);
-      expect(bountyIsEligible(b, "pre", [], [], [0, 0, 0, 1]), b.id).toBe(true);
+      expect(bountyIsEligible(b, "pre", [], [], opened), b.id).toBe(true);
       expect(bountyById(b.id), b.id).toEqual(b);
     }
   });

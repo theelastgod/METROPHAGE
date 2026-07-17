@@ -421,6 +421,7 @@ export type ServerMsg =
       confirmed?: string[];
       reconstruction?: number[];
       social?: { given: number; received: number; tier: number; title: string; line: string };
+      reprints?: number;
     }
   // map discovery — the set of zones this account has arrived at (drives fast travel), on login
   | { t: "discovered"; zones: string[]; unlocked: string[] }
@@ -503,5 +504,7 @@ export type ServerMsg =
       nearBoss?: boolean;
       /** True when world-start respawn is offered (same as extract outside tutorial). */
       worldStart?: boolean;
+      /** Bounded authoritative lifetime reprint memory (caps at final authored tier). */
+      reprints: number;
     }
   | { t: "error"; message: string };

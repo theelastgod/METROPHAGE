@@ -292,9 +292,10 @@ server rules, progression, and consequences.
 - Four existing ambient contacts now turn the weekly public-work ledger into authored
   routes: a restored manifest reaches city center, an awakened runner's own account and
   mutual-aid medicine reach the Clinic, and a paper civic record reaches THE UNDERLINE.
-- Courier offers remain hidden while all eight weekly civic counts are zero. The Worker
-  independently applies the same gate to direct bounty-id packets and persisted bounty
-  hydration, so client presentation is never the authority for whether a route exists.
+- Each courier offer remains hidden until its source district records public work that
+  week (Plaza note, Docks manifest, Undercity relay, or Kernel medicine). Work elsewhere
+  cannot open an unrelated parcel. The Worker independently applies the same gate to
+  direct bounty-id packets and persisted hydration, so presentation is never authority.
 - Travel progress has no client completion packet. After an accepted job is durably
   saved, entering its authored destination zone is the sole objective event; reconnects
   retain the parcel and destination arrival is evaluated from the server's zone identity.
@@ -325,6 +326,64 @@ server rules, progression, and consequences.
 - D1 updates controller and bounded flip count atomically across competing zone writers.
   A live territory smoke now proves node capture, score, control, and durable charter
   publication in the same authoritative path.
+
+## Batch 18 — reachable regional cast (implemented foundation)
+
+- The seven authored `REGIONAL_NPCS` were previously dead data: district population drew
+  only scheduled residents and ambient citizens, so Porter, Tunnel Rat, Scrap Boss,
+  Hawker, Preacher, Street Kid, and Arc Tech never appeared. Their dialogue, services,
+  and existing bounty definitions were consequently unreachable in normal play.
+- Every campaign district now has one stable regional anchor after its moving residents:
+  Street Kid / Scrap Boss / Hawker / Porter / Tunnel Rat / Arc Tech / Preacher / Borne.
+  The mapping is unique, data-tested, and leaves the two-person six-hour resident schedule
+  intact; when those residents are street-side they occupy the first two arrival spots.
+- Arc Tech's previously decorative `arcology_pass` hook is now a real shared bounty:
+  GROUND THE SKY uses the authoritative core-collection counter to mirror the orbital
+  license array onto district hardware. All eight anchors therefore expose actual work.
+- BORNE is excluded from generic hub-room rotation while remaining in the complete NPC
+  registry, preventing the same named courier from standing in the Kernel and a plaza
+  residence simultaneously; the remaining hub roster still supplies 30 unique faces.
+- BORNE's placement makes the fourth civic courier a real encounter rather than an id a
+  client could only know from source data. Courier eligibility was tightened at the same
+  seam: each route now requires weekly public work in its authored source district, not
+  merely any operation anywhere in Metro City.
+- Placement changes presentation and access to already-authored services only. It creates
+  no spawn reward, passive effect, extra payout, duplicate NPC, or client-owned progress.
+
+## Batch 19 — honest contested control (implemented foundation)
+
+- Live district control formerly selected the lowest-index Cell whenever top node counts
+  tied. A one-to-one relay split therefore appeared as METROPHAGE control, could satisfy
+  secure campaign triggers, and generated holder doctrine despite no actual majority.
+- A shared pure controller now requires exactly one node-count leader. No held nodes and
+  every tied lead return neutral; unique majorities retain the existing score, snapshot,
+  secure-objective, capture-broadcast, and daily-charter behavior.
+- Arrival copy now calls neutral/tied ground “unsettled — no unique relay majority” rather
+  than “unclaimed.” The daily relay ledger can still remember the last real majority while
+  live simulation truthfully reports that the present contest has no controller.
+- Tests cover empty, two-way, three-way, and unique-majority ownership. No reward rate,
+  capture speed, decay, faction score, or player progress was added.
+
+## Batch 20 — durable reprint witnesses (implemented foundation)
+
+- Reprint recognition formerly lived only in `localStorage`. OLD MAREK forgot a runner
+  on another browser, private mode returned zero, and the server had no social memory of
+  the setting's central death-and-continuity event.
+- Each authoritative death now advances one fixed `player_stats` counter capped at 25,
+  the final authored threshold. The death packet updates the active client immediately;
+  the relations snapshot hydrates the same count across devices, zones, reconnects, and
+  Durable Object eviction. Death timing, location, inventory, PvP drops, and economy do
+  not consult the counter.
+- MAREK recognizes returns at 3 / 10 / 25 dynamically when spoken to, not only when his
+  scene sprite was first constructed. All sixteen recurring residents gain three
+  role/institution/resource-aware witness lines, rotated through the existing durable
+  conversation cadence; city center displays the bounded social record.
+- Existing device counts remain a compatibility fallback and presentation uses the larger
+  value, avoiding an apparent memory wipe for veteran browsers. New authority never trusts
+  that local value for persistence, rewards, stats, access, or combat.
+- Pure tests cover cap/tier behavior and all 48 resident reactions. The live death smoke
+  requires matching death-packet and relations counts whenever combat actually kills its
+  fresh runner.
 
 ## Validation gates for every batch
 

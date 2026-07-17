@@ -1,6 +1,6 @@
-// METROPHAGE — this device remembers how many times you've been reprinted.
-// Flavour only, never authoritative: OLD MAREK's greeting warms up as the count
-// climbs (he says he remembers people the city forgets — so he does).
+// Legacy device fallback for reprints witnessed before durable server memory shipped.
+// Current deaths are also recorded authoritatively; presentation takes the larger count
+// so an established browser does not appear to lose history during the transition.
 
 const KEY = "mp_reprints_seen";
 

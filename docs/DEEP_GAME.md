@@ -75,6 +75,12 @@ Shipped without mint / CA work.
   to remember today's latest Cell controller and number of node-control changes. Each Cell
   gives the relay a distinct civic doctrine shown in arrivals, maps, and the chronicle;
   live node state alone still determines control, scoring, objectives, and payouts.
+  Live control requires a unique node-count leader; tied relays remain unsettled instead
+  of being silently awarded by faction array order.
+- **Regional anchors** (`cityNpcs.ts`): all eight districts now place one stable authored
+  contact after any scheduled residents, exposing regional dialogue and jobs that formerly
+  existed only as unused data. Civic couriers require weekly work in their own source
+  district, then retain server-owned travel and settlement rules.
 
 ## Social / economy UX
 - Market filters: ALL / ₵ / ◈ / WEP / ARM / RARE
@@ -86,6 +92,9 @@ Shipped without mint / CA work.
 - Contacts (`/c`), pin, dossier (L)
 - Party rescues persist as bounded mutual-aid memory; known contacts also recognize the
   setting provenance of equipped cosmetics without granting appearance-based power.
+- Authoritative deaths advance a bounded reprint-memory stat (3 / 10 / 25 witness tiers).
+  MAREK, recurring residents, and city center retain it across devices; the browser-local
+  counter remains only a veteran-history fallback and grants no mechanical benefit.
 - Build stamp toast on welcome; reconnect/offline banners + guild re-hydrate
 - City chatter + ambient runners when solo
 - Systems hint after 2nd hour (N / U / K / L / J / O)

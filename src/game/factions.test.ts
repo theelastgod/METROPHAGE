@@ -9,7 +9,7 @@ describe("factions", () => {
   });
 
   it("makes control readable as a political outcome", () => {
-    expect(factionTerritoryLine(0, -1, "THE STACKS")).toMatch(/unclaimed/);
+    expect(factionTerritoryLine(0, -1, "THE STACKS")).toMatch(/unsettled|no unique relay majority/);
     expect(factionTerritoryLine(1, 1, "THE STACKS")).toMatch(/holds THE STACKS/);
     expect(factionCaptureLine(2, "THE STACKS")).toMatch(/QUIET PROTOCOL/);
   });

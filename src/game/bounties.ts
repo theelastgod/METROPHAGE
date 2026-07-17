@@ -31,6 +31,8 @@ export interface Bounty {
   requiredPhase?: BountyPhase;
   /** Civic courier routes open only after the weekly ledger contains public work. */
   requiredCivicWork?: boolean;
+  /** District whose recorded public work physically creates this route. */
+  requiredCivicDistrict?: number;
   /** Authoritative arrival zone for travel jobs. */
   targetZone?: string;
 }
@@ -47,8 +49,9 @@ export const BOUNTIES: Record<string, Bounty> = {
   ghost: { id: "ghost_hvt", npc: "ghost", name: "THE QUIET LEDGER", desc: "Collect today's HIGH-VALUE TARGET bounty", objective: "hvt", count: 1, rewardCredits: 1200, rewardRep: 45, offer: "There's a name on today's kill sheet. Every district posts one. Make it a statistic and I'll double what the grid pays." },
   amb_tech: { id: "grid_sweep", npc: "amb_tech", name: "GRID SWEEP", desc: "Purge 30 HSS units", objective: "kill", count: 30, rewardCredits: 680, rewardRep: 34, offer: "Grid's crawling with HSS tonight. Drop thirty and I'll wire the credits." },
   // Regional / profession variety (depth pass — not all kill-N)
-  porter: { id: "porter_docks", npc: "porter", name: "LIVING MANIFEST", desc: "Carry the restored manifest to Metro City center", objective: "travel", count: 1, rewardCredits: 360, rewardRep: 20, requiredCivicWork: true, targetZone: "safe", offer: "Public crews put names back on this manifest. Carry it to city center; no relay, no copy, no quiet correction." },
+  porter: { id: "porter_docks", npc: "porter", name: "LIVING MANIFEST", desc: "Carry the restored manifest to Metro City center", objective: "travel", count: 1, rewardCredits: 360, rewardRep: 20, requiredCivicWork: true, requiredCivicDistrict: 3, targetZone: "safe", offer: "Public crews put names back on this manifest. Carry it to city center; no relay, no copy, no quiet correction." },
   tunnel_rat: { id: "tunnel_cores", npc: "tunnel_rat", name: "UNDER-CORE", desc: "Collect 6 data cores", objective: "collect", count: 6, rewardCredits: 400, rewardRep: 22, offer: "Bring six cores from the dark. I don't care whose they were." },
+  arc_tech: { id: "arc_ground_sky", npc: "arc_tech", name: "GROUND THE SKY", desc: "Collect 6 data cores", objective: "collect", count: 6, rewardCredits: 430, rewardRep: 23, offer: "Six clean cores lets me mirror the license array on the ground. The sky can keep charging rent; the district gets a copy." },
   scrap_boss: { id: "scrap_boss_kill", npc: "scrap_boss", name: "SCRAP CLAIM", desc: "Fell a world boss", objective: "boss", count: 1, rewardCredits: 750, rewardRep: 40, offer: "Something big's chewing the yards. Drop a world boss and the scrap is yours." },
   hawker: { id: "hawker_stock", npc: "hawker", name: "STREET STOCK", desc: "Collect 4 data cores", objective: "collect", count: 4, rewardCredits: 260, rewardRep: 14, offer: "Stall's empty. Four cores. Cash on delivery, no questions." },
   preacher: { id: "preacher_hvt", npc: "preacher", name: "FALSE PROPHET", desc: "Collect today's HIGH-VALUE TARGET bounty", objective: "hvt", count: 1, rewardCredits: 900, rewardRep: 38, offer: "The grid names a sinner each day. End them. The flock will remember." },
@@ -58,9 +61,9 @@ export const BOUNTIES: Record<string, Bounty> = {
   res_mercy: { id: "mercy_field", npc: "res_mercy", name: "FIELD TRIAGE", desc: "Purge 8 HSS units", objective: "kill", count: 8, rewardCredits: 280, rewardRep: 15, offer: "Fewer corpses on my floor if the streets are quieter. Eight HSS." },
   res_quill: { id: "quill_record", npc: "res_quill", name: "TRUE RECORD", desc: "Fell a world boss", objective: "boss", count: 1, rewardCredits: 820, rewardRep: 42, offer: "History needs a body count. Fell a world boss — I'll write it true." },
   // Depth pass — profession / ambient variety
-  street_kid: { id: "kid_scavenge", npc: "street_kid", name: "WAKE NOTE", desc: "Carry a newly awakened runner's note to the Clinic", objective: "travel", count: 1, rewardCredits: 220, rewardRep: 12, requiredCivicWork: true, targetZone: "clinic", offer: "Someone woke during the public op. Clinic needs their own words before the intake form writes a different person." },
+  street_kid: { id: "kid_scavenge", npc: "street_kid", name: "WAKE NOTE", desc: "Carry a newly awakened runner's note to the Clinic", objective: "travel", count: 1, rewardCredits: 220, rewardRep: 12, requiredCivicWork: true, requiredCivicDistrict: 0, targetZone: "clinic", offer: "Someone woke during the public op. Clinic needs their own words before the intake form writes a different person." },
   subway_warden: { id: "warden_line", npc: "subway_warden", name: "CLEAR THE LINE", desc: "Purge 14 HSS units", objective: "kill", count: 14, rewardCredits: 400, rewardRep: 22, offer: "Trains don't run through corpses. Fourteen HSS off my tracks." },
-  amb_courier: { id: "courier_run", npc: "amb_courier", name: "CIVIC RELAY", desc: "Carry the public-operation record to THE UNDERLINE station", objective: "travel", count: 1, rewardCredits: 310, rewardRep: 18, requiredCivicWork: true, targetZone: "subway", offer: "The weekly ledger says people built something. Carry the paper copy below before the city edits the feed." },
+  amb_courier: { id: "courier_run", npc: "amb_courier", name: "CIVIC RELAY", desc: "Carry the public-operation record to THE UNDERLINE station", objective: "travel", count: 1, rewardCredits: 310, rewardRep: 18, requiredCivicWork: true, requiredCivicDistrict: 4, targetZone: "subway", offer: "The weekly ledger says people built something. Carry the paper copy below before the city edits the feed." },
   amb_vendor: { id: "vendor_heat", npc: "amb_vendor", name: "STALL HEAT", desc: "Purge 9 HSS units", objective: "kill", count: 9, rewardCredits: 270, rewardRep: 15, offer: "They keep scaring customers. Nine HSS and the broth's on me." },
   keep_bar: { id: "bar_quiet", npc: "keep_bar", name: "LAST CALL", desc: "Purge 11 HSS units", objective: "kill", count: 11, rewardCredits: 330, rewardRep: 18, offer: "Quiet night means full till. Eleven HSS gone." },
   keep_clinic: { id: "clinic_field", npc: "keep_clinic", name: "TRIAGE PRESSURE", desc: "Collect 4 data cores", objective: "collect", count: 4, rewardCredits: 290, rewardRep: 16, offer: "Med-bay scanners run on cores. Four. Patients don't wait." },
@@ -79,7 +82,7 @@ export const BOUNTIES: Record<string, Bounty> = {
   keep_garage: { id: "garage_chassis", npc: "keep_garage", name: "BIG CHASSIS", desc: "Fell a world boss", objective: "boss", count: 1, rewardCredits: 860, rewardRep: 43, offer: "Something out there is wearing a chassis I want on my lift. Bring it down." },
   keep_hotel: { id: "hotel_quiet", npc: "keep_hotel", name: "QUIET FLOORS", desc: "Purge 10 HSS units", objective: "kill", count: 10, rewardCredits: 320, rewardRep: 17, offer: "Guests don't sleep through gunfire. Ten HSS off my block and the pods stay warm." },
   keep_citycenter: { id: "civic_erasure", npc: "keep_citycenter", name: "CIVIC ERASURE", desc: "Collect today's HIGH-VALUE TARGET bounty", objective: "hvt", count: 1, rewardCredits: 1100, rewardRep: 46, offer: "Officially, today's target doesn't exist. Unofficially, the Spire pays to keep it that way." },
-  res_borne: { id: "borne_unlogged_medicine", npc: "res_borne", name: "UNLOGGED MEDICINE", desc: "Carry mutual-aid medicine to the Clinic", objective: "travel", count: 1, rewardCredits: 280, rewardRep: 16, requiredCivicWork: true, targetZone: "clinic", offer: "Public crews filled this case. Get it to the Clinic before procurement invents a purchase order and owner." },
+  res_borne: { id: "borne_unlogged_medicine", npc: "res_borne", name: "UNLOGGED MEDICINE", desc: "Carry mutual-aid medicine to the Clinic", objective: "travel", count: 1, rewardCredits: 280, rewardRep: 16, requiredCivicWork: true, requiredCivicDistrict: 7, targetZone: "clinic", offer: "Public crews filled this case. Get it to the Clinic before procurement invents a purchase order and owner." },
 };
 
 /** The player's questline act — mirrors cityNpcs.storyPhase without importing it
@@ -132,7 +135,12 @@ export function bountyIsEligible(
   if (bounty.requiredPhase && bounty.requiredPhase !== phase) return false;
   if (bounty.requiredConfirmation && !confirmed.includes(bounty.requiredConfirmation)) return false;
   if (bounty.requiredCampaign && !campaignCompleted.includes(bounty.requiredCampaign)) return false;
-  if (bounty.requiredCivicWork && !weeklyCivic.some((count) => count > 0)) return false;
+  if (bounty.requiredCivicWork) {
+    const open = bounty.requiredCivicDistrict === undefined
+      ? weeklyCivic.some((count) => count > 0)
+      : (weeklyCivic[bounty.requiredCivicDistrict] ?? 0) > 0;
+    if (!open) return false;
+  }
   return true;
 }
 

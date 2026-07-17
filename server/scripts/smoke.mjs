@@ -3319,10 +3319,12 @@ async function look() {
 async function death() {
   const name = "die" + String(Date.now() % 1_000_000);
   const ws = await connect();
-  const store = { credits: 0, dead: false, sys: [], x: 0, y: 0, enemies: [], hp: 999 };
+  const store = { credits: 0, dead: false, sys: [], x: 0, y: 0, enemies: [], hp: 999, deathPayload: null, relationsReprints: 0 };
   ws.addEventListener("message", (ev) => {
     const m = JSON.parse(ev.data);
     if (m.t === "sys") store.sys.push(m.text || "");
+    if (m.t === "death") store.deathPayload = m;
+    if (m.t === "relations") store.relationsReprints = m.reprints ?? store.relationsReprints;
     if (m.t === "state" || m.t === "snap") {
       const me = (m.players || []).find((p) => p.id === store.id);
       if (me) {
@@ -3376,12 +3378,14 @@ async function death() {
   if (store.dead || deathLine) {
     checks.deathSys = deathLine;
     checks.respawnedOrQueued = respawned || store.dead;
+    checks.reprintPayload = Number.isInteger(store.deathPayload?.reprints) && store.deathPayload.reprints >= 1;
+    checks.reprintRelation = store.relationsReprints === store.deathPayload?.reprints;
   }
   ws.close();
   await sleep(200);
   report(
     "DEATH — credits stay non-negative; death sys when killed",
-    { credits: store.credits, dead: store.dead, deathLine, respawned, sys: store.sys.slice(-4) },
+    { credits: store.credits, dead: store.dead, deathLine, respawned, reprints: store.deathPayload?.reprints, relationReprints: store.relationsReprints, sys: store.sys.slice(-4) },
     Object.values(checks).every(Boolean),
     checks,
   );
@@ -3575,7 +3579,7 @@ async function courier() {
   });
   await login(ws, name, 0);
   await sleep(650);
-  const civicOpen = Array.isArray(edition?.civic) && edition.civic.some((n) => n > 0);
+  const civicOpen = Array.isArray(edition?.civic) && (edition.civic[4] ?? 0) > 0;
   ws.send(JSON.stringify({ t: "bounty", action: "accept", id: "courier_run" }));
   await sleep(650);
 

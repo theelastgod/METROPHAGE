@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { districtFieldMedic, FIELD_MEDICS, INTERIOR_PLAN, keeperFor, marekReprintGreeting, npcDef, themedHubOccupants } from "./cityNpcs";
+import { DISTRICT_REGIONAL_ANCHORS, districtFieldMedic, districtRegionalAnchor, FIELD_MEDICS, hubResident, INTERIOR_PLAN, keeperFor, marekReprintGreeting, npcDef, themedHubOccupants } from "./cityNpcs";
 
 describe("MAREK's reprint memory", () => {
   it("stays quiet for fresh runners and escalates at 3 / 10 / 25 deaths", () => {
@@ -56,5 +56,24 @@ describe("district field medics", () => {
       expect(npcDef(medic.id)).toEqual(medic);
       expect(medic.lines.length).toBeGreaterThanOrEqual(2);
     }
+  });
+});
+
+describe("district regional anchors", () => {
+  it("places one distinct, authored, service-capable contact in every district", () => {
+    expect(DISTRICT_REGIONAL_ANCHORS).toHaveLength(8);
+    expect(new Set(DISTRICT_REGIONAL_ANCHORS).size).toBe(8);
+    for (let district = 0; district < 8; district++) {
+      const npc = districtRegionalAnchor(district);
+      expect(npc.id).toBe(DISTRICT_REGIONAL_ANCHORS[district]);
+      expect(npc.lines.length, npc.id).toBeGreaterThanOrEqual(2);
+      expect(npcDef(npc.id), npc.id).toEqual(npc);
+    }
+  });
+
+  it("does not clone the Kernel's stable courier into a hub residence", () => {
+    const hub = Array.from({ length: 30 }, (_, index) => hubResident(index));
+    expect(new Set(hub.map((npc) => npc.id)).size).toBe(30);
+    expect(hub.some((npc) => npc.id === "res_borne")).toBe(false);
   });
 });

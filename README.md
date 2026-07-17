@@ -75,11 +75,17 @@ Four classes, each with a full server-validated kit:
 - **Daily relay charters** — territory flips leave a bounded public memory of the latest
   Cell and its civic use for each district. Maps, arrivals, and the chronicle remember the
   contest, while live nodes remain the sole authority for control and rewards.
+- **Regional anchors** — every district has a stable authored contact alongside its moving
+  residents, making the regional dialogue/jobs reachable. Civic deliveries open from
+  public work in their specific source district rather than an unrelated citywide win.
 - **Seasonal meltdown** — the save-wide Singularity tips into a new era.
 - **Co-op attribution** — nearby party allies share story/contract/public-operation/job
   progress, while base kill value and Cell tally remain attached to the killing blow.
 - **Social memory** — party reboots persist as bounded rescuer/recipient history, and
   contacts recognize mutual aid plus the authored provenance of equipped cosmetics.
+- **Reprint witnesses** — deaths enter a bounded server-side social record. MAREK and
+  recurring residents remember returns across devices without changing death penalties,
+  inventories, combat power, or access.
 
 ## The $METRO economy
 

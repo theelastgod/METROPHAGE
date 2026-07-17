@@ -163,6 +163,7 @@ export default class OnlineMap extends Modal {
   reconstructionProvider?: () => number[];
   fragmentSequenceProvider?: () => string[];
   socialMemoryProvider?: () => { given: number; received: number; tier: number; title: string; line: string };
+  reprintMemoryProvider?: () => number;
   /** Shared daily public-operation completions, indexed by district. */
   civicMomentumProvider?: () => number[];
   chronicleProvider?: () => { week: number; headline: string; lines: string[]; civic: number[]; territory: Array<{ district: number; controller: number; flips: number }> } | null;
@@ -209,9 +210,10 @@ export default class OnlineMap extends Modal {
       const reconstruction = this.reconstructionProvider?.() ?? [];
       const memories = memoryInterpretations(this.fragmentSequenceProvider?.() ?? []);
       const social = this.socialMemoryProvider?.();
+      const reprints = Math.max(0, Math.floor(this.reprintMemoryProvider?.() ?? 0));
       const casefile = casefileMilestone(testimony.confirmed);
       const rebuilt = reconstruction.filter((n) => n > 0).length;
-      return `Metro City hub pad — city spawn for new runners and safe return.${chronicle ? ` WEEKLY CHRONICLE · ${chronicle.headline}. ${chronicle.lines.join(" ")}` : ""}${casefile ? ` CASEFILE ${testimony.confirmed.length}/8 · ${casefile.title}: ${casefile.objective}` : ""}${memories.length ? ` MEMORY SYNTHESIS · ${memories.length}/8 district readings reconstructed.` : ""}${social?.tier ? ` SOCIAL MEMORY · ${social.title} (${social.given} lifted / ${social.received} received). ${social.line}` : ""}${rebuilt ? ` RECONSTRUCTION · ${rebuilt}/8 districts have a working crew.` : ""}`;
+      return `Metro City hub pad — city spawn for new runners and safe return.${chronicle ? ` WEEKLY CHRONICLE · ${chronicle.headline}. ${chronicle.lines.join(" ")}` : ""}${casefile ? ` CASEFILE ${testimony.confirmed.length}/8 · ${casefile.title}: ${casefile.objective}` : ""}${memories.length ? ` MEMORY SYNTHESIS · ${memories.length}/8 district readings reconstructed.` : ""}${social?.tier ? ` SOCIAL MEMORY · ${social.title} (${social.given} lifted / ${social.received} received). ${social.line}` : ""}${reprints ? ` REPRINT MEMORY · ${reprints}${reprints >= 25 ? "+" : ""} returns retained in the social record.` : ""}${rebuilt ? ` RECONSTRUCTION · ${rebuilt}/8 districts have a working crew.` : ""}`;
     }
     if (zone === "clinic") return "The Clinic — patch wounds and recover between sorties.";
     if (zone === "shop") return "Market Stall — buy caches and vendor stock.";

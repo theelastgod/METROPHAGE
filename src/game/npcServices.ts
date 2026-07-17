@@ -165,7 +165,7 @@ const NPC_SERVICE_OVERRIDES: Record<string, NpcServiceId[]> = {
   // Regional — light
   porter: ["chat", "bounty", "rumor"],
   tunnel_rat: ["chat", "bounty", "cool_down"],
-  arc_tech: ["chat", "cool_down"],
+  arc_tech: ["chat", "cool_down", "bounty"],
   scrap_boss: ["chat", "bounty", "sell_core"],
   hawker: ["chat", "bounty", "rumor"],
   preacher: ["chat", "bless", "bounty"],

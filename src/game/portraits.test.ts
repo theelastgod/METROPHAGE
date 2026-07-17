@@ -7,11 +7,10 @@ import {
   PORTRAIT_RESIDENTS_KEY,
   portraitInteractKey,
 } from "../assets/manifest";
-import { hubResident } from "./cityNpcs";
+import { residentNpcRoster } from "./cityNpcs";
 
-// Residents are only reachable through the accessors; ALL_RESIDENTS is module-private.
-// hubResident wraps its roster, so walking well past the end enumerates every one.
-const residentIds = [...new Set(Array.from({ length: 64 }, (_, i) => hubResident(i).id))].filter(
+// Stable regional residents may intentionally be absent from generic hub rotation.
+const residentIds = [...new Set(residentNpcRoster().map((npc) => npc.id))].filter(
   (id) => id.startsWith("res_"),
 );
 

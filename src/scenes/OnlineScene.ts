@@ -253,7 +253,7 @@ import {
   wildernessShacks,
 } from "../game/districtVenues";
 import { applyCosmetic, cosmeticAcknowledgement } from "../game/cosmetics";
-import { npcDef, AMBIENT_NPCS, INTERIOR_PLAN, keeperFor, districtResident, districtFieldMedic, hubResident, themedHubOccupants, campaignAllyLines, marekReprintGreeting, STORY_ALLIES, locationAwareLine, storyPhase } from "../game/cityNpcs";
+import { npcDef, AMBIENT_NPCS, INTERIOR_PLAN, keeperFor, districtResident, districtFieldMedic, districtRegionalAnchor, hubResident, themedHubOccupants, campaignAllyLines, marekReprintGreeting, STORY_ALLIES, locationAwareLine, storyPhase } from "../game/cityNpcs";
 import { linkedResidentLine, residentConvergenceLine, residentProfile, residentScheduleLine, scheduledResidents } from "../game/residentLife";
 import { districtReconstruction } from "../game/reconstruction";
 import { districtMemoryInterpretation } from "../game/fragments";
@@ -261,6 +261,7 @@ import { contactJudgmentReaction, districtJudgmentReaction } from "../game/judgm
 import { rescueMemoryContactLine } from "../game/socialMemory";
 import { rotatingContextLine } from "../game/narrativeCadence";
 import { residentTerritoryLegacyLine } from "../game/territoryLegacy";
+import { residentReprintWitnessLine } from "../game/reprintHistory";
 import { localReprintCount, recordLocalReprint } from "../systems/reprintMemory";
 import { portraitFor, portraitForName, portraitForBoss, portraitSheetFallback, type PortraitRef } from "../game/portraits";
 import { bountyForNpc } from "../game/bounties";
@@ -991,7 +992,7 @@ export default class OnlineScene extends Phaser.Scene {
           if (allyEcho) lines = [allyEcho, ...lines];
           // MAREK counts your reprints — enough of them and his greeting changes.
           if (c.id === "marek") {
-            const g = marekReprintGreeting(localReprintCount());
+            const g = marekReprintGreeting(Math.max(this.net?.reprints ?? 0, localReprintCount()));
             if (g) lines = [g, ...lines];
           }
           // No permanent floating name tags — hover reveals them (see makeTalkNpc).
@@ -1192,10 +1193,11 @@ export default class OnlineScene extends Phaser.Scene {
         ...npc,
         lines: [residentScheduleLine(profile), ...npc.lines],
       }));
+      const population = [...locals, districtRegionalAnchor(this.districtIndex)];
       for (const [tx, ty] of spots) {
         if (placed >= 3) break;
         if (isWall(grid[ty]?.[tx])) continue;
-        const adef = locals[placed] ?? AMBIENT_NPCS[(this.districtIndex * 3 + placed) % AMBIENT_NPCS.length];
+        const adef = population[placed] ?? AMBIENT_NPCS[(this.districtIndex * 3 + placed) % AMBIENT_NPCS.length];
         this.makeTalkNpc(adef.name, adef.look, adef.lines, tx * TILE + TILE / 2, ty * TILE + TILE / 2, adef.id);
         placed++;
       }
@@ -1613,6 +1615,7 @@ export default class OnlineScene extends Phaser.Scene {
     this.mapPanel.reconstructionProvider = () => this.net.reconstruction;
     this.mapPanel.fragmentSequenceProvider = () => this.net.fragments;
     this.mapPanel.socialMemoryProvider = () => this.net.socialMemory;
+    this.mapPanel.reprintMemoryProvider = () => Math.max(this.net.reprints, localReprintCount());
     this.mapPanel.civicMomentumProvider = () => this.net.civicMomentum;
     this.mapPanel.chronicleProvider = () => this.net.chronicle;
     this.net.onRelations = () => {
@@ -3780,7 +3783,10 @@ export default class OnlineScene extends Phaser.Scene {
       .setInteractive({ useHandCursor: true });
     spr.on("pointerdown", () => this.talkNpc(npc));
     // Labels: job givers and story allies only — not every tip/meal NPC.
-    const givesBounty = !!(npcId && bountyForNpc(npcId, storyPhase(this.net.campaignQuest), this.net.residentConfirmed, this.net.campaignCompleted, this.net.chronicle?.civic ?? []));
+    // Spawn-time: create() places the hub cast BEFORE the NetClient exists, so every
+    // net read here must be optional — an unguarded access crashes create() for the
+    // whole zone (caught by panel-smoke; the interaction paths below run post-connect).
+    const givesBounty = !!(npcId && bountyForNpc(npcId, storyPhase(this.net?.campaignQuest), this.net?.residentConfirmed ?? [], this.net?.campaignCompleted ?? [], this.net?.chronicle?.civic ?? []));
     const marked = important || givesBounty;
     const label = this.add
       .text(px, py - 26, givesBounty ? `${name} ·` : important ? name : name, {
@@ -3836,6 +3842,11 @@ export default class OnlineScene extends Phaser.Scene {
           : null)
       : null;
     const rescueMemory = npc.npcId ? rescueMemoryContactLine(this.net.socialMemory, trust) : null;
+    const rememberedReprints = Math.max(this.net.reprints, localReprintCount());
+    const reprintMemory = npc.npcId
+      ? residentReprintWitnessLine(npc.npcId, rememberedReprints)
+        ?? (npc.npcId === "marek" ? marekReprintGreeting(rememberedReprints) : null)
+      : null;
     const cosmetic = npc.npcId ? cosmeticAcknowledgement(this.net.cosmeticEquipped, trust) : null;
     const durable = npc.npcId && trust > 0
       ? relationshipLine(npc.npcId, npc.name, trust, npc.lineIdx ?? 0)
@@ -3844,7 +3855,7 @@ export default class OnlineScene extends Phaser.Scene {
     // Persistent contexts rotate instead of starving everything below the first truthy
     // layer. An unconfirmed counterpart testimony stays urgent until corroborated.
     const contextual = rotatingContextLine(
-      [convergence, judgment, memory, reconstruction, rescueMemory, cosmetic, civic, territory, campaignResident, durable],
+      [convergence, judgment, memory, reconstruction, rescueMemory, reprintMemory, cosmetic, civic, territory, campaignResident, durable],
       npc.lineIdx ?? 0,
     );
     // One advance per talk — bubble + service menu share the same line (was double-advance).
@@ -7815,7 +7826,7 @@ export default class OnlineScene extends Phaser.Scene {
   private updateDeathSequence() {
     const dead = this.net.dead;
     if (dead && !this.wasDead) {
-      recordLocalReprint(); // MAREK's counting (device-local flavour, never authoritative)
+      recordLocalReprint(); // backward-compatible fallback; Worker now owns durable memory
       this.deathStartedAt = performance.now();
       this.synth?.kill();
       juiceHitStop(this, 120);
