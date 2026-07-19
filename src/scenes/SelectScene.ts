@@ -28,7 +28,6 @@ import {
   walletSessionSecret,
   walletChoiceList,
   walletChoiceProse,
-  preferSolanaWallet,
   walletConnectAvailable,
 } from "../economy/wallet";
 import {
@@ -286,7 +285,7 @@ export default class SelectScene extends Phaser.Scene {
           ? [
               {
                 label: "◈ LINK WALLET",
-                sub: walletChoiceList(),
+                sub: "MetaMask · Phantom · any WalletConnect wallet",
                 color: COLORS.neonGreen,
                 primary: false as const,
                 fn: () => void this.onMetaMaskSignUp(),
@@ -367,21 +366,21 @@ export default class SelectScene extends Phaser.Scene {
       step: "connect",
       status: "ready",
       statusText: mobilePicker
-        ? "Solana wallet picker · free sign-in"
-        : mobile ? "Phantom · free Solana sign-in" : `${walletChoiceList()} · free Solana sign-in`,
-      headline: mobilePicker ? "Connect a Solana wallet" : "Connect Phantom",
+        ? "Wallet picker · free sign-in"
+        : mobile ? "MetaMask · free sign-in" : `${walletChoiceList()} · free sign-in`,
+      headline: mobilePicker ? "Connect a wallet" : "Connect your wallet",
       body: mobilePicker
-        ? "Choose Phantom, Solflare, or another Solana wallet. Approval and one free signature happen in the wallet app; the game stays in this browser."
+        ? "Choose MetaMask, Phantom, or another WalletConnect wallet. Approval and one free signature happen in the wallet app; the game stays in this browser."
         : mobile
-          ? "Phantom signs one free Solana message. Or play free with a device save."
-        : `Sign in with ${walletChoiceProse()}. The signature is free—no transaction and no gas. Your runner is permanently bound to that Solana address across devices. Prefer no wallet? Play free with a device-locked multiplayer save.`,
+          ? "Your wallet signs one free message — no gas. Or play free with a device save."
+        : `Sign up with ${walletChoiceProse()}. The signature is free—no transaction and no gas. Your runner is permanently bound to that address across devices. Prefer no wallet? Play free with a device-locked multiplayer save.`,
       wallet: null,
       actions: this.walletActions([
         {
-          label: mobilePicker ? "◈ CONNECT WALLET" : "◈ CONNECT PHANTOM",
+          label: "◈ CONNECT WALLET",
           sub: mobilePicker
-            ? "choose a Solana wallet · free message"
-            : mobile ? "open Phantom · free message" : `${walletChoiceList()} · free message`,
+            ? "choose a wallet · free message"
+            : mobile ? "open your wallet · free message" : `${walletChoiceList()} · free message`,
           color: COLORS.neonGreen,
           primary: true as const,
           fn: () => void this.onMetaMaskSignUp(),
@@ -403,8 +402,8 @@ export default class SelectScene extends Phaser.Scene {
     this.walletPanel.show({
       step: "connect",
       status: "busy",
-      statusText: mobilePicker ? "opening Solana wallet picker" : "awaiting Phantom · Solana",
-      headline: mobilePicker ? "Choose your wallet" : "Check Phantom",
+      statusText: mobilePicker ? "opening wallet picker" : "awaiting wallet · WalletConnect",
+      headline: mobilePicker ? "Choose your wallet" : "Check your wallet",
       body: mobilePicker
         ? "Choose a wallet, approve the connection there, then approve one free login signature. Return here to play—the game does not open inside the wallet."
         : `Approve the connection in ${walletChoiceProse()}. Then sign a free login message — no gas. Your runner is permanently bound to this address.`,
@@ -527,7 +526,7 @@ export default class SelectScene extends Phaser.Scene {
         },
         {
           label: "◈ LINK WALLET TO THIS RUNNER",
-          sub: `${walletChoiceList()} · permanent id`,
+          sub: "MetaMask · Phantom · WalletConnect · permanent id",
           color: COLORS.neonGreen,
           primary: false as const,
           fn: () => void this.linkWalletToGuestRunner(),
@@ -573,7 +572,7 @@ export default class SelectScene extends Phaser.Scene {
       status: "busy",
       statusText: "awaiting wallet",
       headline: "Link wallet to this runner",
-      body: `Connect ${walletChoiceProse()} and sign a free message to lock progress to “${callsign}”. That address will always load this runner until you choose NEW RUNNER.`,
+      body: `Connect MetaMask, Phantom, or any WalletConnect wallet and sign a free message to lock progress to “${callsign}”. That address will always load this runner until you choose NEW RUNNER.`,
       wallet: connectedWallet(),
       actions: [],
     });
@@ -731,9 +730,7 @@ export default class SelectScene extends Phaser.Scene {
   private startNewGuestRunner() {
     const local = loadLocalRunner();
     const addr = connectedWallet();
-    // Linked only counts when the address belongs to the family that settles $METRO;
-    // an address from the dormant alternate cannot bind a runner.
-    const solLinked = !!addr && (preferSolanaWallet() ? !isEvmAddress(addr) : isEvmAddress(addr));
+    const solLinked = !!(addr && !isEvmAddress(addr));
     const hasSave = !!(local?.callsign) || !!this.identity?.locked;
 
     // Nothing to lose — go straight to create.
@@ -778,7 +775,7 @@ export default class SelectScene extends Phaser.Scene {
         ...(!solLinked && walletAvailable()
           ? [
               {
-                label: preferSolanaWallet() ? "◈ LINK SOLANA FIRST" : "◈ LINK WALLET FIRST",
+                label: "◈ LINK SOLANA FIRST",
                 sub: "bind this runner to your wallet",
                 color: COLORS.neonGreen,
                 primary: true as const,

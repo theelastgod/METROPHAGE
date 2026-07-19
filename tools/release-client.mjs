@@ -45,10 +45,10 @@ if (!npmCli || !existsSync(npmCli)) {
 const wcProjectId = (
   process.env.VITE_WALLETCONNECT_PROJECT_ID || PRODUCTION_WALLETCONNECT_PROJECT_ID
 ).trim();
-// Solana SPL is the production settlement family. Robinhood remains a dormant alternate
-// and must be armed explicitly through VITE_METRO_SETTLEMENT=robinhood.
-const metroCluster = (process.env.VITE_METRO_CLUSTER || "mainnet-beta").trim();
-const metroSettlement = (process.env.VITE_METRO_SETTLEMENT || "solana").trim();
+// Robinhood Chain ERC-20 is the production settlement family. Solana SPL remains a
+// dormant alternate and must be armed explicitly through VITE_METRO_SETTLEMENT=solana.
+const metroCluster = (process.env.VITE_METRO_CLUSTER || "robinhood").trim();
+const metroSettlement = (process.env.VITE_METRO_SETTLEMENT || "robinhood").trim();
 const metroMint = (process.env.VITE_METRO_MINT || "").trim();
 console.log(`Building production client for ${LIVE_SERVER_URL}`);
 console.log(`$METRO network: ${metroSettlement} · cluster=${metroCluster}${metroMint ? ` · mint=${metroMint.slice(0, 10)}…` : " · mint=awaiting CA"}`);
@@ -74,9 +74,13 @@ run(process.execPath, [npmCli, "run", "build"], {
   VITE_METRO_SETTLEMENT: metroSettlement,
   // Only bake mint when explicitly provided — never invent a CA.
   ...(metroMint ? { VITE_METRO_MINT: metroMint } : { VITE_METRO_MINT: "" }),
-  VITE_METRO_RPC: process.env.VITE_METRO_RPC || "https://api.mainnet-beta.solana.com",
-  // EVM-only; keep empty on the primary SPL build so stale shell state cannot imply RH.
-  VITE_METRO_CHAIN_ID: metroSettlement === "robinhood" ? process.env.VITE_METRO_CHAIN_ID || "4663" : "",
+  VITE_METRO_RPC:
+    process.env.VITE_METRO_RPC ||
+    (metroSettlement === "solana"
+      ? "https://api.mainnet-beta.solana.com"
+      : "https://rpc.mainnet.chain.robinhood.com"),
+  // EVM chain id only applies off the dormant SPL build.
+  VITE_METRO_CHAIN_ID: metroSettlement === "solana" ? "" : process.env.VITE_METRO_CHAIN_ID || "4663",
   ...(wcProjectId ? { VITE_WALLETCONNECT_PROJECT_ID: wcProjectId } : {}),
 });
 

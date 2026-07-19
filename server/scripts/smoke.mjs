@@ -560,15 +560,16 @@ async function lookpersist() {
 async function auth() {
   const { ed25519 } = await import("@noble/curves/ed25519");
   const bs58 = (await import("bs58")).default;
+  const { Wallet: EvmWallet } = await import("ethers");
   // must match protocol.loginMessage
   const loginMessage = (wallet, ts) => `METROPHAGE login\nwallet: ${wallet}\nts: ${ts}`;
 
   const priv = ed25519.utils.randomPrivateKey();
   const wallet = bs58.encode(ed25519.getPublicKey(priv));
+  const evm = EvmWallet.createRandom();
 
-  const signedLogin = (ws, opts = {}) =>
+  const rawSignedLogin = (ws, payload) =>
     new Promise((resolve) => {
-      const ts = opts.ts ?? Date.now();
       const to = setTimeout(() => resolve({ ok: false, reason: "no welcome" }), 4000);
       const onMsg = (ev) => {
         const m = JSON.parse(ev.data);
@@ -583,11 +584,24 @@ async function auth() {
         }
       };
       ws.addEventListener("message", onMsg);
-      // tamper = sign a DIFFERENT message than the ts we send, so the signature won't verify
-      const signedTs = opts.tamper ? ts + 1 : ts;
-      const sig = bs58.encode(ed25519.sign(new TextEncoder().encode(loginMessage(wallet, signedTs)), priv));
-      ws.send(JSON.stringify({ t: "login", name: "walletuser", wallet, sig, ts }));
+      ws.send(JSON.stringify({ t: "login", name: "walletuser", ...payload }));
     });
+
+  const signedLogin = (ws, opts = {}) => {
+    const ts = opts.ts ?? Date.now();
+    // tamper = sign a DIFFERENT message than the ts we send, so the signature won't verify
+    const signedTs = opts.tamper ? ts + 1 : ts;
+    const sig = bs58.encode(ed25519.sign(new TextEncoder().encode(loginMessage(wallet, signedTs)), priv));
+    return rawSignedLogin(ws, { wallet, sig, ts });
+  };
+
+  // Robinhood / EVM login: EIP-191 personal_sign over the same login message.
+  const evmSignedLogin = async (ws, opts = {}) => {
+    const ts = opts.ts ?? Date.now();
+    const signedTs = opts.tamper ? ts + 1 : ts;
+    const sig = await evm.signMessage(loginMessage(evm.address, signedTs));
+    return rawSignedLogin(ws, { wallet: evm.address, sig, ts });
+  };
 
   const a = await connect();
   const r1 = await signedLogin(a); // valid → durable wallet id
@@ -598,15 +612,23 @@ async function auth() {
   const c = await connect();
   const r3 = await signedLogin(c, { ts: Date.now() - 5 * 60_000 }); // stale → rejected
   c.close();
+  const d = await connect();
+  const r4 = await evmSignedLogin(d); // valid EVM personal_sign → durable wallet id
+  d.close();
+  const e = await connect();
+  const r5 = await evmSignedLogin(e, { tamper: true }); // bad EVM signature → rejected
+  e.close();
   await sleep(300);
 
   const checks = {
     verifiedIdentity: r1.ok && r1.id === "w:" + wallet,
     rejectsBadSignature: !r2.ok,
     rejectsStaleTimestamp: !r3.ok,
+    evmVerifiedIdentity: r4.ok && typeof r4.id === "string" && r4.id.toLowerCase() === ("w:" + evm.address).toLowerCase(),
+    evmRejectsBadSignature: !r5.ok,
   };
   report(
-    "AUTH — signed Solana wallet login → durable wallet id; bad/stale rejected",
+    "AUTH — signed wallet login (EVM personal_sign + Solana ed25519) → durable wallet id; bad/stale rejected",
     { id: r1.id, badSig: r2.reason, stale: r3.reason },
     Object.values(checks).every(Boolean),
     checks,
@@ -1137,11 +1159,12 @@ async function market() {
 
   // $METRO listings — fund via bridge deposit, then list/buy in ◈
   const httpBase = WS_URL.replace(/^ws/, "http").replace(/\/ws$/, "");
-  const WALLET = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+  const WALLET = "0x2222222222222222222222222222222222222222";
   const post = async (p, body) =>
     (await fetch(httpBase + p, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).json();
-  const depSeller = await post("/metro/deposit", { player: "mseller", wallet: WALLET, txSig: "MKT_S_" + Date.now(), metro: 50 });
-  const depBuyer = await post("/metro/deposit", { player: "mbuyer", wallet: WALLET, txSig: "MKT_B_" + Date.now(), metro: 50 });
+  // as:"metro" — the ◈ listing/buy below needs an in-game metro balance, not credits.
+  const depSeller = await post("/metro/deposit", { player: "mseller", wallet: WALLET, txSig: "MKT_S_" + Date.now(), metro: 50, as: "metro" });
+  const depBuyer = await post("/metro/deposit", { player: "mbuyer", wallet: WALLET, txSig: "MKT_B_" + Date.now(), metro: 50, as: "metro" });
 
   const M = await connect();
   const sm = { inventory: [], metro: 0, listings: [], sys: [] };
@@ -2726,10 +2749,10 @@ async function metro() {
   const a1 = await get(`/metro/account?player=whale`);
   const pPending = await get(`/metro/pool`);
   const claimSig = "CLAIM_" + Date.now();
-  const cf = await post(`/metro/withdraw/confirm`, { player: "whale", withdrawId: w.withdrawId, txSig: claimSig });
+  const cf = await post(`/metro/withdraw/confirm`, { player: "whale", wallet: WALLET, withdrawId: w.withdrawId, txSig: claimSig });
   const p2 = await get(`/metro/pool`);
 
-  const cf2 = await post(`/metro/withdraw/confirm`, { player: "whale", withdrawId: w.withdrawId, txSig: claimSig });
+  const cf2 = await post(`/metro/withdraw/confirm`, { player: "whale", wallet: WALLET, withdrawId: w.withdrawId, txSig: claimSig });
 
   const wc = await post(`/metro/withdraw`, { player: "whale", wallet: WALLET, credits: 1000 });
   const wb = await post(`/metro/withdraw`, { player: "whale", wallet: "not-a-wallet", credits: 1000 });

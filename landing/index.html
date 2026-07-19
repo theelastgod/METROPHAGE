@@ -132,7 +132,7 @@
       <button class="btn btn-primary" id="connectBtn" type="button">▶ Connect Wallet</button>
       <a class="btn btn-ghost" id="guestBtn" href="#play">Play as Guest</a>
     </div>
-    <p class="wallet-status" id="walletStatus">Sign in with a Solana wallet to <b style="color:var(--ink)">save your progress</b> &amp; earn <b class="metro" style="color:var(--mag)">$METRO</b>. Guests can play — but runs aren't saved.</p>
+    <p class="wallet-status" id="walletStatus">Sign in with your wallet to <b style="color:var(--ink)">save your progress</b> &amp; earn <b class="metro" style="color:var(--mag)">$METRO</b>. Guests can play — but runs aren't saved.</p>
 
     <ul class="chips">
       <li>Twin-stick combat</li>
@@ -163,7 +163,7 @@
     const logo = document.getElementById('logo');
     (function loop(){ setTimeout(()=>{ logo.classList.add('glitch'); setTimeout(()=>logo.classList.remove('glitch'),420); loop(); }, 2600 + Math.random()*4200); })();
 
-    // ── Solana wallet login: connect → sign in → enter (injected Phantom / Solflare / Backpack) ──
+    // ── EVM wallet login (Robinhood Chain): connect → sign in → enter (injected MetaMask / any window.ethereum) ──
     const btn = document.getElementById('connectBtn');
     const guest = document.getElementById('guestBtn');
     const status = document.getElementById('walletStatus');
@@ -174,11 +174,8 @@
 
     function detectWallet(){
       const w = window;
-      if (w.phantom && w.phantom.solana && w.phantom.solana.isPhantom) return { p: w.phantom.solana, name: 'Phantom' };
-      if (w.solana && w.solana.isPhantom) return { p: w.solana, name: 'Phantom' };
-      if (w.solflare && w.solflare.isSolflare) return { p: w.solflare, name: 'Solflare' };
-      if (w.backpack && w.backpack.isBackpack) return { p: w.backpack, name: 'Backpack' };
-      if (w.solana) return { p: w.solana, name: 'Wallet' };
+      if (w.ethereum && w.ethereum.isMetaMask) return { p: w.ethereum, name: 'MetaMask' };
+      if (w.ethereum) return { p: w.ethereum, name: 'Wallet' };
       return null;
     }
     const trunc = (a) => a.slice(0,4) + '…' + a.slice(-4);
@@ -186,14 +183,15 @@
     async function connect(){
       const wallet = detectWallet();
       if (!wallet) {
-        status.innerHTML = 'No Solana wallet detected — install <a href="https://phantom.app/" target="_blank" rel="noopener">Phantom</a> or <a href="https://solflare.com/" target="_blank" rel="noopener">Solflare</a>, then reload. (Guests can still play — but runs aren\'t saved.)';
+        status.innerHTML = 'No wallet detected — install <a href="https://metamask.io/" target="_blank" rel="noopener">MetaMask</a> (or any EVM wallet extension), then reload. (Guests can still play — but runs aren\'t saved.)';
         return;
       }
       try {
         btn.disabled = true; btn.textContent = 'Connecting…';
-        const res = await wallet.p.connect();
+        const accounts = await wallet.p.request({ method: 'eth_requestAccounts' });
         provider = wallet.p; providerName = wallet.name;
-        address = ((res && res.publicKey) || wallet.p.publicKey).toString();
+        address = accounts && accounts[0];
+        if (!address) throw new Error('no account');
         status.innerHTML = '◢ <b>Connected</b> · <span class="addr">' + trunc(address) + '</span> · ' + providerName + ' — sign in to save your run &amp; earn ' + metro + '.';
         btn.disabled = false; btn.textContent = 'Sign In ▶';
       } catch (e) {
@@ -206,7 +204,8 @@
       try {
         btn.disabled = true; btn.textContent = 'Signing in…';
         const msg = 'Sign in to METROPHAGE\n\nWallet: ' + address + '\nERA 0 · ' + Date.now();
-        await provider.signMessage(new TextEncoder().encode(msg), 'utf8');
+        const hex = '0x' + Array.from(new TextEncoder().encode(msg)).map((b) => b.toString(16).padStart(2, '0')).join('');
+        await provider.request({ method: 'personal_sign', params: [hex, address] });
         signedIn = true;
         status.innerHTML = '◢ <b>Signed in</b> · <span class="addr">' + trunc(address) + '</span> — progress saved, ' + metro + ' tracked. Deploy.';
         btn.disabled = false; btn.textContent = 'Enter the Sprawl ▶';

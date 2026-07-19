@@ -1,17 +1,17 @@
-// METROPHAGE — record the Solana SPL $METRO mint CA and print launch commands.
+// METROPHAGE — record the Robinhood ERC-20 $METRO mint CA and print launch commands.
 //
 // Prerequisites:
-//   1. node scripts/mainnet-prepare.mjs   (Solana treasury exists)
-//   2. you hold the SPL mint address (base58) for $METRO
+//   1. node scripts/mainnet-prepare.mjs --evm   (EVM treasury exists)
+//   2. you hold the ERC-20 contract address (0x…) for $METRO on Robinhood Chain
 //   3. counsel sign-off before setting either METRO_MAINNET_ARMED flag
 //
-// Usage (authoritative Solana path):
-//   node scripts/mainnet-arm.mjs <base58_mint>
-//   node scripts/mainnet-arm.mjs <base58_mint> --with-arm-flag   # counsel only
+// Usage (authoritative Robinhood path):
+//   node scripts/mainnet-arm.mjs <0x_CA>
+//   node scripts/mainnet-arm.mjs <0x_CA> --with-arm-flag   # counsel only
 //
-// Dormant EVM alternate (only if re-enabling Robinhood):
-//   node scripts/mainnet-arm.mjs <0x_CA> --evm
-//   node scripts/mainnet-arm.mjs <0x_CA> --evm --with-arm-flag
+// Dormant Solana alternate (only if re-enabling SPL):
+//   node scripts/mainnet-arm.mjs <base58_mint> --solana
+//   node scripts/mainnet-arm.mjs <base58_mint> --solana --with-arm-flag
 
 import fs from "node:fs";
 import path from "node:path";
@@ -24,12 +24,12 @@ const TREASURY = path.join(__dir, "../.mainnet-treasury.json");
 const SOL_ALIAS = path.join(__dir, "../.solana-treasury.json");
 const mintArg = (process.argv[2] || "").trim();
 const withArm = process.argv.includes("--with-arm-flag");
-const wantEvm = process.argv.includes("--evm") || process.argv.includes("--robinhood");
+const wantSolana = process.argv.includes("--solana") || process.argv.includes("--spl");
 
 function usage() {
   console.error("usage: node scripts/mainnet-arm.mjs <mint_CA> [--with-arm-flag]");
-  console.error("  Solana (default): <base58 SPL mint>");
-  console.error("  EVM alternate:    <0x ERC-20> --evm");
+  console.error("  Robinhood (default): <0x ERC-20 contract>");
+  console.error("  Solana alternate:    <base58 SPL mint> --solana");
 }
 
 function writeState(state) {
@@ -59,38 +59,42 @@ let state;
 try {
   state = JSON.parse(fs.readFileSync(TREASURY, "utf8"));
 } catch {
-  console.error("No treasury file. Run: node scripts/mainnet-prepare.mjs");
+  console.error("No treasury file. Run: node scripts/mainnet-prepare.mjs --evm");
   process.exit(1);
 }
 
-const isEvmShape = wantEvm || /^0x[a-fA-F0-9]{40}$/.test(mintArg);
+const isSolanaShape = wantSolana && !/^0x[a-fA-F0-9]{40}$/.test(mintArg);
 
-if (isEvmShape) {
+if (isSolanaShape) {
+  // Dormant Solana SPL alternate
   let mint;
   try {
-    mint = getAddress(mintArg);
+    mint = new PublicKey(mintArg).toBase58();
   } catch {
+    console.error("Mint must be a Solana base58 pubkey when passing --solana.");
     usage();
     process.exit(1);
   }
   const secret = String(state.treasurySecret || "").trim();
-  let treasurySecret = null;
-  if (/^0x[0-9a-fA-F]{64}$/.test(secret)) treasurySecret = secret;
-  else if (/^[0-9a-fA-F]{64}$/.test(secret)) treasurySecret = "0x" + secret;
-  if (!treasurySecret) {
-    console.error("Treasury file is not EVM-ready. For dormant EVM path run:");
-    console.error("  node scripts/mainnet-prepare.mjs --evm --replace");
+  let treasuryAddress;
+  try {
+    const bytes = Buffer.from(secret, "base64");
+    if (bytes.length !== 64) throw new Error(`secret is ${bytes.length} bytes, need 64`);
+    treasuryAddress = Keypair.fromSecretKey(new Uint8Array(bytes)).publicKey.toBase58();
+  } catch (e) {
+    console.error("Treasury file is not Solana-ready:", String(e?.message || e));
+    console.error("  node scripts/mainnet-prepare.mjs --replace   (no --evm → Solana keypair)");
     process.exit(1);
   }
-  const RPC = process.env.METRO_RPC || "https://rpc.mainnet.chain.robinhood.com";
-  const CHAIN_ID = "4663";
-  const treasuryAddress = state.treasuryAddress || new Wallet(treasurySecret).address;
+  const RPC = process.env.METRO_RPC || "https://api.mainnet-beta.solana.com";
   state = {
     ...state,
-    chain: "robinhood",
-    cluster: "robinhood",
+    chain: "solana",
+    cluster: "mainnet-beta",
     treasuryAddress,
-    treasurySecret,
+    treasuryPubkey: treasuryAddress,
+    treasurySecret: secret,
+    secretFormat: "base64-64-byte-solana-keypair",
     mint,
     mintSetAt: new Date().toISOString(),
     mainnetArmed: withArm,
@@ -100,11 +104,11 @@ if (isEvmShape) {
   writeState(state);
 
   console.log(`
-Recorded DORMANT Robinhood ERC-20 CA (not the live Solana path).
+Recorded DORMANT Solana SPL mint (not the live Robinhood path).
 
   mint CA:  ${mint}
   treasury: ${treasuryAddress}
-  chain:    Robinhood Chain mainnet (${CHAIN_ID})
+  chain:    Solana mainnet-beta
 
 ── To activate this alternate (counsel only) ─────────────────────────────
   cd server
@@ -112,64 +116,62 @@ Recorded DORMANT Robinhood ERC-20 CA (not the live Solana path).
     | npx wrangler secret put METRO_TREASURY_SECRET
   echo -n '${mint}' | npx wrangler secret put METRO_MINT
   echo -n '${RPC}' | npx wrangler secret put METRO_RPC
-  echo -n '${CHAIN_ID}' | npx wrangler secret put METRO_CHAIN_ID
-  echo -n 'robinhood' | npx wrangler secret put METRO_SETTLEMENT
+  echo -n 'solana' | npx wrangler secret put METRO_SETTLEMENT
 ${withArm ? "  echo -n '1' | npx wrangler secret put METRO_MAINNET_ARMED\n" : "  # leave METRO_MAINNET_ARMED unset until counsel\n"}  npx wrangler deploy
 
 Client:
-  VITE_METRO_MINT=${mint} VITE_METRO_CLUSTER=robinhood VITE_METRO_SETTLEMENT=robinhood \\
-  VITE_METRO_RPC=${RPC} VITE_METRO_CHAIN_ID=${CHAIN_ID} npm run deploy:client
+  VITE_METRO_MINT=${mint} VITE_METRO_CLUSTER=mainnet-beta VITE_METRO_SETTLEMENT=solana \\
+  VITE_METRO_RPC=${RPC} npm run deploy:client
 `);
   process.exit(0);
 }
 
-// Authoritative Solana path
+// Authoritative Robinhood / EVM path
 let mint;
 try {
-  mint = new PublicKey(mintArg).toBase58();
+  mint = getAddress(mintArg);
 } catch {
-  console.error("Mint must be a Solana base58 pubkey (or pass --evm for 0x CA).");
+  console.error("Mint must be a 0x ERC-20 contract address (or pass --solana for base58).");
   usage();
   process.exit(1);
 }
 
 const secret = String(state.treasurySecret || "").trim();
-let treasuryAddress;
-try {
-  const bytes = Buffer.from(secret, "base64");
-  if (bytes.length !== 64) throw new Error(`secret is ${bytes.length} bytes, need 64`);
-  treasuryAddress = Keypair.fromSecretKey(new Uint8Array(bytes)).publicKey.toBase58();
-} catch (e) {
-  console.error("Treasury file is not Solana-ready:", String(e?.message || e));
-  console.error("  node scripts/mainnet-prepare.mjs --replace");
+let treasurySecret = null;
+if (/^0x[0-9a-fA-F]{64}$/.test(secret)) treasurySecret = secret;
+else if (/^[0-9a-fA-F]{64}$/.test(secret)) treasurySecret = "0x" + secret;
+if (!treasurySecret) {
+  console.error("Treasury file is not EVM-ready. Run:");
+  console.error("  node scripts/mainnet-prepare.mjs --evm --replace");
   process.exit(1);
 }
 
-const RPC = process.env.METRO_RPC || "https://api.mainnet-beta.solana.com";
+const RPC = process.env.METRO_RPC || "https://rpc.mainnet.chain.robinhood.com";
+const CHAIN_ID = "4663";
+const treasuryAddress = state.treasuryAddress || new Wallet(treasurySecret).address;
 
 state = {
   ...state,
-  chain: "solana",
-  cluster: "mainnet-beta",
+  chain: "robinhood",
+  cluster: "robinhood",
   treasuryAddress,
-  treasuryPubkey: treasuryAddress,
-  treasurySecret: secret,
-  secretFormat: "base64-64-byte-solana-keypair",
+  treasurySecret,
+  secretFormat: "evm-hex-private-key",
   mint,
   mintSetAt: new Date().toISOString(),
   mainnetArmed: withArm,
   authoritative: true,
   alternate: false,
-  note: "AUTHORITATIVE Solana treasury + mint. Never commit. Treasury pays cash-out fees when funded; player fallback if empty.",
+  note: "AUTHORITATIVE Robinhood Chain treasury + ERC-20 mint. Never commit. Treasury pays gas on cash-outs.",
 };
 writeState(state);
 
 console.log(`
-Recorded Solana SPL $METRO mint against Solana treasury.
+Recorded Robinhood ERC-20 $METRO mint against EVM treasury.
 
   mint CA:  ${mint}
   treasury: ${treasuryAddress}
-  chain:    Solana mainnet-beta
+  chain:    Robinhood Chain mainnet (${CHAIN_ID})
   rpc:      ${RPC}
   file:     ${TREASURY}
 
@@ -180,7 +182,8 @@ Recorded Solana SPL $METRO mint against Solana treasury.
     | npx wrangler secret put METRO_TREASURY_SECRET
   echo -n '${mint}' | npx wrangler secret put METRO_MINT
   echo -n '${RPC}' | npx wrangler secret put METRO_RPC
-  echo -n 'solana' | npx wrangler secret put METRO_SETTLEMENT
+  echo -n '${CHAIN_ID}' | npx wrangler secret put METRO_CHAIN_ID
+  echo -n 'robinhood' | npx wrangler secret put METRO_SETTLEMENT
 ${withArm ? "  echo -n '1' | npx wrangler secret put METRO_MAINNET_ARMED\n" : "  # counsel-gated: leave METRO_MAINNET_ARMED unset until legal OK\n"}  npx wrangler d1 migrations apply metrophage --remote
   npx wrangler deploy
 
@@ -188,11 +191,12 @@ ${withArm ? "  echo -n '1' | npx wrangler secret put METRO_MAINNET_ARMED\n" : " 
 
 ── 2) Client build SECOND ────────────────────────────────────────────────
   VITE_METRO_MINT=${mint} \\
-  VITE_METRO_CLUSTER=mainnet-beta \\
+  VITE_METRO_CLUSTER=robinhood \\
   VITE_METRO_RPC=${RPC} \\
-  VITE_METRO_SETTLEMENT=solana \\
+  VITE_METRO_CHAIN_ID=${CHAIN_ID} \\
+  VITE_METRO_SETTLEMENT=robinhood \\
 ${withArm ? "  VITE_METRO_MAINNET_ARMED=1 \\\\\n" : ""}  npm run deploy:client
 
-Fund the treasury with a small SOL float for cash-out fees + ATA rent.
-Deposits remain player-paid; cash-outs fall back to player-paid if treasury SOL is empty.
+Fund the treasury with a small native-gas float for cash-out transactions.
+Deposits remain player-paid; the pool only pays out what player deposits funded.
 `);

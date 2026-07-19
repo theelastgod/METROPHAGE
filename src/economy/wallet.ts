@@ -234,14 +234,14 @@ export function rotateWalletSessionSecret(wallet: string): string | undefined {
   return s;
 }
 
-/** Prefer EVM only when Robinhood is forced / mint is 0x. Default launch path is Solana. */
+/** Prefer Solana only when SPL is forced / mint is base58. Default launch path is EVM. */
 export function preferSolanaWallet(): boolean {
   if (settlementForce() === "solana") return true;
   if (settlementForce() === "robinhood") return false;
   if (metroIsSolana) return true;
   if (metroIsEvm) return false;
-  // No CA yet (force=auto) — Solana / SPL is the active launch path.
-  return true;
+  // No CA yet — Robinhood / EVM is the active launch path.
+  return false;
 }
 
 function getInjectedEvm(): EvmProvider | null {

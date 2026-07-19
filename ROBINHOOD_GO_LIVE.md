@@ -1,17 +1,12 @@
 # $METRO on Robinhood Chain — go-live checklist
 
-> [!WARNING]
-> **DORMANT — not the launch path.** METROPHAGE launches with $METRO as a Solana SPL
-> token. This checklist is retained only for the optional Robinhood/ERC-20 settlement
-> implementation and must not be used for production launch preparation.
-
 > **Canonical ordered checklist:** [`docs/BRIDGE_GO_LIVE.md`](./docs/BRIDGE_GO_LIVE.md)
 
 ## What is live in code
 
 - MetaMask sign-up + auto-add **Robinhood Chain** (testnet 46630 / mainnet 4663)
 - ERC-20 deposit (one-click MetaMask) + withdraw (treasury-signed transfer)
-- Player-funded pool · rates **100 in / 125 out** · min **250 ₵** · daily **50k ₵**
+- Player-funded pool · rates **100 in / 150 out** · min **300 ₵** · no daily cap
 - **Sim lock**: if mint is set but settlement is still sim, deposits/withdraws return 503
 - Treasury ETH/token health on `/metro/pool`
 - Withdraw lock (D1) against concurrent nonce races

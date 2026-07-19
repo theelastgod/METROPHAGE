@@ -1,11 +1,10 @@
-// $METRO market USD oracle — Solana SPL primary, Robinhood / EVM alternate.
+// $METRO market USD oracle for Robinhood / EVM.
 //
 // Every bridge rate (credits per $METRO) is scaled by marketUsd / REFERENCE_USD
 // so deposits and cash-outs track the real token value once a CA is listed.
 // Quotes are cached in D1 and refreshed at most every 30 minutes (cron + on-demand).
 
 import type { D1Database } from "@cloudflare/workers-types";
-import { isEvmMint, isSolanaMint } from "./settlementFamily";
 
 /** Design reference: rates in economyPolicy assume ~$1 per $METRO at launch. */
 export const METRO_USD_REFERENCE = 1.0;
@@ -48,24 +47,13 @@ function mintOf(env: MetroPriceEnv): string {
   return (env.METRO_MINT || env.METRO_DEVNET_MINT || "").trim();
 }
 
-/** Compare mints per family: base58 is case-sensitive, EVM hex is not. */
-function sameMint(a: string | null | undefined, b: string | null | undefined): boolean {
-  const x = (a || "").trim();
-  const y = (b || "").trim();
-  if (!x || !y) return false;
-  if (isSolanaMint(x) || isSolanaMint(y)) return x === y;
-  return x.toLowerCase() === y.toLowerCase();
-}
-
-/** EIP-155 chain id, or null on the SPL path (Solana has no chain id). */
-function chainIdOf(env: MetroPriceEnv): number | null {
-  if (isSolanaMint(mintOf(env))) return null;
+function chainIdOf(env: MetroPriceEnv): number {
   if (env.METRO_CHAIN_ID) {
     const n = parseInt(env.METRO_CHAIN_ID, 10);
     if (Number.isFinite(n)) return n;
   }
   if (/testnet\.chain\.robinhood/i.test(env.METRO_RPC || "")) return 46630;
-  // EVM alternate only: Robinhood mainnet is the default chain id on that path.
+  // Robinhood mainnet is the default settlement network.
   return 4663;
 }
 
@@ -159,22 +147,19 @@ async function fetchDexScreener(mint: string): Promise<{ usd: number; raw: strin
   }
 }
 
-/** GeckoTerminal token endpoint (network slug guess for Solana / Robinhood / generic). */
-async function fetchGeckoTerminal(mint: string, chainId: number | null): Promise<{ usd: number; raw: string } | null> {
+/** GeckoTerminal token endpoint (network slug guess for Robinhood / generic). */
+async function fetchGeckoTerminal(mint: string, chainId: number): Promise<{ usd: number; raw: string } | null> {
   // Known / likely network slugs — GT uses kebab names.
-  const nets = isSolanaMint(mint)
-    ? ["solana"]
-    : chainId === 4663
+  const nets =
+    chainId === 4663
       ? ["robinhood-chain", "robinhood", "rh"]
       : chainId === 46630
         ? ["robinhood-chain-testnet", "robinhood-testnet"]
         : ["eth", "arbitrum", "base"];
   for (const net of nets) {
-    // base58 is case-SENSITIVE — only EVM hex may be folded.
-    const id = isSolanaMint(mint) ? mint : mint.toLowerCase();
     try {
       const r = await fetch(
-        `https://api.geckoterminal.com/api/v2/networks/${net}/tokens/${id}`,
+        `https://api.geckoterminal.com/api/v2/networks/${net}/tokens/${mint.toLowerCase()}`,
         { headers: { accept: "application/json" } },
       );
       if (!r.ok) continue;
@@ -197,16 +182,13 @@ async function fetchGeckoTerminal(mint: string, chainId: number | null): Promise
  */
 export async function fetchMarketUsd(
   mint: string,
-  chainId: number | null,
+  chainId: number,
   envPrice?: string,
 ): Promise<{ usd: number; source: string; raw?: string } | null> {
   const forced = parseUsd(envPrice);
   if (forced != null) return { usd: forced, source: "env:METRO_USD_PRICE" };
 
-  // Accept either family's mint shape. Gating on 0x here pinned every Solana
-  // deployment to the $1 reference multiplier forever — silently, because a null
-  // quote is indistinguishable from "not listed yet".
-  if (!isEvmMint(mint) && !isSolanaMint(mint)) return null;
+  if (!/^0x[a-fA-F0-9]{40}$/i.test(mint)) return null;
 
   const dex = await fetchDexScreener(mint);
   if (dex) return { usd: dex.usd, source: "dexscreener", raw: dex.raw };
@@ -244,13 +226,12 @@ export async function getMetroUsdPrice(env: MetroPriceEnv, opts?: { forceRefresh
     return q;
   }
 
-  // Either family's mint shape is priceable. Anything else → design reference.
-  if (!mint || (!isEvmMint(mint) && !isSolanaMint(mint))) {
+  if (!mint || !/^0x[a-fA-F0-9]{40}$/i.test(mint)) {
     return REFERENCE_QUOTE(now);
   }
 
   const cached = await readCache(env.DB);
-  if (cached && !cached.stale && !opts?.forceRefresh && sameMint(cached.mint, mint)) {
+  if (cached && !cached.stale && !opts?.forceRefresh && cached.mint?.toLowerCase() === mint.toLowerCase()) {
     return cached;
   }
 
@@ -275,7 +256,7 @@ export async function getMetroUsdPrice(env: MetroPriceEnv, opts?: { forceRefresh
   }
 
   // Network miss — keep last good quote if we have one for this mint.
-  if (cached && sameMint(cached.mint, mint) && cached.usd > 0 && !cached.isReference) {
+  if (cached && cached.mint?.toLowerCase() === mint.toLowerCase() && cached.usd > 0 && !cached.isReference) {
     return { ...cached, stale: true };
   }
 

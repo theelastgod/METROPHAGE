@@ -356,7 +356,7 @@ export default class WalletSignInPanel {
     );
     this.add(
       this.scene.add
-        .text(x + w - pad, cy + uiDim(11), "SOL · MAINNET", bodyFont(9, { color: "#4e5568" }))
+        .text(x + w - pad, cy + uiDim(11), "RH · MAINNET", bodyFont(9, { color: "#4e5568" }))
         .setOrigin(1, 0),
     );
     cy += headerH;
@@ -581,7 +581,7 @@ export default class WalletSignInPanel {
           .text(
             x + pad,
             footerY + uiDim(8),
-            "PHANTOM  ·  SOLANA",
+            "WALLETCONNECT  ·  ROBINHOOD CHAIN",
             bodyFont(8, { color: "#3d4454" }),
           )
           .setOrigin(0, 0),

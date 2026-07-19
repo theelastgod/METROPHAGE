@@ -101,9 +101,7 @@ export async function getWalletConnectProvider(): Promise<WcProvider | null> {
       const provider = (await EthereumProvider.init({
         projectId: walletConnectProjectId(),
         showQrModal: true,
-        // EVM-only provider: WalletConnect pairs EVM chains, so Robinhood leads here even
-        // though Solana settles $METRO — the SPL path connects via injected Phantom instead.
-        // Others optional so any wallet can still pair for chain-agnostic sign-in.
+        // Prefer Robinhood as the primary chain; others optional so any wallet can pair.
         optionalChains: optional,
         rpcMap: buildRpcMap(),
         metadata: dappMetadata(),

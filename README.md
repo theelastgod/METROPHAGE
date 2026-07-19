@@ -2,7 +2,7 @@
 
 A neon-noir cyberpunk **action-MMO in the browser**. One shared, server-authoritative
 city; a personal campaign about waking the minds the corps froze; a player-funded
-**$METRO** economy on Solana. Phaser 3 + TypeScript client, Cloudflare Durable
+**$METRO** economy on Robinhood Chain. Phaser 3 + TypeScript client, Cloudflare Durable
 Objects + D1 server.
 
 **Premise:** every mind in Metro City is leased. You are a *Blank* — a repossessed
@@ -102,18 +102,19 @@ Four classes, each with a full server-validated kit:
 ## The $METRO economy
 
 $METRO is a tradeable on-chain token bridged to server-authoritative `credits`.
-**Preferred settlement: Solana SPL** via Phantom. Robinhood Chain ERC-20 remains in the
-tree as a dormant alternate (`METRO_SETTLEMENT=robinhood`), not the launch path.
+**Authoritative settlement: Robinhood Chain ERC-20** via MetaMask / WalletConnect.
+Solana SPL stays in the tree as a dormant alternate (`METRO_SETTLEMENT=solana`).
 
 - In-game currency is off-chain `credits`.
-- Sign-up: choose a Solana wallet (Phantom featured) + one free message (no gas);
-  mobile approval happens in the wallet app and play remains in the normal browser.
+- Sign-up: connect MetaMask, Phantom, or any WalletConnect wallet + one free
+  message (no gas); mobile approval happens in the wallet app and play remains
+  in the normal browser.
 - Cash-out pool is **100% player-funded** (starts empty). Empty/short pool →
   **"Check back later."**
 - **Rate spread**: deposit 1 ◈ → **100 ₵**, withdraw **150 ₵** → 1 ◈.
   Min cash-out **300 ₵** (2 ◈). There is no daily earn or withdrawal cap.
-- Cash-outs: treasury preferably pays SOL and sends $METRO; player-pays only if treasury SOL is empty.
-- Go-live: server `METRO_MINT` + `METRO_TREASURY_SECRET` (base64 keypair) first, then
+- Cash-outs: treasury pays gas and sends $METRO from the pool.
+- Go-live: server `METRO_MINT` (0x…) + `METRO_TREASURY_SECRET` (0x… private key) first, then
   client `VITE_METRO_MINT`. Mainnet stays disarmed (`METRO_MAINNET_ARMED`) until counsel
   signs off. See `SHIPPING.md` §5 / `docs/METRO_CHAIN_CHOICE.md`.
 

@@ -4,6 +4,29 @@ You are picking up work on **METROPHAGE**, a top-down neon-noir cyberpunk action
 in the browser. Phaser 3 + Vite + TypeScript client; **server-authoritative** world on
 Cloudflare (Worker + per-zone Durable Objects at 20Hz + D1).
 
+## 2026-07-19 — settlement reverted to **Robinhood Chain ERC-20** (authoritative)
+
+- The 2026-07-15 "Restore Solana as the primary METRO settlement" flip (`9e89422`)
+  was reverted in place; all HANDOFF entries below that describe Solana as the
+  live path are **historical**. Robinhood Chain (chain id 4663, MetaMask /
+  WalletConnect, 0x mint) is again authoritative; Solana SPL stays in the tree
+  as the dormant alternate (`METRO_SETTLEMENT=solana`).
+- Defaults: `settlementForce()` returns `robinhood` in `src/economy/chainProfile.ts`
+  and `server/src/settlementFamily.ts`; `wrangler.toml` ships
+  `METRO_SETTLEMENT="robinhood"`, `METRO_CLUSTER="robinhood"`, `METRO_CHAIN_ID=4663`,
+  Robinhood mainnet RPC; `tools/release-client.mjs` bakes robinhood defaults.
+- Wrong-family guard tests: `server/src/settlementFamily.test.ts` (robinhood
+  default; base58 mint refused unless forced) and `server/src/metroPrice.test.ts`
+  (0x-only oracle, Robinhood GeckoTerminal slugs).
+- Operator allowlist (`src/net/godAccounts.ts`) accepts both the EVM operator
+  (`0x7bf8…726d`, primary) and the Solana operator (dormant path).
+- Landing page (`landing/index.html`) connects `window.ethereum` + `personal_sign`.
+- Runbooks rewritten Robinhood-first: `MAINNET_GO_LIVE.md`, `docs/BRIDGE_GO_LIVE.md`,
+  `SHIPPING.md` §1/4/5, `ROBINHOOD_GO_LIVE.md` (rates aligned 100/150/300/no cap).
+- Go-live remainder (waits on the real ERC-20 CA): `mainnet-prepare.mjs --evm`,
+  secret `METRO_TREASURY_SECRET`, then `mainnet-arm.mjs <0x_CA>`, counsel-gated
+  `METRO_MAINNET_ARMED`.
+
 ## 2026-07-16 (third pass) — guest login fixed, Phantom deeplinks, world redesign
 
 - **`smoke:panels` is GREEN (desktop + mobile) for the first time.** The blocker was
@@ -75,13 +98,6 @@ art constraints). `CLAUDE.md` points at it. Non-negotiables from it:
 
 Treat the live build stamp and `git status` as authoritative; this branch may contain
 verified work that is not deployed yet. The full test suite and both typechecks are the gate.
-
-> **If you are touching $METRO / the chain layer, read §7 first — specifically the ⚠ price-oracle
-> note.** Settlement is back on **Solana SPL**; Robinhood/ERC-20 is a dormant alternate. The
-> rename was the easy half. A `0x`-shaped regex in `metroPrice.ts` silently pinned every bridge
-> rate to the `$1` reference with no error surface, and that class of bug hides in files that
-> look chain-agnostic. §7 also carries the two open tasks: the **GitBook** (commit to GitHub →
-> GitSync publishes) and the **treasury secret** (human-only).
 
 ---
 
@@ -556,43 +572,6 @@ Context you need: commit `9c0e1c5` had flipped the *code and config* to Robinhoo
 **most prose still saying Solana**, so the repo was self-contradictory. This work flipped the
 code back, which resolved the contradiction rather than creating one.
 
-### ⚠ The load-bearing part was the price oracle — not the renaming
-
-**Read this before you touch the chain layer again.** Swapping the names/defaults was the
-easy, visible half. The half that actually decided whether the economy worked was
-`server/src/metroPrice.ts`, and it was **silently broken by the switch**:
-
-- It gated on `/^0x[a-fA-F0-9]{40}$/` in **two** places (`fetchMarketUsd`, and again in
-  `getMetroUsdPrice` *before* the fetch was even reached — fixing only one does nothing).
-  A base58 SPL mint failed both, so the oracle returned `null`.
-- **`null` is indistinguishable from "not listed yet."** So it degraded to the `$1` reference
-  multiplier and stayed there **forever**, with no error, no warning, nothing in `/health`.
-  Every bridge rate is `marketUsd / REFERENCE_USD` — so $METRO could trade at $40 and the
-  bridge would keep paying out as if it were $1.
-- It also `.toLowerCase()`d the mint (**base58 is case-sensitive** — that corrupts the
-  address; only EVM hex may be folded) and had no `solana` GeckoTerminal network slug.
-
-Fixed and regression-tested in `server/src/metroPrice.test.ts` (7 tests, **confirmed to fail
-against the old gate** — not just written to pass). `chainIdOf()` now returns `null` on SPL,
-and `sameMint()` compares per-family.
-
-**The generalisable lesson:** this file *looked* chain-agnostic from the outside. The
-0x-shaped assumption was buried in a regex inside a function nobody would list as
-"chain code". If you touch settlement again, re-run this sweep:
-
-```sh
-grep -rnE '0x\[0-9a-fA-F\]|0x\[a-fA-F0-9\]|startsWith\("0x"\)|\.toLowerCase\(\)' \
-  --include="*.ts" src/ server/src/ | grep -iE "mint|addr|wallet|treasury|claim|sig|secret"
-```
-
-Everything else that hit that sweep **was audited and is correct** — don't re-litigate:
-`auth.ts` is genuinely family-aware (EVM secp256k1 / `0x` vs Solana ed25519 / base58, and it
-folds case *only* inside the EVM branch, preserving base58 at `auth.ts:124`);
-`wallet.ts:110` `sessionKeyFor` folds only when the address matches the EVM regex;
-`claim.ts:30` and `erc20Deposit.ts` / `evm.ts` are EVM-only paths reached solely via the
-dormant force. `index.ts:233` folds both sides symmetrically and is only a consistency check
-on a client-supplied `player` — `verifyWalletLogin`'s signature is what authenticates.
-
 ### What is already done (code + config + docs, verified)
 
 - Defaults: `settlementForce()` returns `solana` in `src/economy/chainProfile.ts` and
@@ -615,8 +594,12 @@ total supply **1,000,000,000**; dev seed **1% = 10,000,000 $METRO** in the treas
 rates **100 ₵ in / 150 ₵ out**; min withdraw **300 ₵**; **no daily earn cap, no daily
 withdraw cap** (`BASE_DAILY_*` are `0` = unlimited). Do not "restore" any daily cap.
 
-The constants were never the risk — the **price oracle** was, and that is the one real bug
-this work found and fixed. See the ⚠ section above before changing anything here.
+**One real bug was found and fixed here** — `server/src/metroPrice.ts` gated on
+`/^0x…{40}$/` in *two* places, so a base58 SPL mint returned `null` and every bridge rate
+silently pinned to the `$1` reference multiplier forever (a null quote is indistinguishable
+from "not listed yet"). It also `.toLowerCase()`d the mint, which corrupts case-sensitive
+base58, and had no `solana` GeckoTerminal slug. Fixed + regression-tested in
+`server/src/metroPrice.test.ts` (7 tests, verified to fail against the old gate).
 
 ### ✓ GitBook updated — GitSync branch is authoritative
 
