@@ -173,7 +173,7 @@ See also `LAUNCH_HARDENING.md`.
 - Leaving Cloudflare “for speed” — bottleneck is **zone DO work + snapshot size**  
 - Adding Redis “because multiplayer” — DO *is* room authority  
 - Turning off Paid / SQLite DO  
-- Solana RPC on the tick loop — chain IO only on bridge endpoints  
+- Chain RPC on the tick loop — chain IO only on bridge endpoints  
 - Raising tick past 20 Hz when snapshots/AOI are the limit  
 
 ---

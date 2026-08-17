@@ -24,9 +24,6 @@
     "wrangler": "^4.103.0"
   },
   "dependencies": {
-    "@solana/spl-token": "^0.4.14",
-    "@solana/web3.js": "^1.98.4",
-    "bigint-buffer": "file:vendor/bigint-buffer-1.1.6.tgz",
     "ethers": "^6.17.0"
   },
   "overrides": {

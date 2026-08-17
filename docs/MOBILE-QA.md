@@ -31,18 +31,17 @@ unlock. Run this on at least one iPhone (Safari) and one Android (Chrome);
 
 ## Session & performance
 - [ ] Guest login persists across a full browser kill + relaunch (device secret)
-- [ ] Solana wallet picker (mobile Safari/Chrome, no injector): tap Connect → a
-      fitted, vertically scrollable picker opens in the game tab with Phantom
-      visible near the top; there is no horizontal clipping in short landscape.
-- [ ] Choose Phantom → the native app opens for connection approval → return to
-      the same Safari/Chrome tab → Phantom receives one free login signature.
-      The game must never load or become playable inside Phantom's browser.
+- [ ] WalletConnect wallet picker (mobile Safari/Chrome, no injector): tap Connect →
+      the WalletConnect modal opens in the game tab with MetaMask visible near the
+      top; there is no horizontal clipping in short landscape.
+- [ ] Choose MetaMask → the native app opens for connection approval → return to
+      the same Safari/Chrome tab → MetaMask receives one free personal_sign login.
+      Robinhood Chain is added/switched (wallet_addEthereumChain) without a second prompt.
 - [ ] Kill/relaunch Safari/Chrome after connecting: the cached address appears,
-      the WalletConnect signer rehydrates, and Retry Sign Up can sign without
+      the WalletConnect session restores, and Retry Sign Up can sign without
       choosing the wallet again.
-- [ ] No-WalletConnect fallback build only: Phantom's encrypted connect and
-      signMessage protocol round-trips approval through the app and returns to
-      the original browser tab.
+- [ ] No-WalletConnect fallback build only: Connect opens the dapp inside MetaMask's
+      in-app browser (metamask.app.link/dapp/…) and login completes there.
 - [ ] 10 min in the hub: FPS acceptable, no thermal runaway, no memory crash
 - [ ] Lock screen / switch app / return: WebSocket reconnects, runner where you left it
 - [ ] Audio: music starts after first tap (autoplay policy); volume sliders apply live

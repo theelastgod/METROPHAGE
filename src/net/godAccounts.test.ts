@@ -5,8 +5,8 @@ describe("operator allowlist", () => {
   const evmOperator = "0x7bf8195c181fbb74d10aed7035c26eca18ea726d";
   const solOperator = "9Z9uZJXdnyTE7gkFfrepJ3BWDTNA3ZeteDkpgT6cxkve";
 
-  it("contains only the authorized wallets, EVM first", () => {
-    expect(GOD_WALLETS).toEqual([evmOperator, solOperator]);
+  it("contains only the authorized EVM wallet", () => {
+    expect(GOD_WALLETS).toEqual([evmOperator]);
   });
 
   it("accepts raw and persisted wallet player ids for the EVM operator", () => {
@@ -16,9 +16,10 @@ describe("operator allowlist", () => {
     expect(isGodAccount(`w:0x${evmOperator.slice(2).toUpperCase()}`)).toBe(true);
   });
 
-  it("still accepts the dormant Solana operator", () => {
-    expect(isGodAccount(solOperator)).toBe(true);
-    expect(isGodAccount(`w:${solOperator}`)).toBe(true);
+  it("does not accept the Solana operator on the EVM-only build", () => {
+    expect(isGodAccount(solOperator)).toBe(false);
+    expect(isGodAccount(`w:${solOperator}`)).toBe(false);
+    expect(normalizeWalletAddress(solOperator)).toBeNull();
   });
 
   it("rejects malformed ids and other wallets", () => {

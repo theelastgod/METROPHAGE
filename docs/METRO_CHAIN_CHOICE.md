@@ -1,60 +1,47 @@
-# $METRO chain choice — Solana (authoritative)
+# $METRO chain choice — Robinhood Chain ERC-20 (authoritative)
 
-**Solana SPL is the only live launch path.**  
-Robinhood ERC-20 code remains in-tree as a **dormant alternate** you can re-enable
-explicitly — it is not auto-selected.
+**This branch is EVM-only.** Robinhood Chain (chain id 4663; testnet 46630) is the
+settlement family for the $METRO bridge and for wallet identity. No Solana / SPL code is
+compiled into this build.
 
-| Family | Mint shape | Wallet | Server adapter | Status |
-|--------|------------|--------|----------------|--------|
-| **Solana** | base58 pubkey | Phantom / Solana | `server/src/solana.ts` | **Authoritative** |
-| **Robinhood** | `0x` + 40 hex | MetaMask | `server/src/evm.ts` | Dormant alternate |
+The Solana SPL version is preserved as a **separate branch**: `settlement/solana`
+(Phantom / AppKit wallets, `server/src/solana.ts`, `src/economy/splDeposit.ts`, ed25519
+login). It is not a runtime toggle here — `METRO_SETTLEMENT=solana` on this branch
+resolves to **off** (credits-only) rather than silently taking a chain we cannot settle.
+
+| Family | Mint shape | Wallet | Server adapter | Where |
+|--------|------------|--------|----------------|-------|
+| **Robinhood** | `0x` + 40 hex | MetaMask / WalletConnect | `server/src/evm.ts` | this branch (`main`) |
+| Solana | base58 pubkey | Phantom / Solana | `server/src/solana.ts` | branch `settlement/solana` |
 
 Shared ledger: server `credits` + D1 `metro_*` tables.  
 Rates: see `src/game/economyPolicy.ts` / `server/src/metro.ts`.
 
 ---
 
-## Live path (Solana)
+## Live path (Robinhood)
 
 ```sh
 # server
-npx wrangler secret put METRO_MINT              # base58 mint
-npx wrangler secret put METRO_TREASURY_SECRET   # base64 64-byte keypair
-npx wrangler secret put METRO_RPC               # https://api.devnet.solana.com or mainnet
-# wrangler.toml already has METRO_SETTLEMENT = "solana"
+cd server
+node scripts/mainnet-prepare.mjs                # EVM treasury (0x private key)
+npx wrangler secret put METRO_TREASURY_SECRET   # from .mainnet-treasury.json
+npx wrangler secret put METRO_MINT              # 0x ERC-20 contract
+npx wrangler secret put METRO_RPC               # https://rpc.mainnet.chain.robinhood.com
+npx wrangler secret put METRO_CHAIN_ID          # 4663 (46630 for testnet rehearsal)
+# wrangler.toml already has METRO_SETTLEMENT = "robinhood"
 npx wrangler deploy
 
 # client
-VITE_METRO_MINT=<base58> \
-VITE_METRO_CLUSTER=devnet \                 # or mainnet-beta
-VITE_METRO_RPC=https://api.devnet.solana.com \
-VITE_METRO_SETTLEMENT=solana \
+VITE_METRO_MINT=<0x> \
+VITE_METRO_CLUSTER=robinhood \                  # or robinhood-testnet
+VITE_METRO_RPC=https://rpc.mainnet.chain.robinhood.com \
+VITE_METRO_CHAIN_ID=4663 \
 npm run deploy:client
 ```
 
-Mainnet: counsel `METRO_MAINNET_ARMED=1` + `VITE_METRO_MAINNET_ARMED=1`.  
-Treasury **pays SOL on cash-outs** when funded (preferred). Deposits remain player-paid.
-
-Treasury prep (no CA yet):
-
-```sh
-cd server && node scripts/mainnet-prepare.mjs
-```
-
----
-
-## Dormant alternate (Robinhood / EVM)
-
-Only if you deliberately switch back:
-
-```sh
-cd server
-node scripts/mainnet-prepare.mjs --evm --replace
-node scripts/mainnet-arm.mjs <0x_CA> --evm
-# set METRO_SETTLEMENT=robinhood + EVM METRO_TREASURY_SECRET + METRO_CHAIN_ID
-```
-
-Client: `VITE_METRO_SETTLEMENT=robinhood` + `VITE_METRO_CLUSTER=robinhood-testnet|robinhood`.
+Mainnet real-value settlement additionally needs counsel: `METRO_MAINNET_ARMED=1` +
+`VITE_METRO_MAINNET_ARMED=1`. Treasury pays gas on cash-outs; deposits are player-paid.
 
 ---
 
@@ -62,22 +49,34 @@ Client: `VITE_METRO_SETTLEMENT=robinhood` + `VITE_METRO_CLUSTER=robinhood-testne
 
 | Env | Values |
 |-----|--------|
-| Client | `VITE_METRO_SETTLEMENT=solana` (default) \| `robinhood` \| `auto` |
-| Server | `METRO_SETTLEMENT=solana` (default in wrangler.toml) \| `robinhood` \| `auto` |
+| Client | `VITE_METRO_SETTLEMENT=robinhood` (default) \| `auto` \| `off` |
+| Server | `METRO_SETTLEMENT=robinhood` (default in wrangler.toml) \| `auto` \| `off` |
 
-`auto` restores mint-shape detection (base58 → solana, `0x` → robinhood).
+`auto` = mint-shape detection (`0x` → robinhood, anything else → off).  
+`solana` / `sol` / `spl` are accepted for env compatibility and map to `off`.
 
 ---
 
-## Code map
+## Switching to the Solana version
+
+```sh
+git checkout settlement/solana
+```
+
+That branch carries its own runbooks (`docs/METRO_CHAIN_CHOICE.md` there describes the
+SPL path). Do not try to merge the two — they are intentionally separate deliverables.
+
+---
+
+## Code map (this branch)
 
 | Path | Role |
 |------|------|
-| `src/economy/chainProfile.ts` | Client family resolve |
-| `src/economy/solanaChain.ts` | Solana network defs |
-| `src/economy/splDeposit.ts` | Phantom deposit |
-| `src/economy/robinhoodChain.ts` | RH defs (alternate) |
-| `src/economy/erc20Deposit.ts` | MetaMask deposit (alternate) |
-| `server/src/solana.ts` | Live settlement |
-| `server/src/evm.ts` | Alternate settlement |
+| `src/economy/chainProfile.ts` | Client family resolve (robinhood \| off) |
+| `src/economy/robinhoodChain.ts` | Robinhood network defs |
+| `src/economy/wallet.ts` | Injected + WalletConnect EVM connector, personal_sign |
+| `src/economy/erc20Deposit.ts` | MetaMask ERC-20 deposit |
+| `src/economy/claim.ts` | Broadcast treasury-signed payout (eth_sendRawTransaction) |
+| `server/src/evm.ts` | Live settlement (pre-signed claims, nonce burn, deposit verify) |
+| `server/src/auth.ts` | EIP-191 personal_sign login verify |
 | `server/src/settlementFamily.ts` | Family resolution |

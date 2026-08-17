@@ -1,13 +1,10 @@
 // Operator wallet — shared client + server. Keep this list deliberately singular.
-// Wallet player ids are stored as `w:<address>` — 0x EVM (Robinhood Chain,
-// authoritative) or base58 Solana (dormant alternate). EVM entries are
-// lowercase; base58 is case-sensitive and kept verbatim.
+// Wallet player ids are stored as `w:<address>` — 0x EVM (Robinhood Chain).
+// EVM entries are lowercase. (The Solana operator lives on `settlement/solana`.)
 
 export const GOD_WALLETS = [
   // Robinhood Chain (EVM) operator — authoritative launch path.
   "0x7bf8195c181fbb74d10aed7035c26eca18ea726d",
-  // Solana operator — dormant SPL alternate only.
-  "9Z9uZJXdnyTE7gkFfrepJ3BWDTNA3ZeteDkpgT6cxkve",
 ] as const;
 
 const GOD_SET = new Set<string>(GOD_WALLETS);
@@ -19,8 +16,6 @@ export function normalizeWalletAddress(idOrAddr: string | null | undefined): str
   if (address.toLowerCase().startsWith("w:")) address = address.slice(2).trim();
   // EVM: 20-byte hex — canonical form is lowercase.
   if (/^0x[a-fA-F0-9]{40}$/.test(address)) return address.toLowerCase();
-  // Base58 excludes 0, O, I and l. Solana public keys normally encode to 32–44 chars.
-  if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return address;
   return null;
 }
 

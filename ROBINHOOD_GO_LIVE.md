@@ -37,7 +37,7 @@ npx wrangler deploy
 ```
 
 The treasury file must contain `treasuryAddress` and an EVM `0x...` private key.
-If the script detects an old Solana treasury, it refuses to replace it unless run
+If the script detects an old (non-EVM, e.g. Solana) treasury, it refuses to replace it unless run
 with `--replace-legacy`.
 
 ## Testnet dry run (≈ $0)

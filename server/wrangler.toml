@@ -46,7 +46,7 @@ METRO_MAX_INSTANCES = "4"
 # Soft concurrent target per combat/subway instance (hub uses METRO_HUB_CAP).
 METRO_INSTANCE_CAP = "40"
 # $METRO settlement family — Robinhood Chain ERC-20 is authoritative.
-# Solana SPL stays in code as a dormant alternate (METRO_SETTLEMENT=solana).
+# EVM-only build: the Solana SPL adapter lives on the settlement/solana branch.
 METRO_SETTLEMENT = "robinhood"
 # Network target: Robinhood Chain mainnet. Mint CA intentionally empty until go-live.
 # When CA is ready: wrangler secret put METRO_MINT (0x…) + METRO_TREASURY_SECRET

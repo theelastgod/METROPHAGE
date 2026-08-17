@@ -1,14 +1,11 @@
-// METROPHAGE — pre-CA treasury preparation.
+// METROPHAGE — pre-CA treasury preparation (Robinhood Chain / EVM).
 //
-// AUTHORITATIVE path: Robinhood Chain / EVM treasury (0x private key).
-//   node scripts/mainnet-prepare.mjs --evm
-//   node scripts/mainnet-prepare.mjs --evm --replace
+// This build is EVM-only. (The Solana keypair flow lives on the `settlement/solana` branch.)
+//   node scripts/mainnet-prepare.mjs            # create (or reuse) the EVM treasury
+//   node scripts/mainnet-prepare.mjs --replace  # mint a new one (previous is backed up)
+//   --evm / --robinhood are accepted for compatibility and are the default.
 //
-// Dormant alternate: Solana keypair (only if METRO_SETTLEMENT=solana):
-//   node scripts/mainnet-prepare.mjs
-//   node scripts/mainnet-prepare.mjs --replace
-//
-// Writes (gitignored): server/.mainnet-treasury.json (+ .solana-treasury.json for SOL)
+// Writes (gitignored): server/.mainnet-treasury.json
 //
 // After you have the Robinhood ERC-20 mint CA:
 //   set METRO_MINT + VITE_METRO_MINT to the 0x address; arm mainnet only with counsel.
@@ -16,16 +13,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { Keypair } from "@solana/web3.js";
 import { Wallet } from "ethers";
 
 const __dir = path.dirname(fileURLToPath(import.meta.url));
 const OUT = path.join(__dir, "../.mainnet-treasury.json");
-const OUT_SOL = path.join(__dir, "../.solana-treasury.json");
 const BACKUP_DIR = path.join(__dir, "../.wrangler/secret-backups");
 const printSecret = process.argv.includes("--print-secret");
 const replace = process.argv.includes("--replace") || process.argv.includes("--replace-legacy");
-const wantEvm = process.argv.includes("--evm") || process.argv.includes("--robinhood");
 
 function chmod600(file) {
   try {
@@ -49,7 +43,7 @@ function secretKind(secret) {
   if (/^0x[0-9a-fA-F]{64}$/.test(v) || /^[0-9a-fA-F]{64}$/.test(v)) return "evm";
   try {
     const bytes = Buffer.from(v, "base64").length;
-    if (bytes === 64) return "solana";
+    if (bytes === 64) return "solana"; // legacy SPL keypair — not usable on this build
     if (bytes === 32) return "evm-base64";
     return `unknown-base64-${bytes}`;
   } catch {
@@ -61,10 +55,6 @@ function writeRecord(record) {
   const body = JSON.stringify(record, null, 2);
   fs.writeFileSync(OUT, body, { mode: 0o600 });
   chmod600(OUT);
-  if (record.chain === "solana") {
-    fs.writeFileSync(OUT_SOL, body, { mode: 0o600 });
-    chmod600(OUT_SOL);
-  }
 }
 
 function backupExisting(existing) {
@@ -77,28 +67,6 @@ function backupExisting(existing) {
   return backup;
 }
 
-function makeSolanaRecord(kp) {
-  const address = kp.publicKey.toBase58();
-  const secretB64 = Buffer.from(kp.secretKey).toString("base64");
-  return {
-    chain: "solana",
-    cluster: "mainnet-beta",
-    treasuryAddress: address,
-    treasuryPubkey: address,
-    treasurySecret: secretB64,
-    secretFormat: "base64-64-byte-solana-keypair",
-    createdAt: new Date().toISOString(),
-    note:
-      "AUTHORITATIVE Solana treasury for $METRO. Never commit. Receives SPL deposits; " +
-      "pays cash-out fees when funded, with a player-fee partial-sign fallback. " +
-      "Dormant Solana alternate — Robinhood EVM is authoritative: " +
-      "node scripts/mainnet-prepare.mjs --evm --replace",
-    mint: null,
-    mainnetArmed: false,
-    authoritative: true,
-  };
-}
-
 function makeEvmRecord(wallet) {
   return {
     chain: "robinhood",
@@ -109,39 +77,11 @@ function makeEvmRecord(wallet) {
     createdAt: new Date().toISOString(),
     note:
       "AUTHORITATIVE Robinhood Chain treasury for $METRO. Never commit. " +
-      "Receives ERC-20 deposits; signs cash-outs (fund with ETH for gas). " +
-      "Solana alternate: node scripts/mainnet-prepare.mjs --replace (no --evm).",
+      "Receives ERC-20 deposits; signs cash-outs (fund with ETH for gas).",
     mint: null,
     mainnetArmed: false,
     authoritative: true,
   };
-}
-
-function printSolanaSteps(record) {
-  console.log(`
-── Install Solana treasury secret on Cloudflare (no CA required yet) ─────
-  cd server
-  node -e "process.stdout.write(JSON.parse(require('fs').readFileSync('.mainnet-treasury.json','utf8')).treasurySecret)" \\
-    | npx wrangler secret put METRO_TREASURY_SECRET
-  # optional force (default in wrangler.toml is already solana):
-  # echo -n solana | npx wrangler secret put METRO_SETTLEMENT
-  npx wrangler deploy
-
-── When you have the Solana SPL mint CA ──────────────────────────────────
-  cd server
-  node scripts/mainnet-arm.mjs <base58_MINT>
-
-── Until then ────────────────────────────────────────────────────────────
-  • Do NOT set METRO_MINT / VITE_METRO_MINT until the CA is real
-  • METRO_MAINNET_ARMED stays OFF until counsel
-  • Fund the treasury with a small SOL float for cash-out fees + ATA rent
-
-Treasury (Solana — AUTHORITATIVE):
-  address: ${record.treasuryAddress}
-  file:    ${OUT}
-  alias:   ${OUT_SOL}`);
-  if (printSecret) console.log(`  METRO_TREASURY_SECRET=${record.treasurySecret}`);
-  else console.log("  (re-run with --print-secret to show the base64 secret)");
 }
 
 function printEvmSteps(record) {
@@ -167,19 +107,15 @@ Treasury (Robinhood Chain — AUTHORITATIVE):
 const existing = readExisting();
 if (existing && !replace) {
   const kind = existing.chain || secretKind(existing.treasurySecret);
-  const wantKind = wantEvm ? "robinhood" : "solana";
-  const same =
-    (wantKind === "solana" && (kind === "solana" || secretKind(existing.treasurySecret) === "solana")) ||
-    (wantKind === "robinhood" && (kind === "robinhood" || secretKind(existing.treasurySecret) === "evm"));
-  if (same) {
+  const isEvm = kind === "robinhood" || secretKind(existing.treasurySecret) === "evm";
+  if (isEvm) {
     console.log(`Reusing existing ${kind} treasury (pass --replace to mint a new one).`);
-    console.log(`  address: ${existing.treasuryAddress || existing.treasuryPubkey}`);
-    if (wantEvm) printEvmSteps(existing);
-    else printSolanaSteps(existing);
+    console.log(`  address: ${existing.treasuryAddress}`);
+    printEvmSteps(existing);
     process.exit(0);
   }
   console.error(
-    `Existing treasury is ${kind}; you asked for ${wantKind}. ` +
+    `Existing treasury is ${kind}, which this EVM-only build cannot use. ` +
       `Re-run with --replace (previous file is backed up under .wrangler/secret-backups/).`,
   );
   process.exit(1);
@@ -190,16 +126,8 @@ if (existing) {
   console.log(`Backed up previous treasury → ${backup}`);
 }
 
-if (wantEvm) {
-  const wallet = Wallet.createRandom();
-  const record = makeEvmRecord(wallet);
-  writeRecord(record);
-  console.log("Created Robinhood/EVM treasury (AUTHORITATIVE).");
-  printEvmSteps(record);
-} else {
-  const kp = Keypair.generate();
-  const record = makeSolanaRecord(kp);
-  writeRecord(record);
-  console.log("Created AUTHORITATIVE Solana treasury.");
-  printSolanaSteps(record);
-}
+const wallet = Wallet.createRandom();
+const record = makeEvmRecord(wallet);
+writeRecord(record);
+console.log("Created Robinhood/EVM treasury (AUTHORITATIVE).");
+printEvmSteps(record);

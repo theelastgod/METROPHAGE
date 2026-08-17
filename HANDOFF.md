@@ -4,6 +4,39 @@ You are picking up work on **METROPHAGE**, a top-down neon-noir cyberpunk action
 in the browser. Phaser 3 + Vite + TypeScript client; **server-authoritative** world on
 Cloudflare (Worker + per-zone Durable Objects at 20Hz + D1).
 
+## 2026-08-15 — Solana stack REMOVED from this branch; two settlement branches
+
+- The dual-chain tree is split into two versions (`docs/HANDOFF_DUAL_CHAIN.md`):
+  **`main` = Robinhood Chain ERC-20 only** (this tree, production) and
+  **`settlement/solana`** = the Solana-primary tree preserved at `43c16e4` (the last
+  commit before the 07-19 revert — SPL adapter, Phantom/AppKit wallets, ed25519 login).
+- Deleted here: `src/economy/{solanaChain,solanaWalletModal,splDeposit,phantomDeeplink}.ts`
+  (+tests), `server/src/solana.ts`, `server/src/bs58.d.ts`, `server/vendor/bigint-buffer*`,
+  `server/scripts/devnet-setup.mjs`. Deps dropped: `@solana/*`, `@reown/appkit*`, `bs58`,
+  `tweetnacl` (client); `@solana/*`, `bigint-buffer` (server). `axios` overridden to
+  ^1.19 (transitive via WalletConnect's Coinbase SDK). **Client `npm audit --omit=dev`: 0
+  vulnerabilities (was 12 / 5 high). Server: 0.**
+- Type surface: `SettlementFamily = "robinhood" | "off"`, `SettlementKind = "sim" | "evm"`;
+  `METRO_SETTLEMENT=solana` / `VITE_METRO_SETTLEMENT=solana` now resolve to **off**
+  (credits-only) instead of taking a chain this build cannot settle — locked by
+  `server/src/settlementFamily.test.ts`. `auth.ts` verifies EIP-191 only; base58 wallets
+  are rejected (smoke `auth` asserts it). `godAccounts` = the single EVM operator.
+- **Behavior fix found while cutting:** `SelectScene.startNewGuestRunner` keyed
+  "wallet-linked" on *address is not 0x*, so an EVM-wallet-locked runner choosing NEW
+  RUNNER went down the guest device-secret retire path (server refuses). Now keyed on
+  `connectedWallet() && identity.locked`, and the button reads "LINK WALLET FIRST".
+- `wallet.ts` boot: a persisted base58 address / `chain=solana` session from the SPL
+  build is dropped so the player is offered a clean EVM connect (no dead session).
+- `/metro/pool` + `/metro/status`: `dualPathReady = { robinhood: true }`; a non-EVM
+  `METRO_TREASURY_SECRET` yields `treasuryChain: "unsupported"` + `treasuryWarn`
+  instead of a guessed address. `stripClaimPrefix` still strips a legacy `solana-sent:`
+  marker so a stale client can't double-record a `tx_sig`.
+- Verified: client+server `tsc` clean; vitest 473/473; local wrangler `METRO_ALLOW_SIM=1`
+  smokes `metro` / `auth` / `market` / `launch` / `move` / `abuse` / `reconnect` PASS.
+- Ops still external: GitHub push is 403 (**account email unverified** —
+  github.com/settings/emails); until then everything lives only on this Mac + the
+  bundle at `~/Desktop/METROPHAGE-backup-20260815.bundle`.
+
 ## 2026-07-19 — settlement reverted to **Robinhood Chain ERC-20** (authoritative)
 
 - The 2026-07-15 "Restore Solana as the primary METRO settlement" flip (`9e89422`)

@@ -1,15 +1,13 @@
-import { ed25519 } from "@noble/curves/ed25519";
-import bs58 from "bs58";
 import { verifyMessage, getAddress } from "ethers";
 import { loginMessage, retireMessage } from "../../src/net/protocol";
 
-// METROPHAGE wallet sign-in.
+// METROPHAGE wallet sign-in (EVM-only build).
 //
-// Supports:
-//   • MetaMask / EVM — EIP-191 personal_sign over loginMessage (secp256k1, hex 0x sig)
-//   • Solana (Phantom etc.) — ed25519 over the same message (base58 wallet + sig)
+// Supports MetaMask / WalletConnect / any EVM wallet — EIP-191 personal_sign over
+// loginMessage (secp256k1, hex 0x sig). The Solana ed25519 verifier lives on the
+// `settlement/solana` branch.
 //
-// Canonical player id is always "w:<address>" (EVM checksummed, Solana as-signed).
+// Canonical player id is always "w:<checksummed 0x address>".
 
 const FRESH_MS = 120_000; // ±2 min of server clock
 
@@ -55,21 +53,6 @@ function verifyEvmLogin(wallet: string, sig: string, ts: number, now: number, ms
   }
 }
 
-/** Verify Solana ed25519 SIWS. Returns w:<base58> or null. */
-function verifySolanaLogin(wallet: string, sig: string, ts: number, now: number, msgFor: MessageFor): string | null {
-  try {
-    if (Math.abs(now - ts) > FRESH_MS) return null;
-    const pub = bs58.decode(wallet);
-    const signature = bs58.decode(sig);
-    if (pub.length !== 32 || signature.length !== 64) return null;
-    const msg = new TextEncoder().encode(msgFor(wallet, ts));
-    if (!ed25519.verify(signature, msg, pub)) return null;
-    return "w:" + wallet;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Verify a signed wallet login. Returns canonical player id ("w:<wallet>") or null.
  * Never throws — malformed proof is rejection.
@@ -94,13 +77,10 @@ export function verifyWalletAction(p: WalletProof, msgFor: MessageFor, now = Dat
     const wallet = p.wallet.trim();
     const sig = p.sig.trim();
 
-    // Prefer EVM when the address or sig shape is Ethereum.
-    if (isEvmWallet(wallet) || isEvmSig(sig)) {
-      if (!isEvmWallet(wallet)) return null;
-      return verifyEvmLogin(wallet, sig, p.ts, now, msgFor);
-    }
-
-    return verifySolanaLogin(wallet, sig, p.ts, now, msgFor);
+    // EVM only. (Non-0x wallets — e.g. base58 — are rejected outright on this build.)
+    if (!isEvmWallet(wallet)) return null;
+    if (!isEvmSig(sig) && !sig.startsWith("0x")) return null;
+    return verifyEvmLogin(wallet, sig, p.ts, now, msgFor);
   } catch {
     return null;
   }
@@ -120,8 +100,6 @@ export function walletPlayerId(wallet: string): string | null {
     const w = (wallet || "").trim();
     if (!w) return null;
     if (isEvmWallet(w)) return "w:" + getAddress(w);
-    // Solana base58 addresses are typically 32–44 chars
-    if (w.length >= 32 && w.length <= 48 && !w.startsWith("0x")) return "w:" + w;
     return null;
   } catch {
     return null;

@@ -1,4 +1,4 @@
-// Link a Solana (or EVM) wallet to an existing guest runner.
+// Link an EVM wallet to an existing guest runner.
 // After success, the wallet id (w:<addr>) owns all progress and is locked to that
 // character until the player explicitly chooses NEW RUNNER (wallet retire).
 
@@ -112,7 +112,7 @@ export async function linkGuestToWallet(
     return {
       ok: false,
       reason:
-        "this Solana wallet already has a locked runner — CONTINUE with that wallet, or NEW RUNNER on the wallet to start over",
+        "this wallet already has a locked runner — CONTINUE with that wallet, or NEW RUNNER on the wallet to start over",
     };
   }
 

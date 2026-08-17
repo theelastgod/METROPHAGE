@@ -1,12 +1,10 @@
-// METROPHAGE — claim submission for bridge withdrawals.
+// METROPHAGE — claim submission for bridge withdrawals (EVM-only build).
 //
-// Solana (primary):
-//   - `solana-sent:<sig>` — Worker already broadcast a treasury-paid payout (no player SOL)
-//   - fully signed base64 tx (treasury fee-payer) — client just sends raw
-//   - partially signed base64 (player fee-payer fallback) — Phantom signs + sends
-// EVM (legacy): claimTx is a fully signed raw tx via eth_sendRawTransaction.
+// claimTx is a fully signed raw Robinhood Chain tx (0x…) that the client
+// broadcasts via eth_sendRawTransaction — through the connected wallet first,
+// then the public RPCs. The Solana claim path lives on `settlement/solana`.
 
-import { ensureSolanaProvider, getEvmProvider, connectedChain } from "./wallet";
+import { getEvmProvider, connectedChain } from "./wallet";
 
 export interface ClaimSubmitResult {
   ok: boolean;
@@ -14,23 +12,17 @@ export interface ClaimSubmitResult {
   reason?: string;
 }
 
-/** Sign + submit (Solana) or broadcast (EVM raw) a claim. */
+/** Broadcast an EVM raw claim tx. */
 export async function submitClaim(claimTx: string, rpc: string): Promise<ClaimSubmitResult> {
   // Sim harness.
   if (claimTx.startsWith("devnet-sim-claim:")) {
     return { ok: true, sig: `sim:${Date.now()}` };
   }
-  // Server already broadcast treasury-paid Solana cash-out.
-  if (claimTx.startsWith("solana-sent:")) {
-    const sig = claimTx.slice("solana-sent:".length).trim();
-    if (!sig) return { ok: false, reason: "empty treasury payout signature" };
-    return { ok: true, sig };
-  }
   // EVM signed raw txs start with 0x.
   if (claimTx.startsWith("0x") && claimTx.length > 100) {
     return broadcastEvmRaw(claimTx, rpc);
   }
-  return submitSolanaClaim(claimTx, rpc);
+  return { ok: false, reason: "unrecognized claim payload (this build settles on Robinhood Chain only)" };
 }
 
 async function broadcastEvmRaw(rawTx: string, rpc: string): Promise<ClaimSubmitResult> {
@@ -65,62 +57,6 @@ async function broadcastEvmRaw(rawTx: string, rpc: string): Promise<ClaimSubmitR
       }
     }
     return { ok: false, reason: lastErr.slice(0, 160) };
-  } catch (e) {
-    return { ok: false, reason: String((e as Error)?.message ?? e).slice(0, 160) };
-  }
-}
-
-async function submitSolanaClaim(claimTxB64: string, rpc: string): Promise<ClaimSubmitResult> {
-  try {
-    const { Transaction, Connection } = await import("@solana/web3.js");
-    const bytes = Uint8Array.from(atob(claimTxB64), (c) => c.charCodeAt(0));
-    const tx = Transaction.from(bytes);
-    const conn = new Connection(rpc, "confirmed");
-
-    // Fully signed treasury-paid cash-out — broadcast only (player needs no SOL / no sign).
-    const sigs = tx.signatures ?? [];
-    const allPresent = sigs.length > 0 && sigs.every((s) => s.signature != null);
-    if (allPresent) {
-      try {
-        const sig = await conn.sendRawTransaction(tx.serialize(), {
-          skipPreflight: false,
-          preflightCommitment: "confirmed",
-        });
-        try {
-          const latest = await conn.getLatestBlockhash("confirmed");
-          await conn.confirmTransaction({ signature: sig, ...latest }, "confirmed");
-        } catch {
-          /* confirm endpoint retries */
-        }
-        return { ok: true, sig };
-      } catch (e) {
-        return { ok: false, reason: String((e as Error)?.message ?? e).slice(0, 160) };
-      }
-    }
-
-    // Partial-signed (player fee-payer fallback) — needs Phantom.
-    const p = await ensureSolanaProvider();
-    if (!p) return { ok: false, reason: "no Solana wallet — connect Phantom (treasury will pay fees when funded)" };
-    if (p.signAndSendTransaction) {
-      const { signature } = await p.signAndSendTransaction(tx);
-      if (!signature) return { ok: false, reason: "wallet returned empty signature" };
-      return { ok: true, sig: signature };
-    }
-    if (p.signTransaction) {
-      const signed = await p.signTransaction(tx);
-      const sig = await conn.sendRawTransaction(signed.serialize(), {
-        skipPreflight: false,
-        preflightCommitment: "confirmed",
-      });
-      try {
-        const latest = await conn.getLatestBlockhash("confirmed");
-        await conn.confirmTransaction({ signature: sig, ...latest }, "confirmed");
-      } catch {
-        /* confirm endpoint retries if RPC is lagging */
-      }
-      return { ok: true, sig };
-    }
-    return { ok: false, reason: "wallet cannot sign transactions" };
   } catch (e) {
     return { ok: false, reason: String((e as Error)?.message ?? e).slice(0, 160) };
   }

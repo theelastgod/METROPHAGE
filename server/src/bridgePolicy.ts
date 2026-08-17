@@ -1,4 +1,4 @@
-export type BridgeSettlementKind = "sim" | "evm" | "solana";
+export type BridgeSettlementKind = "sim" | "evm";
 
 /**
  * Simulated settlement trusts client-supplied amounts and is therefore read-only

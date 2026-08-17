@@ -14,6 +14,5 @@ describe("bridge mutation policy", () => {
 
   it("never blocks a live settlement", () => {
     expect(simulatedSettlementLocked("evm", undefined)).toBe(false);
-    expect(simulatedSettlementLocked("solana", undefined)).toBe(false);
   });
 });

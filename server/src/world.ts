@@ -458,7 +458,7 @@ export interface Env {
   METRO_MAINNET_ARMED?: string;
   /** Harness only: allow deposit/withdraw while settlement is sim with a mint set. */
   METRO_ALLOW_SIM?: string;
-  /** Force settlement family: solana (default) | robinhood | auto (detect from mint shape). */
+  /** Settlement family: robinhood (default) | auto (0x → robinhood, else off) | off. EVM-only build. */
   METRO_SETTLEMENT?: string;
   /** "1" when Workers Paid is provisioned — ops /health only (tuning is compile-time). */
   METRO_PAID_TIER?: string;
@@ -3261,7 +3261,7 @@ export class WorldDO {
     reject: (text: string) => void,
   ) {
     // Identity:
-    //  1) MetaMask/Solana signature (fresh) → durable wallet id
+    //  1) MetaMask / WalletConnect signature (fresh) → durable wallet id
     //  2) Wallet + device session (bound after first signed login) → same id, no re-sign
     //  3) Guest multiplayer: callsign + device secret (full D1 save, no wallet required)
     let id: string;
@@ -3341,9 +3341,9 @@ export class WorldDO {
       if (mismatch) {
         // PERMANENT guest memory: never rebind over an existing device secret.
         // The only way to remove this runner is NEW RUNNER → /player/retire (with secret).
-        // Link a Solana wallet for a portable identity that is never deleted.
+        // Link a wallet for a portable identity that is never deleted.
         return reject(
-          "that callsign is already saved on another device — CONTINUE on the original device, pick a new callsign (NEW RUNNER), or link a Solana wallet for permanent progress",
+          "that callsign is already saved on another device — CONTINUE on the original device, pick a new callsign (NEW RUNNER), or link a wallet for permanent progress",
         );
       }
       if (!p.secret || harnessSecret) {

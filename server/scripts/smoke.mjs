@@ -558,14 +558,10 @@ async function lookpersist() {
 }
 
 async function auth() {
-  const { ed25519 } = await import("@noble/curves/ed25519");
-  const bs58 = (await import("bs58")).default;
   const { Wallet: EvmWallet } = await import("ethers");
   // must match protocol.loginMessage
   const loginMessage = (wallet, ts) => `METROPHAGE login\nwallet: ${wallet}\nts: ${ts}`;
 
-  const priv = ed25519.utils.randomPrivateKey();
-  const wallet = bs58.encode(ed25519.getPublicKey(priv));
   const evm = EvmWallet.createRandom();
 
   const rawSignedLogin = (ws, payload) =>
@@ -587,49 +583,44 @@ async function auth() {
       ws.send(JSON.stringify({ t: "login", name: "walletuser", ...payload }));
     });
 
-  const signedLogin = (ws, opts = {}) => {
-    const ts = opts.ts ?? Date.now();
-    // tamper = sign a DIFFERENT message than the ts we send, so the signature won't verify
-    const signedTs = opts.tamper ? ts + 1 : ts;
-    const sig = bs58.encode(ed25519.sign(new TextEncoder().encode(loginMessage(wallet, signedTs)), priv));
-    return rawSignedLogin(ws, { wallet, sig, ts });
-  };
-
-  // Robinhood / EVM login: EIP-191 personal_sign over the same login message.
+  // Robinhood / EVM login: EIP-191 personal_sign over the login message.
   const evmSignedLogin = async (ws, opts = {}) => {
     const ts = opts.ts ?? Date.now();
+    // tamper = sign a DIFFERENT message than the ts we send, so the signature won't verify
     const signedTs = opts.tamper ? ts + 1 : ts;
     const sig = await evm.signMessage(loginMessage(evm.address, signedTs));
     return rawSignedLogin(ws, { wallet: evm.address, sig, ts });
   };
 
   const a = await connect();
-  const r1 = await signedLogin(a); // valid → durable wallet id
+  const r1 = await evmSignedLogin(a); // valid → durable wallet id
   a.close();
   const b = await connect();
-  const r2 = await signedLogin(b, { tamper: true }); // bad signature → rejected
+  const r2 = await evmSignedLogin(b, { tamper: true }); // bad signature → rejected
   b.close();
   const c = await connect();
-  const r3 = await signedLogin(c, { ts: Date.now() - 5 * 60_000 }); // stale → rejected
+  const r3 = await evmSignedLogin(c, { ts: Date.now() - 5 * 60_000 }); // stale → rejected
   c.close();
+  // EVM-only build: a base58 (Solana-shaped) wallet + signature must be rejected outright,
+  // never accepted or crashed on. (The SPL verifier lives on `settlement/solana`.)
   const d = await connect();
-  const r4 = await evmSignedLogin(d); // valid EVM personal_sign → durable wallet id
+  const r4 = await rawSignedLogin(d, {
+    wallet: "9Z9uZJXdnyTE7gkFfrepJ3BWDTNA3ZeteDkpgT6cxkve",
+    sig: "3f2Zc9v6WcJdEeYzY7bJqfQb4o8bDgYzq6NfW9r1cV3sHf5x3rP2rMbTq2gYVvXk1zGx4qJx3jSXbYq3xJcgqQd",
+    ts: Date.now(),
+  });
   d.close();
-  const e = await connect();
-  const r5 = await evmSignedLogin(e, { tamper: true }); // bad EVM signature → rejected
-  e.close();
   await sleep(300);
 
   const checks = {
-    verifiedIdentity: r1.ok && r1.id === "w:" + wallet,
-    rejectsBadSignature: !r2.ok,
-    rejectsStaleTimestamp: !r3.ok,
-    evmVerifiedIdentity: r4.ok && typeof r4.id === "string" && r4.id.toLowerCase() === ("w:" + evm.address).toLowerCase(),
-    evmRejectsBadSignature: !r5.ok,
+    evmVerifiedIdentity: r1.ok && typeof r1.id === "string" && r1.id.toLowerCase() === ("w:" + evm.address).toLowerCase(),
+    evmRejectsBadSignature: !r2.ok,
+    evmRejectsStaleTimestamp: !r3.ok,
+    rejectsNonEvmWallet: !r4.ok,
   };
   report(
-    "AUTH — signed wallet login (EVM personal_sign + Solana ed25519) → durable wallet id; bad/stale rejected",
-    { id: r1.id, badSig: r2.reason, stale: r3.reason },
+    "AUTH — signed wallet login (EVM personal_sign) → durable wallet id; bad/stale/non-EVM rejected",
+    { id: r1.id, badSig: r2.reason, stale: r3.reason, base58: r4.reason },
     Object.values(checks).every(Boolean),
     checks,
   );

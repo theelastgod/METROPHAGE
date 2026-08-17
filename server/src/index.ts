@@ -3,7 +3,7 @@ import { getAccount, quote, withdraw, confirmWithdraw, deposit, poolInfo, simSet
 import { verifyWalletLogin } from "./auth";
 import { loginMessage, PROTOCOL_VERSION, publicPlayerKey } from "../../src/net/protocol";
 import { simulatedSettlementLocked } from "./bridgePolicy";
-import { resolveSettlementFamily, settlementFamilyLabel } from "./settlementFamily";
+import { resolveSettlementFamily, settlementFamilyLabel, type SettlementFamily } from "./settlementFamily";
 import { launchFlagsFromEnv } from "../../src/game/featureFlags";
 import {
   doName,
@@ -155,7 +155,7 @@ function metroMint(env: Env): string | undefined {
   return m || undefined;
 }
 
-/** True for value-bearing mainnets (Robinhood 4663, Ethereum mainnet, Solana mainnet). */
+/** True for value-bearing mainnets (Robinhood 4663, Ethereum mainnet). */
 function rpcIsMainnet(rpc: string, chainId?: number): boolean {
   if (chainId === 4663) return true; // Robinhood Chain mainnet
   if (chainId === 46630) return false; // Robinhood Chain testnet
@@ -190,38 +190,20 @@ function defaultEvmChainId(env: Env): number {
   return 4663;
 }
 
-export type SettlementKind = "sim" | "evm" | "solana";
+export type SettlementKind = "sim" | "evm";
 
 /**
  * Choose the bridge settlement.
  * AUTHORITATIVE: Robinhood Chain ERC-20 (default METRO_SETTLEMENT=robinhood).
- * Dormant alternate: Solana SPL only when METRO_SETTLEMENT=solana.
+ * This build is EVM-only (Solana SPL lives on `settlement/solana`).
  * Mainnet requires METRO_MAINNET_ARMED=1. Missing mint/treasury → sim.
  */
-async function pickSettlement(env: Env): Promise<{ settlement: Settlement; kind: SettlementKind; family: string }> {
+async function pickSettlement(env: Env): Promise<{ settlement: Settlement; kind: SettlementKind; family: SettlementFamily }> {
   const mint = metroMint(env);
   const secret = env.METRO_TREASURY_SECRET?.trim();
   const family = resolveSettlementFamily(mint, env);
   if (!mint || !secret || family === "off") {
     return { settlement: simSettlement, kind: "sim", family: family === "off" ? "off" : family };
-  }
-
-  // Solana SPL — dormant alternate (METRO_SETTLEMENT=solana only).
-  if (family === "solana") {
-    const rpc = (env.METRO_RPC || "https://api.devnet.solana.com").trim();
-    if (rpcIsMainnet(rpc) && env.METRO_MAINNET_ARMED !== "1") {
-      return { settlement: simSettlement, kind: "sim", family: "solana" };
-    }
-    // Reject EVM-shaped secrets so a leftover 0x key never pretends to be Solana.
-    if (/^0x[0-9a-fA-F]{64}$/.test(secret) || /^[0-9a-fA-F]{64}$/.test(secret)) {
-      return { settlement: simSettlement, kind: "sim", family: "solana" };
-    }
-    const { makeSolanaSettlement } = await import("./solana");
-    return {
-      settlement: makeSolanaSettlement({ rpc, mint, treasurySecretB64: secret }),
-      kind: "solana",
-      family: "solana",
-    };
   }
 
   // Robinhood / EVM — authoritative live path.
@@ -248,7 +230,7 @@ async function pickSettlement(env: Env): Promise<{ settlement: Settlement; kind:
   return { settlement: simSettlement, kind: "sim", family: "off" };
 }
 
-/** EVM addresses compare case-insensitively; Solana base58 is case-sensitive. */
+/** EVM addresses compare case-insensitively; anything else compares verbatim. */
 function walletsEqual(a: string, b: string): boolean {
   const x = (a || "").trim();
   const y = (b || "").trim();
@@ -263,7 +245,7 @@ function walletsEqual(a: string, b: string): boolean {
 const BRIDGE_SIG_FRESH_MS = 120_000;
 
 /** Require a wallet signature that proves `player` is the wallet owner (w:<addr>).
- *  EVM uses personal_sign; Solana uses ed25519 SIWS.
+ *  EVM personal_sign.
  *  Freshness matches login (±2 min) — was 10 min for EVM, which widened replay windows. */
 async function requireWalletPlayer(
   b: { player?: string; wallet?: string; sig?: string; ts?: number },
@@ -279,7 +261,7 @@ async function requireWalletPlayer(
   if (Math.abs(Date.now() - ts) > BRIDGE_SIG_FRESH_MS) {
     return { ok: false, reason: "wallet sign-in required — stale timestamp" };
   }
-  // Prefer unified verifier (EVM + Solana, 2 min freshness). Fall back to EVM helper for
+  // Prefer unified verifier (2 min freshness). Fall back to EVM helper for
   // settlement-kind edge cases that already signed the same login message.
   const id = verifyWalletLogin({ wallet, sig, ts });
   if (id) {
@@ -402,7 +384,7 @@ async function handlePlayerRetire(req: Request, env: Env): Promise<Response> {
   }
 }
 
-/** Bind a Solana wallet to an existing guest runner (permanent until NEW RUNNER). */
+/** Bind a wallet to an existing guest runner (permanent until NEW RUNNER). */
 async function handlePlayerLinkWallet(req: Request, env: Env): Promise<Response> {
   try {
     const b = (await req.json()) as {
@@ -548,57 +530,25 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
       info.treasuryConfigured = hasTreasury;
       info.mainnetArmed = armed;
       info.rpc = rpc || null;
-      const force = (env.METRO_SETTLEMENT || "robinhood").toLowerCase().trim();
-      const wantRobinhood =
-        family === "robinhood" ||
-        force === "robinhood" ||
-        force === "rh" ||
-        force === "evm" ||
-        force === "" ||
-        (!force.includes("sol") && force !== "auto");
-      const cid = wantRobinhood || family === "robinhood" ? defaultEvmChainId(env) : null;
+      const cid = defaultEvmChainId(env);
       info.family = family;
-      info.familyLabel = settlementFamilyLabel(family as "robinhood" | "solana" | "off");
+      info.familyLabel = settlementFamilyLabel(family);
       // Robinhood is authoritative even while awaiting mint (family=off).
-      info.chain =
-        family === "solana"
-          ? "solana"
-          : cid === 4663 || cid === 46630
-            ? "robinhood"
-            : wantRobinhood
-              ? "evm"
-              : "robinhood";
-      info.chainId = family === "solana" ? null : cid;
-      info.networkName =
-        family === "solana"
-          ? /mainnet/i.test(rpc)
-            ? "Solana Mainnet"
-            : "Solana Devnet"
-          : cid === 4663
-            ? "Robinhood Chain"
-            : "Robinhood Chain Testnet";
+      info.chain = cid === 4663 || cid === 46630 ? "robinhood" : "evm";
+      info.chainId = cid;
+      info.networkName = cid === 4663 ? "Robinhood Chain" : "Robinhood Chain Testnet";
       info.readyForCa = hasTreasury && !mint;
       info.liveBridge = live;
       info.settlement = kind;
       info.simLocked = simLocked;
       info.simAllowed = allowSim;
-      // Robinhood is authoritative; solana adapter remains loadable as alternate only.
-      info.dualPathReady = { robinhood: true, solana: false, solanaAlternate: true };
+      // Robinhood is the only settlement family compiled into this build.
+      info.dualPathReady = { robinhood: true };
       info.authoritativeChain = "robinhood";
-      info.note =
-        family === "solana"
-          ? "Solana SPL alternate — Phantom cash-outs when forced."
-          : "Robinhood Chain $METRO — MetaMask deposits; treasury pays gas on cash-outs when funded.";
-      info.getMetroHint =
-        family === "solana"
-          ? "Alternate SPL path — deposit via Phantom."
-          : "Get $METRO (ERC-20), Send via MetaMask to treasury, then Claim deposit.";
+      info.note = "Robinhood Chain $METRO — MetaMask deposits; treasury pays gas on cash-outs when funded.";
+      info.getMetroHint = "Get $METRO (ERC-20), Send via MetaMask to treasury, then Claim deposit.";
       if (hasTreasury) {
-        // Prefer EVM treasury when Robinhood is primary (or secret is clearly EVM).
-        if (
-          (wantRobinhood || family === "robinhood" || isEvmTreasurySecret(env.METRO_TREASURY_SECRET)) &&
-          isEvmTreasurySecret(env.METRO_TREASURY_SECRET)
-        ) {
+        if (isEvmTreasurySecret(env.METRO_TREASURY_SECRET)) {
           const { treasuryEvmAddress, treasuryHealth, robinhoodRpcs } = await import("./evm");
           info.treasury = treasuryEvmAddress(env.METRO_TREASURY_SECRET!);
           info.treasuryChain = "evm";
@@ -618,13 +568,11 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
             }
           }
         } else {
-          try {
-            const { treasuryPubkey } = await import("./solana");
-            info.treasury = treasuryPubkey(env.METRO_TREASURY_SECRET!);
-            info.treasuryChain = "solana";
-          } catch {
-            info.treasury = null;
-          }
+          // Secret is not an EVM private key (e.g. a base64 Solana keypair left over
+          // from the SPL build) — refuse to derive an address rather than guess.
+          info.treasury = null;
+          info.treasuryChain = "unsupported";
+          info.treasuryWarn = "METRO_TREASURY_SECRET is not an EVM private key — this build settles on Robinhood Chain only";
         }
       }
       if (!live) {
@@ -639,10 +587,7 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
           info.reason = "mainnet RPC set but METRO_MAINNET_ARMED is off — settlement stays sim";
           info.phaseHint = "mainnet_gated";
         } else if (!hasTreasury) {
-          info.reason =
-            family === "solana"
-              ? "awaiting METRO_TREASURY_SECRET (base64 Solana keypair)"
-              : "awaiting METRO_TREASURY_SECRET (EVM 0x private key)";
+          info.reason = "awaiting METRO_TREASURY_SECRET (EVM 0x private key)";
           info.phaseHint = "awaiting_treasury";
         }
       } else if ((info.poolMetro as number) <= 0) {
@@ -653,14 +598,6 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
       return json(info);
     }
     if (url.pathname === "/metro/status" && req.method === "GET") {
-      const force = (env.METRO_SETTLEMENT || "robinhood").toLowerCase().trim();
-      const wantRobinhood =
-        family === "robinhood" ||
-        force === "robinhood" ||
-        force === "rh" ||
-        force === "evm" ||
-        force === "" ||
-        (!force.includes("sol") && force !== "auto");
       const status: Record<string, unknown> = {
         ok: true,
         mintConfigured: !!mint,
@@ -671,31 +608,23 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
         authoritativeChain: "robinhood",
         simLocked,
         simAllowed: allowSim,
-        chain: family === "solana" ? "solana" : "robinhood",
-        chainId: family === "solana" ? null : defaultEvmChainId(env),
+        chain: "robinhood",
+        chainId: defaultEvmChainId(env),
         readyForCa: hasTreasury && !mint,
-        clusterHint: rpcIsMainnet(rpc, family === "solana" ? undefined : defaultEvmChainId(env))
+        clusterHint: rpcIsMainnet(rpc, defaultEvmChainId(env))
           ? "mainnet"
           : rpc
             ? "testnet/custom"
             : "unset",
       };
       if (hasTreasury) {
-        if (
-          (wantRobinhood || family === "robinhood" || isEvmTreasurySecret(env.METRO_TREASURY_SECRET)) &&
-          isEvmTreasurySecret(env.METRO_TREASURY_SECRET)
-        ) {
+        if (isEvmTreasurySecret(env.METRO_TREASURY_SECRET)) {
           const { treasuryEvmAddress } = await import("./evm");
           status.treasury = treasuryEvmAddress(env.METRO_TREASURY_SECRET!);
           status.treasuryChain = "evm";
         } else {
-          try {
-            const { treasuryPubkey } = await import("./solana");
-            status.treasury = treasuryPubkey(env.METRO_TREASURY_SECRET!);
-            status.treasuryChain = "solana";
-          } catch {
-            status.treasury = null;
-          }
+          status.treasury = null;
+          status.treasuryChain = "unsupported";
         }
       }
       return json(status);
@@ -1034,7 +963,7 @@ export default {
     if (url.pathname === "/identity" && req.method === "POST") return handleIdentity(req, env);
     // NEW RUNNER — deletes guest (device secret) or wallet runner (signed).
     if (url.pathname === "/player/retire" && req.method === "POST") return handlePlayerRetire(req, env);
-    // Bind Solana wallet → existing guest runner (locked until NEW RUNNER).
+    // Bind wallet → existing guest runner (locked until NEW RUNNER).
     if (url.pathname === "/player/link-wallet" && req.method === "POST") return handlePlayerLinkWallet(req, env);
 
     if (url.pathname.startsWith("/metro/")) return handleMetro(url, req, env);

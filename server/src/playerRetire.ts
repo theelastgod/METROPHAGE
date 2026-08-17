@@ -23,7 +23,7 @@ export async function retireGuestPlayer(
   const sec = (secret || "").trim().slice(0, 64);
   if (!id || id.startsWith("__")) return { ok: false, reason: "invalid callsign" };
   if (id.startsWith("w:")) {
-    return { ok: false, reason: "wallet runners require a Solana signature to retire — use NEW RUNNER while signed in" };
+    return { ok: false, reason: "wallet runners require a wallet signature to retire — use NEW RUNNER while signed in" };
   }
   if (!sec || sec.length < 8) return { ok: false, reason: "device key required" };
 

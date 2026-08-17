@@ -103,7 +103,7 @@ Four classes, each with a full server-validated kit:
 
 $METRO is a tradeable on-chain token bridged to server-authoritative `credits`.
 **Authoritative settlement: Robinhood Chain ERC-20** via MetaMask / WalletConnect.
-Solana SPL stays in the tree as a dormant alternate (`METRO_SETTLEMENT=solana`).
+This branch is EVM-only; the Solana SPL version lives on the `settlement/solana` branch (`docs/HANDOFF_DUAL_CHAIN.md`).
 
 - In-game currency is off-chain `credits`.
 - Sign-up: connect MetaMask, Phantom, or any WalletConnect wallet + one free

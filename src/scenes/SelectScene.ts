@@ -48,7 +48,7 @@ import {
   writeLocalRunner,
 } from "../systems/LocalRunner";
 import { ensureGuestDeviceSecret, readGuestDeviceSecret } from "../net/NetClient";
-import { metroApiBase, isEvmAddress } from "../economy/metro";
+import { metroApiBase } from "../economy/metro";
 import { prefersMobileUx } from "../systems/Mobile";
 import { playDeployTeaser } from "../ui/DeployTeaser";
 
@@ -57,7 +57,7 @@ type MenuPhase = "wallet" | "returning" | "create" | "guest_returning";
 /**
  * Title screen — full-bleed layout.
  * Guest multiplayer: callsign + device secret → full server save, no wallet.
- * Wallet: optional permanent Solana identity (Phantom); returning players skip customize.
+ * Wallet: optional permanent EVM identity (MetaMask / WalletConnect on Robinhood Chain); returning players skip customize.
  */
 export default class SelectScene extends Phaser.Scene {
   private hover = -1;
@@ -730,11 +730,14 @@ export default class SelectScene extends Phaser.Scene {
   private startNewGuestRunner() {
     const local = loadLocalRunner();
     const addr = connectedWallet();
-    const solLinked = !!(addr && !isEvmAddress(addr));
+    // A runner is wallet-linked when the connected wallet owns a locked character.
+    // (Previously keyed on "address is not 0x", which never fired for EVM wallets and
+    // sent wallet-locked runners down the guest device-secret retire path.)
+    const walletLinked = !!(addr && this.identity?.locked);
     const hasSave = !!(local?.callsign) || !!this.identity?.locked;
 
     // Nothing to lose — go straight to create.
-    if (!hasSave && !solLinked) {
+    if (!hasSave && !walletLinked) {
       void this.commitNewGuestRunner({ mode: "local_only" });
       return;
     }
@@ -749,7 +752,7 @@ export default class SelectScene extends Phaser.Scene {
     this.preview = undefined;
 
     const callsign = local?.callsign || this.identity?.name || "runner";
-    const body = solLinked
+    const body = walletLinked
       ? `⚠ WARNING — NEW RUNNER will permanently delete the runner locked to wallet ${this.shortWallet(addr!)} (“${callsign}”).\n\nThat address can then create a different character. This cannot be undone.`
       : `⚠ WARNING — you will permanently lose runner “${callsign}”.\n\nThe server will delete that guest save. Link a wallet first if you want permanent portable progress.`;
 
@@ -772,10 +775,10 @@ export default class SelectScene extends Phaser.Scene {
             else void this.refreshWalletState();
           },
         },
-        ...(!solLinked && walletAvailable()
+        ...(!walletLinked && walletAvailable()
           ? [
               {
-                label: "◈ LINK SOLANA FIRST",
+                label: "◈ LINK WALLET FIRST",
                 sub: "bind this runner to your wallet",
                 color: COLORS.neonGreen,
                 primary: true as const,
@@ -785,10 +788,10 @@ export default class SelectScene extends Phaser.Scene {
           : []),
         {
           label: "☠ DELETE & NEW RUNNER",
-          sub: solLinked ? "sign to free this wallet · then create" : `permanently delete ${callsign}`,
+          sub: walletLinked ? "sign to free this wallet · then create" : `permanently delete ${callsign}`,
           color: 0xff3b6b,
           primary: false,
-          fn: () => void this.commitNewGuestRunner({ mode: solLinked ? "wallet" : "guest" }),
+          fn: () => void this.commitNewGuestRunner({ mode: walletLinked ? "wallet" : "guest" }),
         },
       ]),
     });

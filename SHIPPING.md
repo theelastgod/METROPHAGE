@@ -102,7 +102,7 @@ Pending claims auto-refund after 10 minutes. Local accounting without chain:
 `npm run dev:sim` + `node scripts/smoke.mjs metro`. Ordinary `npm run dev` keeps
 simulated ledger mutations locked.
 
-Solana SPL is a **dormant alternate** only (`docs/METRO_CHAIN_CHOICE.md`) — not
+The Solana SPL version is a **separate branch** (`settlement/solana`, see `docs/HANDOFF_DUAL_CHAIN.md`) — not
 used for launch.
 
 ## 5. Entering the $METRO mint address (when the token is live)
@@ -110,7 +110,7 @@ used for launch.
 **Full ordered checklist:** `docs/BRIDGE_GO_LIVE.md` (devnet rehearsal → mainnet arm).
 
 **Authoritative path: Robinhood Chain ERC-20** (0x mint, MetaMask / WalletConnect).
-Solana SPL remains in code for optional restore via `METRO_SETTLEMENT=solana` —
+Solana SPL is not compiled into this branch (`METRO_SETTLEMENT=solana` here resolves to off) —
 see `docs/METRO_CHAIN_CHOICE.md`.
 
 | Network | RPC | Chain id |

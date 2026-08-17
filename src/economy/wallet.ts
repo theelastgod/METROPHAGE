@@ -1,15 +1,9 @@
-// METROPHAGE — wallet connector.
-// **Robinhood / EVM first** for identity + $METRO ERC-20 bridge.
-// Connects: injected browsers (MetaMask, Phantom, Rabby, …) + WalletConnect
-// (any mobile wallet) + native Phantom approval as a last-resort fallback.
-// Phantom / Solana remains available when settlement is forced to SPL.
+// METROPHAGE — wallet connector (EVM-only build).
+// **Robinhood / EVM** for identity + $METRO ERC-20 bridge.
+// Connects: injected browsers (MetaMask, Phantom-EVM, Rabby, …) + WalletConnect
+// (any mobile wallet). The Solana / Phantom-native path lives on the
+// `settlement/solana` branch and is not compiled here.
 
-import {
-  beginPhantomConnect,
-  handlePhantomRedirect,
-  phantomDeeplinkSession,
-  phantomDeeplinkUsable,
-} from "./phantomDeeplink";
 import {
   type RobinhoodCluster,
   robinhoodNetwork,
@@ -18,7 +12,6 @@ import {
 import {
   metroRobinhoodCluster,
   METRO_CLUSTER,
-  metroIsSolana,
   metroIsEvm,
   settlementForce,
 } from "./metro";
@@ -33,14 +26,6 @@ import {
   walletConnectEnabled,
   type EvmRequestProvider,
 } from "./walletConnect";
-import {
-  connectViaSolanaWalletModal,
-  disconnectSolanaWalletModal,
-  getActiveAppKitSolanaProvider,
-  mobileSolanaConnectRoute,
-  restoreSolanaWalletModalProvider,
-} from "./solanaWalletModal";
-
 interface EvmProvider extends EvmRequestProvider {
   isMetaMask?: boolean;
   isPhantom?: boolean;
@@ -49,40 +34,38 @@ interface EvmProvider extends EvmRequestProvider {
   providers?: EvmProvider[];
 }
 
-export interface SolanaProvider {
-  publicKey?: { toString(): string } | null;
-  isConnected?: boolean;
-  connect(opts?: { onlyIfTrusted?: boolean }): Promise<{ publicKey: { toString(): string } }>;
-  disconnect(): Promise<void>;
-  signMessage?(message: Uint8Array, encoding?: string): Promise<{ signature: Uint8Array }>;
-  signAndSendTransaction?(tx: unknown): Promise<{ signature: string }>;
-  signTransaction?(tx: unknown): Promise<{ serialize(): Uint8Array }>;
-}
-
 const ADDR_KEY = "mp_wallet_addr_v1";
 const CHAIN_KEY = "mp_wallet_chain_v1";
 const SOURCE_KEY = "mp_wallet_source_v1";
 
 let lastConnectedAddress: string | null = null;
-let lastChain: "evm" | "solana" | null = null;
+let lastChain: "evm" | null = null;
 /** How the EVM session was established — drives sign/deposit provider selection. */
-let lastSource: "injected" | "walletconnect" | "solana" | null = null;
+let lastSource: "injected" | "walletconnect" | null = null;
 
 try {
-  lastConnectedAddress = localStorage.getItem(ADDR_KEY);
+  const stored = localStorage.getItem(ADDR_KEY);
   const ch = localStorage.getItem(CHAIN_KEY);
-  lastChain = ch === "evm" || ch === "solana" ? ch : null;
   const src = localStorage.getItem(SOURCE_KEY);
-  lastSource =
-    src === "injected" || src === "walletconnect" || src === "solana" ? src : null;
+  // A base58 / non-EVM address left over from an SPL build cannot be used here —
+  // drop it so the player is offered a clean EVM connect instead of a dead session.
+  if (stored && /^0x[a-fA-F0-9]{40}$/.test(stored) && ch !== "solana" && src !== "solana") {
+    lastConnectedAddress = stored;
+    lastChain = ch === "evm" ? "evm" : null;
+    lastSource = src === "injected" || src === "walletconnect" ? src : null;
+  } else if (stored) {
+    localStorage.removeItem(ADDR_KEY);
+    localStorage.removeItem(CHAIN_KEY);
+    localStorage.removeItem(SOURCE_KEY);
+  }
 } catch {
   /* private mode */
 }
 
 function persistConnection(
   addr: string | null,
-  chain: "evm" | "solana" | null,
-  source: "injected" | "walletconnect" | "solana" | null = null,
+  chain: "evm" | null,
+  source: "injected" | "walletconnect" | null = null,
 ) {
   lastConnectedAddress = addr;
   lastChain = chain;
@@ -114,8 +97,8 @@ const WALLET_SESSION_REFRESH_MS = 7 * 24 * 60 * 60 * 1000;
 const memoryWalletSessions = new Map<string, string>();
 
 /**
- * Stable localStorage key for a wallet.
- * EVM: case-insensitive. Solana base58 is case-sensitive — never fold case.
+ * Stable localStorage key for a wallet. EVM addresses are case-insensitive.
+ * (Non-0x addresses keep their exact form so a stray key never collides.)
  */
 function sessionKeyFor(wallet: string): string | null {
   const w = (wallet || "").trim();
@@ -123,7 +106,6 @@ function sessionKeyFor(wallet: string): string | null {
   if (/^0x[a-fA-F0-9]{40}$/i.test(w)) {
     return "mp_wsession_" + w.toLowerCase();
   }
-  // Solana / other base58 — preserve case, strip only whitespace.
   return "mp_wsession_" + w.replace(/\s+/g, "");
 }
 
@@ -234,16 +216,6 @@ export function rotateWalletSessionSecret(wallet: string): string | undefined {
   return s;
 }
 
-/** Prefer Solana only when SPL is forced / mint is base58. Default launch path is EVM. */
-export function preferSolanaWallet(): boolean {
-  if (settlementForce() === "solana") return true;
-  if (settlementForce() === "robinhood") return false;
-  if (metroIsSolana) return true;
-  if (metroIsEvm) return false;
-  // No CA yet — Robinhood / EVM is the active launch path.
-  return false;
-}
-
 function getInjectedEvm(): EvmProvider | null {
   const w = window as unknown as {
     ethereum?: EvmProvider;
@@ -264,30 +236,16 @@ function getInjectedEvm(): EvmProvider | null {
   return eth;
 }
 
-function getSolana(): SolanaProvider | null {
-  const w = window as unknown as {
-    solana?: SolanaProvider;
-    phantom?: { solana?: SolanaProvider };
-    backpack?: { solana?: SolanaProvider };
-    solflare?: SolanaProvider;
-  };
-  return w.phantom?.solana ?? w.solana ?? w.backpack?.solana ?? w.solflare ?? getActiveAppKitSolanaProvider() ?? null;
-}
-
 /**
  * True when the user can start a wallet connect flow.
  * Injected extension/in-app browser, WalletConnect project id, or mobile deep-link.
  */
 export function walletAvailable(): boolean {
-  if (getInjectedEvm() || getSolana()) return true;
+  if (getInjectedEvm()) return true;
   if (walletConnectEnabled()) return true;
   // Mobile Safari / Chrome can use native wallet approval/deep-link flows.
   if (isLikelyMobile()) return true;
   return false;
-}
-
-export function solanaWalletAvailable(): boolean {
-  return !!getSolana();
 }
 
 export function evmWalletAvailable(): boolean {
@@ -299,34 +257,9 @@ export function walletConnectAvailable(): boolean {
   return walletConnectEnabled();
 }
 
-/** Prefer the chain that matches the active $METRO mint family. */
+/** The active EVM provider (injected or WalletConnect). */
 export function getInjectedProvider(): unknown {
-  if (preferSolanaWallet()) return getSolana() ?? getActiveEvmProvider();
-  return getActiveEvmProvider() ?? getSolana();
-}
-
-/** Always the Solana injector (Phantom etc.) — never MetaMask. */
-export function getSolanaProvider(): SolanaProvider | null {
-  return getSolana();
-}
-
-/**
- * Async provider getter for SIGNING/TRANSACTION boundaries (login signature, SPL
- * deposit, withdrawal claims). After a page reload the cached address restores
- * instantly but AppKit's in-memory signer does not — a sync getSolanaProvider()
- * then reports a phantom "connected" wallet with no provider and every bridge
- * action fails. Rehydration stays LAZY (only at these boundaries) so zone travel
- * never waits on AppKit.
- */
-export async function ensureSolanaProvider(): Promise<SolanaProvider | null> {
-  const existing = getSolana();
-  if (existing) return existing;
-  const addr = lastConnectedAddress;
-  if (addr && lastChain === "solana" && walletConnectEnabled()) {
-    await restoreSolanaWalletModalProvider(addr);
-    return getSolana();
-  }
-  return null;
+  return getActiveEvmProvider();
 }
 
 /**
@@ -352,11 +285,11 @@ export function connectedWallet(): string | null {
   return null;
 }
 
-export function connectedChain(): "evm" | "solana" | null {
+export function connectedChain(): "evm" | null {
   return lastChain;
 }
 
-export function connectedSource(): "injected" | "walletconnect" | "solana" | null {
+export function connectedSource(): "injected" | "walletconnect" | null {
   return lastSource;
 }
 
@@ -370,24 +303,8 @@ export async function restoreWalletSession(): Promise<string | null> {
   if (lastConnectedAddress) return lastConnectedAddress;
 
   // Injected wallets (MetaMask in-app browser) — usually fast.
-  if (preferSolanaWallet() || lastChain === "solana") {
-    const sol = getSolana();
-    if (sol) {
-      try {
-        const res = await sol.connect({ onlyIfTrusted: true });
-        const addr = res?.publicKey?.toString() ?? sol.publicKey?.toString() ?? null;
-        if (addr) {
-          persistConnection(addr, "solana", "solana");
-          return addr;
-        }
-      } catch {
-        /* not trusted yet */
-      }
-    }
-  }
-
   const eth = getInjectedEvm();
-  if (eth && (lastChain === "evm" || !preferSolanaWallet())) {
+  if (eth) {
     try {
       const accounts = (await eth.request({ method: "eth_accounts" })) as string[];
       const addr = accounts?.[0] ?? null;
@@ -401,19 +318,17 @@ export async function restoreWalletSession(): Promise<string | null> {
   }
 
   // WalletConnect last — dynamic import can be slow; never block first link.
-  if (lastSource === "walletconnect" || lastChain === "evm" || !preferSolanaWallet()) {
-    try {
-      const wcAddr = await Promise.race([
-        restoreWalletConnectSession(),
-        new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500)),
-      ]);
-      if (wcAddr) {
-        persistConnection(wcAddr, "evm", "walletconnect");
-        return wcAddr;
-      }
-    } catch {
-      /* ignore */
+  try {
+    const wcAddr = await Promise.race([
+      restoreWalletConnectSession(),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500)),
+    ]);
+    if (wcAddr) {
+      persistConnection(wcAddr, "evm", "walletconnect");
+      return wcAddr;
     }
+  } catch {
+    /* ignore */
   }
 
   return lastConnectedAddress;
@@ -467,45 +382,6 @@ export async function ensureRobinhoodNetwork(
       }
     }
     return { ok: false, reason: String(err?.message ?? e).slice(0, 120) };
-  }
-}
-
-async function connectSolana(): Promise<string | null> {
-  const sol = getSolana();
-  if (!sol) {
-    const mobile = isLikelyMobile();
-    const route = mobileSolanaConnectRoute(
-      mobile && walletConnectEnabled(),
-      mobile && phantomDeeplinkUsable(),
-    );
-    // AppKit is the normal mobile path: choose an installed Solana wallet, approve
-    // there, and return to this browser for the game. Cancellation is final for
-    // this click; it must not surprise-navigate the player into another app.
-    if (route === "wallet_picker") {
-      const address = await connectViaSolanaWalletModal();
-      if (address) persistConnection(address, "solana", "solana");
-      return address;
-    }
-    // If WalletConnect is not configured, Phantom's connect/sign protocol still
-    // round-trips approval through the native app without loading the game there.
-    if (route === "phantom_protocol") {
-      const dl = phantomDeeplinkSession();
-      if (dl) {
-        persistConnection(dl.wallet, "solana", "solana");
-        return dl.wallet;
-      }
-      beginPhantomConnect(); // page navigates to the Phantom app and back
-      return null;
-    }
-    return null;
-  }
-  try {
-    const res = await sol.connect({ onlyIfTrusted: true }).catch(() => sol.connect());
-    const addr = res.publicKey.toString();
-    persistConnection(addr, "solana", "solana");
-    return addr;
-  } catch {
-    return null;
   }
 }
 
@@ -589,108 +465,44 @@ async function connectEvm(): Promise<string | null> {
   return null;
 }
 
-/**
- * Connect a wallet. The live path is Phantom/Solana; the EVM branch remains only
- * for explicitly forced compatibility deployments.
- */
-export async function connectWallet(prefer?: "evm" | "solana"): Promise<string | null> {
-  const wantSol = prefer === "solana" || (prefer !== "evm" && preferSolanaWallet());
-  if (wantSol) {
-    return connectSolana();
-  }
-  const eth = await connectEvm();
-  if (eth) return eth;
-  return connectSolana();
+/** Connect an EVM wallet (injected → WalletConnect → MetaMask in-app browser). */
+export async function connectWallet(_prefer?: "evm"): Promise<string | null> {
+  return connectEvm();
 }
 
 export async function disconnectWallet(): Promise<void> {
   if (lastConnectedAddress) clearWalletSessionSecret(lastConnectedAddress);
   const wasWc = lastSource === "walletconnect";
   persistConnection(null, null, null);
-  try {
-    await getSolana()?.disconnect();
-  } catch {
-    /* ignore */
-  }
-  await disconnectSolanaWalletModal();
   if (wasWc) {
     await disconnectWalletConnect();
   }
 }
 
-const B58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-function base58Encode(bytes: Uint8Array): string {
-  let zeros = 0;
-  while (zeros < bytes.length && bytes[zeros] === 0) zeros++;
-  const digits: number[] = [];
-  for (let i = zeros; i < bytes.length; i++) {
-    let carry = bytes[i];
-    for (let j = 0; j < digits.length; j++) {
-      const x = digits[j] * 256 + carry;
-      digits[j] = x % 58;
-      carry = (x / 58) | 0;
-    }
-    while (carry > 0) {
-      digits.push(carry % 58);
-      carry = (carry / 58) | 0;
-    }
-  }
-  let str = "1".repeat(zeros);
-  for (let i = digits.length - 1; i >= 0; i--) str += B58_ALPHABET[digits[i]];
-  return str;
-}
-
 /**
- * Sign the online-login / bridge-auth message.
- * Solana → ed25519 base58. EVM → personal_sign (Robinhood when mint is EVM).
+ * Sign the online-login / bridge-auth message with personal_sign on the active
+ * EVM provider (switching to Robinhood first when the mint is EVM).
  */
 export async function signWalletLogin(
   message: string,
   address?: string,
 ): Promise<{ address: string; signature: string } | null> {
   const addr = address ?? lastConnectedAddress;
-  const isEvmAddr = !!(addr && /^0x/i.test(addr));
-
-  // Solana path first when address is base58 or we prefer Solana and address is not 0x.
-  if (!isEvmAddr) {
-    // Lazy AppKit rehydration lives in ensureSolanaProvider — shared with the
-    // SPL deposit/claim paths so no boundary sees address-without-provider.
-    const p = !isEvmAddr ? await ensureSolanaProvider() : getSolana();
-    const solAddr = addr ?? p?.publicKey?.toString() ?? lastConnectedAddress;
-    if (p?.signMessage && solAddr && !/^0x/i.test(solAddr)) {
-      const bytes = new TextEncoder().encode(message);
-      try {
-        let signature: Uint8Array;
-        try {
-          const res = await p.signMessage(bytes, "utf8");
-          signature = res.signature;
-        } catch {
-          const res = await p.signMessage(bytes);
-          signature = res.signature;
-        }
-        return { address: solAddr, signature: base58Encode(signature) };
-      } catch {
-        return null;
-      }
-    }
-  }
-
+  if (!addr || !/^0x/i.test(addr)) return null;
   const eth = getActiveEvmProvider();
-  if (eth && addr && isEvmAddr) {
-    try {
-      if (metroIsEvm || settlementForce() === "robinhood") {
-        await ensureRobinhoodNetwork();
-      }
-      const sig = (await eth.request({
-        method: "personal_sign",
-        params: [message, addr],
-      })) as string;
-      return { address: addr, signature: sig };
-    } catch {
-      return null;
+  if (!eth) return null;
+  try {
+    if (metroIsEvm || settlementForce() === "robinhood") {
+      await ensureRobinhoodNetwork();
     }
+    const sig = (await eth.request({
+      method: "personal_sign",
+      params: [message, addr],
+    })) as string;
+    return { address: addr, signature: sig };
+  } catch {
+    return null;
   }
-  return null;
 }
 
 export async function signOwnership(nonce: string): Promise<{ address: string; signature: string } | null> {
@@ -699,52 +511,24 @@ export async function signOwnership(nonce: string): Promise<{ address: string; s
 
 /** Human-facing label for UI (connect buttons, status). */
 export function walletUiLabel(): string {
-  if (preferSolanaWallet()) return "Phantom";
   if (lastSource === "walletconnect") return "WalletConnect";
   if (getInjectedEvm()?.isMetaMask) return "MetaMask";
   if (getInjectedEvm()?.isPhantom) return "Phantom";
   return "Wallet";
 }
 
-/**
- * Wallet names for sign-up copy, in the order players should try them.
- * Leads with the family that actually settles $METRO.
- */
+/** Wallet names for sign-up copy, in the order players should try them. */
 export function walletChoiceList(): string {
-  return preferSolanaWallet()
-    ? "Phantom · Solflare"
-    : "MetaMask · Phantom · any WalletConnect wallet";
+  return "MetaMask · Phantom · any WalletConnect wallet";
 }
 
 /** Prose form of the same list, for sentences rather than button subtitles. */
 export function walletChoiceProse(): string {
-  return preferSolanaWallet()
-    ? "Phantom or Solflare"
-    : "MetaMask, Phantom, or any WalletConnect wallet";
+  return "MetaMask, Phantom, or any WalletConnect wallet";
 }
 
 export function connectWalletLabel(): string {
-  if (preferSolanaWallet()) {
-    return walletConnectEnabled() && isLikelyMobile() ? "Connect Solana Wallet" : "Connect Phantom";
-  }
   if (walletConnectEnabled() || isLikelyMobile()) return "Connect Wallet";
   if (getInjectedEvm()?.isMetaMask) return "Connect MetaMask";
   return "Connect Wallet";
-}
-
-/** True when a browser-injected Solana provider exists (in-app browsers, extensions). */
-export function hasInjectedSolana(): boolean {
-  return !!getSolana();
-}
-
-// A Phantom deeplink return lands as a full page reload with `?phantom_action=…` —
-// consume it BEFORE any UI reads connection state, so the title screen simply shows
-// the wallet as connected when the player lands back from the Phantom app.
-if (typeof window !== "undefined") {
-  const back = handlePhantomRedirect();
-  if (back && back.kind !== "error") {
-    persistConnection(back.wallet, "solana", "solana");
-  } else if (back?.kind === "error") {
-    console.warn("[wallet] phantom deeplink:", back.detail);
-  }
 }

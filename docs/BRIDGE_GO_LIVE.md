@@ -95,14 +95,13 @@ Counsel only: `METRO_MAINNET_ARMED=1` + `VITE_METRO_MAINNET_ARMED=1`.
 
 ---
 
-## Dormant Solana alternate
+## Solana version (separate branch)
 
-Not the launch path. To restore SPL:
+Not the launch path. The SPL bridge lives on its own branch:
 
 ```sh
-node scripts/mainnet-prepare.mjs --replace          # no --evm → Solana keypair
-node scripts/mainnet-arm.mjs <base58_MINT> --solana
-# METRO_SETTLEMENT=solana + SPL secrets
+git checkout settlement/solana
+# then follow docs/BRIDGE_GO_LIVE.md on that branch
 ```
 
 See `docs/METRO_CHAIN_CHOICE.md`.

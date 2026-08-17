@@ -2,18 +2,18 @@
 //
 // The off-chain `credits` balance (server-authoritative, Phase 4) is the live in-game
 // currency. This bridge converts it to/from on-chain $METRO via a CUSTODIAL treasury:
-//   withdraw  credits -> $METRO  (debit credits; Solana treasury preferably pays SOL
-//                                 and broadcasts the payout; confirm finalizes on-chain)
+//   withdraw  credits -> $METRO  (debit credits; treasury pre-signs an ERC-20 payout the
+//                                 player broadcasts; confirm finalizes on-chain)
 //   deposit   $METRO  -> credits (verify an on-chain transfer into the treasury, grant credits)
 //
 // AUTHORITY: the server owns every balance and authorizes every settlement. The client
 // never mints, never reports a balance, and cannot double-spend — withdrawals debit
 // atomically (a conditional UPDATE) and deposits are claim-once (tx_sig is a PRIMARY
-// KEY). Settlement is a pluggable seam: Robinhood ERC-20 (primary), Solana SPL (alt),
-// or devnet-sim for headless smoke tests.
+// KEY). Settlement is a pluggable seam: Robinhood ERC-20 (evm.ts) or devnet-sim for
+// headless smoke tests. (This build is EVM-only; the SPL adapter lives on `settlement/solana`.)
 // Credits↔$METRO rates track EVM market USD (refreshed ~every 30m via metroPrice).
 //
-// Wallet proof required for live settlement (personal_sign / SIWS).
+// Wallet proof required for live settlement (personal_sign).
 
 import type { D1Database } from "@cloudflare/workers-types";
 import {
@@ -250,29 +250,9 @@ export async function poolInfo(db: D1Database, priceEnv?: BridgePriceEnv): Promi
   };
 }
 
-const BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-/** EVM address (preferred for ETH $METRO) or legacy Solana base58 pubkey. */
+/** EVM address (0x + 40 hex). This build settles on Robinhood Chain only. */
 export function isValidWallet(s: string): boolean {
-  const a = (s || "").trim();
-  if (/^0x[a-fA-F0-9]{40}$/.test(a)) return true;
-  if (!a || a.length < 32 || a.length > 44) return false;
-  const bytes: number[] = [0];
-  for (const ch of a) {
-    const v = BASE58.indexOf(ch);
-    if (v < 0) return false;
-    let carry = v;
-    for (let i = 0; i < bytes.length; i++) {
-      carry += bytes[i] * 58;
-      bytes[i] = carry & 0xff;
-      carry >>= 8;
-    }
-    while (carry > 0) {
-      bytes.push(carry & 0xff);
-      carry >>= 8;
-    }
-  }
-  for (let i = 0; i < a.length && a[i] === "1"; i++) bytes.push(0);
-  return bytes.length === 32;
+  return /^0x[a-fA-F0-9]{40}$/.test((s || "").trim());
 }
 
 export interface SettleResult {
@@ -282,8 +262,6 @@ export interface SettleResult {
   metro?: number; // verified on-chain amount (deposit)
   /**
    * Payout payload for the client:
-   *  - Solana preferred: `solana-sent:<sig>` (Worker already broadcast; treasury paid SOL)
-   *  - Solana fallback: base64 fully- or partially-signed tx
    *  - EVM: fully signed raw ERC-20 transfer hex
    *  - sim: `devnet-sim-claim:…`
    */
@@ -299,9 +277,10 @@ export interface SettleResult {
 }
 
 /**
- * `solana-sent:<sig>` marks a claim the Worker already broadcast. The bare signature is
- * the canonical identity — strip the marker before matching or storing a `tx_sig`, or the
- * same payout occupies two distinct spellings of the single-use guard.
+ * Canonicalize a submitted claim signature. `solana-sent:<sig>` was the SPL build's
+ * "Worker already broadcast" marker; it is still stripped here so a stale client (or a
+ * legacy row) can never store the same payout under two spellings of the single-use
+ * `tx_sig` guard.
  */
 export function stripClaimPrefix(raw: string | null | undefined): string {
   const s = (typeof raw === "string" ? raw : "").trim();
@@ -309,8 +288,7 @@ export function stripClaimPrefix(raw: string | null | undefined): string {
 }
 
 export interface Settlement {
-  /** Build a payout claim the client can broadcast (or that the server already sent).
-   *  - Solana: treasury-paid when SOL available; else player fee-payer partial sign
+  /** Build a payout claim the client can broadcast.
    *  - EVM: fully signed raw ERC-20 transfer (treasury → wallet) */
   buildClaim(wallet: string, metro: number): Promise<SettleResult>;
   /** Verify a submitted claim landed on-chain: treasury paid exactly `metro` to `wallet`. */
@@ -319,13 +297,13 @@ export interface Settlement {
   verifyDeposit(txSig: string, wallet: string, claimedMetro: number): Promise<SettleResult>;
   /**
    * Invalidate a pre-signed EVM claim by consuming its treasury nonce (0-value self-tx).
-   * Optional — sim/Solana leave this undefined (Solana claims expire via blockhash).
+   * Optional — sim leaves this undefined.
    */
   invalidateNonce?(nonce: number): Promise<void>;
 }
 
 /** Devnet-sim settlement: simulates the chain so the off-chain accounting is fully
- *  testable headlessly. Real settlement (evm.ts / solana.ts) swaps in when configured. */
+ *  testable headlessly. Real settlement (evm.ts) swaps in when configured. */
 export const simSettlement: Settlement = {
   async buildClaim() {
     return { ok: true, claimTx: "devnet-sim-claim:" + crypto.randomUUID() };
@@ -335,7 +313,7 @@ export const simSettlement: Settlement = {
     return { ok: true, ref: txSig };
   },
   async verifyDeposit(_txSig, _wallet, claimedMetro) {
-    return { ok: true, metro: claimedMetro }; // trust the amount in sim; solana.ts reads it from chain
+    return { ok: true, metro: claimedMetro }; // trust the amount in sim; evm.ts reads it from chain
   },
 };
 
@@ -575,12 +553,9 @@ export async function withdraw(
       return { ok: false, reason: "cash-out ledger unavailable — credits refunded, please retry" };
     }
   } else if (settle.claimTxHash) {
-    // Solana has no nonce to burn: buildClaim already signed — and usually broadcast —
-    // the transfer, so the payout can land whether or not the player ever confirms.
-    // The signature is the only thing that lets reclaimExpired tell a landed payout from
-    // an abandoned claim, so it must be recorded outside the nonce branch above. While it
-    // lived inside that branch every Solana cash-out stayed {nonce:NULL, hash:NULL}, and
-    // the TTL sweep refunded credits for tokens the treasury had already delivered.
+    // A settlement that pre-signs (or already broadcast) without a nonce still needs the
+    // hash recorded: it is the only thing that lets reclaimExpired tell a landed payout
+    // from an abandoned claim. Kept outside the nonce branch above on purpose.
     try {
       await db
         .prepare("UPDATE metro_withdrawals SET claim_tx_hash = ? WHERE id = ?")
@@ -678,8 +653,8 @@ export async function confirmWithdraw(
 }
 
 /** Refund pending claims older than the TTL.
- *  Solana claims die with blockhash; EVM pre-signed raw txs do NOT — pass settlement
- *  so we can burn the treasury nonce and invalidate the abandoned claimTx. */
+ *  EVM pre-signed raw txs do NOT expire on their own — pass settlement so we can burn
+ *  the treasury nonce and invalidate the abandoned claimTx. */
 export async function reclaimExpired(db: D1Database, settlement?: Settlement): Promise<number> {
   const cutoff = Date.now() - BRIDGE.claimTtlMs;
   type Row = {

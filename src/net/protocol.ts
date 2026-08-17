@@ -53,7 +53,7 @@ export interface PlayerLook {
 }
 
 /**
- * The exact message a client signs with MetaMask (personal_sign) or a Solana wallet
+ * The exact message a client signs with MetaMask / WalletConnect (personal_sign)
  * at login / identity. Client and server must use the same string; server checks ts freshness.
  */
 export function loginMessage(wallet: string, ts: number): string {

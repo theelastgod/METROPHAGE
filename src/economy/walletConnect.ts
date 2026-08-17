@@ -230,9 +230,8 @@ export function getActiveWalletConnectProvider(): EvmRequestProvider | null {
 }
 
 /**
- * EVM-only mobile browser fallback when no injected provider is present.
- * Solana uses AppKit or Phantom's approval protocol and never loads the game in
- * a wallet's embedded browser.
+ * Mobile browser fallback when no injected provider is present: open the dapp
+ * inside the wallet's in-app browser.
  */
 export function walletBrowserUrl(
   wallet: "metamask" | "coinbase" | "trust",

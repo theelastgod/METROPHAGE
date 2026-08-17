@@ -37,14 +37,8 @@
     "gen:music:local": "node tools/gen-music-local.mjs"
   },
   "dependencies": {
-    "@reown/appkit": "^1.8.22",
-    "@reown/appkit-adapter-solana": "^1.8.22",
-    "@solana/spl-token": "^0.4.15",
-    "@solana/web3.js": "^1.98.4",
     "@walletconnect/ethereum-provider": "^2.23.10",
-    "bs58": "^6.0.0",
-    "phaser": "^3.90.0",
-    "tweetnacl": "^1.0.3"
+    "phaser": "^3.90.0"
   },
   "devDependencies": {
     "playwright": "^1.49.0",
@@ -53,5 +47,8 @@
     "vite": "^5.4.10",
     "vite-plugin-node-polyfills": "^0.28.0",
     "vitest": "^2.1.8"
+  },
+  "overrides": {
+    "axios": "^1.19.0"
   }
 }

@@ -2,7 +2,7 @@
 // Public mainnet launched 2026-07-01; testnet since 2026-02.
 // Docs: https://docs.robinhood.com/chain/connecting/
 //
-// Dormant compatibility adapter only. Solana SPL + Phantom is the live path.
+// AUTHORITATIVE settlement + wallet identity chain for this build.
 // Fully EVM-compatible — same personal_sign / ERC-20 paths as Ethereum, different chainId.
 
 export interface RobinhoodNetworkDef {

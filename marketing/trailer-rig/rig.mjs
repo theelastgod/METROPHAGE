@@ -1,6 +1,6 @@
 // METROPHAGE capture rig: headed Chromium + injected Solana wallet (Node signs).
 import { chromium } from "/Users/wendellphillips/METROPHAGE/node_modules/playwright/index.mjs";
-import { ed25519 } from "/Users/wendellphillips/METROPHAGE/server/node_modules/@noble/curves/ed25519.js";
+import { ed25519 } from "/Users/wendellphillips/METROPHAGE/node_modules/@noble/curves/ed25519.js";
 import fs from "node:fs";
 
 const SCRATCH = "/Users/wendellphillips/METROPHAGE/marketing/trailer-rig";

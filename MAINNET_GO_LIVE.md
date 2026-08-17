@@ -4,8 +4,8 @@
 
 **Authoritative path: Robinhood Chain ERC-20** (MetaMask / WalletConnect, 0x mint,
 chain id 4663).
-Solana SPL adapters remain in the repo as a **dormant alternate** only
-(`METRO_SETTLEMENT=solana` + no-flag prepare scripts). Do not use them for launch.
+The Solana SPL version is a **separate branch** (`settlement/solana`) and is not
+compiled into this build. Do not use it for launch.
 
 ## Invariants
 
@@ -76,10 +76,9 @@ npx wrangler deploy
 
 Rebuild client with `VITE_METRO_MAINNET_ARMED=1`.
 
-## Dormant Solana alternate (not launch)
+## Solana version (separate branch, not launch)
 
 ```sh
-node scripts/mainnet-prepare.mjs --replace          # no --evm → Solana keypair
-node scripts/mainnet-arm.mjs <base58_MINT> --solana
-# then set METRO_SETTLEMENT=solana + SPL secrets
+git checkout settlement/solana
+# then follow MAINNET_GO_LIVE.md on that branch (SPL keypair + base58 mint)
 ```
