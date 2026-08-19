@@ -8262,9 +8262,12 @@ export class WorldDO {
 
   /** First-time player row (absolute zeros). */
   private async insertNewPlayer(id: string, name: string, x: number, y: number): Promise<void> {
+    // Smoke/probe identities announce themselves with the reserved "smk_" prefix so
+    // launch metrics (/funnel, deploy fingerprint) can exclude them from day one.
+    const isBot = name.startsWith("smk_") ? 1 : 0;
     try {
       await this.env.DB.prepare(
-        "INSERT OR IGNORE INTO players (id, name, x, y, zone, credits, xp, cores, metro, campaign, tutorial_done, tutorial_step, tutorial_mode, inventory, stash, look, equipped, updated_at, session_zone, session_at) VALUES (?,?,?,?,?,0,0,0,0,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT OR IGNORE INTO players (id, name, x, y, zone, credits, xp, cores, metro, campaign, tutorial_done, tutorial_step, tutorial_mode, inventory, stash, look, equipped, updated_at, session_zone, session_at, is_bot) VALUES (?,?,?,?,?,0,0,0,0,?,?,?,?,?,?,?,?,?,?,?,?)",
       )
         .bind(
           id,
@@ -8283,6 +8286,7 @@ export class WorldDO {
           Date.now(),
           this.doKey(),
           Date.now(),
+          isBot,
         )
         .run();
     } catch {

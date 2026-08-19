@@ -126,7 +126,7 @@ async function move() {
   const ws = await connect();
   // fresh identity every run: persisted bots drift down-left each pass (the tour is a
   // staircase) until they park in the SW corner where the tour can only push walls
-  const w = await login(ws, "mv" + String(Date.now() % 1_000_000));
+  const w = await login(ws, "smk_mv" + String(Date.now() % 1_000_000));
   const store = { x: w.x, y: w.y, ack: 0, tick: 0 };
   trackState(ws, w.id, store);
   const startX = w.x;
@@ -218,7 +218,7 @@ async function fish() {
   // porter is the DOCKS (d3) regional anchor — presence is validated per zone, so
   // fish only from the district the porter actually stands in.
   const ws = await connect(WS_URL + "?zone=d3");
-  const w = await login(ws, "fs" + String(Date.now() % 1_000_000));
+  const w = await login(ws, "smk_fs" + String(Date.now() % 1_000_000));
   const store = { x: w.x, y: w.y, credits: 0, cores: 0, sys: [] };
   trackState(ws, w.id, store);
   ws.addEventListener("message", (ev) => {
@@ -314,7 +314,7 @@ async function rest() {
 
 async function combat() {
   const ws = await connect();
-  const w = await login(ws, "ft" + String(Date.now() % 1_000_000)); // fresh identity — no cross-run coupling
+  const w = await login(ws, "smk_ft" + String(Date.now() % 1_000_000)); // fresh identity — no cross-run coupling
   const store = { x: w.x, y: w.y, ack: 0, hp: 100, credits: 0, enemies: [], shots: [] };
   trackState(ws, w.id, store);
   await sleep(250);
@@ -630,7 +630,7 @@ async function boss() {
   const ws = await connect();
   // fresh identity every run: a persisted hunter parks at the boss corner, which flips
   // the trek target to the OPPOSITE corner next run — it walks away from the boss
-  const w = await login(ws, "bh" + String(Date.now() % 1_000_000));
+  const w = await login(ws, "smk_bh" + String(Date.now() % 1_000_000));
   // REAL world dims from the welcome — districts scaled 3× (3840×2880) long after this
   // smoke's original hardcoded 1280×960, which sent the trek to the middle of the map
   const WW = w.world?.w ?? 3840;
@@ -1826,7 +1826,7 @@ async function subway() {
   // PvP off (indoor). Verify it routes as combat (enemies + boss) and combat is live.
   const ws = await connect(WS_URL + (WS_URL.includes("?") ? "&" : "?") + "zone=subway");
   const store = { x: 0, y: 0, enemies: [], boss: null, hp: 100, credits: 0 };
-  const w = await login(ws, "delver_" + Math.random().toString(36).slice(2, 6));
+  const w = await login(ws, "smk_dlv" + Math.random().toString(36).slice(2, 6));
   store.x = w.x;
   store.y = w.y;
   trackState(ws, w.id, store);
@@ -2448,7 +2448,7 @@ async function load() {
   const MAX_TICK_AVG_MS = setting("LOAD_MAX_TICK_AVG_MS", 50, { min: 1, max: 1000 });
   const suffix = String(Date.now() % 1_000_000);
   const bots = Array.from({ length: N }, (_, i) => ({
-    name: "ld" + suffix + "_" + i,
+    name: "smk_ld" + suffix + "_" + i,
     faction: i % 4,
     id: null,
     ws: null,
@@ -3419,7 +3419,7 @@ async function death() {
 
 /** Stash deposit/withdraw attempt in hub — assert hydration + no session brick. */
 async function stash() {
-  const name = "st" + String(Date.now() % 1_000_000);
+  const name = "smk_st" + String(Date.now() % 1_000_000);
   const base = (process.env.WS_URL || "ws://127.0.0.1:8787/ws").replace(/\?.*$/, "");
   const hub = await connect(base + "?zone=safe");
   const store = { inventory: [], stash: [], sys: [] };
@@ -3752,7 +3752,7 @@ async function contacts() {
 
 /** Dual connect: first session replaced cleanly; credits survive. */
 async function reconnect() {
-  const name = "rc" + String(Date.now() % 1_000_000);
+  const name = "smk_rc" + String(Date.now() % 1_000_000);
   const base = (process.env.WS_URL || "ws://127.0.0.1:8787/ws").replace(/\?.*$/, "");
   const a = await connect(base + "?zone=safe");
   const sa = { credits: 0, closed: false, id: "" };

@@ -111,19 +111,29 @@ function assertProdD1Binding() {
 /** Snapshot durable progression fingerprint from remote D1. */
 function progressFingerprint() {
   const [bin, ...pre] = wranglerBin();
-  const sql =
+  // Real players only: smoke/probe rows (is_bot=1, migration 0040) churn on every
+  // scheduled prod-smoke and would make the wipe-guard fingerprint noisy.
+  const fpSql = (botClause) =>
     "SELECT " +
-    "(SELECT COUNT(*) FROM players) AS players, " +
-    "(SELECT COALESCE(SUM(credits),0) FROM players) AS credits_sum, " +
-    "(SELECT COALESCE(SUM(xp),0) FROM players) AS xp_sum, " +
-    "(SELECT COALESCE(SUM(tutorial_done),0) FROM players) AS tutorials, " +
+    `(SELECT COUNT(*) FROM players ${botClause}) AS players, ` +
+    `(SELECT COALESCE(SUM(credits),0) FROM players ${botClause}) AS credits_sum, ` +
+    `(SELECT COALESCE(SUM(xp),0) FROM players ${botClause}) AS xp_sum, ` +
+    `(SELECT COALESCE(SUM(tutorial_done),0) FROM players ${botClause}) AS tutorials, ` +
     "(SELECT COUNT(*) FROM metro_deposits) AS deposits, " +
     "(SELECT COUNT(*) FROM metro_withdrawals) AS withdrawals";
-  const r = spawnSync(
+  let r = spawnSync(
     bin,
-    [...pre, "d1", "execute", PROD_D1_NAME, "--remote", "--json", "--command", sql],
+    [...pre, "d1", "execute", PROD_D1_NAME, "--remote", "--json", "--command", fpSql("WHERE is_bot = 0")],
     { cwd: serverDir, encoding: "utf8" },
   );
+  if (r.status !== 0 && /no such column: is_bot/i.test((r.stdout || "") + (r.stderr || ""))) {
+    // Pre-0040 database — fall back to the all-rows fingerprint.
+    r = spawnSync(
+      bin,
+      [...pre, "d1", "execute", PROD_D1_NAME, "--remote", "--json", "--command", fpSql("")],
+      { cwd: serverDir, encoding: "utf8" },
+    );
+  }
   if (r.status !== 0) {
     console.error(r.stdout || r.stderr);
     die("failed to read remote D1 fingerprint — aborting deploy");

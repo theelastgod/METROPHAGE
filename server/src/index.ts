@@ -755,6 +755,36 @@ export default {
       });
     }
 
+    // Launch-readiness funnel: REAL players only (is_bot=0 — smoke/probe accounts
+    // are quarantined by migration 0040 + the reserved "smk_" name prefix).
+    // No new writes; every stage is derived from columns the game already persists.
+    if (url.pathname === "/funnel" && req.method === "GET") {
+      try {
+        const now = Date.now();
+        const row = await env.DB.prepare(
+          `SELECT
+             COUNT(*) AS total,
+             SUM(CASE WHEN id LIKE 'w:%' THEN 1 ELSE 0 END) AS wallet_linked,
+             SUM(CASE WHEN tutorial_done = 1 THEN 1 ELSE 0 END) AS tutorial_done,
+             SUM(CASE WHEN xp > 0 THEN 1 ELSE 0 END) AS first_xp,
+             SUM(CASE WHEN xp >= 500 THEN 1 ELSE 0 END) AS xp_500,
+             SUM(CASE WHEN xp >= 2000 THEN 1 ELSE 0 END) AS xp_2000,
+             SUM(CASE WHEN zone NOT IN ('safe','tutorial') THEN 1 ELSE 0 END) AS left_hub,
+             SUM(CASE WHEN credits >= 1000 THEN 1 ELSE 0 END) AS credits_1k,
+             SUM(CASE WHEN updated_at > ? THEN 1 ELSE 0 END) AS active_1d,
+             SUM(CASE WHEN updated_at > ? THEN 1 ELSE 0 END) AS active_7d,
+             SUM(CASE WHEN updated_at > ? THEN 1 ELSE 0 END) AS active_30d
+           FROM players WHERE is_bot = 0`,
+        )
+          .bind(now - 86_400_000, now - 7 * 86_400_000, now - 30 * 86_400_000)
+          .first<Record<string, number | null>>();
+        const bots = await env.DB.prepare("SELECT COUNT(*) AS n FROM players WHERE is_bot = 1").first<{ n: number }>();
+        return json({ ok: true, ts: now, players: row, quarantinedBots: bots?.n ?? 0 });
+      } catch (e) {
+        // Pre-migration (no is_bot yet) — report honestly instead of guessing.
+        return json({ ok: false, reason: "funnel unavailable — run migration 0040_bot_quarantine", detail: String((e as Error)?.message ?? e).slice(0, 120) }, 503);
+      }
+    }
     if (url.pathname === "/health") {
       // Sample hot zones + primary overflow shards in parallel.
       const sampleTargets: Array<{ zone: string; inst: number }> = [
