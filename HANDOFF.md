@@ -4,6 +4,25 @@ You are picking up work on **METROPHAGE**, a top-down neon-noir cyberpunk action
 in the browser. Phaser 3 + Vite + TypeScript client; **server-authoritative** world on
 Cloudflare (Worker + per-zone Durable Objects at 20Hz + D1).
 
+## 2026-08-19 — launch-metrics readiness (token-first plan)
+
+Strategy note from the operator: **players arrive when the $METRO CA goes live** —
+work optimizes for launch-day readiness, not pre-launch acquisition.
+
+- **Bot quarantine** (D1 0040): `players.is_bot`; 158 prod rows (scheduled prod-smoke,
+  world-tour, fixtures) quarantined, 18 real remain. All generated smoke identities now
+  use the reserved `smk_` name prefix and are marked at creation.
+- **GET /funnel**: real-player acquisition funnel from existing columns (wallet-linked,
+  tutorial_done, first_xp, xp tiers, left_hub, active 1/7/30d) + quarantinedBots. This is
+  the launch-day drop-off dashboard.
+- Deploy fingerprint counts real players only (stops churn from scheduled smokes).
+- `enemies.ts` dead `credits` field removed (HANDOFF §5 item) — server ENEMY_ARCHES rules.
+- **Load gate finally run against prod (Workers Free)**: 40 bots/20s — all connected,
+  0 drops, ≥16 Hz snapshots, reconnect p95 1.4 s; at 63 concurrent (double-run overlap)
+  the overflow shard d0#1 engaged correctly; connects time out near the 40-soft-cap
+  boundary rather than degrading the running instance. Free plan holds a first wave;
+  restore Workers Paid before pushing past ~2 full shards.
+
 ## 2026-08-15 — Solana stack REMOVED from this branch; two settlement branches
 
 - The dual-chain tree is split into two versions (`docs/HANDOFF_DUAL_CHAIN.md`):
