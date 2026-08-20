@@ -429,10 +429,9 @@ This tier list is the *existing* world. **§6b supersedes it with the full 600-c
 
 ## 5. Resolved hardening notes / worth monitoring
 
-- **`npm run smoke:panels` is RED and was red before any of this work** (verified by stashing
-  everything and running on a clean tree — identical failure). `page.goto` times out waiting
-  for `domcontentloaded` on a heavy boot. `tools/art-probe.mjs` shows `waitUntil: "commit"`
-  works. This means `npm run verify:ship` cannot pass as-is.
+- ~~`npm run smoke:panels` is RED~~ **Stale — resolved 2026-07-16** (boot-wait rewritten to
+  `__bootDone` + settled Select scene; see the 07-16 entries above). `verify:ship` passes
+  end to end and gated the 2026-08-18/19 deploys, panel smoke green desktop + mobile.
 - **Resolved: boss-bounty faucet.** Every boss job now has a durable per-player 24-hour
   completion gate (`bounty_completions`). The conditional D1 claim must succeed before the
   reward is granted, so reconnects, zone races, and failed writes cannot duplicate payouts.

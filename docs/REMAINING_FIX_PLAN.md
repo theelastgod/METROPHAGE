@@ -91,7 +91,16 @@ net sinks — no exploit) and absolute xp/cores writes (latent, no external writ
   reaches its final act — offer text and rewards phase-aware on both client
   and server.
 
-## Status (current)
+## 2026-08-19 — launch-metrics pass (token-first)
+
+Strategy: players arrive when the $METRO CA goes live; readiness > acquisition.
+Bot quarantine (D1 0040 `players.is_bot` + reserved `smk_` smoke prefix), real-player
+`GET /funnel`, bot-free deploy fingerprint, dead `EnemyTierDef.credits` removed, and the
+**prod load gate finally run: PASS** (40 bots/20 s on Workers Free — 0 drops, ≥19 Hz,
+sharding engaged). This tree is EVM-only (`docs/HANDOFF_DUAL_CHAIN.md`); the Solana
+rows in the tables below are historical.
+
+## Status (historical — pre branch-split)
 
 | Area | Status |
 |------|--------|
