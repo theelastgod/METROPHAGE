@@ -37,8 +37,9 @@ panel is reachable without a keyboard. The whole game is designed to run on a ph
 
 - **Guest** — pick a callsign and play immediately. Your progress is bound to your
   device so nobody else can log in as you.
-- **Wallet** — connect **Phantom** on Solana and sign a **free message** (no gas). This
-  gives you a durable identity that survives across devices and unlocks the
+- **Wallet** — connect **MetaMask, Phantom, or any WalletConnect wallet** on
+  **Robinhood Chain** and sign a **free message** (no gas). This gives you a
+  durable identity that survives across devices and unlocks the
   [$METRO bridge](economy.md).
 
 ## Your first hour
