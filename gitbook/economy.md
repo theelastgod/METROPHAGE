@@ -7,7 +7,7 @@ METROPHAGE has two currencies: off-chain **credits (₵)** that you earn and spe
 ## Two currencies
 
 * **Credits (₵)** — off-chain, **server-authoritative** in-game currency. You earn them by playing and spend them at the forge, market, vendors, and Crucible. **Playing is the only faucet.**
-* **$METRO (◈)** — an on-chain **ERC-20** token on **Robinhood Chain** (an Ethereum L2) with real, tradeable value. Wallet is **MetaMask, Phantom, or any WalletConnect wallet**, and sign-up is a free message signature (no gas).
+* **$METRO (◈)** — an on-chain **ERC-20** token on **Robinhood Chain** (an Ethereum L2) with real, tradeable value. Wallet is **MetaMask, Phantom, or any WalletConnect wallet**, and sign-up is a free message signature (no gas). See [Robinhood Chain](robinhood.md) for network details.
 
 ## The bridge, in one picture
 
@@ -25,7 +25,7 @@ The **50 ₵ spread** between deposit and withdraw stays in the pool. The pool *
 | Deposit rate     | **1 ◈ → 100 ₵**           |
 | Withdraw rate    | **150 ₵ → 1 ◈**           |
 | Minimum cash-out | **300 ₵** (2 ◈)           |
-| Settlement       | Robinhood Chain (ERC-20)  |
+| Settlement       | [Robinhood Chain](robinhood.md) (ERC-20) |
 
 ## How claims stay safe
 
