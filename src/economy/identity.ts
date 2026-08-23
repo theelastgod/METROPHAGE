@@ -12,6 +12,7 @@ import {
   beginPhantomSign,
   phantomDeeplinkSession,
   phantomDeeplinkUsable,
+  phantomSignPending,
   takePhantomProof,
 } from "./phantomDeeplink";
 import { isLikelyMobile } from "./walletConnect";
@@ -39,7 +40,14 @@ export interface WalletIdentity {
   locked: boolean;
 }
 
-export type IdentityError = "no_wallet" | "connect_failed" | "sign_failed" | "server_unreachable" | "auth_failed" | "unknown";
+export type IdentityError =
+  | "no_wallet"
+  | "connect_failed"
+  | "sign_failed"
+  | "pending_phantom"
+  | "server_unreachable"
+  | "auth_failed"
+  | "unknown";
 
 /** Sign a fresh wallet proof for HTTP identity checks (wallet must already be connected). */
 export async function signIdentityProof(
@@ -51,7 +59,7 @@ export async function signIdentityProof(
   if (landed) return landed;
   const ts = Date.now();
   if (phantomSignRoundTrip(addr)) {
-    beginPhantomSign(loginMessage(addr, ts), { kind: "login", ts, wallet: addr });
+    if (!beginPhantomSign(loginMessage(addr, ts), { kind: "login", ts, wallet: addr })) return null;
     return null;
   }
   const signed = await signWalletLogin(loginMessage(addr, ts), addr);
@@ -76,7 +84,7 @@ export async function signRetireProof(
   if (landed) return landed;
   const ts = Date.now();
   if (phantomSignRoundTrip(addr)) {
-    beginPhantomSign(retireMessage(addr, ts), { kind: "retire", ts, wallet: addr });
+    if (!beginPhantomSign(retireMessage(addr, ts), { kind: "retire", ts, wallet: addr })) return null;
     return null;
   }
   const signed = await signWalletLogin(retireMessage(addr, ts), addr);
@@ -168,7 +176,10 @@ export async function walletSignUp(): Promise<
     };
   }
   const proof = await signIdentityProof(addr);
-  if (!proof) return { ok: false, error: "sign_failed", detail: "Wallet signature cancelled" };
+  if (!proof) {
+    if (phantomSignPending()) return { ok: false, error: "pending_phantom", detail: "Approve in Phantom" };
+    return { ok: false, error: "sign_failed", detail: "Wallet signature cancelled" };
+  }
   return { ok: true, proof };
 }
 

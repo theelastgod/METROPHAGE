@@ -28,7 +28,6 @@ import {
   walletSessionSecret,
   walletChoiceList,
   walletChoiceProse,
-  hasInjectedSolana,
 } from "../economy/wallet";
 import { shortSolanaAddress } from "../economy/solanaChain";
 import {
@@ -49,7 +48,7 @@ import {
   writeLocalRunner,
 } from "../systems/LocalRunner";
 import { readGuestDeviceSecret } from "../net/NetClient";
-import { hasPhantomProof, phantomDeeplinkSession, phantomDeeplinkUsable } from "../economy/phantomDeeplink";
+import { hasPhantomProof, phantomSignPending } from "../economy/phantomDeeplink";
 import { metroApiBase } from "../economy/metro";
 import { prefersMobileUx } from "../systems/Mobile";
 import { playDeployTeaser } from "../ui/DeployTeaser";
@@ -227,6 +226,17 @@ export default class SelectScene extends Phaser.Scene {
     await restoreWalletSession();
     const landed = connectedWallet();
     if (landed && hasPhantomProof("login", landed)) {
+      let pendingLink = false;
+      try {
+        pendingLink = sessionStorage.getItem("mp_pending_guest_link") === "1";
+        if (pendingLink) sessionStorage.removeItem("mp_pending_guest_link");
+      } catch {
+        /* private mode */
+      }
+      if (pendingLink && loadLocalRunner()?.guestId) {
+        await this.linkWalletToGuestRunner();
+        return;
+      }
       await this.verifyAndAdvance(landed);
       return;
     }
@@ -578,6 +588,23 @@ export default class SelectScene extends Phaser.Scene {
 
     const signed = await metaMaskSignUp();
     if (!signed.ok) {
+      if (signed.error === "pending_phantom") {
+        try {
+          sessionStorage.setItem("mp_pending_guest_link", "1");
+        } catch {
+          /* private mode */
+        }
+        this.walletPanel.show({
+          step: "sign",
+          status: "busy",
+          statusText: "opening Phantom",
+          headline: "Approve in Phantom",
+          body: "Approve the free signature in Phantom. This page will resume the link when you return.",
+          wallet: connectedWallet(),
+          actions: [],
+        });
+        return;
+      }
       this.walletPanel.show({
         step: "sign",
         status: "error",
@@ -997,7 +1024,7 @@ export default class SelectScene extends Phaser.Scene {
     );
     const proof = await signIdentityProof(addr);
     if (!proof) {
-      if (phantomDeeplinkUsable() && !hasInjectedSolana() && phantomDeeplinkSession()?.wallet === addr) {
+      if (phantomSignPending()) {
         this.showConnectedPending(addr, "Approve in Phantom. This page will resume when you return.", [], {
           status: "busy",
           statusText: "opening Phantom",

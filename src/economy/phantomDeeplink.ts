@@ -103,6 +103,10 @@ export function phantomDeeplinkSession(): { wallet: string; session: string } | 
 }
 
 /** Deeplinks only make sense on a public https origin (Phantom must redirect back). */
+export function phantomSignPending(): boolean {
+  return !!ss()?.getItem(K_PENDING_META);
+}
+
 export function phantomDeeplinkUsable(): boolean {
   try {
     return typeof location !== "undefined" && location.protocol === "https:";
