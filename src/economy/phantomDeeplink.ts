@@ -14,6 +14,7 @@
 
 import nacl from "tweetnacl";
 import bs58 from "bs58";
+import { parseSolanaCluster } from "./solanaChain";
 
 const PHANTOM_BASE = "https://phantom.app/ul/v1";
 const K_SECRET = "ph_dl_secret"; // our x25519 secret key (b58)
@@ -32,9 +33,9 @@ function ss(): Storage | null {
   }
 }
 
-/** Cluster for the connect handshake — mirrors the client's baked settlement target. */
-function cluster(): string {
-  return ((import.meta.env as Record<string, string | undefined>).VITE_METRO_CLUSTER || "mainnet-beta").trim();
+/** Phantom-legal cluster (`mainnet-beta` | `devnet`). Same source as identity chrome. */
+export function phantomConnectCluster(raw?: string): "devnet" | "mainnet-beta" {
+  return parseSolanaCluster(raw);
 }
 
 // ── envelope helpers (pure; unit-tested) ────────────────────────────────────
@@ -121,7 +122,7 @@ export function beginPhantomConnect(): void {
   const kp = nacl.box.keyPair();
   s.setItem(K_SECRET, bs58.encode(kp.secretKey));
   s.setItem(K_PUBLIC, bs58.encode(kp.publicKey));
-  location.href = buildConnectUrl(location.origin, bs58.encode(kp.publicKey), redirectUrl("connect"), cluster());
+  location.href = buildConnectUrl(location.origin, bs58.encode(kp.publicKey), redirectUrl("connect"), phantomConnectCluster());
 }
 
 /** Kick off a signMessage approval in the Phantom APP (page navigates away).
@@ -142,6 +143,20 @@ export function beginPhantomSign(message: string, meta: { kind: "login" | "retir
 }
 
 /** Take (and clear) a finished sign proof — {wallet, sig, ts} ready for the server. */
+export function hasPhantomProof(kind: "login" | "retire", wallet?: string): boolean {
+  const s = ss();
+  const raw = s?.getItem(K_PROOF);
+  if (!s || !raw) return false;
+  try {
+    const p = JSON.parse(raw) as { kind: string; wallet: string; ts: number };
+    if (p.kind !== kind) return false;
+    if (wallet && p.wallet !== wallet) return false;
+    return Math.abs(Date.now() - p.ts) <= 120_000;
+  } catch {
+    return false;
+  }
+}
+
 export function takePhantomProof(kind: "login" | "retire", wallet?: string): { wallet: string; sig: string; ts: number } | null {
   const s = ss();
   const raw = s?.getItem(K_PROOF);
@@ -150,9 +165,8 @@ export function takePhantomProof(kind: "login" | "retire", wallet?: string): { w
     const p = JSON.parse(raw) as { kind: string; wallet: string; sig: string; ts: number };
     if (p.kind !== kind) return null;
     if (wallet && p.wallet !== wallet) return null;
-    // One shot — and only within the server's freshness window.
+    if (Math.abs(Date.now() - p.ts) > 120_000) return null;
     s.removeItem(K_PROOF);
-    if (Math.abs(Date.now() - p.ts) > 85_000) return null;
     return { wallet: p.wallet, sig: p.sig, ts: p.ts };
   } catch {
     s.removeItem(K_PROOF);

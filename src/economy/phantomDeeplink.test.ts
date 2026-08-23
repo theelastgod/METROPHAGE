@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import nacl from "tweetnacl";
 import bs58 from "bs58";
-import { buildConnectUrl, buildSignMessageUrl, openPayload, sealPayload } from "./phantomDeeplink";
+import { buildConnectUrl, buildSignMessageUrl, openPayload, phantomConnectCluster, sealPayload } from "./phantomDeeplink";
 
 describe("phantom deeplink envelopes", () => {
   it("seals and opens a payload with a shared x25519 secret (round trip)", () => {
@@ -43,5 +43,12 @@ describe("phantom deeplink envelopes", () => {
     for (const k of ["dapp_encryption_public_key", "redirect_link", "nonce", "payload"]) {
       expect(sign.searchParams.get(k), k).toBeTruthy();
     }
+  });
+
+  it("emits only Phantom-legal clusters from leftover Robinhood env", () => {
+    expect(phantomConnectCluster("robinhood")).toBe("mainnet-beta");
+    expect(phantomConnectCluster("robinhood-testnet")).toBe("devnet");
+    expect(phantomConnectCluster("")).toBe("mainnet-beta");
+    expect(phantomConnectCluster("devnet")).toBe("devnet");
   });
 });

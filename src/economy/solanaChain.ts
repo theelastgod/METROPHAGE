@@ -34,10 +34,12 @@ const env: Record<string, string | undefined> =
     (import.meta as unknown as { env?: Record<string, string | undefined> }).env) ||
   {};
 
-/** Identity chrome cluster. Robinhood leftover env still maps to Solana, not 0x. */
+/** Identity chrome + Phantom handshake. Leftover Robinhood env maps onto Solana clusters. */
 export function parseSolanaCluster(raw?: string): SolanaCluster {
   const c = (raw ?? env.VITE_METRO_CLUSTER ?? "").trim().toLowerCase();
-  if (c === "mainnet-beta" || c === "mainnet") return "mainnet-beta";
+  if (c === "mainnet-beta" || c === "mainnet" || c === "robinhood") return "mainnet-beta";
+  if (c === "devnet" || c === "testnet" || c === "robinhood-testnet") return "devnet";
+  if (!c) return "mainnet-beta";
   return "devnet";
 }
 

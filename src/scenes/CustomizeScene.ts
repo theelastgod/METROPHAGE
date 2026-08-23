@@ -48,6 +48,7 @@ import { uiGap } from "../ui/spacing";
 import { bodyFont, displayFont, uiFont } from "../ui/typography";
 import { drawPanelFrame } from "../ui/panelChrome";
 import { connectedWallet } from "../economy/wallet";
+import { shortSolanaAddress } from "../economy/solanaChain";
 import { loadLocalRunner, writeLocalRunner } from "../systems/LocalRunner";
 import { ensureGuestDeviceSecret } from "../net/NetClient";
 import { mintGuestId } from "../game/playerId";
@@ -138,8 +139,7 @@ export default class CustomizeScene extends Phaser.Scene {
     const sub = guest
       ? `MULTIPLAYER SAVE  ·  no wallet · progress sticks to this device  ·  ${this.classDef.name}`
       : (() => {
-          const w = wallet ?? "—";
-          const short = w.length > 12 ? `${w.slice(0, 4)}…${w.slice(-4)}` : w;
+          const short = shortSolanaAddress(wallet) || "—";
           return `ONE-TIME CREATION  ·  bound to wallet ${short}  ·  ${this.classDef.name}`;
         })();
     this.add

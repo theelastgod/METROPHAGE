@@ -28,6 +28,7 @@ import {
   walletSessionSecret,
   walletChoiceList,
   walletChoiceProse,
+  hasInjectedSolana,
 } from "../economy/wallet";
 import { shortSolanaAddress } from "../economy/solanaChain";
 import {
@@ -48,6 +49,7 @@ import {
   writeLocalRunner,
 } from "../systems/LocalRunner";
 import { readGuestDeviceSecret } from "../net/NetClient";
+import { hasPhantomProof, phantomDeeplinkSession, phantomDeeplinkUsable } from "../economy/phantomDeeplink";
 import { metroApiBase } from "../economy/metro";
 import { prefersMobileUx } from "../systems/Mobile";
 import { playDeployTeaser } from "../ui/DeployTeaser";
@@ -223,7 +225,12 @@ export default class SelectScene extends Phaser.Scene {
       return;
     }
     await restoreWalletSession();
-    if (connectedWallet()) {
+    const landed = connectedWallet();
+    if (landed && hasPhantomProof("login", landed)) {
+      await this.verifyAndAdvance(landed);
+      return;
+    }
+    if (landed) {
       await this.refreshWalletState();
       return;
     }
@@ -990,6 +997,14 @@ export default class SelectScene extends Phaser.Scene {
     );
     const proof = await signIdentityProof(addr);
     if (!proof) {
+      if (phantomDeeplinkUsable() && !hasInjectedSolana() && phantomDeeplinkSession()?.wallet === addr) {
+        this.showConnectedPending(addr, "Approve in Phantom. This page will resume when you return.", [], {
+          status: "busy",
+          statusText: "opening Phantom",
+          headline: "Approve in Phantom",
+        });
+        return;
+      }
       this.showConnectedPending(
         addr,
         "Signature cancelled or wallet could not sign. Retry, or play multiplayer without a wallet.",

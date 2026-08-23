@@ -29,6 +29,7 @@ import {
   restoreSolanaWalletModalProvider,
 } from "./solanaWalletModal";
 import { isSolanaPubkey } from "./solanaChain";
+import bs58 from "bs58";
 
 interface EvmProvider extends EvmRequestProvider {
   isMetaMask?: boolean;
@@ -43,7 +44,10 @@ export interface SolanaProvider {
   isConnected?: boolean;
   connect(opts?: { onlyIfTrusted?: boolean }): Promise<{ publicKey: { toString(): string } }>;
   disconnect(): Promise<void>;
-  signMessage?(message: Uint8Array, encoding?: string): Promise<{ signature: Uint8Array }>;
+  signMessage?(
+    message: Uint8Array,
+    encoding?: string,
+  ): Promise<{ signature: Uint8Array } | Uint8Array>;
   signAndSendTransaction?(tx: unknown): Promise<{ signature: string }>;
   signTransaction?(tx: unknown): Promise<{ serialize(): Uint8Array }>;
 }
@@ -411,28 +415,6 @@ export async function disconnectWallet(): Promise<void> {
   }
 }
 
-const B58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-function base58Encode(bytes: Uint8Array): string {
-  let zeros = 0;
-  while (zeros < bytes.length && bytes[zeros] === 0) zeros++;
-  const digits: number[] = [];
-  for (let i = zeros; i < bytes.length; i++) {
-    let carry = bytes[i];
-    for (let j = 0; j < digits.length; j++) {
-      const x = digits[j] * 256 + carry;
-      digits[j] = x % 58;
-      carry = (x / 58) | 0;
-    }
-    while (carry > 0) {
-      digits.push(carry % 58);
-      carry = (carry / 58) | 0;
-    }
-  }
-  let str = "1".repeat(zeros);
-  for (let i = digits.length - 1; i >= 0; i--) str += B58_ALPHABET[digits[i]];
-  return str;
-}
-
 export async function signWalletLogin(
   message: string,
   address?: string,
@@ -445,15 +427,16 @@ export async function signWalletLogin(
   if (p?.signMessage && solAddr && isSolanaPubkey(solAddr)) {
     const bytes = new TextEncoder().encode(message);
     try {
-      let signature: Uint8Array;
-      try {
-        const res = await p.signMessage(bytes, "utf8");
-        signature = res.signature;
-      } catch {
-        const res = await p.signMessage(bytes);
-        signature = res.signature;
-      }
-      return { address: solAddr, signature: base58Encode(signature) };
+      const signed = await (async () => {
+        try {
+          return await p.signMessage!(bytes, "utf8");
+        } catch {
+          return await p.signMessage!(bytes);
+        }
+      })();
+      const signature = signed instanceof Uint8Array ? signed : signed.signature;
+      if (!signature) return null;
+      return { address: solAddr, signature: bs58.encode(signature) };
     } catch {
       return null;
     }

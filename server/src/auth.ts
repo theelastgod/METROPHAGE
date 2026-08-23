@@ -99,8 +99,10 @@ export function walletPlayerId(wallet: string): string | null {
     const w = (wallet || "").trim();
     if (!w) return null;
     if (isEvmWallet(w)) return "w:" + getAddress(w);
-    if (w.length >= 32 && w.length <= 44 && !w.startsWith("0x") && !w.startsWith("0X")) {
-      return "w:" + w;
+    try {
+      if (bs58.decode(w).length === 32) return "w:" + w;
+    } catch {
+      return null;
     }
     return null;
   } catch {

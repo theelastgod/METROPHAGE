@@ -1,6 +1,4 @@
-// Mobile Solana connect routing. AppKit is not compiled here — July pins
-// pulled bigint-buffer into `npm audit`. Injected wallets + Phantom's native
-// protocol (not /ul/browse) cover desktop and mobile until a clean adapter lands.
+// Picker not bundled; inject + Phantom protocol only.
 
 import { walletConnectEnabled } from "./walletConnect";
 import type { SolanaProvider } from "./wallet";

@@ -26,7 +26,9 @@ describe("Solana address + chrome", () => {
   });
 
   it("labels identity chrome as SOL · DEVNET|MAINNET", () => {
-    expect(parseSolanaCluster("robinhood")).toBe("devnet");
+    expect(parseSolanaCluster("robinhood")).toBe("mainnet-beta");
+    expect(parseSolanaCluster("robinhood-testnet")).toBe("devnet");
+    expect(parseSolanaCluster("")).toBe("mainnet-beta");
     expect(parseSolanaCluster("mainnet-beta")).toBe("mainnet-beta");
     expect(solanaChromeLabel("devnet")).toBe("SOL · DEVNET");
     expect(solanaChromeLabel("mainnet-beta")).toBe("SOL · MAINNET");
