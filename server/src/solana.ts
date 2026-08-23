@@ -175,6 +175,9 @@ export function makeSolanaSettlement(cfg: SolanaConfig): Settlement {
                 preparedByHash.delete(claimTxHash);
                 return { ok: true, ref: claimTxHash, claimTx: `solana-sent:${claimTxHash}`, claimTxHash };
               }
+              if (!val) {
+                return { ok: false, rpcError: true, reason: "signature not indexed — claim still pending" };
+              }
             } catch {
               /* status RPC failed — do not resign until we know the old sig is dead */
               return { ok: false, rpcError: true, reason: "rpc unreachable — claim still pending" };

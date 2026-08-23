@@ -188,6 +188,7 @@ export async function fetchMarketUsd(
 ): Promise<{ usd: number; source: string; raw?: string } | null> {
   const forced = parseUsd(envPrice);
   if (forced != null) return { usd: forced, source: "env:METRO_USD_PRICE" };
+  if (!mint) return null;
 
   const dex = await fetchDexScreener(mint);
   if (dex) return { usd: dex.usd, source: "dexscreener", raw: dex.raw };

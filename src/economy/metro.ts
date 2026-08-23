@@ -4,12 +4,7 @@
 // Empty mint → pure off-chain credits (awaiting CA). Real-value settlement also needs METRO_MAINNET_ARMED.
 // Go-live: VITE_METRO_MINT (base58) + server METRO_MINT + METRO_TREASURY_SECRET + MAINNET_ARMED=1.
 
-import {
-  ROBINHOOD_MAINNET,
-  ROBINHOOD_TESTNET,
-  type RobinhoodCluster,
-  robinhoodNetwork,
-} from "./robinhoodChain";
+import { type RobinhoodCluster } from "./robinhoodChain";
 import { getDualChainProfile, dualChainSummary, type DualChainProfile } from "./chainProfile";
 import {
   parseSolanaCluster,
@@ -173,6 +168,5 @@ export function getMetroBridge(): MetroBridge {
   return disabledBridge;
 }
 
-export { robinhoodNetwork, ROBINHOOD_MAINNET, ROBINHOOD_TESTNET };
 export { getDualChainProfile, dualChainSummary, settlementForce } from "./chainProfile";
 export { solanaNetwork } from "./solanaChain";

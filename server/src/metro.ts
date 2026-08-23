@@ -759,8 +759,7 @@ export async function reclaimExpired(db: D1Database, settlement?: Settlement): P
         continue; // never refund a claim that paid
       }
     }
-    // EVM: burn treasury nonce BEFORE flipping status / refunding. If burn fails, leave
-    // the row pending so we retry — never refund while a pre-signed claimTx may still land.
+    // Legacy nonce burn (unused on Solana). If it throws, leave the row pending.
     if (r.claim_nonce != null && settlement?.invalidateNonce) {
       try {
         await settlement.invalidateNonce(r.claim_nonce);

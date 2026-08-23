@@ -677,20 +677,26 @@ function mountStandbyMetroPanel(getPlayerId: () => string | null): void {
     try {
       const auth = await walletAuth(wallet);
       if (auth.error) return status(`✗ ${auth.error}`);
-      const r = await fetch(`${metroApiBase()}/metro/deposit`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          player,
-          wallet,
-          txSig,
-          metro: metro || 0,
-          as: depositAs(),
-          sig: auth.sig,
-          ts: auth.ts,
-        }),
-      }).then((x) => x.json());
-      status(r.ok ? `✓ deposited ◈ ${fmtMetro(r.metro)} → ${grantedLabel(r)}` : `✗ ${r.reason}`);
+      let r: { ok?: boolean; reason?: string; metro?: number; granted?: string; credits?: number; metroGranted?: number } = {};
+      for (let i = 0; i < 12; i++) {
+        r = await fetch(`${metroApiBase()}/metro/deposit`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            player,
+            wallet,
+            txSig,
+            metro: metro || 0,
+            as: depositAs(),
+            sig: auth.sig,
+            ts: auth.ts,
+          }),
+        }).then((x) => x.json());
+        if (r.ok || !/not finalized|not found/i.test(r.reason ?? "")) break;
+        status("waiting for finalized…");
+        await new Promise((res) => setTimeout(res, 1500));
+      }
+      status(r.ok ? `✓ deposited ◈ ${fmtMetro(r.metro ?? 0)} → ${grantedLabel(r)}` : `✗ ${r.reason}`);
       void refresh();
     } catch {
       status("deposit failed (server unreachable)");
