@@ -448,9 +448,9 @@ export interface Env {
   /** Legacy alias — still accepted if METRO_MINT is unset. */
   METRO_DEVNET_MINT?: string;
   METRO_RPC?: string;
-  /** Optional EIP-155 chain id for EVM (4663 RH mainnet default, 46630 RH testnet). */
+  /** Unused on Solana (leftover EVM var). */
   METRO_CHAIN_ID?: string;
-  /** Network label: robinhood (mainnet) | robinhood-testnet. */
+  /** Network label: mainnet-beta | devnet. */
   METRO_CLUSTER?: string;
   /** Manual $METRO USD price override (ops / pre-listing). Bridge rates scale from this. */
   METRO_USD_PRICE?: string;
@@ -459,7 +459,7 @@ export interface Env {
   METRO_MAINNET_ARMED?: string;
   /** Harness only: allow deposit/withdraw while settlement is sim with a mint set. */
   METRO_ALLOW_SIM?: string;
-  /** Settlement family: robinhood (default) | auto (0x → robinhood, else off) | off. EVM-only build. */
+  /** Settlement family: solana (default) | auto (base58 → solana, else off) | off. */
   METRO_SETTLEMENT?: string;
   /** "1" when Workers Paid is provisioned — ops /health only (tuning is compile-time). */
   METRO_PAID_TIER?: string;

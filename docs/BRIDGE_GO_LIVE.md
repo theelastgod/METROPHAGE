@@ -1,9 +1,9 @@
-# Live $METRO bridge — go-live checklist (Robinhood Chain)
+# Live $METRO bridge — go-live checklist (Solana)
 
 Single ordered checklist for turning on the player-funded cash-out bridge.
-**Robinhood Chain ERC-20 is authoritative.** Follow **top to bottom**.
+**Solana SPL is authoritative.** Mint is whatever CA pump.fun created. Follow **top to bottom**.
 
-Related docs: `MAINNET_GO_LIVE.md`, `METRO_CHAIN_CHOICE.md`, `SHIPPING.md`, `ROBINHOOD_GO_LIVE.md`.
+Related docs: `MAINNET_GO_LIVE.md`, `METRO_CHAIN_CHOICE.md`, `SHIPPING.md`.
 
 ---
 
@@ -13,9 +13,12 @@ Related docs: `MAINNET_GO_LIVE.md`, `METRO_CHAIN_CHOICE.md`, `SHIPPING.md`, `ROB
 |------|-----|
 | **Server secrets before client mint** | Client mint without live settlement is dangerous |
 | **Player-funded pool only** | Deposits fill cash-outs; empty pool = “Check back later.” |
-| **EVM treasury** | 0x private key; address is 0x on Robinhood Chain |
-| **Treasury pays gas on cash-outs** | Keep a small native-gas float funded; deposits stay player-paid |
+| **Solana treasury** | base64 64-byte keypair; address is base58 |
+| **Treasury pays SOL on cash-outs** | Keep a small SOL float for withdraw fees + ATA rent; deposits stay player-paid |
+| **Worker always broadcasts** | Solana blockhash dies in ~90s; never hand a stale signed tx to the client |
+| **Deposits credit at finalized** | `confirmed` can fork and double-grant |
 | **`METRO_MAINNET_ARMED` is counsel-gated** | Real-value mainnet cannot arm by accident |
+| **Mint is case-sensitive base58** | Never `.toLowerCase()` a pump.fun CA |
 
 ---
 
@@ -28,16 +31,17 @@ curl -sS https://metrophage-server.wendellphillips.workers.dev/health
 curl -sS https://metrophage-server.wendellphillips.workers.dev/metro/pool | jq '{settlement,family,treasury,treasuryChain,readyForCa}'
 ```
 
-Expect: `treasuryChain: "robinhood"` once the EVM secret is installed.
+Expect: `settlement` sim or solana; `treasuryChain: "solana"` once the Solana secret is installed.
 
 ---
 
-## Phase 1 — EVM treasury (before CA)
+## Phase 1 — Solana treasury (before CA)
 
 ```sh
 cd server
-node scripts/mainnet-prepare.mjs --evm
-# → .mainnet-treasury.json (gitignored)
+node scripts/mainnet-prepare.mjs
+# → .mainnet-treasury.json + .solana-treasury.json (gitignored)
+# Re-running without --replace reuses the existing secret (does not mint a new one).
 
 node -e "process.stdout.write(JSON.parse(require('fs').readFileSync('.mainnet-treasury.json','utf8')).treasurySecret)" \
   | npx wrangler secret put METRO_TREASURY_SECRET
@@ -47,22 +51,21 @@ curl -sS https://metrophage-server.wendellphillips.workers.dev/metro/pool \
   | jq '{treasury, treasuryChain, treasuryConfigured, readyForCa, family}'
 ```
 
-- [ ] EVM treasury address recorded  
-- [ ] Secret on Worker (`METRO_TREASURY_SECRET` 0x private key)  
-- [ ] **Do not** set `METRO_MINT` / `VITE_METRO_MINT` yet  
+- [ ] Solana treasury address recorded
+- [ ] Secret on Worker (`METRO_TREASURY_SECRET` base64 64-byte keypair)
+- [ ] **Do not** set `METRO_MINT` / `VITE_METRO_MINT` yet
 
 ---
 
-## Phase 2 — Testnet rehearsal (recommended)
+## Phase 2 — Devnet rehearsal (recommended)
 
-Deploy a throwaway ERC-20 on Robinhood testnet (chain id 46630), then:
+Create/use a throwaway SPL mint on Solana devnet, then:
 
 ```sh
 cd server
-npx wrangler secret put METRO_MINT          # 0x testnet contract
-npx wrangler secret put METRO_RPC           # https://rpc.testnet.chain.robinhood.com
-npx wrangler secret put METRO_CHAIN_ID      # 46630
-# METRO_SETTLEMENT=robinhood already in wrangler.toml
+npx wrangler secret put METRO_MINT          # base58 devnet mint
+npx wrangler secret put METRO_RPC           # https://api.devnet.solana.com
+# METRO_SETTLEMENT=solana already in wrangler.toml
 # METRO_MAINNET_ARMED stays unset
 npx wrangler d1 migrations apply metrophage --remote
 npx wrangler deploy
@@ -71,37 +74,29 @@ npx wrangler deploy
 Client:
 
 ```sh
-VITE_METRO_MINT=<0x_contract> \
-VITE_METRO_CLUSTER=robinhood-testnet \
-VITE_METRO_RPC=https://rpc.testnet.chain.robinhood.com \
-VITE_METRO_CHAIN_ID=46630 \
-VITE_METRO_SETTLEMENT=robinhood \
+VITE_METRO_MINT=<base58> \
+VITE_METRO_CLUSTER=devnet \
+VITE_METRO_RPC=https://api.devnet.solana.com \
+VITE_METRO_SETTLEMENT=solana \
 npm run deploy:client
 ```
 
-Smoke: MetaMask connect → auto-add Robinhood Chain → Send ERC-20 to treasury → Claim deposit → Withdraw claim.
+Smoke: Phantom connect → Send SPL to treasury → wait **finalized** → Claim deposit → Withdraw (Worker broadcasts).
 
 ---
 
-## Phase 3 — Mainnet mint CA
+## Phase 3 — Mainnet mint CA (pump.fun)
+
+Create `$METRO` on pump.fun (1B / 6dp). Put the mint CA into Worker secrets **before** baking the client.
 
 ```sh
 cd server
-node scripts/mainnet-arm.mjs <0x_CA>
-# follow printed server secrets + deploy, then client build
+npx wrangler secret put METRO_MINT          # base58, never lowercased
+npx wrangler secret put METRO_RPC           # dedicated Helius/mainnet RPC
+# fund treasury SOL, then treasury buys seed inventory on the curve
 ```
 
 Counsel only: `METRO_MAINNET_ARMED=1` + `VITE_METRO_MAINNET_ARMED=1`.
 
----
-
-## Solana version (separate branch)
-
-Not the launch path. The SPL bridge lives on its own branch:
-
-```sh
-git checkout settlement/solana
-# then follow docs/BRIDGE_GO_LIVE.md on that branch
-```
-
-See `docs/METRO_CHAIN_CHOICE.md`.
+Then client: `VITE_METRO_MINT=<same base58>` + `VITE_METRO_CLUSTER=mainnet-beta`.
+`VITE_SERVER_URL` is **build-time**.

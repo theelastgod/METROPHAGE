@@ -1,5 +1,5 @@
-// METROPHAGE — $METRO bridge panel (Robinhood Chain ERC-20; EVM-only build).
-// Wallet deposit, empty-pool "Check back later.", sim-lock fail-loud.
+// METROPHAGE — $METRO bridge panel (Solana SPL; pump.fun mint).
+// Wallet deposit, empty-pool "Check back later.", sim-lock fail-loud. Treasury pays SOL on cash-out.
 
 import {
   metroEnabled,
@@ -23,11 +23,11 @@ import { isLikelyMobile, openInWalletBrowser } from "../economy/walletConnect";
 import { prefersMobileUx } from "../systems/Mobile";
 import { onOnlinePlayerChange } from "../economy/session";
 import { submitClaim } from "../economy/claim";
-import { sendErc20Deposit } from "../economy/erc20Deposit";
+import { sendSplDeposit } from "../economy/splDeposit";
 import { loginMessage } from "../net/protocol";
-import { ROBINHOOD_TESTNET, ROBINHOOD_MAINNET } from "../economy/robinhoodChain";
+import { solanaNetwork, parseSolanaCluster, shortSolanaAddress } from "../economy/solanaChain";
 
-const short = (a: string) => (a.length > 10 ? `${a.slice(0, 4)}…${a.slice(-4)}` : a);
+const short = (a: string) => shortSolanaAddress(a) || (a.length > 10 ? `${a.slice(0, 4)}…${a.slice(-4)}` : a);
 
 /**
  * Which side of the house a deposit funds. One deposit funds exactly one — it
@@ -375,7 +375,7 @@ function mountStandbyMetroPanel(getPlayerId: () => string | null): void {
         <div class="row"><span class="muted">wallet</span><span id="m-wallet" class="mono-value">—</span></div>
         <div class="field-row two">
           <button id="m-connect">${connectLabel}</button>
-          <input id="m-addr" placeholder="or paste 0x address" style="display:none"/>
+          <input id="m-addr" placeholder="or paste Solana address" style="display:none"/>
         </div>
         <div class="row"><span class="muted">player</span><span id="m-player" class="mono-value">—</span></div>
         <div class="row"><span class="muted">credits</span><span id="m-credits" class="big">—</span></div>
@@ -586,7 +586,7 @@ function mountStandbyMetroPanel(getPlayerId: () => string | null): void {
   }
 
   if (!walletAvailable()) {
-    ($("m-connect") as HTMLButtonElement).textContent = "Connect Wallet / paste 0x";
+    ($("m-connect") as HTMLButtonElement).textContent = "Connect Wallet / paste address";
     addrInput.style.display = "block";
   }
 
@@ -595,8 +595,8 @@ function mountStandbyMetroPanel(getPlayerId: () => string | null): void {
       addrInput.style.display = "block";
       status(
         walletConnectAvailable()
-          ? "open WalletConnect or paste 0x"
-          : "install a wallet, open in MetaMask, or paste 0x",
+          ? "open your Solana wallet or paste a base58 address"
+          : "install Phantom, or paste a Solana address",
       );
       if (isLikelyMobile()) openInWalletBrowser("metamask");
       return;
@@ -610,7 +610,7 @@ function mountStandbyMetroPanel(getPlayerId: () => string | null): void {
       return;
     }
     status("opening wallet…");
-    const addr = await connectWallet("evm");
+    const addr = await connectWallet();
     if (addr) {
       $("m-wallet").textContent = short(addr);
       ($("m-connect") as HTMLButtonElement).textContent = "Disconnect";
@@ -656,11 +656,8 @@ function mountStandbyMetroPanel(getPlayerId: () => string | null): void {
       status("mint CA not ready — copy treasury and send from your wallet, then paste tx");
       return;
     }
-    if (!/^0x/i.test(mint)) {
-      return status("mint is not a Robinhood Chain (0x) contract — this build settles ERC-20 only");
-    }
-    status("approve $METRO transfer in MetaMask…");
-    const sent = await sendErc20Deposit({ treasury, amount, mint });
+    status("approve $METRO transfer in Phantom (you pay SOL)…");
+    const sent = await sendSplDeposit({ treasury, amount, mint });
     if (!sent.ok || !sent.txHash) return status(`✗ ${sent.reason ?? "send failed"}`);
     ($("m-txsig") as HTMLInputElement).value = sent.txHash;
     status("tx sent — claiming…");
@@ -760,10 +757,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
   fab.title = "Open $METRO bridge";
   document.body.appendChild(fab);
 
-  const explorer =
-    st.chainId === ROBINHOOD_MAINNET.chainId
-      ? ROBINHOOD_MAINNET.explorerUrl
-      : ROBINHOOD_TESTNET.explorerUrl;
+  const explorer = solanaNetwork(parseSolanaCluster()).explorerUrl;
 
   const panel = document.createElement("div");
   panel.id = "metro-panel";
@@ -771,7 +765,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
     <div class="head">
       <div class="titlebar">
         <div>
-          <div class="eyebrow">Robinhood Chain bridge</div>
+          <div class="eyebrow">Solana bridge</div>
           <h3>◈ $METRO</h3>
         </div>
         <button class="x" id="m-x" aria-label="Close">×</button>
@@ -785,7 +779,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
           <div class="pool-value" id="m-pool">—</div>
         </div>
         <div class="chip-stack">
-          <span class="chip" id="m-net-chip">${(st.networkName || st.chain || "Robinhood").toUpperCase()}</span>
+          <span class="chip" id="m-net-chip">${(st.networkName || st.chain || "Solana").toUpperCase()}</span>
           <span class="chip" id="m-phase-pill">PRE-CA</span>
         </div>
       </div>
@@ -798,9 +792,9 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
       </div>
 
       <div class="section">
-        <div class="section-title"><span>Wallet</span><span class="hint">WalletConnect · Robinhood</span></div>
+        <div class="section-title"><span>Wallet</span><span class="hint">Phantom · Solana</span></div>
         <div class="row"><span class="muted">wallet</span><span id="m-wallet" class="mono-value">—</span></div>
-        <div class="field-row two"><button id="m-connect">${connectLabel}</button><input id="m-addr" placeholder="or paste 0x address" style="display:none"/></div>
+        <div class="field-row two"><button id="m-connect">${connectLabel}</button><input id="m-addr" placeholder="or paste Solana address" style="display:none"/></div>
         <div class="row"><span class="muted">player</span><span id="m-player" class="mono-value">—</span></div>
         <div class="row"><span class="muted">credits</span><span id="m-credits" class="big">—</span></div>
       </div>
@@ -839,7 +833,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
             </div>
             <button id="m-copy-treasury" class="secondary copy">Copy</button>
           </div>
-          <div class="notice" id="m-get-hint">Earn ₵ in-game. Cash-outs use the player-funded $METRO pool on Robinhood Chain.</div>
+          <div class="notice" id="m-get-hint">Earn ₵ in-game. Cash-outs use the player-funded $METRO pool on Solana. Treasury pays SOL.</div>
           <div class="notice" id="m-checklist" style="display:none"></div>
           <div class="notice" id="m-treasury-health" style="display:none"></div>
           <div class="notice" id="m-economy" style="display:none"></div>
@@ -855,7 +849,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
   const addrInput = $("m-addr") as HTMLInputElement;
 
   if (!walletAvailable()) {
-    ($("m-connect") as HTMLButtonElement).textContent = "No MetaMask — paste 0x";
+    ($("m-connect") as HTMLButtonElement).textContent = "No Phantom — paste address";
     addrInput.style.display = "block";
   }
 
@@ -880,6 +874,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
     dangerousSim?: boolean;
     treasuryWarn?: string;
     treasuryEth?: string;
+    treasurySol?: string | number;
     treasuryMetro?: string;
     getMetroHint?: string;
     note?: string;
@@ -901,7 +896,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
       pool = p;
       $("m-pool").textContent = `◈ ${fmtMetro(p.poolMetro ?? 0)}`;
       $("m-net-chip").textContent = String(
-        p.networkName || p.chain || st.networkName || st.chain || "ROBINHOOD",
+        p.networkName || p.chain || st.networkName || st.chain || "SOLANA",
       ).toUpperCase();
       $("m-rate-in").textContent = `1◈ → ${p.depositCreditsPerMetro}₵`;
       $("m-rate-out").textContent = `${p.withdrawCreditsPerMetro}₵ → 1◈`;
@@ -934,17 +929,17 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
       if (ck) {
         const mint = mintReady ? "configured" : "awaiting CA";
         const treas = p.treasuryConfigured || p.treasury ? "ok" : "missing";
-        const fam = p.family || "robinhood";
+        const fam = p.family || "solana";
         ck.style.display = "block";
         ck.textContent =
-          `Robinhood Chain ERC-20 · family: ${fam} · mint: ${mint} · treasury: ${treas}. ` +
-          `Go-live: server METRO_MINT + METRO_TREASURY_SECRET (0x private key), then client VITE_METRO_MINT.`;
+          `Solana SPL · family: ${fam} · mint: ${mint} · treasury: ${treas}. ` +
+          `Go-live: server METRO_MINT (base58) + METRO_TREASURY_SECRET (base64 keypair), then client VITE_METRO_MINT.`;
       }
 
       if (!mintReady || p.readyForCa || p.family === "off") {
         phasePill.textContent = "AWAITING CA";
         phaseEl.textContent =
-          "Bridge is standing by (not broken). In-game ₵ is fully live — deposit/withdraw arms when the Robinhood Chain mint CA is set. Earn credits, gear up, run contracts. Empty pool is normal until the first deposit.";
+          "Bridge is standing by (not broken). In-game ₵ is fully live — deposit/withdraw arms when the pump.fun mint CA is set. Earn credits, gear up, run contracts. Empty pool is normal until the first deposit.";
         setActions(false, false);
         status("earn ₵ in-game · $METRO cash-out opens with the mint CA");
       } else if (p.simLocked || p.dangerousSim) {
@@ -972,7 +967,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
         phaseEl.classList.add("ok");
         phasePill.classList.add("ok");
         phasePill.textContent = "OPEN";
-        phaseEl.textContent = `POOL OPEN on ${p.networkName || "Robinhood Chain"} — deposit via MetaMask · cash-out is treasury-signed (ETH gas).`;
+        phaseEl.textContent = `POOL OPEN on ${p.networkName || "Solana"} — deposit via Phantom (you pay SOL) · cash-out is Worker-broadcast (treasury pays SOL).`;
         setActions(true, true);
       }
 
@@ -981,19 +976,22 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
       if (p.treasury) $("m-treasury").dataset.full = p.treasury;
 
       const th = $("m-treasury-health");
-      if (p.treasuryWarn || p.treasuryEth) {
+      if (p.treasuryWarn || p.treasurySol != null || p.treasuryEth) {
         th.style.display = "block";
         th.classList.toggle("warn", !!p.treasuryWarn);
+        const sol = p.treasurySol ?? p.treasuryEth;
         th.textContent = p.treasuryWarn
-          ? `⚠ ${p.treasuryWarn} (ETH ${p.treasuryEth ?? "?"} · $METRO ${p.treasuryMetro ?? "?"})`
-          : `Treasury OK · ETH ${p.treasuryEth} · $METRO ${p.treasuryMetro}`;
+          ? `⚠ ${p.treasuryWarn} (SOL ${sol ?? "?"} · $METRO ${p.treasuryMetro ?? "?"})`
+          : `Treasury OK · SOL ${sol} · $METRO ${p.treasuryMetro}`;
       } else {
         th.style.display = "none";
       }
 
       if (METRO_MINT) {
-        const base = explorer.replace(/\?.*$/, "");
-        ($("m-get") as HTMLAnchorElement).href = `${base}/token/${METRO_MINT}`;
+        const net = solanaNetwork(parseSolanaCluster());
+        const base = net.explorerUrl.replace(/\?.*$/, "").replace(/\/+$/, "");
+        const q = net.id === "devnet" ? "?cluster=devnet" : "";
+        ($("m-get") as HTMLAnchorElement).href = `${base}/address/${METRO_MINT}${q}`;
       }
 
       // Economy dashboard strip: how well the treasury covers the circulating
@@ -1151,8 +1149,8 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
       addrInput.style.display = "block";
       status(
         walletConnectAvailable()
-          ? "open WalletConnect or paste 0x"
-          : "paste a 0x address or open in MetaMask",
+          ? "open your Solana wallet or paste a base58 address"
+          : "paste a Solana address or open Phantom",
       );
       if (isLikelyMobile()) openInWalletBrowser("metamask");
       return;
@@ -1165,7 +1163,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
       return;
     }
     status("opening wallet…");
-    const addr = await connectWallet("evm");
+    const addr = await connectWallet();
     if (addr) {
       $("m-wallet").textContent = short(addr);
       ($("m-connect") as HTMLButtonElement).textContent = "Disconnect";
@@ -1213,7 +1211,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
     return { sig: signed.signature, ts };
   }
 
-  // One-click deposit: ERC-20 transfer from the connected EVM wallet.
+  // One-click deposit: SPL transfer from the connected Solana wallet.
   // Latched: this fires a REAL on-chain transfer. Unguarded, a double-tap (easy on a
   // laggy canvas or a phone) queued two wallet approvals and sent two transfers, but both
   // callbacks write the one #m-txsig field — so only the last signature was ever claimed
@@ -1235,15 +1233,15 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
     sending = true;
     sendBtn.disabled = true;
     try {
-      status("approve $METRO transfer in MetaMask (you pay RH ETH gas)…");
-      const sent = await sendErc20Deposit({ treasury, amount });
+      status("approve $METRO transfer in Phantom (you pay SOL)…");
+      const sent = await sendSplDeposit({ treasury, amount });
       if (!sent.ok || !sent.txHash) {
         status(`✗ ${sent.reason ?? "send failed"}`);
         return;
       }
       ($("m-txsig") as HTMLInputElement).value = sent.txHash;
-      status("tx sent — waiting a few seconds then claiming deposit…");
-      await new Promise((r) => setTimeout(r, 4000));
+      status("tx sent — waiting for finalized then claiming deposit…");
+      await new Promise((r) => setTimeout(r, 8000));
       ($("m-deposit") as HTMLButtonElement).click();
     } finally {
       sending = false;
@@ -1260,16 +1258,25 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
     if (!wallet) return status(`connect ${walletLabel}`);
     if (!txSig) return status(`send via ${walletLabel} or paste tx signature`);
     if (pool?.simLocked || pool?.dangerousSim) return status("bridge locked (simulated settlement is read-only)");
-    status("verifying deposit on-chain (amount from Transfer logs, not your form)…");
+    status("verifying deposit on-chain (finalized)…");
     try {
       const auth = await walletAuth(wallet);
       if (auth.error) return status(`✗ ${auth.error}`);
-      const r = await fetch(`${metroApiBase()}/metro/deposit`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ player, wallet, txSig, metro: metro || 0, as: depositAs(), sig: auth.sig, ts: auth.ts }),
-      }).then((x) => x.json());
-      status(r.ok ? `✓ deposited ◈ ${fmtMetro(r.metro)} → ${grantedLabel(r)}` : `✗ ${r.reason}`);
+      let r: { ok: boolean; reason?: string; metro?: number; granted?: string; credits?: number; metroGranted?: number } = {
+        ok: false,
+        reason: "no attempt",
+      };
+      for (let i = 0; i < 12; i++) {
+        r = await fetch(`${metroApiBase()}/metro/deposit`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ player, wallet, txSig, metro: metro || 0, as: depositAs(), sig: auth.sig, ts: auth.ts }),
+        }).then((x) => x.json());
+        if (r.ok || !/not finalized|not found/i.test(r.reason ?? "")) break;
+        status("waiting for finalized…");
+        await new Promise((res) => setTimeout(res, 1500));
+      }
+      status(r.ok ? `✓ deposited ◈ ${fmtMetro(r.metro ?? 0)} → ${grantedLabel(r)}` : `✗ ${r.reason}`);
       void refresh();
     } catch {
       status("deposit failed (server unreachable)");
@@ -1332,7 +1339,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
       status("broadcasting treasury-signed payout…");
       const sub = await submitClaim(claimTx, metroRpc());
       if (!sub.ok || !sub.sig) {
-        status(`✗ ${sub.reason ?? "broadcast failed"} — credits auto-refund in ~10 min if unconfirmed`);
+        status(`✗ ${sub.reason ?? "broadcast failed"} — credits auto-refund in ~2 min if unconfirmed`);
         void refresh();
         return;
       }

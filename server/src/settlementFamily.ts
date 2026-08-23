@@ -1,26 +1,36 @@
 // Server-side $METRO family resolution (mirrors client chainProfile).
-// AUTHORITATIVE: Robinhood Chain ERC-20. This build is EVM-only — the Solana SPL
-// settlement lives on the `settlement/solana` branch.
+// AUTHORITATIVE: Solana SPL. evm.ts is unused — this build does not compile an EVM live path.
 
-export type SettlementFamily = "robinhood" | "off";
+import bs58 from "bs58";
+
+export type SettlementFamily = "solana" | "off";
 
 export function isEvmMint(mint: string): boolean {
   return /^0x[a-fA-F0-9]{40}$/.test((mint || "").trim());
 }
 
+/** 32-byte payload as base58. Never fold case — pump.fun mints are case-sensitive. */
+export function isSolanaMint(mint: string): boolean {
+  const a = (mint || "").trim();
+  if (a.length < 32 || a.length > 44 || a.startsWith("0x") || a.startsWith("0X")) return false;
+  try {
+    return bs58.decode(a).length === 32;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * METRO_SETTLEMENT:
- *   robinhood|evm (default) — authoritative live path
- *   auto                    — detect from mint shape (0x → robinhood, else off)
- *   solana|sol|spl|off      — accepted for env compatibility; resolves to OFF here
- *                             (no SPL adapter is compiled into this build)
+ *   solana|sol|spl (default) — live path
+ *   auto                     — detect from mint shape (base58 → solana, else off)
+ *   off|robinhood|rh|evm     — credits-only (EVM adapter is not compiled as live)
  */
-export function settlementForce(env: { METRO_SETTLEMENT?: string }): "robinhood" | "auto" | "off" {
-  const f = (env.METRO_SETTLEMENT || "robinhood").toLowerCase().trim();
+export function settlementForce(env: { METRO_SETTLEMENT?: string }): "solana" | "auto" | "off" {
+  const f = (env.METRO_SETTLEMENT || "solana").toLowerCase().trim();
   if (f === "auto") return "auto";
-  if (f === "solana" || f === "sol" || f === "spl" || f === "off") return "off";
-  // robinhood | rh | evm | empty | anything else → robinhood (authoritative)
-  return "robinhood";
+  if (f === "off" || f === "robinhood" || f === "rh" || f === "evm") return "off";
+  return "solana";
 }
 
 export function resolveSettlementFamily(
@@ -30,16 +40,19 @@ export function resolveSettlementFamily(
   const m = (mint || "").trim();
   const force = settlementForce(env);
   if (force === "off" || !m) return "off";
-  if (isEvmMint(m)) return "robinhood";
-  // Non-0x mint (e.g. base58) → stay off: never silently take a chain we can't settle.
+  if (force === "auto") {
+    if (isSolanaMint(m)) return "solana";
+    return "off";
+  }
+  if (isSolanaMint(m)) return "solana";
   return "off";
 }
 
 export function settlementFamilyLabel(family: SettlementFamily): string {
   switch (family) {
-    case "robinhood":
-      return "Robinhood Chain ERC-20";
+    case "solana":
+      return "Solana SPL";
     default:
-      return "off (credits only · Robinhood primary)";
+      return "off (credits only · Solana primary)";
   }
 }

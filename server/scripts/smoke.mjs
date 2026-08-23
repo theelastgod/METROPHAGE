@@ -1207,7 +1207,7 @@ async function market() {
 
   // $METRO listings — fund via bridge deposit, then list/buy in ◈
   const httpBase = WS_URL.replace(/^ws/, "http").replace(/\/ws$/, "");
-  const WALLET = "0x2222222222222222222222222222222222222222";
+  const WALLET = "11111111111111111111111111111111";
   const post = async (p, body) =>
     (await fetch(httpBase + p, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).json();
   // as:"metro" — the ◈ listing/buy below needs an in-game metro balance, not credits.
@@ -2768,8 +2768,7 @@ async function metro() {
   // HTTP bridge endpoints (no WebSocket). Harness pre-seeds D1: whale credits=10000,
   // pauper credits=600, and clears the metro ledger so caps/cooldowns start fresh.
   const httpBase = WS_URL.replace(/^ws/, "http").replace(/\/ws$/, "");
-  // Prefer EVM-shaped wallet for Robinhood-era bridge; sim still accepts any valid shape.
-  const WALLET = "0x1111111111111111111111111111111111111111";
+  const WALLET = "11111111111111111111111111111111";
   const get = async (p) => (await fetch(httpBase + p)).json();
   const post = async (p, body) =>
     (await fetch(httpBase + p, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).json();

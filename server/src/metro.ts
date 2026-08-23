@@ -2,20 +2,19 @@
 //
 // The off-chain `credits` balance (server-authoritative, Phase 4) is the live in-game
 // currency. This bridge converts it to/from on-chain $METRO via a CUSTODIAL treasury:
-//   withdraw  credits -> $METRO  (debit credits; treasury pre-signs an ERC-20 payout the
-//                                 player broadcasts; confirm finalizes on-chain)
-//   deposit   $METRO  -> credits (verify an on-chain transfer into the treasury, grant credits)
+//   withdraw  credits -> $METRO  (debit credits; Worker broadcasts an SPL payout;
+//                                 confirm finalizes on-chain)
+//   deposit   $METRO  -> credits (verify a finalized transfer into the treasury, grant credits)
 //
 // AUTHORITY: the server owns every balance and authorizes every settlement. The client
 // never mints, never reports a balance, and cannot double-spend — withdrawals debit
 // atomically (a conditional UPDATE) and deposits are claim-once (tx_sig is a PRIMARY
-// KEY). Settlement is a pluggable seam: Robinhood ERC-20 (evm.ts) or devnet-sim for
-// headless smoke tests. (This build is EVM-only; the SPL adapter lives on `settlement/solana`.)
-// Credits↔$METRO rates track EVM market USD (refreshed ~every 30m via metroPrice).
-//
-// Wallet proof required for live settlement (personal_sign).
+// KEY). Settlement is a pluggable seam: Solana SPL (solana.ts) or devnet-sim for
+// headless smoke tests. evm.ts is unused.
+// Credits↔$METRO rates track market USD (metroPrice). Wallet proof is ed25519 login.
 
 import type { D1Database } from "@cloudflare/workers-types";
+import { isSolanaMint } from "./settlementFamily";
 import {
   BASE_DEPOSIT_CREDITS,
   BASE_WITHDRAW_CREDITS,
@@ -42,7 +41,8 @@ export const BRIDGE = {
   withdrawCooldownMs: BASE_WITHDRAW_COOLDOWN_MS,
   dailyCapCredits: 0, // unlimited
   metroDecimals: 6,
-  claimTtlMs: 10 * 60_000,
+  // Solana recent-blockhash dies in ~60–90s. Never hand a stale signed tx to the client.
+  claimTtlMs: 2 * 60_000,
   devSeedMetro: METRO_DEV_SEED_METRO,
   targetPlayers: TARGET_PLAYERS,
 } as const;
@@ -250,9 +250,9 @@ export async function poolInfo(db: D1Database, priceEnv?: BridgePriceEnv): Promi
   };
 }
 
-/** EVM address (0x + 40 hex). This build settles on Robinhood Chain only. */
+/** Solana wallet (base58 32-byte). Never fold case. */
 export function isValidWallet(s: string): boolean {
-  return /^0x[a-fA-F0-9]{40}$/.test((s || "").trim());
+  return isSolanaMint((s || "").trim());
 }
 
 export interface SettleResult {
@@ -262,16 +262,15 @@ export interface SettleResult {
   metro?: number; // verified on-chain amount (deposit)
   /**
    * Payout payload for the client:
-   *  - EVM: fully signed raw ERC-20 transfer hex
+   *  - Solana live: `solana-sent:<sig>` after Worker broadcast
    *  - sim: `devnet-sim-claim:…`
    */
   claimTx?: string;
-  /** EVM treasury nonce used for a pre-signed claim (burned on TTL reclaim). */
+  /** Unused on Solana (EVM leftover on the Settlement seam). */
   nonce?: number;
   /**
-   * Hash the pre-signed claim WILL have once broadcast (deterministic from the
-   * signed tx). Lets the TTL sweep ask the chain whether the player actually
-   * broadcast it, instead of assuming abandonment and refunding blind.
+   * Signature known before broadcast (treasury is fee-payer). Persist this
+   * before sendPreparedClaim so TTL reclaim can tell landed from abandoned.
    */
   claimTxHash?: string;
 }
@@ -288,17 +287,18 @@ export function stripClaimPrefix(raw: string | null | undefined): string {
 }
 
 export interface Settlement {
-  /** Build a payout claim the client can broadcast.
-   *  - EVM: fully signed raw ERC-20 transfer (treasury → wallet) */
+  /** Prepare a payout. Solana signs locally and returns claimTxHash without sending. */
   buildClaim(wallet: string, metro: number): Promise<SettleResult>;
+  /**
+   * Broadcast a payout whose claim_tx_hash is already in D1.
+   * Solana only — Worker is the sole broadcaster. Sim leaves this undefined.
+   */
+  sendPreparedClaim?(claimTxHash: string): Promise<SettleResult>;
   /** Verify a submitted claim landed on-chain: treasury paid exactly `metro` to `wallet`. */
   verifyClaim(txSig: string, wallet: string, metro: number): Promise<SettleResult>;
   /** Verify an on-chain deposit tx that paid `metro` into the treasury from `wallet`. */
   verifyDeposit(txSig: string, wallet: string, claimedMetro: number): Promise<SettleResult>;
-  /**
-   * Invalidate a pre-signed EVM claim by consuming its treasury nonce (0-value self-tx).
-   * Optional — sim leaves this undefined.
-   */
+  /** Unused on Solana (EVM nonce burn). */
   invalidateNonce?(nonce: number): Promise<void>;
 }
 
@@ -522,48 +522,60 @@ export async function withdraw(
       /treasury.*low|balance too low|Check back later|insufficient \$METRO|no \$METRO/i.test(raw);
     return { ok: false, reason: poolish ? POOL_EMPTY_USER_MSG : raw };
   }
-  if (typeof settle.nonce === "number" && Number.isFinite(settle.nonce)) {
-    // This write is NOT optional. reclaimExpired burns the nonce only when
-    // claim_nonce is set; if it's NULL the TTL path refunds the credits while the
-    // player still holds a valid, broadcastable pre-signed transfer — they keep
-    // the credits AND take the tokens, repeatably. (The old `catch {}` here was
-    // for pre-0031 DBs; 0031 is long applied.)
-    let recorded = false;
+
+  const persistClaimHash = async (hash: string): Promise<boolean> => {
     try {
-      // nonce + hash in one write: the sweep needs the hash to tell "landed" from
-      // "abandoned", and the nonce to burn it. Splitting them risks having one.
       const w = await db
-        .prepare("UPDATE metro_withdrawals SET claim_nonce = ?, claim_tx_hash = ? WHERE id = ?")
-        .bind(settle.nonce, settle.claimTxHash ?? null, wid)
-        .run();
-      recorded = (w.meta.changes ?? 0) > 0;
-    } catch {
-      recorded = false;
-    }
-    if (!recorded) {
-      // Never hand out a claim we can't reclaim. Refund, fail the row, and burn
-      // the nonce so the tx we just signed can never land.
-      await db.prepare("UPDATE players SET credits = credits + ? WHERE id = ?").bind(credits, id).run();
-      await db.prepare("UPDATE metro_withdrawals SET status = 'failed' WHERE id = ?").bind(wid).run();
-      try {
-        await settlement.invalidateNonce?.(settle.nonce);
-      } catch {
-        /* burn failed — the claimTx was never returned, so it can't be broadcast */
-      }
-      return { ok: false, reason: "cash-out ledger unavailable — credits refunded, please retry" };
-    }
-  } else if (settle.claimTxHash) {
-    // A settlement that pre-signs (or already broadcast) without a nonce still needs the
-    // hash recorded: it is the only thing that lets reclaimExpired tell a landed payout
-    // from an abandoned claim. Kept outside the nonce branch above on purpose.
-    try {
-      await db
         .prepare("UPDATE metro_withdrawals SET claim_tx_hash = ? WHERE id = ?")
-        .bind(settle.claimTxHash, wid)
+        .bind(hash, wid)
         .run();
+      return (w.meta.changes ?? 0) > 0;
     } catch {
-      /* best effort — confirmWithdraw can still finalize this row by signature */
+      return false;
     }
+  };
+
+  const refundUnsent = async (reason: string): Promise<BridgeResponse> => {
+    await db.prepare("UPDATE players SET credits = credits + ? WHERE id = ?").bind(credits, id).run();
+    await db.prepare("UPDATE metro_withdrawals SET status = 'failed' WHERE id = ?").bind(wid).run();
+    return { ok: false, reason };
+  };
+
+  // Persist the known signature BEFORE considering the payout sent. Without this
+  // the TTL sweep refunds credits for tokens the treasury already moved.
+  if (settle.claimTxHash) {
+    const recorded = await persistClaimHash(settle.claimTxHash);
+    if (!recorded) {
+      return refundUnsent("cash-out ledger unavailable — credits refunded, please retry");
+    }
+  }
+
+  let claimTx = settle.claimTx;
+  if (settlement.sendPreparedClaim && settle.claimTxHash) {
+    let hash = settle.claimTxHash;
+    let sent: SettleResult = { ok: false, reason: POOL_EMPTY_USER_MSG };
+    for (let i = 0; i < 4; i++) {
+      sent = await settlement.sendPreparedClaim(hash);
+      if (sent.ok && sent.ref) break;
+      if (sent.reason === "blockhash_retry" && sent.claimTxHash) {
+        const moved = await persistClaimHash(sent.claimTxHash);
+        if (!moved) return { ok: false, reason: POOL_EMPTY_USER_MSG };
+        hash = sent.claimTxHash;
+        continue;
+      }
+      break;
+    }
+    if (!sent.ok || !sent.ref) {
+      const raw = sent.reason ?? POOL_EMPTY_USER_MSG;
+      const poolish =
+        raw === POOL_EMPTY_USER_MSG ||
+        raw === "blockhash_retry" ||
+        /treasury.*low|balance too low|Check back later|insufficient \$METRO|no \$METRO|BlockhashNotFound/i.test(
+          raw,
+        );
+      return { ok: false, reason: poolish ? POOL_EMPTY_USER_MSG : raw };
+    }
+    claimTx = `solana-sent:${sent.ref}`;
   }
   try {
     const { recordTreasuryEvent } = await import("./playerTreasury");
@@ -586,10 +598,10 @@ export async function withdraw(
     credits,
     metro,
     withdrawId: wid,
-    claimTx: settle.claimTx,
+    claimTx,
     expiresAt: Date.now() + live.claimTtlMs,
     withdrawCreditsPerMetro: live.withdrawCreditsPerMetro,
-    note: "sign + submit this tx with your wallet (you pay the network fee), then confirm",
+    note: "treasury already broadcast this cash-out (you pay no SOL) — confirm shortly",
   };
 }
 
