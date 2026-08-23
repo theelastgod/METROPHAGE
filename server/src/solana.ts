@@ -50,7 +50,7 @@ const SEND_ATTEMPTS = 4;
 
 function isBlockhashGone(err: unknown): boolean {
   const m = String((err as Error)?.message ?? err);
-  return /BlockhashNotFound|blockhash not found|Blockhash not found|expired/i.test(m);
+  return /BlockhashNotFound|blockhash not found/i.test(m);
 }
 
 export function isSolanaTreasurySecret(secret: string | undefined): boolean {
@@ -168,13 +168,23 @@ export function makeSolanaSettlement(cfg: SolanaConfig): Settlement {
           return { ok: true, ref: sig, claimTx: `solana-sent:${sig}`, claimTxHash: sig };
         } catch (e) {
           if (isBlockhashGone(e)) {
+            try {
+              const st = await conn.getSignatureStatuses([claimTxHash], { searchTransactionHistory: true });
+              const val = st?.value?.[0];
+              if (val && !val.err) {
+                preparedByHash.delete(claimTxHash);
+                return { ok: true, ref: claimTxHash, claimTx: `solana-sent:${claimTxHash}`, claimTxHash };
+              }
+            } catch {
+              /* status RPC failed — do not resign until we know the old sig is dead */
+              return { ok: false, rpcError: true, reason: "rpc unreachable — claim still pending" };
+            }
             preparedByHash.delete(claimTxHash);
             const rebuilt = await assemblePayout(prep.wallet, prep.metro);
             if (!rebuilt.ok || !rebuilt.claimTxHash || !rebuilt.prepared) {
               return { ok: false, reason: rebuilt.reason ?? POOL_EMPTY_USER_MSG };
             }
             preparedByHash.set(rebuilt.claimTxHash, rebuilt.prepared);
-            // New sig is not yet on-chain. Persist first, then sendPreparedClaim again.
             return {
               ok: false,
               claimTxHash: rebuilt.claimTxHash,
@@ -211,7 +221,22 @@ export function makeSolanaSettlement(cfg: SolanaConfig): Settlement {
         if (walletGot !== units) return { ok: false, reason: "tx does not pay this claim's wallet" };
         return { ok: true, ref: sig };
       } catch (e) {
-        return { ok: false, reason: String((e as Error)?.message ?? e).slice(0, 160) };
+        return {
+          ok: false,
+          rpcError: true,
+          reason: String((e as Error)?.message ?? e).slice(0, 160),
+        };
+      }
+    },
+
+    async treasuryTokenUi() {
+      try {
+        const from = await getAssociatedTokenAddress(mint, treasury.publicKey);
+        const bal = await conn.getTokenAccountBalance(from, "confirmed");
+        const n = Number(bal.value.uiAmount);
+        return Number.isFinite(n) ? n : 0;
+      } catch {
+        return null;
       }
     },
 

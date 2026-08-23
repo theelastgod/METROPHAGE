@@ -19,7 +19,7 @@ import {
   walletUiLabel,
   walletConnectAvailable,
 } from "../economy/wallet";
-import { isLikelyMobile, openInWalletBrowser } from "../economy/walletConnect";
+import { isLikelyMobile } from "../economy/walletConnect";
 import { prefersMobileUx } from "../systems/Mobile";
 import { onOnlinePlayerChange } from "../economy/session";
 import { submitClaim } from "../economy/claim";
@@ -598,7 +598,7 @@ function mountStandbyMetroPanel(getPlayerId: () => string | null): void {
           ? "open your Solana wallet or paste a base58 address"
           : "install Phantom, or paste a Solana address",
       );
-      if (isLikelyMobile()) openInWalletBrowser("metamask");
+
       return;
     }
     if (connectedWallet()) {
@@ -660,8 +660,8 @@ function mountStandbyMetroPanel(getPlayerId: () => string | null): void {
     const sent = await sendSplDeposit({ treasury, amount, mint });
     if (!sent.ok || !sent.txHash) return status(`✗ ${sent.reason ?? "send failed"}`);
     ($("m-txsig") as HTMLInputElement).value = sent.txHash;
-    status("tx sent — claiming…");
-    await new Promise((r) => setTimeout(r, 3500));
+    status("tx sent — waiting for finalized…");
+    await new Promise((r) => setTimeout(r, 8000));
     ($("m-deposit") as HTMLButtonElement).click();
   };
 
@@ -1152,7 +1152,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
           ? "open your Solana wallet or paste a base58 address"
           : "paste a Solana address or open Phantom",
       );
-      if (isLikelyMobile()) openInWalletBrowser("metamask");
+
       return;
     }
     if (connectedWallet()) {
@@ -1296,7 +1296,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ player, withdrawId, txSig, wallet: currentWallet(), ...auth }),
       }).then((x) => x.json());
-      if (last.ok || !/not found on-chain/.test(last.reason ?? "")) return last;
+      if (last.ok || !/not found|not finalized|try again shortly/i.test(last.reason ?? "")) return last;
       await new Promise((res) => setTimeout(res, 1500));
     }
     return last;

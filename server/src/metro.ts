@@ -273,6 +273,8 @@ export interface SettleResult {
    * before sendPreparedClaim so TTL reclaim can tell landed from abandoned.
    */
   claimTxHash?: string;
+  /** True when the chain RPC failed — do not treat as "tx absent". */
+  rpcError?: boolean;
 }
 
 /**
@@ -300,6 +302,8 @@ export interface Settlement {
   verifyDeposit(txSig: string, wallet: string, claimedMetro: number): Promise<SettleResult>;
   /** Unused on Solana (EVM nonce burn). */
   invalidateNonce?(nonce: number): Promise<void>;
+  /** On-chain treasury ATA balance in $METRO (human units), or null if unread. */
+  treasuryTokenUi?(): Promise<number | null>;
 }
 
 /** Devnet-sim settlement: simulates the chain so the off-chain accounting is fully
@@ -458,6 +462,12 @@ export async function withdraw(
 
   const metro = creditsToMetroAt(credits, live.withdrawCreditsPerMetro);
 
+  if (settlement.treasuryTokenUi) {
+    const ata = await settlement.treasuryTokenUi();
+    const pool = await poolMetro(db);
+    if (ata != null && ata + 1e-6 < pool) return { ok: false, reason: POOL_EMPTY_USER_MSG };
+  }
+
   // ATOMIC debit — succeeds only if the LIVE balance covers it (no double-spend).
   const debit = await db
     .prepare("UPDATE players SET credits = credits - ? WHERE id = ? AND credits >= ?")
@@ -559,23 +569,30 @@ export async function withdraw(
       if (sent.ok && sent.ref) break;
       if (sent.reason === "blockhash_retry" && sent.claimTxHash) {
         const moved = await persistClaimHash(sent.claimTxHash);
-        if (!moved) return { ok: false, reason: POOL_EMPTY_USER_MSG };
+        if (!moved) {
+          return { ok: false, reason: "cash-out ledger unavailable — try confirm shortly" };
+        }
         hash = sent.claimTxHash;
         continue;
       }
       break;
     }
     if (!sent.ok || !sent.ref) {
-      const raw = sent.reason ?? POOL_EMPTY_USER_MSG;
-      const poolish =
-        raw === POOL_EMPTY_USER_MSG ||
-        raw === "blockhash_retry" ||
-        /treasury.*low|balance too low|Check back later|insufficient \$METRO|no \$METRO|BlockhashNotFound/i.test(
-          raw,
-        );
-      return { ok: false, reason: poolish ? POOL_EMPTY_USER_MSG : raw };
+      if (sent.rpcError) {
+        claimTx = `solana-sent:${hash}`;
+      } else {
+        const raw = sent.reason ?? POOL_EMPTY_USER_MSG;
+        const poolish =
+          raw === POOL_EMPTY_USER_MSG ||
+          raw === "blockhash_retry" ||
+          /treasury.*low|balance too low|Check back later|insufficient \$METRO|no \$METRO|BlockhashNotFound/i.test(
+            raw,
+          );
+        return { ok: false, reason: poolish ? POOL_EMPTY_USER_MSG : raw };
+      }
+    } else {
+      claimTx = `solana-sent:${sent.ref}`;
     }
-    claimTx = `solana-sent:${sent.ref}`;
   }
   try {
     const { recordTreasuryEvent } = await import("./playerTreasury");
@@ -664,9 +681,7 @@ export async function confirmWithdraw(
   return { ok: true, player: id, withdrawId: wid, metro: row.metro, credits: row.credits, txSig };
 }
 
-/** Refund pending claims older than the TTL.
- *  EVM pre-signed raw txs do NOT expire on their own — pass settlement so we can burn
- *  the treasury nonce and invalidate the abandoned claimTx. */
+/** Refund pending claims older than the TTL when the chain proves the payout did not land. */
 export async function reclaimExpired(db: D1Database, settlement?: Settlement): Promise<number> {
   const cutoff = Date.now() - BRIDGE.claimTtlMs;
   type Row = {
@@ -711,8 +726,11 @@ export async function reclaimExpired(db: D1Database, settlement?: Settlement): P
       try {
         const v = await settlement.verifyClaim(r.claim_tx_hash, r.wallet, r.metro);
         landed = !!v.ok;
+        if (!v.ok && (v.rpcError || /fetch|429|timeout|ECONN|unreachable|ENOTFOUND/i.test(v.reason ?? ""))) {
+          continue;
+        }
       } catch {
-        landed = false; // can't reach the chain — fall through and retry next sweep
+        continue;
       }
       if (landed) {
         // It paid out. Finalize like confirmWithdraw would have, exactly once.

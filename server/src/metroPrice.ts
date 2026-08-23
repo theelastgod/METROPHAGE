@@ -150,16 +150,17 @@ async function fetchDexScreener(mint: string): Promise<{ usd: number; raw: strin
 /** GeckoTerminal token endpoint (network slug guess for Robinhood / generic). */
 async function fetchGeckoTerminal(mint: string, chainId: number): Promise<{ usd: number; raw: string } | null> {
   // Known / likely network slugs — GT uses kebab names.
-  const nets =
-    chainId === 4663
+  const nets = /^0x/i.test(mint)
+    ? chainId === 4663
       ? ["robinhood-chain", "robinhood", "rh"]
       : chainId === 46630
         ? ["robinhood-chain-testnet", "robinhood-testnet"]
-        : ["eth", "arbitrum", "base"];
+        : ["eth", "arbitrum", "base"]
+    : ["solana"];
   for (const net of nets) {
     try {
       const r = await fetch(
-        `https://api.geckoterminal.com/api/v2/networks/${net}/tokens/${mint.toLowerCase()}`,
+        `https://api.geckoterminal.com/api/v2/networks/${net}/tokens/${/^0x/i.test(mint) ? mint.toLowerCase() : mint}`,
         { headers: { accept: "application/json" } },
       );
       if (!r.ok) continue;
@@ -187,8 +188,6 @@ export async function fetchMarketUsd(
 ): Promise<{ usd: number; source: string; raw?: string } | null> {
   const forced = parseUsd(envPrice);
   if (forced != null) return { usd: forced, source: "env:METRO_USD_PRICE" };
-
-  if (!/^0x[a-fA-F0-9]{40}$/i.test(mint)) return null;
 
   const dex = await fetchDexScreener(mint);
   if (dex) return { usd: dex.usd, source: "dexscreener", raw: dex.raw };
@@ -226,12 +225,15 @@ export async function getMetroUsdPrice(env: MetroPriceEnv, opts?: { forceRefresh
     return q;
   }
 
-  if (!mint || !/^0x[a-fA-F0-9]{40}$/i.test(mint)) {
+  if (!mint) {
     return REFERENCE_QUOTE(now);
   }
 
+  const mintEq = (a: string | null | undefined) =>
+    !!a && (/^0x/i.test(mint) ? a.toLowerCase() === mint.toLowerCase() : a === mint);
+
   const cached = await readCache(env.DB);
-  if (cached && !cached.stale && !opts?.forceRefresh && cached.mint?.toLowerCase() === mint.toLowerCase()) {
+  if (cached && !cached.stale && !opts?.forceRefresh && mintEq(cached.mint)) {
     return cached;
   }
 
@@ -256,7 +258,7 @@ export async function getMetroUsdPrice(env: MetroPriceEnv, opts?: { forceRefresh
   }
 
   // Network miss — keep last good quote if we have one for this mint.
-  if (cached && cached.mint?.toLowerCase() === mint.toLowerCase() && cached.usd > 0 && !cached.isReference) {
+  if (cached && mintEq(cached.mint) && cached.usd > 0 && !cached.isReference) {
     return { ...cached, stale: true };
   }
 
