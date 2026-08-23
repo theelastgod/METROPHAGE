@@ -1,13 +1,12 @@
+import { ed25519 } from "@noble/curves/ed25519";
+import bs58 from "bs58";
 import { verifyMessage, getAddress } from "ethers";
 import { loginMessage, retireMessage } from "../../src/net/protocol";
 
-// METROPHAGE wallet sign-in (EVM-only build).
+// METROPHAGE wallet sign-in.
 //
-// Supports MetaMask / WalletConnect / any EVM wallet — EIP-191 personal_sign over
-// loginMessage (secp256k1, hex 0x sig). The Solana ed25519 verifier lives on the
-// `settlement/solana` branch.
-//
-// Canonical player id is always "w:<checksummed 0x address>".
+// Live path: Solana ed25519 over loginMessage (base58 wallet + sig).
+// EVM EIP-191 is kept only so leftover 0x proofs still verify until settlement cutover.
 
 const FRESH_MS = 120_000; // ±2 min of server clock
 
@@ -22,25 +21,17 @@ function isEvmWallet(s: string): boolean {
 }
 
 function isEvmSig(s: string): boolean {
-  // 65-byte signature as 0x + 130 hex chars (r,s,v)
   return /^0x[a-fA-F0-9]{130}$/.test((s || "").trim());
 }
 
-/**
- * Builds the exact text the signature must cover. Scoping this per action is what
- * stops a captured login proof from authorizing a destructive one.
- */
 type MessageFor = (wallet: string, ts: number) => string;
 
-/** Verify MetaMask / EVM personal_sign. Returns w:<checksummed> or null. */
 function verifyEvmLogin(wallet: string, sig: string, ts: number, now: number, msgFor: MessageFor): string | null {
   try {
     if (Math.abs(now - ts) > FRESH_MS) return null;
     const msg = msgFor(wallet, ts);
-    // Also try checksum / lowercase variants some wallets embed in the message UI only.
     const recovered = verifyMessage(msg, sig);
     if (recovered.toLowerCase() !== wallet.toLowerCase()) {
-      // Client may have signed with checksummed form in the message:
       const checksum = getAddress(wallet);
       const msg2 = msgFor(checksum, ts);
       const recovered2 = verifyMessage(msg2, sig);
@@ -53,10 +44,20 @@ function verifyEvmLogin(wallet: string, sig: string, ts: number, now: number, ms
   }
 }
 
-/**
- * Verify a signed wallet login. Returns canonical player id ("w:<wallet>") or null.
- * Never throws — malformed proof is rejection.
- */
+function verifySolanaLogin(wallet: string, sig: string, ts: number, now: number, msgFor: MessageFor): string | null {
+  try {
+    if (Math.abs(now - ts) > FRESH_MS) return null;
+    const pub = bs58.decode(wallet);
+    const signature = bs58.decode(sig);
+    if (pub.length !== 32 || signature.length !== 64) return null;
+    const msg = new TextEncoder().encode(msgFor(wallet, ts));
+    if (!ed25519.verify(signature, msg, pub)) return null;
+    return "w:" + wallet;
+  } catch {
+    return null;
+  }
+}
+
 export function verifyWalletLogin(p: WalletProof, now = Date.now()): string | null {
   return verifyWalletAction(p, loginMessage, now);
 }
@@ -77,29 +78,30 @@ export function verifyWalletAction(p: WalletProof, msgFor: MessageFor, now = Dat
     const wallet = p.wallet.trim();
     const sig = p.sig.trim();
 
-    // EVM only. (Non-0x wallets — e.g. base58 — are rejected outright on this build.)
-    if (!isEvmWallet(wallet)) return null;
-    if (!isEvmSig(sig) && !sig.startsWith("0x")) return null;
-    return verifyEvmLogin(wallet, sig, p.ts, now, msgFor);
+    if (isEvmWallet(wallet) || isEvmSig(sig)) {
+      if (!isEvmWallet(wallet)) return null;
+      return verifyEvmLogin(wallet, sig, p.ts, now, msgFor);
+    }
+
+    return verifySolanaLogin(wallet, sig, p.ts, now, msgFor);
   } catch {
     return null;
   }
 }
 
-/** Verify a signature authorizing PERMANENT deletion of a character. */
 export function verifyWalletRetire(p: WalletProof, now = Date.now()): string | null {
   return verifyWalletAction(p, retireMessage, now);
 }
 
-/**
- * Canonical player id for a wallet address without verifying a signature.
- * Used for device-session resume after the first signed login.
- */
+/** Canonical player id without verifying a signature (device-session resume). */
 export function walletPlayerId(wallet: string): string | null {
   try {
     const w = (wallet || "").trim();
     if (!w) return null;
     if (isEvmWallet(w)) return "w:" + getAddress(w);
+    if (w.length >= 32 && w.length <= 44 && !w.startsWith("0x") && !w.startsWith("0X")) {
+      return "w:" + w;
+    }
     return null;
   } catch {
     return null;

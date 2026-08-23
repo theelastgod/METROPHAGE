@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { Wallet } from "ethers";
-import { verifyWalletLogin, verifyWalletRetire } from "./auth";
+import { ed25519 } from "@noble/curves/ed25519";
+import bs58 from "bs58";
+import { verifyWalletLogin, verifyWalletRetire, walletPlayerId } from "./auth";
 import { loginMessage, retireMessage } from "../../src/net/protocol";
 
 // A real signer — these are genuine secp256k1 signatures, not stubs.
@@ -68,5 +70,35 @@ describe("wallet action scoping", () => {
     expect(retireMessage(ADDR, now)).not.toBe(loginMessage(ADDR, now));
     // The signer must be shown what they are actually approving.
     expect(retireMessage(ADDR, now).toLowerCase()).toContain("permanently delete");
+  });
+});
+
+describe("Solana ed25519 login", () => {
+  const now = Date.now();
+  const priv = ed25519.utils.randomPrivateKey();
+  const wallet = bs58.encode(ed25519.getPublicKey(priv));
+
+  function solProof(text: string, ts: number) {
+    const sig = bs58.encode(ed25519.sign(new TextEncoder().encode(text), priv));
+    return { wallet, sig, ts };
+  }
+
+  it("accepts a base58 ed25519 signature over loginMessage", () => {
+    const p = solProof(loginMessage(wallet, now), now);
+    expect(verifyWalletLogin(p, now)).toBe("w:" + wallet);
+    expect(walletPlayerId(wallet)).toBe("w:" + wallet);
+  });
+
+  it("scopes retire vs login the same as EVM", () => {
+    const login = solProof(loginMessage(wallet, now), now);
+    expect(verifyWalletRetire(login, now)).toBeNull();
+    const retire = solProof(retireMessage(wallet, now), now);
+    expect(verifyWalletRetire(retire, now)).toBe("w:" + wallet);
+    expect(verifyWalletLogin(retire, now)).toBeNull();
+  });
+
+  it("does not treat a 0x address as a Solana player id", () => {
+    expect(walletPlayerId("0x7bf8195c181fbb74d10aed7035c26eca18ea726d")).toMatch(/^w:0x/i);
+    expect(verifyWalletLogin({ wallet, sig: "0xdead", ts: now }, now)).toBeNull();
   });
 });

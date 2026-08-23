@@ -24,6 +24,8 @@
     "wrangler": "^4.103.0"
   },
   "dependencies": {
+    "@noble/curves": "^1.9.7",
+    "bs58": "^6.0.0",
     "ethers": "^6.17.0"
   },
   "overrides": {

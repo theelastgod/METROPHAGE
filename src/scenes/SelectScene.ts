@@ -28,8 +28,8 @@ import {
   walletSessionSecret,
   walletChoiceList,
   walletChoiceProse,
-  walletConnectAvailable,
 } from "../economy/wallet";
+import { shortSolanaAddress } from "../economy/solanaChain";
 import {
   ensureWalletConnected,
   fetchWalletIdentity,
@@ -57,7 +57,7 @@ type MenuPhase = "wallet" | "returning" | "create" | "guest_returning";
 /**
  * Title screen — full-bleed layout.
  * Guest multiplayer: g:<uuid> + device secret → full server save, no wallet.
- * Wallet: optional permanent EVM identity (MetaMask / WalletConnect on Robinhood Chain); returning players skip customize.
+ * Wallet: optional permanent Solana identity (Phantom / Solflare / Backpack); returning players skip customize.
  */
 export default class SelectScene extends Phaser.Scene {
   private hover = -1;
@@ -173,7 +173,7 @@ export default class SelectScene extends Phaser.Scene {
         .text(
           VIEW_W / 2,
           MENU_FOOTER_Y + uiDim(4),
-          "WALLETCONNECT  ·  PERMANENT ID     ·     FREE PLAY  ·  DEVICE SAVE",
+          `${t("wallet.family")}     ·     FREE PLAY  ·  DEVICE SAVE`,
           bodyFont(9, { color: "#3d4454" }),
         )
         .setOrigin(0.5);
@@ -287,10 +287,10 @@ export default class SelectScene extends Phaser.Scene {
           ? [
               {
                 label: "◈ LINK WALLET",
-                sub: "MetaMask · Phantom · any WalletConnect wallet",
+                sub: "Phantom · Solflare · Backpack",
                 color: COLORS.neonGreen,
                 primary: false as const,
-                fn: () => void this.onMetaMaskSignUp(),
+                fn: () => void this.onWalletSignUp(),
               },
             ]
           : []),
@@ -299,7 +299,7 @@ export default class SelectScene extends Phaser.Scene {
   }
 
   private shortWallet(addr: string) {
-    return addr.length > 10 ? `${addr.slice(0, 4)}…${addr.slice(-4)}` : addr;
+    return shortSolanaAddress(addr);
   }
 
   private syncWalletLabel(addr?: string | null) {
@@ -354,31 +354,24 @@ export default class SelectScene extends Phaser.Scene {
     this.bodyText.setVisible(false);
     this.tagline?.setVisible(true); // caption borrowed the tagline's slot
     // Wallet is the key / recommended path; guest multiplayer remains available.
-    // walletAvailable() is true for inject, WalletConnect, and mobile deep-links.
+    // walletAvailable() is true for inject and mobile Phantom protocol.
     const mobile = prefersMobileUx();
-    const mobilePicker = mobile && walletConnectAvailable();
     this.walletPanel.show({
       step: "connect",
       status: "ready",
-      statusText: mobilePicker
-        ? "Wallet picker · free sign-in"
-        : mobile ? "MetaMask · free sign-in" : `${walletChoiceList()} · free sign-in`,
-      headline: mobilePicker ? "Connect a wallet" : "Connect your wallet",
-      body: mobilePicker
-        ? "Choose MetaMask, Phantom, or another WalletConnect wallet. Approval and one free signature happen in the wallet app; the game stays in this browser."
-        : mobile
-          ? "Your wallet signs one free message — no gas. Or play free with a device save."
-        : `Sign up with ${walletChoiceProse()}. The signature is free—no transaction and no gas. Your runner is permanently bound to that address across devices. Prefer no wallet? Play free with a device-locked multiplayer save.`,
+      statusText: mobile ? "Phantom · SOLANA · free sign-in" : `${walletChoiceList()} · free sign-in`,
+      headline: "Connect Phantom",
+      body: mobile
+        ? "Choose Phantom, Solflare, or Backpack. Approval and one free signature happen in the wallet app; the game stays in this browser."
+        : `Sign up with ${walletChoiceProse()}. The signature is free—no transaction. Your runner is permanently bound to that address across devices. Prefer no wallet? Play free with a device-locked multiplayer save.`,
       wallet: null,
       actions: this.walletActions([
         {
-          label: "◈ CONNECT WALLET",
-          sub: mobilePicker
-            ? "choose a wallet · free message"
-            : mobile ? "open your wallet · free message" : `${walletChoiceList()} · free message`,
+          label: "◈ CONNECT PHANTOM",
+          sub: mobile ? "open Phantom · free message" : `${walletChoiceList()} · free message`,
           color: COLORS.neonGreen,
           primary: true as const,
-          fn: () => void this.onMetaMaskSignUp(),
+          fn: () => void this.onWalletSignUp(),
         },
         {
           label: "◢ PLAY FREE · NO WALLET",
@@ -391,17 +384,17 @@ export default class SelectScene extends Phaser.Scene {
     });
   }
 
-  /** One-click wallet connect (inject / WalletConnect / mobile) + sign-in. */
-  private async onMetaMaskSignUp() {
-    const mobilePicker = prefersMobileUx() && walletConnectAvailable();
+  /** One-click Solana connect (inject / picker / Phantom protocol) + sign-in. */
+  private async onWalletSignUp() {
+    const mobile = prefersMobileUx();
     this.walletPanel.show({
       step: "connect",
       status: "busy",
-      statusText: mobilePicker ? "opening wallet picker" : "awaiting wallet · WalletConnect",
-      headline: mobilePicker ? "Choose your wallet" : "Check your wallet",
-      body: mobilePicker
-        ? "Choose a wallet, approve the connection there, then approve one free login signature. Return here to play—the game does not open inside the wallet."
-        : `Approve the connection in ${walletChoiceProse()}. Then sign a free login message — no gas. Your runner is permanently bound to this address.`,
+      statusText: mobile ? "opening Phantom" : "awaiting Phantom",
+      headline: mobile ? "Approve in Phantom" : "Check Phantom",
+      body: mobile
+        ? "Approve the connection in the wallet app, then one free login signature. Return here to play—the game does not open inside the wallet."
+        : `Approve the connection in ${walletChoiceProse()}. Then sign a free login message. Your runner is permanently bound to this address.`,
       wallet: connectedWallet(),
       actions: [],
       showDisconnect: true,
@@ -525,7 +518,7 @@ export default class SelectScene extends Phaser.Scene {
         },
         {
           label: "◈ LINK WALLET TO THIS RUNNER",
-          sub: "MetaMask · Phantom · WalletConnect · permanent id",
+          sub: "Phantom · Solflare · Backpack · permanent id",
           color: COLORS.neonGreen,
           primary: false as const,
           fn: () => void this.linkWalletToGuestRunner(),
@@ -562,7 +555,7 @@ export default class SelectScene extends Phaser.Scene {
   private async linkWalletToGuestRunner() {
     const local = loadLocalRunner();
     if (!local?.guestId) {
-      void this.onMetaMaskSignUp();
+      void this.onWalletSignUp();
       return;
     }
     const callsign = local.callsign;
@@ -571,7 +564,7 @@ export default class SelectScene extends Phaser.Scene {
       status: "busy",
       statusText: "awaiting wallet",
       headline: "Link wallet to this runner",
-      body: `Connect MetaMask, Phantom, or any WalletConnect wallet and sign a free message to lock progress to “${callsign}”. That address will always load this runner until you choose NEW RUNNER.`,
+      body: `Connect Phantom, Solflare, or Backpack and sign a free message to lock progress to “${callsign}”. That address will always load this runner until you choose NEW RUNNER.`,
       wallet: connectedWallet(),
       actions: [],
     });
@@ -728,9 +721,7 @@ export default class SelectScene extends Phaser.Scene {
   private startNewGuestRunner() {
     const local = loadLocalRunner();
     const addr = connectedWallet();
-    // A runner is wallet-linked when the connected wallet owns a locked character.
-    // (Previously keyed on "address is not 0x", which never fired for EVM wallets and
-    // sent wallet-locked runners down the guest device-secret retire path.)
+    // Wallet-linked when this address owns a locked character (not a guest id).
     const walletLinked = !!(addr && this.identity?.locked);
     const hasSave = !!(local?.callsign) || !!this.identity?.locked;
 
@@ -989,7 +980,7 @@ export default class SelectScene extends Phaser.Scene {
   private async verifyAndAdvance(addr: string) {
     this.showConnectedPending(
       addr,
-      "Approve the login message in your wallet. This is a free signature — not a transaction. No gas, no $METRO.",
+      "Approve the login message in Phantom. This is a free signature — not a transaction.",
       [],
       {
         status: "busy",
