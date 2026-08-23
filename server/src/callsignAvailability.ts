@@ -11,15 +11,25 @@ export type CallsignCheck = {
   suggestion?: string;
 };
 
-async function nameTaken(db: D1Database, nameNorm: string): Promise<boolean> {
+export async function nameTaken(db: D1Database, nameNorm: string): Promise<boolean> {
   try {
     const row = await db
-      .prepare("SELECT 1 AS taken FROM players WHERE name_norm = ?")
-      .bind(nameNorm)
+      .prepare(
+        "SELECT 1 AS taken FROM players WHERE name_norm = ? OR (name_norm IS NULL AND UPPER(name) = ?)",
+      )
+      .bind(nameNorm, nameNorm)
       .first();
     return !!row;
   } catch {
-    return false;
+    try {
+      const row = await db
+        .prepare("SELECT 1 AS taken FROM players WHERE name_norm = ?")
+        .bind(nameNorm)
+        .first();
+      return !!row;
+    } catch {
+      return false;
+    }
   }
 }
 

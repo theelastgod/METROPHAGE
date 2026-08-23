@@ -18,7 +18,7 @@ import {
 import { getClass } from "./classes";
 import { bakeWalkSheet } from "../assets/anim";
 import type { PlayerLook } from "../net/protocol";
-import { cleanCallsign } from "./callsign";
+import { cleanCallsign, normalizeCallsign } from "./callsign";
 
 export { CALLSIGN_MAX, cleanCallsign, normalizeCallsign } from "./callsign";
 
@@ -56,10 +56,11 @@ export interface Customization {
 /** Themed default handles (a fresh run gets a random one, editable). */
 const CALLSIGN_POOL = [
   "NEOREAVER", "NULLSEC", "VECTOR", "WRAITH", "CIPHER", "HEXWARE",
-  "GHOSTRUN", "BLACKICE", "ECHO-9", "STATIC", "VANTA", "RELAY",
-];
+  "GHOSTRUN", "BLACKICE", "ECHO-9", "GRIDRUN", "VANTA", "RELAY",
+].filter((s) => normalizeCallsign(s) === s);
 
 export function randomCallsign(): string {
+  if (CALLSIGN_POOL.length === 0) return "RUNNER";
   return CALLSIGN_POOL[Math.floor(Math.random() * CALLSIGN_POOL.length)];
 }
 

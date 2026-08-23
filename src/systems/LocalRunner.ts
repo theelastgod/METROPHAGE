@@ -35,7 +35,7 @@ export function loadLocalRunner(): LocalRunnerProfile | null {
     if (!s || s.v !== 1 || !s.customization || !s.classId) return null;
     const callsign = (s.callsign || s.customization.callsign || "").trim();
     const guestId = typeof s.guestId === "string" ? s.guestId.trim() : "";
-    // Name-only legacy slots cannot CONTINUE — that was the callsign-as-id bug.
+    // Name-only slots cannot CONTINUE — resume is guestId + secret, never typed name.
     if (!callsign || !isGuestPlayerId(guestId)) return null;
     return {
       v: 1,

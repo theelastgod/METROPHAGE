@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { cleanCallsign, isReservedCallsign, normalizeCallsign } from "./callsign";
 import { isGuestPlayerId, isWalletPlayerId, mintGuestId } from "./playerId";
+import { randomCallsign } from "./customization";
 
 describe("normalizeCallsign", () => {
   it("matches cleanCallsign for a valid handle", () => {
@@ -31,6 +32,14 @@ describe("normalizeCallsign", () => {
   it("keeps a free variant of a reserved stem", () => {
     expect(normalizeCallsign("ECHO-9")).toBe("ECHO-9");
     expect(normalizeCallsign("NEOREAVER")).toBe("NEOREAVER");
+  });
+
+  it("randomCallsign never returns a reserved handle", () => {
+    expect(normalizeCallsign("STATIC")).toBe("");
+    for (let i = 0; i < 40; i++) {
+      const s = randomCallsign();
+      expect(normalizeCallsign(s), s).toBe(s);
+    }
   });
 });
 

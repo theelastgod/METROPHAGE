@@ -47,7 +47,7 @@ import {
   loadLocalRunner,
   writeLocalRunner,
 } from "../systems/LocalRunner";
-import { ensureGuestDeviceSecret, readGuestDeviceSecret } from "../net/NetClient";
+import { readGuestDeviceSecret } from "../net/NetClient";
 import { metroApiBase } from "../economy/metro";
 import { prefersMobileUx } from "../systems/Mobile";
 import { playDeployTeaser } from "../ui/DeployTeaser";
@@ -248,23 +248,24 @@ export default class SelectScene extends Phaser.Scene {
     this.preview = undefined;
     const hasWallet = walletAvailable();
     const local = loadLocalRunner();
-    if (local?.guestId) ensureGuestDeviceSecret(local.guestId);
+    const hasKey = !!(local?.deviceSecret || (local?.guestId && readGuestDeviceSecret(local.guestId)));
     const taken = /taken|reserved/i.test(reason);
+    const noKey = /no (device )?key/i.test(reason);
     const face = /another device|locked on/i.test(reason) ? "that callsign is taken" : reason;
     this.walletPanel.show({
       step: "connect",
       status: "error",
-      statusText: taken ? "that callsign is taken" : "sign-in rejected",
-      headline: taken ? "That callsign is taken" : "Sign-in rejected",
+      statusText: taken ? "that callsign is taken" : noKey ? "no device key" : "sign-in rejected",
+      headline: taken ? "That callsign is taken" : noKey ? "Could not resume runner" : "Sign-in rejected",
       body:
         face +
         (/[.!?]$/.test(face.trim()) ? " " : ". ") +
         (hasWallet
-          ? "Retry CONTINUE if this is your device, start a new runner, or link a wallet for a permanent identity."
-          : "Retry CONTINUE if this is your device, or start a new runner."),
+          ? "Start a new runner, or link a wallet for a permanent identity."
+          : "Start a new runner on this device."),
       wallet: null,
       actions: this.walletActions([
-        ...(local
+        ...(local && hasKey
           ? [
               {
                 label: "↻ RETRY CONTINUE",
@@ -278,8 +279,8 @@ export default class SelectScene extends Phaser.Scene {
         {
           label: "◌ NEW RUNNER",
           sub: "new callsign · fresh multiplayer save on this device",
-          color: local ? 0x9aa3b2 : COLORS.neonCyan,
-          primary: !local,
+          color: local && hasKey ? 0x9aa3b2 : COLORS.neonCyan,
+          primary: !(local && hasKey),
           fn: () => this.startNewGuestRunner(),
         },
         ...(hasWallet
@@ -293,13 +294,6 @@ export default class SelectScene extends Phaser.Scene {
               },
             ]
           : []),
-        {
-          label: "▸ RETRY CONTINUE",
-          sub: "try this device save again",
-          color: 0x9aa3b2,
-          primary: false,
-          fn: () => this.enterGuestReturning(),
-        },
       ]),
     });
   }
@@ -469,8 +463,11 @@ export default class SelectScene extends Phaser.Scene {
       classId ?? CLASSES.find((c) => c.color === cust.color)?.id ?? CLASSES[0].id,
     );
     this.registry.set("characterLocked", true);
-    // Reuse the profile's device secret — never mint a replacement or CONTINUE mismatches.
-    const deviceSecret = local.deviceSecret || readGuestDeviceSecret(local.guestId) || ensureGuestDeviceSecret(local.guestId);
+    const deviceSecret = local.deviceSecret || readGuestDeviceSecret(local.guestId);
+    if (!deviceSecret) {
+      this.showGuestAuthError("this device holds no key for this runner");
+      return;
+    }
     writeLocalRunner({
       guestId: local.guestId,
       callsign: cust.callsign,
@@ -622,7 +619,11 @@ export default class SelectScene extends Phaser.Scene {
       actions: [],
     });
 
-    const secret = local.deviceSecret || readGuestDeviceSecret(local.guestId) || ensureGuestDeviceSecret(local.guestId);
+    const secret = local.deviceSecret || readGuestDeviceSecret(local.guestId);
+    if (!secret) {
+      this.showGuestAuthError("this device holds no key for this runner");
+      return;
+    }
     try {
       const res = await fetch(`${metroApiBase()}/player/link-wallet`, {
         method: "POST",

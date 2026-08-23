@@ -4,11 +4,15 @@ import { claimPlayer } from "./playerClaim";
 import { checkCallsign } from "./callsignAvailability";
 import { mintGuestId } from "../../src/game/playerId";
 
-type Row = { id: string; name: string; name_norm: string; secret: string };
+type Row = { id: string; name: string; name_norm: string | null; secret: string };
 
-function fakeDb(): D1Database {
+function fakeDb(seed: Row[] = []): D1Database {
   const byId = new Map<string, Row>();
   const byNorm = new Map<string, string>();
+  for (const r of seed) {
+    byId.set(r.id, { ...r });
+    if (r.name_norm) byNorm.set(r.name_norm, r.id);
+  }
   return {
     prepare(sql: string) {
       return {
@@ -19,23 +23,62 @@ function fakeDb(): D1Database {
                 const row = byId.get(String(args[0]));
                 return row ? { ...row } : null;
               }
-              if (/name_norm = \?/.test(sql)) {
-                return byNorm.has(String(args[0])) ? { taken: 1 } : null;
+              if (/name_norm/.test(sql)) {
+                const n = String(args[0]);
+                if (byNorm.has(n)) return { taken: 1 };
+                for (const r of byId.values()) {
+                  if (!r.name_norm && r.name.toUpperCase() === n) return { taken: 1 };
+                }
+                return null;
               }
               return null;
             },
             async run() {
-              if (!/INSERT INTO players/.test(sql)) return { success: true };
+              if (/UPDATE players SET name_norm = \? WHERE name_norm IS NULL/.test(sql)) {
+                const n = String(args[0]);
+                const hits: Row[] = [];
+                for (const r of byId.values()) {
+                  if (!r.name_norm && r.name.toUpperCase() === n) hits.push(r);
+                }
+                if (hits.length === 0) return { success: true, meta: { changes: 0 } };
+                if (byNorm.has(n) || hits.length > 1) {
+                  throw new Error("UNIQUE constraint failed: players.name_norm");
+                }
+                hits[0].name_norm = n;
+                byNorm.set(n, hits[0].id);
+                return { success: true, meta: { changes: 1 } };
+              }
+              if (/UPDATE players SET name_norm = \? WHERE id = \?/.test(sql)) {
+                const n = String(args[0]);
+                const id = String(args[1]);
+                if (byNorm.has(n) && byNorm.get(n) !== id) {
+                  throw new Error("UNIQUE constraint failed: players.name_norm");
+                }
+                const row = byId.get(id);
+                if (row) {
+                  row.name_norm = n;
+                  byNorm.set(n, id);
+                }
+                return { success: true, meta: { changes: row ? 1 : 0 } };
+              }
+              if (/DELETE FROM players WHERE id = \?/.test(sql)) {
+                const id = String(args[0]);
+                const row = byId.get(id);
+                if (row?.name_norm) byNorm.delete(row.name_norm);
+                byId.delete(id);
+                return { success: true, meta: { changes: row ? 1 : 0 } };
+              }
+              if (!/INSERT INTO players/.test(sql)) return { success: true, meta: { changes: 0 } };
               const id = String(args[0]);
               const name = String(args[1]);
-              const nameNorm = String(args[2] ?? args[1]);
+              const nameNorm = /name_norm/.test(sql) ? String(args[2]) : name;
               const secret = String(args[6] ?? args[4] ?? "");
               if (byId.has(id)) throw new Error("UNIQUE constraint failed: players.id");
               if (byNorm.has(nameNorm)) throw new Error("UNIQUE constraint failed: players.name_norm");
               const row: Row = { id, name, name_norm: nameNorm, secret };
               byId.set(id, row);
               byNorm.set(nameNorm, id);
-              return { success: true };
+              return { success: true, meta: { changes: 1 } };
             },
           };
         },
@@ -91,6 +134,31 @@ describe("claimPlayer UNIQUE callsign", () => {
     expect(steal.ok).toBe(false);
     if (!steal.ok) expect(steal.reason).toMatch(/guest id required/);
   });
+
+  it("rejects a second secret on the same guest id as a key mismatch, not taken", async () => {
+    const db = fakeDb();
+    const guestId = mintGuestId();
+    await claimPlayer(db, { guestId, secret: "device-secret-aaaa", callsign: "WRAITH" });
+    const r = await claimPlayer(db, { guestId, secret: "device-secret-bbbb", callsign: "WRAITH" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.reason).toBe("device key does not match this runner");
+      expect(r.reason.toLowerCase()).not.toContain("taken");
+    }
+  });
+
+  it("treats a legacy NULL name_norm display name as taken", async () => {
+    const db = fakeDb([
+      { id: "legacy-row", name: "NEOREAVER", name_norm: null, secret: "old-secret" },
+    ]);
+    const r = await claimPlayer(db, {
+      guestId: mintGuestId(),
+      secret: "device-secret-aaaa",
+      callsign: "NEOREAVER",
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("that callsign is taken");
+  });
 });
 
 describe("checkCallsign copy", () => {
@@ -102,5 +170,12 @@ describe("checkCallsign copy", () => {
     expect(r.reason).toBe("that callsign is taken");
     expect(JSON.stringify(r).toLowerCase()).not.toContain("another device");
     expect(JSON.stringify(r).toLowerCase()).not.toContain("locked");
+  });
+
+  it("treats UPPER(name) as taken when name_norm is still null", async () => {
+    const db = fakeDb([{ id: "legacy-row", name: "hexware", name_norm: null, secret: "x" }]);
+    const r = await checkCallsign(db, "HEXWARE");
+    expect(r.available).toBe(false);
+    expect(r.reason).toBe("that callsign is taken");
   });
 });

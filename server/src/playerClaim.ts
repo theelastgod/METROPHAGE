@@ -6,7 +6,7 @@ import { cleanCallsign, isReservedCallsign } from "../../src/game/callsign";
 import { isGuestPlayerId } from "../../src/game/playerId";
 import { DEFAULT_CAMPAIGN, serializeCampaign } from "../../src/net/campaign";
 import { verifyWalletLogin, walletPlayerId } from "./auth";
-import { suggestCallsign } from "./callsignAvailability";
+import { nameTaken, suggestCallsign } from "./callsignAvailability";
 
 /** Harness-only device secret. Not a reclaim-by-name hatch. */
 export const SMOKE_DEVICE_SECRET = "smk-harness-secret-v1";
@@ -15,9 +15,23 @@ export type ClaimResult =
   | { ok: true; playerId: string; callsign: string; already?: boolean }
   | { ok: false; reason: string; suggestion?: string };
 
+function errText(e: unknown): string {
+  return String((e as Error)?.message ?? e);
+}
+
 function uniqueNameConflict(e: unknown): boolean {
-  const m = String((e as Error)?.message ?? e);
+  const m = errText(e);
   return /UNIQUE/i.test(m) && /name_norm/i.test(m);
+}
+
+function uniqueIdConflict(e: unknown): boolean {
+  const m = errText(e);
+  return /UNIQUE/i.test(m) && (/\bplayers\.id\b/i.test(m) || /failed: id\b/i.test(m));
+}
+
+function noSuchColumn(e: unknown, col: string): boolean {
+  const m = errText(e);
+  return /no such column/i.test(m) && new RegExp(col, "i").test(m);
 }
 
 function isBotClaim(playerId: string, secret: string | undefined): number {
@@ -30,6 +44,10 @@ function isBotClaim(playerId: string, secret: string | undefined): number {
 async function takenResponse(db: D1Database, callsign: string): Promise<ClaimResult> {
   const suggestion = await suggestCallsign(db, callsign);
   return { ok: false, reason: "that callsign is taken", suggestion };
+}
+
+function d1Changes(res: { meta?: { changes?: number } } | undefined): number {
+  return Math.max(0, Number(res?.meta?.changes) || 0);
 }
 
 async function insertPlayer(
@@ -67,7 +85,14 @@ async function existingRow(
       .bind(id)
       .first<{ name: string; secret: string | null; name_norm: string | null }>();
   } catch {
-    return null;
+    try {
+      return await db
+        .prepare("SELECT name, secret FROM players WHERE id = ?")
+        .bind(id)
+        .first<{ name: string; secret: string | null; name_norm: string | null }>();
+    } catch {
+      return null;
+    }
   }
 }
 
@@ -76,6 +101,51 @@ function lookJson(look: unknown): string | null {
   try {
     return JSON.stringify(look);
   } catch {
+    return null;
+  }
+}
+
+async function existingClaim(
+  db: D1Database,
+  id: string,
+  secret: string,
+  callsign: string,
+): Promise<ClaimResult | null> {
+  const row = await existingRow(db, id);
+  if (!row) return null;
+  if (!id.startsWith("w:") && (row.secret || "") !== secret) {
+    return { ok: false, reason: "device key does not match this runner" };
+  }
+  return { ok: true, playerId: id, callsign: row.name || callsign, already: true };
+}
+
+/** Stamp leftover NULL name_norm rows so UNIQUE covers them; treat as taken if any match. */
+async function occupyLegacyName(db: D1Database, callsign: string): Promise<boolean> {
+  try {
+    const res = await db
+      .prepare("UPDATE players SET name_norm = ? WHERE name_norm IS NULL AND UPPER(name) = ?")
+      .bind(callsign, callsign)
+      .run();
+    return d1Changes(res) > 0;
+  } catch (e) {
+    if (uniqueNameConflict(e) || uniqueIdConflict(e) || /UNIQUE/i.test(errText(e))) return true;
+    return false;
+  }
+}
+
+async function stampNameNorm(db: D1Database, id: string, callsign: string): Promise<ClaimResult | null> {
+  try {
+    await db.prepare("UPDATE players SET name_norm = ? WHERE id = ?").bind(callsign, id).run();
+    return null;
+  } catch (e) {
+    if (uniqueNameConflict(e) || /UNIQUE/i.test(errText(e))) {
+      try {
+        await db.prepare("DELETE FROM players WHERE id = ?").bind(id).run();
+      } catch {
+        /* best-effort rollback of the fallback insert */
+      }
+      return takenResponse(db, callsign);
+    }
     return null;
   }
 }
@@ -124,32 +194,41 @@ export async function claimPlayer(
     id = guestId;
   }
 
-  const row = await existingRow(db, id);
-  if (row) {
-    if (!id.startsWith("w:") && (row.secret || "") !== secret) {
-      return { ok: false, reason: "device key does not match this runner" };
-    }
-    return { ok: true, playerId: id, callsign: row.name || callsign, already: true };
-  }
+  const already = await existingClaim(db, id, secret, callsign);
+  if (already) return already;
+
+  if (await occupyLegacyName(db, callsign)) return takenResponse(db, callsign);
+  if (await nameTaken(db, callsign)) return takenResponse(db, callsign);
+
+  const args = {
+    id,
+    callsign,
+    secret: secret || "",
+    look,
+    classId,
+    isBot: isBotClaim(id, secret),
+  };
 
   try {
-    await insertPlayer(db, {
-      id,
-      callsign,
-      secret: secret || "",
-      look,
-      classId,
-      isBot: isBotClaim(id, secret),
-    });
+    await insertPlayer(db, args);
   } catch (e) {
-    const again = await existingRow(db, id);
-    if (again && (id.startsWith("w:") || (again.secret || "") === secret)) {
-      return { ok: true, playerId: id, callsign: again.name || callsign, already: true };
+    const raced = await existingClaim(db, id, secret, callsign);
+    if (raced) return raced;
+    if (uniqueNameConflict(e)) return takenResponse(db, callsign);
+    if (uniqueIdConflict(e)) {
+      return (await existingClaim(db, id, secret, callsign)) ?? {
+        ok: false,
+        reason: "device key does not match this runner",
+      };
     }
-    if (uniqueNameConflict(e) || /UNIQUE/i.test(String((e as Error)?.message ?? e))) {
-      return takenResponse(db, callsign);
+    if (
+      !noSuchColumn(e, "name_norm") &&
+      !noSuchColumn(e, "is_bot") &&
+      !noSuchColumn(e, "class_id")
+    ) {
+      return { ok: false, reason: "could not claim callsign — " + errText(e).slice(0, 80) };
     }
-    // Pre-migration: retry without name_norm / is_bot.
+    // Older schema: retry without columns the live D1 doesn't have yet.
     try {
       await db
         .prepare(
@@ -159,11 +238,20 @@ export async function claimPlayer(
         .bind(id, callsign, look, secret || "", Date.now())
         .run();
     } catch (e2) {
-      if (uniqueNameConflict(e2) || /UNIQUE/i.test(String((e2 as Error)?.message ?? e2))) {
-        return takenResponse(db, callsign);
+      const raced2 = await existingClaim(db, id, secret, callsign);
+      if (raced2) return raced2;
+      if (uniqueNameConflict(e2)) return takenResponse(db, callsign);
+      if (uniqueIdConflict(e2)) {
+        return (await existingClaim(db, id, secret, callsign)) ?? {
+          ok: false,
+          reason: "device key does not match this runner",
+        };
       }
-      return { ok: false, reason: "could not claim callsign — " + String((e2 as Error)?.message ?? e2).slice(0, 80) };
+      return { ok: false, reason: "could not claim callsign — " + errText(e2).slice(0, 80) };
     }
+    // Fallback omitted name_norm — stamp it when 0041 is applied so UNIQUE still holds.
+    const stamped = await stampNameNorm(db, id, callsign);
+    if (stamped) return stamped;
   }
 
   return { ok: true, playerId: id, callsign };
