@@ -3,15 +3,12 @@
 // character until the player explicitly chooses NEW RUNNER (wallet retire).
 
 import type { D1Database } from "@cloudflare/workers-types";
+import { isGuestPlayerId } from "../../src/game/playerId";
 import { verifyWalletLogin, verifyWalletRetire, walletPlayerId } from "./auth";
 
 export type LinkResult =
   | { ok: true; playerId: string; name: string; alreadyLinked?: boolean }
   | { ok: false; reason: string };
-
-function guestIdFromCallsign(callsign: string): string {
-  return (callsign || "").toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 32) || "";
-}
 
 const run = async (db: D1Database, sql: string, ...binds: unknown[]) => {
   try {
@@ -42,17 +39,17 @@ function walletHasRunner(row: {
 export async function linkGuestToWallet(
   db: D1Database,
   args: {
-    callsign: string;
+    guestId: string;
     secret: string;
     wallet: string;
     sig: string;
     ts: number;
   },
 ): Promise<LinkResult> {
-  const guestId = guestIdFromCallsign(args.callsign);
+  const guestId = (args.guestId || "").trim();
   const secret = (args.secret || "").trim().slice(0, 64);
-  if (!guestId || guestId.startsWith("__") || guestId.startsWith("w:")) {
-    return { ok: false, reason: "invalid guest callsign" };
+  if (!isGuestPlayerId(guestId)) {
+    return { ok: false, reason: "invalid guest id" };
   }
   if (!secret || secret.length < 8) {
     return { ok: false, reason: "device key required" };
@@ -103,7 +100,7 @@ export async function linkGuestToWallet(
     return {
       ok: true,
       playerId: walletId,
-      name: String(walletRow.name ?? guest.name ?? args.callsign),
+      name: String(walletRow.name ?? guest.name ?? ""),
       alreadyLinked: true,
     };
   }
@@ -126,13 +123,13 @@ export async function linkGuestToWallet(
     await db
       .prepare(
         `INSERT INTO players (
-          id, name, x, y, zone, updated_at,
+          id, name, name_norm, x, y, zone, updated_at,
           credits, xp, cores, quest_step, inventory, look, equipped,
           campaign, tutorial_done, tutorial_step, tutorial_mode,
           metro, fragments, stash, secret, session_zone, session_at, class_id
         )
         SELECT
-          ?, name, x, y, zone, ?,
+          ?, name, name_norm, x, y, zone, ?,
           credits, xp, cores, quest_step, inventory, look, equipped,
           campaign, tutorial_done, tutorial_step, tutorial_mode,
           metro, fragments, stash, ?, session_zone, session_at, class_id
@@ -158,14 +155,14 @@ export async function linkGuestToWallet(
   // Re-point side tables from guest → wallet.
   await rekeyPlayerRefs(db, guestId, walletId);
   // Estates ownership.
-  await run(db, "UPDATE estates SET owner = ?, owner_name = ? WHERE owner = ?", walletId, String(guest.name ?? args.callsign), guestId);
+  await run(db, "UPDATE estates SET owner = ?, owner_name = ? WHERE owner = ?", walletId, String(guest.name ?? ""), guestId);
   // Remove guest primary row (side tables already rekeyed or deleted).
   await run(db, "DELETE FROM players WHERE id = ?", guestId);
 
   return {
     ok: true,
     playerId: walletId,
-    name: String(guest.name ?? args.callsign),
+    name: String(guest.name ?? ""),
   };
 }
 

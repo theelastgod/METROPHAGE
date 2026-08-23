@@ -12,6 +12,7 @@ import { furnitureHomeBuffs } from "../world/estates";
 import { campaignEchoLine } from "../game/campaignEchoes";
 import { normalizeFragmentSequence } from "../game/fragments";
 import { emptyRsSkills, type RsSkillXp } from "../game/rsSkills";
+import { isGuestPlayerId } from "../game/playerId";
 
 /** True when the page is on a public host but the WS URL still points at loopback —
  *  the classic "forgot VITE_SERVER_URL" Pages footgun. */
@@ -92,19 +93,14 @@ export function withoutStickyInstance(wsUrl: string): string {
   }
 }
 
-/** Guest id form of a callsign (must match server `onLoginInner` sanitization). */
-export function guestIdFromCallsign(name: string): string {
-  return (name || "").toLowerCase().replace(/[^a-z0-9_-]/g, "");
-}
-
 /** Session-only secrets when localStorage is blocked (private mode / ITP). */
 const memoryDeviceSecrets = new Map<string, string>();
 
 /**
- * Read this device's stored secret for a callsign, WITHOUT minting one.
+ * Read this device's stored secret for a guest id, WITHOUT minting one.
  *
  * Sources (first hit wins):
- *  1. localStorage `mp_secret_<id>`
+ *  1. localStorage `mp_secret_<guestId>`
  *  2. sessionStorage (iOS private-mode / ITP wipes localStorage between navigations)
  *  3. LocalRunner profile.deviceSecret (survives partial storage clears)
  *  4. in-memory map (private mode / storage blocked)
@@ -113,9 +109,9 @@ const memoryDeviceSecrets = new Map<string, string>();
  * the one bound server-side, so fabricating one turns "this device has no key" into a
  * guaranteed "device key does not match this runner".
  */
-export function readGuestDeviceSecret(name: string): string | undefined {
-  const id = guestIdFromCallsign(name);
-  if (!id) return undefined;
+export function readGuestDeviceSecret(guestId: string): string | undefined {
+  const id = (guestId || "").trim();
+  if (!isGuestPlayerId(id)) return undefined;
   const found = lookupDeviceSecret(id);
   return found && found.length >= 8 ? found : undefined;
 }
@@ -141,9 +137,8 @@ function lookupDeviceSecret(id: string): string | undefined {
     try {
       const raw = localStorage.getItem("metrophage_local_runner_v1");
       if (raw) {
-        const prof = JSON.parse(raw) as { callsign?: string; deviceSecret?: string };
-        const profId = guestIdFromCallsign(prof?.callsign || "");
-        if (profId === id && typeof prof.deviceSecret === "string" && prof.deviceSecret.length >= 8) {
+        const prof = JSON.parse(raw) as { guestId?: string; deviceSecret?: string };
+        if (prof?.guestId === id && typeof prof.deviceSecret === "string" && prof.deviceSecret.length >= 8) {
           s = prof.deviceSecret;
         }
       }
@@ -156,29 +151,18 @@ function lookupDeviceSecret(id: string): string | undefined {
 }
 
 /**
- * Guest-identity device secret — generated once per callsign on this device and bound
- * server-side on first login. Stops anyone else logging in as your name and selling
- * your house. Wallet sign-ins don't need it (the signature is the proof).
+ * Guest device secret — generated once per g:<uuid> on this device and bound
+ * server-side at claim. Wallet sign-ins don't need it (the signature is the proof).
  *
- * Sources (first hit wins, then all are synced):
- *  1. localStorage `mp_secret_<id>`
- *  2. LocalRunner profile.deviceSecret (survives partial storage clears)
- *  3. in-memory map (private mode / storage blocked)
- *  4. freshly minted UUID
- *
- * ALWAYS returns a secret when the callsign is non-empty — server guest login
- * rejects missing secrets and used to brick tutorial entry. Use
- * `readGuestDeviceSecret` when a MISSING key must stay missing (see retire).
+ * ALWAYS returns a secret when the guest id is valid. Use `readGuestDeviceSecret`
+ * when a MISSING key must stay missing (see retire).
  */
-export function ensureGuestDeviceSecret(name: string): string | undefined {
-  const id = guestIdFromCallsign(name);
-  if (!id) return undefined;
+export function ensureGuestDeviceSecret(guestId: string): string | undefined {
+  const id = (guestId || "").trim();
+  if (!isGuestPlayerId(id)) return undefined;
   const key = "mp_secret_" + id;
   const sessionKey = "mp_secret_sess_" + id;
 
-  // localStorage → sessionStorage (iOS private-mode / ITP) → LocalRunner profile →
-  // memory. Recovering from LocalRunner matters: regenerating a NEW secret locked
-  // players out of their own server save.
   let s = lookupDeviceSecret(id);
 
   if (!s || s.length < 8) {
@@ -190,7 +174,6 @@ export function ensureGuestDeviceSecret(name: string): string | undefined {
 
   memoryDeviceSecrets.set(id, s);
 
-  // Best-effort persist so CONTINUE + login always present the same proof.
   try {
     localStorage.setItem(key, s);
   } catch {
@@ -206,8 +189,7 @@ export function ensureGuestDeviceSecret(name: string): string | undefined {
     const raw = localStorage.getItem("metrophage_local_runner_v1");
     if (raw) {
       const prof = JSON.parse(raw) as Record<string, unknown>;
-      const profId = guestIdFromCallsign(String(prof.callsign || ""));
-      if (profId === id && prof.deviceSecret !== s) {
+      if (prof.guestId === id && prof.deviceSecret !== s) {
         prof.deviceSecret = s;
         localStorage.setItem("metrophage_local_runner_v1", JSON.stringify(prof));
       }
@@ -216,11 +198,6 @@ export function ensureGuestDeviceSecret(name: string): string | undefined {
     /* ignore */
   }
   return s;
-}
-
-/** @deprecated use ensureGuestDeviceSecret */
-function deviceSecretFor(name: string): string | undefined {
-  return ensureGuestDeviceSecret(name);
 }
 
 export interface RemotePlayer {
@@ -284,6 +261,8 @@ export interface NetStats {
  */
 export default class NetClient {
   id = "";
+  /** Guest player id (`g:<uuid>`). Sent on login; never derived from the callsign. */
+  guestId = "";
   connected = false;
   pred: MoveState = { x: 0, y: 0 }; // predicted local position (what we render)
   serverPos: MoveState = { x: 0, y: 0 };
@@ -496,8 +475,7 @@ export default class NetClient {
    * - "prompt": allow one personal_sign
    */
   onAuthRequired?: (mode: "silent" | "prompt") => void;
-  /** Fired when a GUEST login is rejected outright (4001 with no wallet in play) —
-   *  callsign bound to another device, missing device key, or reserved name. */
+  /** Fired when a GUEST login is rejected outright (4001 with no wallet in play). */
   onGuestAuthFailed?: (reason: string) => void;
   private lastSysText = "";
 
@@ -709,15 +687,17 @@ export default class NetClient {
           }
         : {};
     const travelFrom = this.travelFrom;
+    const guestId = isGuestPlayerId(this.guestId) ? this.guestId : undefined;
     ws.send(
       JSON.stringify({
         t: "login",
         name: this.name,
+        ...(guestId && !auth?.wallet ? { id: guestId, guestId } : {}),
         faction: this.loginFaction,
         look: this.look,
         arrival: this.arrival,
         classId: this.classId,
-        secret: deviceSecretFor(this.name),
+        secret: guestId && !auth?.wallet ? ensureGuestDeviceSecret(guestId) : undefined,
         ...(session ? { session } : {}),
         ...(travelFrom ? { from: travelFrom } : {}),
         ...authFields,
@@ -865,9 +845,7 @@ export default class NetClient {
         );
         return;
       }
-      // 4001 without a wallet = GUEST login rejected (callsign saved on another
-      // device / no device key / reserved name). Reconnecting would be rejected
-      // identically forever — stop and surface the reason instead.
+      // 4001 without a wallet = GUEST login rejected. Reconnecting would loop.
       if (ev.code === 4001 && !this.auth?.wallet) {
         this.manualClose = true;
         this.onConnectionState?.("offline");

@@ -56,7 +56,7 @@ type MenuPhase = "wallet" | "returning" | "create" | "guest_returning";
 
 /**
  * Title screen — full-bleed layout.
- * Guest multiplayer: callsign + device secret → full server save, no wallet.
+ * Guest multiplayer: g:<uuid> + device secret → full server save, no wallet.
  * Wallet: optional permanent EVM identity (MetaMask / WalletConnect on Robinhood Chain); returning players skip customize.
  */
 export default class SelectScene extends Phaser.Scene {
@@ -214,8 +214,8 @@ export default class SelectScene extends Phaser.Scene {
 
   /** Restore wallet silently if present, else guest multiplayer continue / create. */
   private async bootWalletGate() {
-    // Bounced back because the server rejected the guest login (callsign bound to
-    // another device / missing device key / reserved) — recovery menu, not a loop.
+    // Bounced back because the server rejected the guest login (taken callsign /
+    // missing device key / reserved) — recovery menu, not a loop.
     const guestErr = this.registry.get("guestAuthError") as string | undefined;
     if (guestErr) {
       this.registry.remove("guestAuthError");
@@ -248,16 +248,17 @@ export default class SelectScene extends Phaser.Scene {
     this.preview = undefined;
     const hasWallet = walletAvailable();
     const local = loadLocalRunner();
-    // Re-sync secret from profile (fixes partial storage clears that reminted a key).
-    if (local?.callsign) ensureGuestDeviceSecret(local.callsign);
+    if (local?.guestId) ensureGuestDeviceSecret(local.guestId);
+    const taken = /taken|reserved/i.test(reason);
+    const face = /another device|locked on/i.test(reason) ? "that callsign is taken" : reason;
     this.walletPanel.show({
       step: "connect",
       status: "error",
-      statusText: "sign-in rejected",
-      headline: "That callsign is locked",
+      statusText: taken ? "that callsign is taken" : "sign-in rejected",
+      headline: taken ? "That callsign is taken" : "Sign-in rejected",
       body:
-        reason +
-        (/[.!?]$/.test(reason.trim()) ? " " : ". ") +
+        face +
+        (/[.!?]$/.test(face.trim()) ? " " : ". ") +
         (hasWallet
           ? "Retry CONTINUE if this is your device, start a new runner, or link a wallet for a permanent identity."
           : "Retry CONTINUE if this is your device, or start a new runner."),
@@ -294,7 +295,7 @@ export default class SelectScene extends Phaser.Scene {
           : []),
         {
           label: "▸ RETRY CONTINUE",
-          sub: "try the same callsign again",
+          sub: "try this device save again",
           color: 0x9aa3b2,
           primary: false,
           fn: () => this.enterGuestReturning(),
@@ -442,7 +443,7 @@ export default class SelectScene extends Phaser.Scene {
 
   /**
    * Resume a guest multiplayer runner (no wallet).
-   * Server reloads credits/inventory/campaign via callsign + device secret.
+   * Server reloads credits/inventory/campaign via guestId + device secret — never by typed name.
    */
   private enterGuestReturning() {
     const local = loadLocalRunner();
@@ -453,7 +454,7 @@ export default class SelectScene extends Phaser.Scene {
       cust = local.customization;
       classId = local.classId;
     }
-    if (!cust) {
+    if (!cust || !local?.guestId) {
       this.enterGuestPlay();
       return;
     }
@@ -468,16 +469,17 @@ export default class SelectScene extends Phaser.Scene {
       classId ?? CLASSES.find((c) => c.color === cust.color)?.id ?? CLASSES[0].id,
     );
     this.registry.set("characterLocked", true);
-    // Reuse the profile's device secret (or restore mp_secret_* from it) — never mint a
-    // replacement for an existing server-bound callsign or CONTINUE will be rejected.
-    const deviceSecret = ensureGuestDeviceSecret(cust.callsign);
+    // Reuse the profile's device secret — never mint a replacement or CONTINUE mismatches.
+    const deviceSecret = local.deviceSecret || readGuestDeviceSecret(local.guestId) || ensureGuestDeviceSecret(local.guestId);
     writeLocalRunner({
+      guestId: local.guestId,
       callsign: cust.callsign,
       classId: (this.registry.get("classId") as string) || "metrophage",
       customization: cust,
-      lastZone: local?.lastZone,
+      lastZone: local.lastZone,
       deviceSecret,
     });
+    this.registry.set("guestId", local.guestId);
 
     this.syncWalletLabel(null);
     this.classLayer.setVisible(false);
@@ -510,7 +512,7 @@ export default class SelectScene extends Phaser.Scene {
       status: "ready",
       statusText: "guest multiplayer · link wallet to lock this runner",
       headline: `Welcome back, ${cust.callsign}`,
-      body: "Your multiplayer save is on the server and locked to this device. CONTINUE loads it. Link a wallet to bind THIS runner to your address permanently (portable; locked until NEW RUNNER).",
+      body: "Your multiplayer save is on the server and bound to this device. CONTINUE loads it by id, not by typing a name. Link a wallet to bind THIS runner to your address permanently (portable until NEW RUNNER).",
       wallet: null,
       offsetY: 36,
       actions: this.walletActions([
@@ -562,7 +564,7 @@ export default class SelectScene extends Phaser.Scene {
    */
   private async linkWalletToGuestRunner() {
     const local = loadLocalRunner();
-    if (!local?.callsign) {
+    if (!local?.guestId) {
       void this.onMetaMaskSignUp();
       return;
     }
@@ -620,13 +622,13 @@ export default class SelectScene extends Phaser.Scene {
       actions: [],
     });
 
-    const secret = ensureGuestDeviceSecret(callsign);
+    const secret = local.deviceSecret || readGuestDeviceSecret(local.guestId) || ensureGuestDeviceSecret(local.guestId);
     try {
       const res = await fetch(`${metroApiBase()}/player/link-wallet`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          callsign,
+          guestId: local.guestId,
           secret,
           wallet: proof.wallet,
           sig: proof.sig,
@@ -671,12 +673,7 @@ export default class SelectScene extends Phaser.Scene {
       this.registry.set("characterLocked", true);
       this.registry.set("walletAddress", proof.wallet);
       this.registry.set("walletProof", proof);
-      writeLocalRunner({
-        callsign: res.name || callsign,
-        classId,
-        customization: cust,
-        lastZone: local.lastZone,
-      });
+      this.registry.remove("guestId");
 
       this.identity = {
         wallet: proof.wallet,
@@ -801,12 +798,12 @@ export default class SelectScene extends Phaser.Scene {
   private async commitNewGuestRunner(opts: { mode: "local_only" | "guest" | "wallet" }) {
     if (opts.mode === "guest") {
       const local = loadLocalRunner();
-      if (local?.callsign) {
+      if (local?.guestId) {
         // READ, never mint. ensureGuestDeviceSecret() fabricates a fresh UUID when this
         // device holds no key — which the server can only ever answer with "device key
         // does not match this runner", so NEW RUNNER failed with a mismatch that was
         // really "no key here". Without a key there is nothing to prove ownership with.
-        const secret = readGuestDeviceSecret(local.callsign);
+        const secret = readGuestDeviceSecret(local.guestId) || local.deviceSecret;
         if (!secret) {
           this.walletPanel.show({
             step: "connect",
@@ -834,7 +831,7 @@ export default class SelectScene extends Phaser.Scene {
           const res = await fetch(`${metroApiBase()}/player/retire`, {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ callsign: local.callsign, secret }),
+            body: JSON.stringify({ guestId: local.guestId, secret }),
           }).then((r) => r.json() as Promise<{ ok?: boolean; reason?: string }>);
           if (!res.ok && res.reason && /does not match|required|invalid/i.test(res.reason)) {
             this.walletPanel.show({

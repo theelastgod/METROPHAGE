@@ -1,6 +1,7 @@
 // Shared game model + sim (single source of truth, imported from the client repo —
 // these modules are Phaser-free and deterministic).
 import { NET_TICK_MS, PROTOCOL_VERSION, type ClientMsg, type PlayerLook } from "../../src/net/protocol";
+import { isGuestPlayerId } from "../../src/game/playerId";
 import {
   stepMove,
   tileIsWall,
@@ -1844,6 +1845,8 @@ export class WorldDO {
     }
     if (msg.t === "login")
       return this.onLogin(ws, msg.name, msg.faction, msg.look, {
+        id: msg.id || msg.guestId,
+        guestId: msg.guestId || msg.id,
         wallet: msg.wallet,
         sig: msg.sig,
         ts: msg.ts,
@@ -3207,6 +3210,8 @@ export class WorldDO {
     faction?: number,
     look?: PlayerLook,
     proof?: {
+      id?: string;
+      guestId?: string;
       wallet?: string;
       sig?: string;
       ts?: number;
@@ -3248,6 +3253,8 @@ export class WorldDO {
     look: PlayerLook | undefined,
     proof:
       | {
+          id?: string;
+          guestId?: string;
           wallet?: string;
           sig?: string;
           ts?: number;
@@ -3263,7 +3270,7 @@ export class WorldDO {
     // Identity:
     //  1) MetaMask / WalletConnect signature (fresh) → durable wallet id
     //  2) Wallet + device session (bound after first signed login) → same id, no re-sign
-    //  3) Guest multiplayer: callsign + device secret (full D1 save, no wallet required)
+    //  3) Guest: id=g:<uuid> + device secret. Callsign is never the id.
     let id: string;
     let walletSignedIn = false;
     if (proof?.wallet || proof?.sig) {
@@ -3312,44 +3319,27 @@ export class WorldDO {
         return;
       }
     } else {
-      id = name.toLowerCase().replace(/[^a-z0-9_-]/g, "") || "blank";
-      // "__" ids are reserved for authored NPCs (estate owners, market sellers) — a live
-      // player must never be able to log in AS one and liquidate its property
-      if (id.startsWith("__")) return reject("that callsign is reserved");
+      const guestId = (proof?.guestId || proof?.id || "").trim();
+      if (!isGuestPlayerId(guestId)) {
+        return reject("guest login requires a device id — CONTINUE on this device, or claim a new callsign");
+      }
+      id = guestId;
     }
     const fac = Number.isInteger(faction) && faction! >= 0 && faction! < FACTION_COUNT ? faction! : 0;
-    const p = this.players.get(id) ?? (await this.loadPlayer(id, name, fac));
-    // Guest identities are device-bound: the first login binds the client-generated
-    // secret to the callsign; every later login must present it. Without this, ANY
-    // visitor could type an existing name and sell that player's house out from under
-    // them. Wallet ids ("w:") use signature on first login, then device session.
+    const loaded = this.players.get(id) ?? (await this.loadPlayer(id, name, fac));
+    if (!loaded) {
+      return reject("claim this callsign first");
+    }
+    const p = loaded;
+    // Guest identities are device-bound: claim stores the secret; login must present it.
+    // Wallet ids ("w:") use signature on first login, then device session.
     if (!id.startsWith("w:")) {
-      // Guest multiplayer save — progress is real server state; the device secret is the key.
       const presented = (proof?.secret ?? "").slice(0, 64) || null;
       if (!presented) {
         return reject("guest save requires a device key — enable storage / cookies for this site, then retry");
       }
-      // Harness leftovers: smoke.mjs binds `smk-<name>` — not real device keys; allow reclaim.
-      //
-      // Deliberately keyed on the `smk-` prefix ALONE. This used to also reclaim any
-      // secret shorter than 16 chars, which made those rows claimable by anyone
-      // presenting an arbitrary key: `{"t":"login","name":"<victim>","secret":"x"}`
-      // rebound the row to the attacker — the exact takeover the secret prevents.
-      // A short secret is still a secret; it just has to match.
-      const harnessSecret = !!p.secret && p.secret.startsWith("smk-");
-      const mismatch = !!p.secret && p.secret !== presented && !harnessSecret;
-      if (mismatch) {
-        // PERMANENT guest memory: never rebind over an existing device secret.
-        // The only way to remove this runner is NEW RUNNER → /player/retire (with secret).
-        // Link a wallet for a portable identity that is never deleted.
-        return reject(
-          "that callsign is already saved on another device — CONTINUE on the original device, pick a new callsign (NEW RUNNER), or link a wallet for permanent progress",
-        );
-      }
-      if (!p.secret || harnessSecret) {
-        // First claim or reclaim smoke harness — bind this device.
-        p.secret = presented;
-        await this.env.DB.prepare("UPDATE players SET secret = ? WHERE id = ?").bind(presented, id).run();
+      if (!p.secret || p.secret !== presented) {
+        return reject("device key does not match this runner");
       }
     } else {
       const session = (proof?.session ?? "").slice(0, 64) || null;
@@ -3516,10 +3506,6 @@ export class WorldDO {
     // Wallet identities keep their saved appearance across devices; later edits are ignored.
     if (look && !lookLocked) {
       p.look = look;
-      p.dirty = true;
-    }
-    if (!lookLocked && look && id.startsWith("w:")) {
-      p.name = name;
       p.dirty = true;
     }
     this.players.set(id, p);
@@ -3714,7 +3700,7 @@ export class WorldDO {
 
   /** Build a player's runtime state, loading durable fields (pos/credits/xp/cores/
    *  quest) from D1. Shared by fresh login and hibernation-wake rehydration. */
-  private async loadPlayer(id: string, name: string, fac: number): Promise<PlayerState> {
+  private async loadPlayer(id: string, name: string, fac: number): Promise<PlayerState | null> {
     await this.loadMeta();
     // A cold load means the prior in-memory contest owner disappeared (disconnect,
     // zone handoff, isolate recycle, or deploy). Refund its durable pot first so
@@ -3743,6 +3729,7 @@ export class WorldDO {
     let secret: string | null = null;
     let classId = "metrophage";
     let row: {
+      name?: string | null;
       x: number;
       y: number;
       credits: number;
@@ -3765,18 +3752,19 @@ export class WorldDO {
     } | null = null;
     try {
       row = await this.env.DB.prepare(
-        "SELECT x, y, credits, metro, xp, zone, cores, quest_step, campaign, tutorial_done, tutorial_step, tutorial_mode, inventory, look, equipped, fragments, stash, secret, class_id FROM players WHERE id = ?",
+        "SELECT name, x, y, credits, metro, xp, zone, cores, quest_step, campaign, tutorial_done, tutorial_step, tutorial_mode, inventory, look, equipped, fragments, stash, secret, class_id FROM players WHERE id = ?",
       )
         .bind(id)
         .first();
     } catch {
       row = await this.env.DB.prepare(
-        "SELECT x, y, credits, metro, xp, zone, cores, quest_step, campaign, tutorial_done, tutorial_step, tutorial_mode, inventory, look, equipped, fragments, stash, secret FROM players WHERE id = ?",
+        "SELECT name, x, y, credits, metro, xp, zone, cores, quest_step, campaign, tutorial_done, tutorial_step, tutorial_mode, inventory, look, equipped, fragments, stash, secret FROM players WHERE id = ?",
       )
         .bind(id)
         .first();
     }
     if (row) {
+      if (row.name) name = row.name;
       credits = row.credits ?? 0;
       metro = row.metro ?? 0;
       if (row.class_id && CLASS_IDS.has(row.class_id)) classId = row.class_id;
@@ -3821,7 +3809,9 @@ export class WorldDO {
       // Different zone without travel `from` → zone default spawn (map deploy / intentional
       // zone pick). Client resume always targets row.zone so this path is rare.
     } else {
-      await this.insertNewPlayer(id, name, x, y);
+      // Rows are created only by POST /player/claim (UNIQUE name_norm). Login never
+      // invents an id from the typed callsign.
+      return null;
     }
     // achievements + leaderboard counters (cross-zone, shared D1)
     const stats: Record<string, number> = {};
@@ -4016,6 +4006,7 @@ export class WorldDO {
     this.ownerSocket.set(att.id, ws);
     if (!this.players.has(att.id)) {
       const p = await this.loadPlayer(att.id, att.name, att.faction);
+      if (!p) return;
       if (att.look) p.look = att.look; // restore appearance from the socket attachment
       p.sessionValid = true;
       this.players.set(att.id, p);
@@ -8257,64 +8248,6 @@ export class WorldDO {
       }
     } catch {
       /* ignore */
-    }
-  }
-
-  /** First-time player row (absolute zeros). */
-  private async insertNewPlayer(id: string, name: string, x: number, y: number): Promise<void> {
-    // Smoke/probe identities announce themselves with the reserved "smk_" prefix so
-    // launch metrics (/funnel, deploy fingerprint) can exclude them from day one.
-    const isBot = name.startsWith("smk_") ? 1 : 0;
-    try {
-      await this.env.DB.prepare(
-        "INSERT OR IGNORE INTO players (id, name, x, y, zone, credits, xp, cores, metro, campaign, tutorial_done, tutorial_step, tutorial_mode, inventory, stash, look, equipped, updated_at, session_zone, session_at, is_bot) VALUES (?,?,?,?,?,0,0,0,0,?,?,?,?,?,?,?,?,?,?,?,?)",
-      )
-        .bind(
-          id,
-          name,
-          round2(x),
-          round2(y),
-          this.zoneName,
-          serializeCampaign(new Campaign().toData()),
-          0,
-          0,
-          "quick",
-          "[]",
-          "[]",
-          null,
-          "{}",
-          Date.now(),
-          this.doKey(),
-          Date.now(),
-          isBot,
-        )
-        .run();
-    } catch {
-      // Pre-migration without session columns — fall back.
-      try {
-        await this.env.DB.prepare(
-          "INSERT OR IGNORE INTO players (id, name, x, y, zone, credits, xp, cores, metro, campaign, tutorial_done, tutorial_step, tutorial_mode, inventory, stash, look, equipped, updated_at) VALUES (?,?,?,?,?,0,0,0,0,?,?,?,?,?,?,?,?,?)",
-        )
-          .bind(
-            id,
-            name,
-            round2(x),
-            round2(y),
-            this.zoneName,
-            serializeCampaign(new Campaign().toData()),
-            0,
-            0,
-            "quick",
-            "[]",
-            "[]",
-            null,
-            "{}",
-            Date.now(),
-          )
-          .run();
-      } catch {
-        /* ignore */
-      }
     }
   }
 

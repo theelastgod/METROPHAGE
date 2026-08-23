@@ -1,27 +1,27 @@
 import type { Customization } from "../game/customization";
 import { sanitizeCustomization } from "../game/customization";
+import { isGuestPlayerId } from "../game/playerId";
 
 /**
  * Device-local multiplayer runner profile (no wallet required).
  *
- * Progress (credits, inventory, campaign, house…) is saved on the game server under
- * a guest id = callsign, gated by a per-device secret (`mp_secret_*` in NetClient).
- * This local slot only remembers callsign/look so CONTINUE can reconnect you.
+ * Server progress is keyed by guestId `g:<uuid>` + device secret — never by callsign.
+ * CONTINUE reconnects this id; typing a name cannot load someone else's row.
  */
 
 const KEY = "metrophage_local_runner_v1";
 
 export interface LocalRunnerProfile {
   v: 1;
+  guestId: string;
   callsign: string;
   classId: string;
   customization: Customization;
   /** Last online zone (best-effort resume hint). */
   lastZone?: string;
   /**
-   * Guest multiplayer device secret (same value as `mp_secret_<id>` in localStorage).
-   * Stored here so CONTINUE still works if the mp_secret_* key was wiped but the
-   * profile wasn't — regenerating a secret was causing "callsign locked on another device".
+   * Guest multiplayer device secret (same value as `mp_secret_<guestId>` in localStorage).
+   * Stored here so CONTINUE still works if the mp_secret_* key was wiped but the profile wasn't.
    */
   deviceSecret?: string;
   updatedAt: number;
@@ -34,9 +34,12 @@ export function loadLocalRunner(): LocalRunnerProfile | null {
     const s = JSON.parse(raw) as LocalRunnerProfile;
     if (!s || s.v !== 1 || !s.customization || !s.classId) return null;
     const callsign = (s.callsign || s.customization.callsign || "").trim();
-    if (!callsign) return null;
+    const guestId = typeof s.guestId === "string" ? s.guestId.trim() : "";
+    // Name-only legacy slots cannot CONTINUE — that was the callsign-as-id bug.
+    if (!callsign || !isGuestPlayerId(guestId)) return null;
     return {
       v: 1,
+      guestId,
       callsign,
       classId: s.classId,
       customization: sanitizeCustomization(s.customization, s.classId),
@@ -50,6 +53,7 @@ export function loadLocalRunner(): LocalRunnerProfile | null {
 }
 
 export function writeLocalRunner(partial: {
+  guestId: string;
   callsign: string;
   classId: string;
   customization: Customization;
@@ -57,16 +61,21 @@ export function writeLocalRunner(partial: {
   deviceSecret?: string;
 }): LocalRunnerProfile {
   const prev = loadLocalRunner();
+  const guestId = isGuestPlayerId(partial.guestId)
+    ? partial.guestId
+    : prev?.guestId && isGuestPlayerId(prev.guestId)
+      ? prev.guestId
+      : partial.guestId;
   const profile: LocalRunnerProfile = {
     v: 1,
+    guestId,
     callsign: partial.callsign,
     classId: partial.classId,
     customization: sanitizeCustomization(partial.customization, partial.classId),
     lastZone: partial.lastZone ?? prev?.lastZone,
-    // Prefer explicit secret, else keep previous when callsign matches.
     deviceSecret:
       partial.deviceSecret ??
-      (prev && prev.callsign.toLowerCase() === partial.callsign.toLowerCase() ? prev.deviceSecret : undefined),
+      (prev && prev.guestId === guestId ? prev.deviceSecret : undefined),
     updatedAt: Date.now(),
   };
   try {
@@ -82,10 +91,12 @@ export function touchLocalRunnerZone(zone: string): void {
   const prev = loadLocalRunner();
   if (!prev || !zone) return;
   writeLocalRunner({
+    guestId: prev.guestId,
     callsign: prev.callsign,
     classId: prev.classId,
     customization: prev.customization,
     lastZone: zone,
+    deviceSecret: prev.deviceSecret,
   });
 }
 

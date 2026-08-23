@@ -18,11 +18,14 @@ describe("LocalRunner guest profile (CONTINUE flow)", () => {
     stubStorage();
   });
 
-  it("round-trips callsign/class/zone through write → load", () => {
+  const GID = "g:550e8400-e29b-41d4-a716-446655440000";
+
+  it("round-trips guestId/callsign/class/zone through write → load", () => {
     const cust = defaultCustomization("metrophage");
     cust.callsign = "NEOREAVER";
-    writeLocalRunner({ callsign: "NEOREAVER", classId: "metrophage", customization: cust, lastZone: "d2" });
+    writeLocalRunner({ guestId: GID, callsign: "NEOREAVER", classId: "metrophage", customization: cust, lastZone: "d2" });
     const p = loadLocalRunner();
+    expect(p?.guestId).toBe(GID);
     expect(p?.callsign).toBe("NEOREAVER");
     expect(p?.classId).toBe("metrophage");
     expect(p?.lastZone).toBe("d2");
@@ -32,20 +35,31 @@ describe("LocalRunner guest profile (CONTINUE flow)", () => {
   it("touchLocalRunnerZone updates lastZone without dropping the character", () => {
     const cust = defaultCustomization("swarm");
     cust.callsign = "GHOST-9";
-    writeLocalRunner({ callsign: "GHOST-9", classId: "swarm", customization: cust, lastZone: "safe" });
+    writeLocalRunner({ guestId: GID, callsign: "GHOST-9", classId: "swarm", customization: cust, lastZone: "safe" });
     touchLocalRunnerZone("est3");
     const p = loadLocalRunner();
     expect(p?.lastZone).toBe("est3");
     expect(p?.callsign).toBe("GHOST-9");
+    expect(p?.guestId).toBe(GID);
     expect(p?.classId).toBe("swarm");
   });
 
   it("writeLocalRunner without lastZone keeps the previous resume hint", () => {
     const cust = defaultCustomization("wintermute");
     cust.callsign = "ICEWALL";
-    writeLocalRunner({ callsign: "ICEWALL", classId: "wintermute", customization: cust, lastZone: "d1" });
-    writeLocalRunner({ callsign: "ICEWALL", classId: "wintermute", customization: cust });
+    writeLocalRunner({ guestId: GID, callsign: "ICEWALL", classId: "wintermute", customization: cust, lastZone: "d1" });
+    writeLocalRunner({ guestId: GID, callsign: "ICEWALL", classId: "wintermute", customization: cust });
     expect(loadLocalRunner()?.lastZone).toBe("d1");
+  });
+
+  it("refuses a name-only legacy slot so CONTINUE cannot login by callsign", () => {
+    const cust = defaultCustomization("metrophage");
+    localStorage.setItem(
+      "metrophage_local_runner_v1",
+      JSON.stringify({ v: 1, callsign: "NEOREAVER", classId: "metrophage", customization: cust }),
+    );
+    expect(loadLocalRunner()).toBeNull();
+    expect(hasLocalRunner()).toBe(false);
   });
 
   it("rejects corrupt / legacy blobs instead of throwing", () => {
@@ -61,7 +75,12 @@ describe("LocalRunner guest profile (CONTINUE flow)", () => {
   it("clearLocalRunner wipes the slot (NEW RUNNER path)", () => {
     const cust = defaultCustomization("k-guerilla");
     cust.callsign = "REDLINE";
-    writeLocalRunner({ callsign: "REDLINE", classId: "k-guerilla", customization: cust });
+    writeLocalRunner({
+      guestId: "g:550e8400-e29b-41d4-a716-446655440000",
+      callsign: "REDLINE",
+      classId: "k-guerilla",
+      customization: cust,
+    });
     clearLocalRunner();
     expect(hasLocalRunner()).toBe(false);
   });

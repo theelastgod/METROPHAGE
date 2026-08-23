@@ -99,11 +99,15 @@ export async function publicPlayerKey(id: string): Promise<string> {
 
 // client -> server
 export type ClientMsg =
-  // login: a signed wallet (wallet+sig+ts) is a durable identity; without one the
-  // server falls back to a guest id derived from the callsign (dev / no-wallet play).
+  // login: wallet proof → w:<address>; guest must send id=g:<uuid> + device secret.
+  // Callsign (`name`) is display-only and is never used as the player id.
   | {
       t: "login";
       name: string;
+      /** Guest player id (`g:<uuid>`). Ignored when a wallet proof is present. */
+      id?: string;
+      /** Alias of `id` for guest login. Never a callsign. */
+      guestId?: string;
       faction?: number;
       look?: PlayerLook;
       wallet?: string;
@@ -115,8 +119,7 @@ export type ClientMsg =
       from?: string;
       /** Class id (metrophage/k-guerilla/wintermute/swarm) — selects the signature ability. */
       classId?: string;
-      /** Guest-identity device secret — generated client-side, bound to the callsign on
-       *  first login, required to log in as that callsign thereafter (wallet sig bypasses). */
+      /** Guest device secret — bound at claim, required with id=g:<uuid> (wallet sig bypasses). */
       secret?: string;
       /**
        * Wallet device session — bound after the first successful MetaMask signature.
