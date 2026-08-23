@@ -449,7 +449,9 @@ function priceEnvFrom(env: Env) {
     METRO_DEVNET_MINT: env.METRO_DEVNET_MINT,
     METRO_CHAIN_ID: env.METRO_CHAIN_ID,
     METRO_RPC: env.METRO_RPC,
+    METRO_CLUSTER: env.METRO_CLUSTER,
     METRO_USD_PRICE: env.METRO_USD_PRICE,
+    METRO_USD_REFERENCE: env.METRO_USD_REFERENCE,
     METRO_MAINNET_ARMED: env.METRO_MAINNET_ARMED,
   };
 }
@@ -542,7 +544,8 @@ async function handleMetro(url: URL, req: Request, env: Env): Promise<Response> 
       info.dualPathReady = { solana: true, robinhood: false };
       info.authoritativeChain = "solana";
       info.note = "Solana $METRO — Phantom deposits (you pay SOL); treasury pays SOL on cash-outs when funded.";
-      info.getMetroHint = "Get $METRO (pump.fun SPL), Send via Phantom to treasury, then Claim deposit.";
+      info.getMetroHint = "Get $METRO on pump.fun / PumpSwap, Send via Phantom to treasury, then Claim deposit.";
+      info.venue = "pump.fun / PumpSwap";
       if (hasTreasury) {
         const { isSolanaTreasurySecret, treasuryPubkey, treasuryHealth } = await import("./solana");
         if (isSolanaTreasurySecret(env.METRO_TREASURY_SECRET)) {
@@ -1024,16 +1027,18 @@ export default {
   },
 
   /**
-   * Cron (every 5m):
+   * Cron (every 60s — Cloudflare's finest interval):
    *  - reclaim abandoned $METRO cash-out claims
-   *  - refresh EVM $METRO market USD when the quote is older than 30 minutes
+   *  - refresh Solana $METRO oracle (Jupiter TWAP + circuit breaker)
    * Never touches zone DO ticks.
    */
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(
       (async () => {
+        let settlement: Settlement | null = null;
         try {
-          const { settlement } = await pickSettlement(env);
+          const picked = await pickSettlement(env);
+          settlement = picked.settlement;
           const { reclaimExpired } = await import("./metro");
           const n = await reclaimExpired(env.DB, settlement);
           if (n > 0) console.log(`[cron] reclaimed ${n} expired metro claims`);
@@ -1042,17 +1047,29 @@ export default {
         }
         try {
           const { maybeRefreshMetroPrice } = await import("./metroPrice");
+          const { poolMetro } = await import("./metro");
+          let ata: number | null = null;
+          try {
+            ata = (await settlement?.treasuryTokenUi?.()) ?? null;
+          } catch {
+            ata = null;
+          }
+          const pool = await poolMetro(env.DB);
           const q = await maybeRefreshMetroPrice({
             DB: env.DB,
             METRO_MINT: env.METRO_MINT,
             METRO_DEVNET_MINT: env.METRO_DEVNET_MINT,
             METRO_CHAIN_ID: env.METRO_CHAIN_ID,
             METRO_RPC: env.METRO_RPC,
+            METRO_CLUSTER: env.METRO_CLUSTER,
             METRO_USD_PRICE: env.METRO_USD_PRICE,
+            METRO_USD_REFERENCE: env.METRO_USD_REFERENCE,
             METRO_MAINNET_ARMED: env.METRO_MAINNET_ARMED,
+            treasuryAta: ata,
+            poolMetro: pool,
           });
           console.log(
-            `[cron] metro price usd=${q.usd} source=${q.source} stale=${q.stale} mult≈${(q.usd / 1).toFixed(3)}`,
+            `[cron] metro price spot=${q.spot} twap15=${q.twap15m} src=${q.source} frozen=${q.bridgeFrozen} stale=${q.stale}`,
           );
         } catch (e) {
           console.error("[cron] metro price refresh failed", e);

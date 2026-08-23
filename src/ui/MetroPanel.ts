@@ -29,6 +29,54 @@ import { solanaNetwork, parseSolanaCluster, shortSolanaAddress } from "../econom
 
 const short = (a: string) => shortSolanaAddress(a) || (a.length > 10 ? `${a.slice(0, 4)}…${a.slice(-4)}` : a);
 
+function fmtTwapUsd(n: unknown): string {
+  const x = Number(n);
+  if (!(x > 0)) return "—";
+  if (x >= 1) return `$${x.toFixed(2)}`;
+  if (x >= 0.01) return `$${x.toFixed(4)}`;
+  return `$${x.toPrecision(3)}`;
+}
+
+type OracleSnap = {
+  cluster?: string;
+  networkName?: string;
+  twap15m?: number;
+  metroUsd?: number;
+  spotUsd?: number;
+  priceSource?: string;
+  venue?: string;
+  bridgeFrozen?: boolean;
+  quoteMissing?: boolean;
+  freezeReason?: string;
+};
+
+function paintOracleRow(p: OracleSnap, $: (id: string) => HTMLElement): void {
+  const clusterEl = $("m-cluster");
+  if (clusterEl) clusterEl.textContent = String(p.cluster || p.networkName || "solana");
+  const twapEl = $("m-twap");
+  if (twapEl) twapEl.textContent = fmtTwapUsd(p.twap15m ?? p.metroUsd);
+  const srcEl = $("m-oracle-src");
+  if (srcEl) srcEl.textContent = String(p.priceSource || "none");
+  const venue = $("m-venue");
+  if (venue) venue.textContent = String(p.venue || "pump.fun / PumpSwap");
+  const chip = $("m-frozen-chip");
+  if (chip) {
+    const frozen = !!(p.bridgeFrozen || p.quoteMissing);
+    chip.textContent = frozen ? "FROZEN" : "OPEN";
+    chip.classList.toggle("warn", frozen);
+    chip.classList.toggle("ok", !frozen);
+    chip.title = frozen ? p.freezeReason || "circuit breaker" : "oracle open";
+  }
+}
+
+const ORACLE_METRICS_HTML = `
+      <div class="metrics" id="m-oracle-row">
+        <div class="metric"><span>Cluster</span><b id="m-cluster">—</b></div>
+        <div class="metric"><span>15m TWAP</span><b id="m-twap">—</b></div>
+        <div class="metric"><span>Oracle</span><b id="m-oracle-src">—</b></div>
+      </div>
+      <div class="row"><span class="muted">venue</span><span id="m-venue" class="mono-value">pump.fun / PumpSwap</span></div>`;
+
 /**
  * Which side of the house a deposit funds. One deposit funds exactly one — it
  * used to mint credits AND ◈ for the same tokens. Defaults to credits, matching
@@ -360,6 +408,7 @@ function mountStandbyMetroPanel(getPlayerId: () => string | null): void {
         <div class="chip-stack">
           <span class="chip warn" id="m-net">STANDBY</span>
           <span class="chip" id="m-phase-pill">OFF</span>
+          <span class="chip" id="m-frozen-chip">—</span>
         </div>
       </div>
       <div class="notice" id="m-phase">Loading pool…</div>
@@ -369,6 +418,7 @@ function mountStandbyMetroPanel(getPlayerId: () => string | null): void {
         <div class="metric"><span>Withdraw</span><b id="m-rate-out">—</b></div>
         <div class="metric"><span>Minimum</span><b id="m-rate-min">—</b></div>
       </div>
+      ${ORACLE_METRICS_HTML}
 
       <div class="section">
         <div class="section-title"><span>Wallet</span><span class="hint">${walletLabel}</span></div>
@@ -483,6 +533,7 @@ function mountStandbyMetroPanel(getPlayerId: () => string | null): void {
       $("m-rate-in").textContent = `1◈ → ${p.depositCreditsPerMetro ?? 100}₵`;
       $("m-rate-out").textContent = `${p.withdrawCreditsPerMetro ?? 150}₵ → 1◈`;
       $("m-rate-min").textContent = `${p.minWithdrawCredits ?? 300}₵`;
+      paintOracleRow(p, $);
       $("m-treasury").textContent = p.treasury ? short(p.treasury) : "—";
       if (p.treasury) $("m-treasury").dataset.full = p.treasury;
       ($("m-treas-chain") as HTMLElement).textContent = p.treasuryChain
@@ -787,6 +838,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
         <div class="chip-stack">
           <span class="chip" id="m-net-chip">${(st.networkName || st.chain || "Solana").toUpperCase()}</span>
           <span class="chip" id="m-phase-pill">PRE-CA</span>
+          <span class="chip" id="m-frozen-chip">—</span>
         </div>
       </div>
       <div class="notice" id="m-phase">Loading pool status…</div>
@@ -796,6 +848,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
         <div class="metric"><span>Withdraw</span><b id="m-rate-out">—</b></div>
         <div class="metric"><span>Minimum</span><b id="m-rate-min">—</b></div>
       </div>
+      ${ORACLE_METRICS_HTML}
 
       <div class="section">
         <div class="section-title"><span>Wallet</span><span class="hint">Phantom · Solana</span></div>
@@ -890,6 +943,15 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
     family?: string;
     dualPathReady?: { robinhood?: boolean };
     mint?: string;
+    cluster?: string;
+    venue?: string;
+    twap15m?: number;
+    metroUsd?: number;
+    spotUsd?: number;
+    priceSource?: string;
+    bridgeFrozen?: boolean;
+    quoteMissing?: boolean;
+    freezeReason?: string;
   } | null = null;
 
   const refreshPool = async () => {
@@ -907,6 +969,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
       $("m-rate-in").textContent = `1◈ → ${p.depositCreditsPerMetro}₵`;
       $("m-rate-out").textContent = `${p.withdrawCreditsPerMetro}₵ → 1◈`;
       $("m-rate-min").textContent = `${p.minWithdrawCredits ?? 250}₵`;
+      paintOracleRow(p, $);
 
       const phaseEl = $("m-phase");
       const phasePill = $("m-phase-pill");
@@ -957,6 +1020,15 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
         fab.classList.add("warn");
         setActions(false, false);
         status("₵ economy is live · chain bridge arms with mint + settlement");
+      } else if (p.bridgeFrozen || p.quoteMissing) {
+        phaseEl.classList.add("warn");
+        phasePill.classList.add("warn");
+        phasePill.textContent = "FROZEN";
+        phaseEl.textContent =
+          "Oracle circuit breaker — deposits and cash-outs return “Check back later.” until three consecutive stable quotes.";
+        setActions(false, false);
+        fab.classList.add("warn");
+        status("Check back later.");
       } else if (p.phase === "bootstrap" || (p.poolMetro ?? 0) <= 0) {
         phaseEl.classList.add("warn");
         phasePill.classList.add("warn");
@@ -973,7 +1045,7 @@ export function mountMetroPanel(getPlayerId: () => string | null): void {
         phaseEl.classList.add("ok");
         phasePill.classList.add("ok");
         phasePill.textContent = "OPEN";
-        phaseEl.textContent = `POOL OPEN on ${p.networkName || "Solana"} — deposit via Phantom (you pay SOL) · cash-out is Worker-broadcast (treasury pays SOL).`;
+        phaseEl.textContent = `POOL OPEN on ${p.networkName || "Solana"} (pump.fun / PumpSwap) — deposit via Phantom (you pay SOL) · cash-out is Worker-broadcast (treasury pays SOL).`;
         setActions(true, true);
       }
 

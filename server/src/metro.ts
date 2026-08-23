@@ -11,7 +11,8 @@
 // atomically (a conditional UPDATE) and deposits are claim-once (tx_sig is a PRIMARY
 // KEY). Settlement is a pluggable seam: Solana SPL (solana.ts) or devnet-sim for
 // headless smoke tests. evm.ts is unused.
-// Credits↔$METRO rates track market USD (metroPrice). Wallet proof is ed25519 login.
+// Credits↔$METRO rates track Solana 15m TWAP (metroPrice). A null quote freezes
+// the bridge rather than impersonating $1. Wallet proof is ed25519 login.
 
 import type { D1Database } from "@cloudflare/workers-types";
 import { isSolanaMint } from "./settlementFamily";
@@ -55,11 +56,19 @@ export type LiveBridge = {
   dailyCapCredits: number;
   claimTtlMs: number;
   policy: EconomyPolicy;
-  /** Market USD per 1 $METRO (EVM); reference 1.0 when unlisted. */
+  /** 15m TWAP USD per 1 $METRO; 0 when the oracle has no quote (never silent $1). */
   metroUsd: number;
+  spotUsd: number;
+  twap5m: number;
+  twap15m: number;
   priceMult: number;
   priceSource: string;
   priceStale: boolean;
+  quoteMissing: boolean;
+  bridgeFrozen: boolean;
+  freezeReason: string;
+  referenceUsd: number;
+  vol5m: number;
 };
 
 /** Optional env for market-price-aware rates (Worker secrets / vars). */
@@ -69,7 +78,11 @@ export type BridgePriceEnv = {
   METRO_CHAIN_ID?: string;
   METRO_RPC?: string;
   METRO_USD_PRICE?: string;
+  METRO_USD_REFERENCE?: string;
   METRO_MAINNET_ARMED?: string;
+  METRO_CLUSTER?: string;
+  treasuryAta?: number | null;
+  poolMetroHint?: number | null;
 };
 
 const DAY_MS = 86_400_000;
@@ -174,20 +187,46 @@ export async function resolveBridge(db: D1Database, priceEnv?: BridgePriceEnv): 
   const dayStart = Date.now() - DAY_MS;
   const wdToday = await withdrawnTodayMetro(db, dayStart);
 
-  // Market USD (EVM) — 30m cache; reference $1 when unlisted / no mint.
-  let metroUsd = 1;
-  let priceSource = "reference";
-  let priceStale = false;
-  if (priceEnv) {
-    try {
-      const { getMetroUsdPrice } = await import("./metroPrice");
-      const q = await getMetroUsdPrice({ DB: db, ...priceEnv });
-      metroUsd = q.usd;
-      priceSource = q.source;
-      priceStale = q.stale;
-    } catch {
-      /* keep reference */
-    }
+  // Solana oracle — 60s cache, 15m TWAP for rates. Null quote freezes; never $1.
+  let metroUsd = 0;
+  let spotUsd = 0;
+  let twap5m = 0;
+  let twap15m = 0;
+  let priceSource = "none";
+  let priceStale = true;
+  let quoteMissing = true;
+  let bridgeFrozen = true;
+  let freezeReason = "no-quote";
+  let referenceUsd = 0;
+  let vol5m = 0;
+  try {
+    const { getMetroUsdPrice } = await import("./metroPrice");
+    const q = await getMetroUsdPrice({
+      DB: db,
+      METRO_MINT: priceEnv?.METRO_MINT,
+      METRO_DEVNET_MINT: priceEnv?.METRO_DEVNET_MINT,
+      METRO_CHAIN_ID: priceEnv?.METRO_CHAIN_ID,
+      METRO_RPC: priceEnv?.METRO_RPC,
+      METRO_CLUSTER: priceEnv?.METRO_CLUSTER,
+      METRO_USD_PRICE: priceEnv?.METRO_USD_PRICE,
+      METRO_USD_REFERENCE: priceEnv?.METRO_USD_REFERENCE,
+      METRO_MAINNET_ARMED: priceEnv?.METRO_MAINNET_ARMED,
+      treasuryAta: priceEnv?.treasuryAta,
+      poolMetro: priceEnv?.poolMetroHint ?? pool,
+    });
+    metroUsd = q.usd;
+    spotUsd = q.spot;
+    twap5m = q.twap5m;
+    twap15m = q.twap15m;
+    priceSource = q.source;
+    priceStale = q.stale;
+    quoteMissing = q.quoteMissing;
+    bridgeFrozen = q.bridgeFrozen;
+    freezeReason = q.freezeReason ?? (q.quoteMissing ? "no-quote" : "");
+    referenceUsd = q.referenceUsd;
+    vol5m = q.vol5m;
+  } catch {
+    /* freeze — do not impersonate $1 */
   }
 
   const policy = resolveEconomyPolicy({
@@ -196,9 +235,17 @@ export async function resolveBridge(db: D1Database, priceEnv?: BridgePriceEnv): 
     activePlayers: players > 0 ? players : TARGET_PLAYERS,
     seedMetro: seed > 0 ? seed : METRO_DEV_SEED_METRO,
     withdrawnTodayMetro: wdToday,
-    metroUsd,
+    metroUsd: quoteMissing ? undefined : metroUsd,
+    metroUsdReference: referenceUsd > 0 ? referenceUsd : undefined,
+    spotUsd,
+    twap5m,
+    twap15m,
     priceSource,
     priceStale,
+    quoteMissing,
+    bridgeFrozen,
+    freezeReason,
+    vol5m,
   });
   return {
     depositCreditsPerMetro: policy.depositCreditsPerMetro,
@@ -209,9 +256,17 @@ export async function resolveBridge(db: D1Database, priceEnv?: BridgePriceEnv): 
     claimTtlMs: BRIDGE.claimTtlMs,
     policy,
     metroUsd: policy.metroUsd,
+    spotUsd: policy.spotUsd,
+    twap5m: policy.twap5m,
+    twap15m: policy.twap15m,
     priceMult: policy.priceMult,
     priceSource: policy.priceSource,
     priceStale: policy.priceStale,
+    quoteMissing: policy.quoteMissing,
+    bridgeFrozen: policy.bridgeFrozen,
+    freezeReason: policy.freezeReason,
+    referenceUsd,
+    vol5m: policy.vol5m,
   };
 }
 
@@ -243,10 +298,18 @@ export async function poolInfo(db: D1Database, priceEnv?: BridgePriceEnv): Promi
     note: live.policy.note,
     // Market price transparency for UI / HUD
     metroUsd: live.metroUsd,
+    spotUsd: live.spotUsd,
+    twap5m: live.twap5m,
+    twap15m: live.twap15m,
     priceMult: live.priceMult,
     priceSource: live.priceSource,
     priceStale: live.priceStale,
-    metroUsdReference: 1,
+    quoteMissing: live.quoteMissing,
+    bridgeFrozen: live.bridgeFrozen,
+    freezeReason: live.freezeReason,
+    metroUsdReference: live.referenceUsd,
+    vol5m: live.vol5m,
+    venue: "pump.fun / PumpSwap",
   };
 }
 
@@ -410,9 +473,15 @@ export async function getAccount(
     nextPopThreshold: live.policy.nextPopThreshold,
     note: live.policy.note,
     metroUsd: live.metroUsd,
+    spotUsd: live.spotUsd,
+    twap5m: live.twap5m,
+    twap15m: live.twap15m,
     priceMult: live.priceMult,
     priceSource: live.priceSource,
     priceStale: live.priceStale,
+    quoteMissing: live.quoteMissing,
+    bridgeFrozen: live.bridgeFrozen,
+    freezeReason: live.freezeReason,
   };
 }
 
@@ -445,6 +514,7 @@ export async function withdraw(
   await reclaimExpired(db, settlement);
 
   const live = await resolveBridge(db, priceEnv);
+  if (live.bridgeFrozen || live.quoteMissing) return { ok: false, reason: POOL_EMPTY_USER_MSG };
   if (!Number.isFinite(credits) || credits < live.minWithdrawCredits)
     return { ok: false, reason: `minimum withdraw is ${live.minWithdrawCredits} credits` };
 
@@ -822,6 +892,7 @@ export async function deposit(
   const metro = roundMetro(v.metro ?? args.metro);
   if (!(metro > 0) || !Number.isFinite(metro)) return { ok: false, reason: "bad deposit amount" };
   const live = await resolveBridge(db, priceEnv);
+  if (live.bridgeFrozen || live.quoteMissing) return { ok: false, reason: POOL_EMPTY_USER_MSG };
   const credits = metroToCreditsAt(metro, live.depositCreditsPerMetro);
   // Reject dust that would grant 0 credits (don't inflate metro ledger with Math.max(1,…)).
   if (credits < 1) return { ok: false, reason: "deposit too small — need more $METRO for 1 credit at current rate" };
