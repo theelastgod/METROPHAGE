@@ -886,6 +886,9 @@ export async function deposit(
   const exists = await db.prepare("SELECT 1 FROM players WHERE id = ?").bind(id).first();
   if (!exists) return { ok: false, reason: "unknown player" };
 
+  const liveGate = await resolveBridge(db, priceEnv);
+  if (liveGate.bridgeFrozen || liveGate.quoteMissing) return { ok: false, reason: POOL_EMPTY_USER_MSG };
+
   // verify the on-chain transfer (2a: sim trusts the amount; 2b reads it from chain).
   const v = await settlement.verifyDeposit(txSig, wallet, args.metro);
   if (!v.ok) return { ok: false, reason: v.reason ?? "deposit not verified on-chain" };

@@ -225,7 +225,16 @@ function runPath(opts) {
   const days = opts.days ?? 180;
   const stepMs = opts.stepMs ?? 86_400_000;
   const steps = Math.ceil((days * 86_400_000) / stepMs);
-  const st = {
+  const prev = opts.continueFrom;
+  const st = prev
+    ? {
+        ...prev,
+        oracle: {
+          ...prev.oracle,
+          samples: (prev.oracle.samples || []).map((s) => ({ ...s })),
+        },
+      }
+    : {
     players: opts.players ?? 500,
     pool: opts.seedMetro ?? DEV_SEED,
     ata: opts.seedMetro ?? DEV_SEED,
@@ -249,7 +258,7 @@ function runPath(opts) {
 
   let t = 0;
   const warm = opts.warmupPrice ?? (typeof opts.priceAt === "function" ? opts.priceAt(0, 0) : 0);
-  if (warm > 0 && !opts.noWarmup) {
+  if (warm > 0 && !opts.noWarmup && !prev) {
     for (let k = 3; k >= 1; k--) ingest(st.oracle, warm, -k * 60_000);
   }
   for (let i = 0; i < steps; i++) {
@@ -356,13 +365,14 @@ console.log(`mix: 500p · 12% depositors · 88% farmers · cooldown ${COOLDOWN_M
     days: 1,
     stepMs: DAY,
     seed: 13,
-    circ0: 50_000,
+    continueFrom: r,
+    noWarmup: true,
     priceAt: () => 0.0001,
   });
   check(
     "spike then -90% dump",
-    r.oracle.tripped && after.endPool > DEV_SEED * 0.5 && !after.insolvent,
-    `tripped=${r.oracle.tripped} postThawPool=${Math.round(after.endPool)}`,
+    r.oracle.tripped && r.checkBack > 0 && after.endPool > r.endPool * 0.3 && !after.insolvent,
+    `tripped=${r.oracle.tripped} checkBack=${r.checkBack} dumpPool=${Math.round(r.endPool)} postThawPool=${Math.round(after.endPool)}`,
   );
 }
 

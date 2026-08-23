@@ -1048,11 +1048,11 @@ export default {
         try {
           const { maybeRefreshMetroPrice } = await import("./metroPrice");
           const { poolMetro } = await import("./metro");
-          let ata: number | null = null;
+          let ata: number | null | undefined = undefined;
           try {
             ata = (await settlement?.treasuryTokenUi?.()) ?? null;
           } catch {
-            ata = null;
+            ata = undefined;
           }
           const pool = await poolMetro(env.DB);
           const q = await maybeRefreshMetroPrice({

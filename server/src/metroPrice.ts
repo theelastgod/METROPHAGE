@@ -184,6 +184,7 @@ export function evaluateCircuitBreaker(args: {
   quoteMissing: boolean;
   treasuryAta?: number | null;
   poolMetro?: number | null;
+  holdAtaPool?: boolean;
 }): ShockReason {
   if (args.quoteMissing || !(args.spot > 0)) return "no-quote";
   if (!(args.fetchedAt > 0) || args.now - args.fetchedAt > STALE_QUOTE_MS) return "stale";
@@ -191,6 +192,7 @@ export function evaluateCircuitBreaker(args: {
   if (args.twap15m > 0 && relMove(args.spot, args.twap15m) > TWAP_DIVERGE_FRAC) return "twap-diverge";
   const ata = args.treasuryAta;
   const pool = args.poolMetro;
+  if (args.holdAtaPool && (ata == null || !Number.isFinite(ata))) return "ata-pool";
   if (ata != null && pool != null && pool > 0 && Number.isFinite(ata) && ata + 1e-9 < pool * (1 - ATA_POOL_DIVERGE_FRAC)) {
     return "ata-pool";
   }
@@ -247,6 +249,7 @@ export function ingestQuote(
     quoteMissing: next.quoteMissing || !(next.spot > 0),
     treasuryAta: opts?.treasuryAta,
     poolMetro: opts?.poolMetro,
+    holdAtaPool: prev.freezeReason === "ata-pool",
   });
 
   if (shock) {
@@ -414,8 +417,8 @@ async function readCache(db: D1Database): Promise<OracleState | null> {
         samples: [{ t: row.fetched_at, usd: row.usd }],
         referenceUsd: 0,
         referenceFrozenAt: 0,
-        bridgeFrozen: false,
-        freezeReason: null,
+        bridgeFrozen: true,
+        freezeReason: "no-quote",
         stableQuotes: 0,
         stale: Date.now() - row.fetched_at > METRO_PRICE_TTL_MS,
         quoteMissing: false,
@@ -520,7 +523,7 @@ export async function fetchJupiterUsd(mint: string): Promise<{ usd: number; raw:
       data?: Record<string, { price?: string | number; usdPrice?: string | number } | null>;
     } | null;
     if (!j?.data) continue;
-    const row = j.data[mint] ?? Object.values(j.data).find(Boolean);
+    const row = j.data[mint];
     const usd = parseUsd(row?.price ?? row?.usdPrice);
     if (usd == null) continue;
     return { usd, raw: JSON.stringify({ source: "jupiter", vsToken: "USDC" }).slice(0, 2000) };
@@ -577,10 +580,12 @@ export async function fetchPumpFunCurve(mint: string): Promise<{ usd: number; ra
     if (direct != null) {
       return { usd: direct, raw: JSON.stringify({ source: "pump.fun" }).slice(0, 2000) };
     }
-    const mcap = typeof j.usd_market_cap === "string" ? parseFloat(j.usd_market_cap) : Number(j.usd_market_cap ?? j.market_cap);
-    const supplyRaw = typeof j.total_supply === "string" ? parseFloat(j.total_supply) : Number(j.total_supply);
-    const supply = Number.isFinite(supplyRaw) && supplyRaw > 0 ? supplyRaw : 1_000_000_000;
-    if (Number.isFinite(mcap) && mcap > 0 && supply > 0) {
+    const mcap = parseUsd(j.usd_market_cap);
+    let supplyRaw = typeof j.total_supply === "string" ? parseFloat(j.total_supply) : Number(j.total_supply);
+    if (!(supplyRaw > 0)) supplyRaw = 1_000_000_000;
+    // pump.fun reports raw token atoms (1B × 1e6 = 1e15). Human supply is 1e9.
+    const supply = supplyRaw > 1e12 ? supplyRaw / 1e6 : supplyRaw;
+    if (mcap != null && supply > 0) {
       const usd = parseUsd(mcap / supply);
       if (usd != null) return { usd, raw: JSON.stringify({ source: "pump.fun", mcap, supply }).slice(0, 2000) };
     }

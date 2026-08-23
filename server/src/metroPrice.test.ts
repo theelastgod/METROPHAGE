@@ -69,6 +69,16 @@ describe("fetchMarketUsd — Solana, no lowercase mint", () => {
     expect(urls.some((u) => u.includes(SPL_MINT.toLowerCase()) && !u.includes(SPL_MINT))).toBe(false);
   });
 
+  it("does not treat Jupiter's USDC quote mint as $METRO", async () => {
+    stubFetch((url) => {
+      if (url.includes("jup.ag/price/v2")) {
+        return { body: { data: { EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v: { price: "1" } } } };
+      }
+      return { ok: false };
+    });
+    expect(await fetchMarketUsd(SPL_MINT)).toBeNull();
+  });
+
   it("falls through to DexScreener Solana highest-liq pair", async () => {
     const urls = stubFetch((url) => {
       if (url.includes("dexscreener")) {
@@ -107,7 +117,7 @@ describe("fetchMarketUsd — Solana, no lowercase mint", () => {
   it("uses pump.fun curve while pre-graduation", async () => {
     stubFetch((url) => {
       if (url.includes("pump.fun/coins/")) {
-        return { body: { complete: false, usd_market_cap: 80_000, total_supply: 1_000_000_000 } };
+        return { body: { complete: false, usd_market_cap: 80_000, total_supply: 1_000_000_000_000_000 } };
       }
       return { ok: false };
     });
@@ -215,6 +225,21 @@ describe("evaluateCircuitBreaker", () => {
       quoteMissing: false,
       treasuryAta: 100,
       poolMetro: 200,
+    });
+    expect(r).toBe("ata-pool");
+  });
+
+  it("keeps ata-pool freeze when ATA is unread", () => {
+    const r = evaluateCircuitBreaker({
+      spot: 1,
+      prevSpot: 1,
+      twap15m: 1,
+      fetchedAt: Date.now(),
+      now: Date.now(),
+      quoteMissing: false,
+      treasuryAta: null,
+      poolMetro: 200,
+      holdAtaPool: true,
     });
     expect(r).toBe("ata-pool");
   });
