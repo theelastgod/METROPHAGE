@@ -58,17 +58,16 @@ export const BUILDING_INFECTED: Partial<Record<BuildingKind, string>> = {
  */
 export const DIST_KIT: Record<string, string | string[]> = {
   core: "hf_building_dist_core",
-  // THE KERNEL (campaign final district id)
   kernel: ["hf_building_dist_kernel", "hf_building_dist_core"],
-  downtown: "hf_building_dist_core",
+  downtown: ["hf_building_dist_downtown", "hf_building_dist_core"],
   corporate: ["hf_building_dist_corporate", "hf_building_dist_core"],
   arcology: ["hf_building_dist_arcology", "hf_building_dist_core"],
   stacks: "hf_building_dist_stacks",
-  industrial: "hf_building_dist_stacks",
+  industrial: ["hf_building_dist_industrial", "hf_building_dist_stacks"],
   relay: "hf_building_dist_relay",
   sprawl: "hf_building_dist_sprawl",
-  slum: "hf_building_dist_sprawl",
-  residential: "hf_building_dist_sprawl",
+  slum: ["hf_building_dist_slum", "hf_building_dist_sprawl"],
+  residential: ["hf_building_dist_residential", "hf_building_dist_sprawl"],
   undercity: "hf_building_dist_undercity",
   docks: "hf_building_dist_docks",
   market: ["hf_building_dist_market", "hf_building_dist_docks"],
