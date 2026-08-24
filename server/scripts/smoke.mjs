@@ -30,8 +30,11 @@
 //   * the position survives a full server restart (durable in D1)
 
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 
 const WS_URL = process.env.WS_URL || "ws://127.0.0.1:8787/ws";
+const HTTP_URL = (process.env.HTTP_URL || WS_URL).replace(/^ws/i, "http").replace(/\/ws$/i, "");
+const SMOKE_SECRET = process.env.SMOKE_SECRET || "smk-harness-secret-v1";
 const STATE_FILE = new URL("../.spike-state.json", import.meta.url);
 const SPEED = 200;
 const SPAWN_X = 640;
@@ -57,22 +60,67 @@ function connect(url = WS_URL) {
   });
 }
 
-function login(ws, name, faction, look, extra = {}) {
-  return new Promise((resolve, reject) => {
-    const to = setTimeout(() => reject(new Error("login timeout")), 5000);
-    const onMsg = (ev) => {
-      const m = JSON.parse(ev.data);
-      if (m.t === "welcome") {
-        clearTimeout(to);
-        ws.removeEventListener("message", onMsg);
-        resolve(m);
-      }
-    };
-    ws.addEventListener("message", onMsg);
-    // deterministic per-name device secret — guest identities are device-bound now, and
-    // the harness reuses fixed callsigns (crafter, esthome…) across runs
-    ws.send(JSON.stringify({ t: "login", name, faction, secret: `smk-${name}`, ...(look ? { look } : {}), ...extra }));
+function isGuestId(s) {
+  return (
+    /^g:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s) ||
+    /^g:[0-9a-f]{32}$/i.test(s)
+  );
+}
+
+function smokeGuestId(name) {
+  if (isGuestId(name)) return name;
+  return "g:" + createHash("sha256").update("metro-smoke:" + String(name)).digest("hex").slice(0, 32);
+}
+
+function smokeCallsign(name) {
+  if (isGuestId(name)) return "SMOKE";
+  const c = String(name || "SMOKE")
+    .toUpperCase()
+    .replace(/[^A-Z0-9-]/g, "")
+    .slice(0, 12);
+  return c || "SMOKE";
+}
+
+async function claimSmoke(name) {
+  const id = smokeGuestId(name);
+  const callsign = smokeCallsign(name);
+  const r = await fetch(HTTP_URL + "/player/claim", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ guestId: id, secret: SMOKE_SECRET, callsign }),
   });
+  const j = await r.json().catch(() => ({}));
+  return { id, secret: SMOKE_SECRET, callsign: j.callsign || callsign };
+}
+
+function login(ws, name, faction, look, extra = {}) {
+  return claimSmoke(name).then(
+    (ident) =>
+      new Promise((resolve, reject) => {
+        const to = setTimeout(() => reject(new Error("login timeout")), 8000);
+        const onMsg = (ev) => {
+          const m = JSON.parse(ev.data);
+          if (m.t === "welcome") {
+            clearTimeout(to);
+            ws.removeEventListener("message", onMsg);
+            resolve(m);
+          }
+        };
+        ws.addEventListener("message", onMsg);
+        ws.send(
+          JSON.stringify({
+            t: "login",
+            id: ident.id,
+            guestId: ident.id,
+            name: ident.callsign,
+            faction,
+            secret: ident.secret,
+            ...(look ? { look } : {}),
+            ...extra,
+          }),
+        );
+      }),
+  );
 }
 
 function trackState(ws, id, store) {
@@ -521,7 +569,7 @@ async function lookpersist() {
         }
       };
       ws.addEventListener("message", onMsg);
-      ws.send(JSON.stringify({ t: "login", name: nm, faction: 0, secret: `smk-${nm}`, ...(look ? { look } : {}) }));
+      void login(ws, nm, 0, look).then(resolve, reject);
     });
 
   // Phase 1: A logs in WITH a look, then disconnects (server persists on close).
@@ -589,7 +637,16 @@ async function auth() {
     // tamper = sign a DIFFERENT message than the ts we send, so the signature won't verify
     const signedTs = opts.tamper ? ts + 1 : ts;
     const sig = await evm.signMessage(loginMessage(evm.address, signedTs));
-    return rawSignedLogin(ws, { wallet: evm.address, sig, ts });
+    const payload = { wallet: evm.address, sig, ts };
+    if (!opts.tamper) {
+      const cs = ("W" + evm.address.replace(/^0x/i, "").slice(0, 11)).toUpperCase();
+      await fetch(HTTP_URL + "/player/claim", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ...payload, callsign: cs }),
+      }).catch(() => {});
+    }
+    return rawSignedLogin(ws, payload);
   };
 
   const a = await connect();
@@ -1451,7 +1508,7 @@ async function cosmetic() {
         }
       };
       ws.addEventListener("message", onMsg);
-      ws.send(JSON.stringify({ t: "login", name, faction: 0, secret: `smk-${name}`, look }));
+      void login(ws, name, 0, look).then(resolve, reject);
     });
 
   const D = await connect();
@@ -3312,7 +3369,7 @@ async function look() {
       }
     };
     a.addEventListener("message", onMsg);
-    a.send(JSON.stringify({ t: "login", name: "looker", faction: 2, secret: "smk-looker", look: A_LOOK }));
+    void login(a, "looker", 2, A_LOOK).then(resolve, reject);
   });
   const b = await connect();
   const wb = await login(b, "viewer", 0);

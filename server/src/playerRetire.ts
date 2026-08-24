@@ -1,30 +1,24 @@
 // Explicit guest-runner retirement (NEW RUNNER without a wallet).
 // Wallet runners are retired via playerLink.retireWalletPlayer (signed).
-// Guests persist forever until this path runs with the matching device secret.
+// Guests persist until this path runs with the matching g:<uuid> + device secret.
 
 import type { D1Database } from "@cloudflare/workers-types";
+import { isGuestPlayerId } from "../../src/game/playerId";
 
 export type RetireResult = { ok: true; retired: boolean; id: string } | { ok: false; reason: string };
 
-function guestIdFromCallsign(callsign: string): string {
-  return (callsign || "").toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 32) || "";
-}
-
 /**
  * Permanently remove a guest multiplayer save.
- * Requires the device secret bound on first login — same key as WS guest auth.
+ * Requires the device secret bound at claim — same key as WS guest auth.
  */
 export async function retireGuestPlayer(
   db: D1Database,
-  callsign: string,
+  guestId: string,
   secret: string,
 ): Promise<RetireResult> {
-  const id = guestIdFromCallsign(callsign);
+  const id = (guestId || "").trim();
   const sec = (secret || "").trim().slice(0, 64);
-  if (!id || id.startsWith("__")) return { ok: false, reason: "invalid callsign" };
-  if (id.startsWith("w:")) {
-    return { ok: false, reason: "wallet runners require a wallet signature to retire — use NEW RUNNER while signed in" };
-  }
+  if (!isGuestPlayerId(id)) return { ok: false, reason: "guest id required" };
   if (!sec || sec.length < 8) return { ok: false, reason: "device key required" };
 
   let row: { secret: string | null } | null = null;
@@ -41,7 +35,6 @@ export async function retireGuestPlayer(
     return { ok: false, reason: "device key does not match this runner" };
   }
 
-  // Best-effort cascade — tables may be missing on older DBs.
   const run = async (sql: string, ...binds: unknown[]) => {
     try {
       await db.prepare(sql).bind(...binds).run();
@@ -60,12 +53,9 @@ export async function retireGuestPlayer(
   await run("DELETE FROM guild_invites WHERE player = ?", id);
   await run("DELETE FROM mailbox WHERE player = ?", id);
   await run("DELETE FROM pvp_escrows WHERE player = ?", id);
-  // Free any owned estate so homes don't stay locked forever.
   await run("UPDATE estates SET owner = NULL, owner_name = NULL, for_sale = 1 WHERE owner = ?", id);
-  // Keep metro deposit/withdraw history for ledger integrity — only clear player row.
   await run("DELETE FROM players WHERE id = ? AND secret = ?", id, sec);
 
-  // Confirm gone.
   try {
     const still = await db.prepare("SELECT 1 AS o FROM players WHERE id = ?").bind(id).first();
     if (still) return { ok: false, reason: "retire failed — runner still on server" };

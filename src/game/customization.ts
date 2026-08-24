@@ -18,6 +18,9 @@ import {
 import { getClass } from "./classes";
 import { bakeWalkSheet } from "../assets/anim";
 import type { PlayerLook } from "../net/protocol";
+import { cleanCallsign, normalizeCallsign } from "./callsign";
+
+export { CALLSIGN_MAX, cleanCallsign, normalizeCallsign } from "./callsign";
 
 // METROPHAGE — player character customization. After picking a class, the player
 // tunes a human look: skin, hair, signature colour + gear silhouette. It's all data;
@@ -50,28 +53,15 @@ export interface Customization {
   strap: boolean; // bandolier
 }
 
-/** Max callsign length + the characters a callsign may contain. */
-export const CALLSIGN_MAX = 12;
-const CALLSIGN_RE = /[A-Z0-9-]/;
-
 /** Themed default handles (a fresh run gets a random one, editable). */
 const CALLSIGN_POOL = [
   "NEOREAVER", "NULLSEC", "VECTOR", "WRAITH", "CIPHER", "HEXWARE",
-  "GHOSTRUN", "BLACKICE", "ECHO-9", "STATIC", "VANTA", "RELAY",
-];
+  "GHOSTRUN", "BLACKICE", "ECHO-9", "GRIDRUN", "VANTA", "RELAY",
+].filter((s) => normalizeCallsign(s) === s);
 
 export function randomCallsign(): string {
+  if (CALLSIGN_POOL.length === 0) return "RUNNER";
   return CALLSIGN_POOL[Math.floor(Math.random() * CALLSIGN_POOL.length)];
-}
-
-/** Clean an arbitrary string into a valid callsign (upper, allowed chars, clamped). */
-export function cleanCallsign(s: string): string {
-  return (s || "")
-    .toUpperCase()
-    .split("")
-    .filter((ch) => CALLSIGN_RE.test(ch))
-    .join("")
-    .slice(0, CALLSIGN_MAX);
 }
 
 /** Selectable neon colours for the signature tint. */

@@ -292,7 +292,7 @@ import {
   PLAYER_CUSTOM_KEY,
   type Customization,
 } from "../game/customization";
-import { writeLocalRunner, touchLocalRunnerZone } from "../systems/LocalRunner";
+import { loadLocalRunner, writeLocalRunner, touchLocalRunnerZone } from "../systems/LocalRunner";
 import { prefersMobileUx } from "../systems/Mobile";
 import MobileControls from "../ui/MobileControls";
 
@@ -1401,6 +1401,10 @@ export default class OnlineScene extends Phaser.Scene {
     const fastArrival = !!this.registry.get("fastTravel");
     this.registry.set("fastTravel", false);
     this.net = new NetClient(grid, this.callsign, url, this.faction, this.baseLook);
+    this.net.guestId =
+      (this.registry.get("guestId") as string | undefined) ||
+      loadLocalRunner()?.guestId ||
+      "";
     this.net.classId = (this.registry.get("classId") as string) || "metrophage";
     this.net.arrival = fastArrival ? "fast" : "organic";
     // Only intentional handoffs send `from`. Resume / reconnect / title deploy omit it
@@ -2447,7 +2451,7 @@ export default class OnlineScene extends Phaser.Scene {
 
   /**
    * Keep a device-local runner profile so CONTINUE works without Phantom.
-   * Guest server progress still keys off callsign + device secret on login.
+   * Guest server progress keys off guestId + device secret on login.
    */
   private isGuestRun(): boolean {
     // Explicit guest/offline flags win over a leftover wallet in localStorage —
@@ -2466,9 +2470,12 @@ export default class OnlineScene extends Phaser.Scene {
     const cust = this.registry.get("customization") as Customization | undefined;
     if (!cust?.callsign) return;
     const classId = (this.registry.get("classId") as string) || "metrophage";
-    // Keep device secret on the profile every time we touch it (CONTINUE must never mint a new one).
-    const deviceSecret = ensureGuestDeviceSecret(cust.callsign);
+    const prev = loadLocalRunner();
+    const guestId = prev?.guestId || (this.registry.get("guestId") as string | undefined);
+    if (!guestId) return;
+    const deviceSecret = prev?.deviceSecret || ensureGuestDeviceSecret(guestId);
     writeLocalRunner({
+      guestId,
       callsign: cust.callsign,
       classId,
       customization: cust,

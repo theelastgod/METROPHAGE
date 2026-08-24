@@ -37,6 +37,8 @@ import {
   LEG_GEAR_LABELS,
   CALLSIGN_MAX,
   randomCallsign,
+  cleanCallsign,
+  customizationToLook,
 } from "../game/customization";
 import { applyMenuNeon } from "../render/ensureNeon";
 import { fadeInScene, transitionTo } from "../systems/transitions";
@@ -46,8 +48,10 @@ import { uiGap } from "../ui/spacing";
 import { bodyFont, displayFont, uiFont } from "../ui/typography";
 import { drawPanelFrame } from "../ui/panelChrome";
 import { connectedWallet } from "../economy/wallet";
-import { writeLocalRunner } from "../systems/LocalRunner";
+import { loadLocalRunner, writeLocalRunner } from "../systems/LocalRunner";
 import { ensureGuestDeviceSecret } from "../net/NetClient";
+import { mintGuestId } from "../game/playerId";
+import { claimCallsign, checkCallsignAvailable } from "../net/playerClaim";
 import { prefersMobileUx } from "../systems/Mobile";
 
 interface Row {
@@ -68,6 +72,9 @@ export default class CustomizeScene extends Phaser.Scene {
   private rows: Row[] = [];
   private preview!: Phaser.GameObjects.Container;
   private callsignText!: Phaser.GameObjects.Text;
+  private availHint?: Phaser.GameObjects.Text;
+  private availTimer?: Phaser.Time.TimerEvent;
+  private claiming = false;
   private caretOn = true;
   private rowG!: Phaser.GameObjects.Graphics;
   private rowTexts: Phaser.GameObjects.Text[] = [];
@@ -397,9 +404,17 @@ export default class CustomizeScene extends Phaser.Scene {
         p.event?.stopPropagation?.();
         this.cust.callsign = randomCallsign();
         this.renderCallsign();
+        this.scheduleAvailCheck();
       });
     }
+    this.availHint = asMenuUi(
+      this.add
+        .text(x + uiDim(14), y + h + uiDim(4), "", bodyFont(11, { color: "#9aa3b2" }))
+        .setOrigin(0, 0)
+        .setDepth(10),
+    );
     this.renderCallsign();
+    this.scheduleAvailCheck();
     this.time.addEvent({
       delay: 420,
       loop: true,
@@ -417,11 +432,9 @@ export default class CustomizeScene extends Phaser.Scene {
     if (this.mobile) {
       const next = window.prompt("CALLSIGN (A–Z 0–9 -)", this.cust.callsign || "");
       if (next == null) return;
-      this.cust.callsign = next
-        .toUpperCase()
-        .replace(/[^A-Z0-9-]/g, "")
-        .slice(0, CALLSIGN_MAX);
+      this.cust.callsign = cleanCallsign(next);
       this.renderCallsign();
+      this.scheduleAvailCheck();
       return;
     }
     // Desktop: focus stays on keyboard handler already active.
@@ -684,6 +697,7 @@ export default class CustomizeScene extends Phaser.Scene {
       if (e.key === "Backspace") {
         this.cust.callsign = this.cust.callsign.slice(0, -1);
         this.renderCallsign();
+        this.scheduleAvailCheck();
         return;
       }
       if (e.key.length === 1) {
@@ -691,6 +705,7 @@ export default class CustomizeScene extends Phaser.Scene {
         if (/[A-Z0-9-]/.test(ch) && this.cust.callsign.length < CALLSIGN_MAX) {
           this.cust.callsign += ch;
           this.renderCallsign();
+          this.scheduleAvailCheck();
         }
         return;
       }
@@ -797,31 +812,113 @@ export default class CustomizeScene extends Phaser.Scene {
     transitionTo(this, "Select", undefined, { style: "fade", accent: 0x9aa3b2 });
   }
 
-  private confirm() {
+  private scheduleAvailCheck() {
+    this.availTimer?.remove(false);
+    this.availTimer = this.time.delayedCall(280, () => void this.refreshAvailability());
+  }
+
+  private async refreshAvailability() {
+    const callsign = cleanCallsign(this.cust.callsign);
+    if (!this.availHint) return;
+    if (!callsign) {
+      this.availHint.setText("").setColor("#9aa3b2");
+      return;
+    }
+    try {
+      const r = await checkCallsignAvailable(callsign);
+      if (cleanCallsign(this.cust.callsign) !== callsign) return;
+      if (r.available) {
+        this.availHint.setText("available").setColor("#39ff88");
+      } else {
+        const sug = r.suggestion ? ` — try ${r.suggestion}` : "";
+        this.availHint.setText((r.reason || "that callsign is taken") + sug).setColor("#ff3b6b");
+      }
+    } catch {
+      /* preflight is UX only */
+    }
+  }
+
+  private async confirm() {
+    if (this.claiming) return;
     if (!this.cust.callsign) this.cust.callsign = randomCallsign();
+    this.cust.callsign = cleanCallsign(this.cust.callsign);
     const wallet = this.registry.get("walletAddress") as string | undefined;
     const guest =
       !wallet &&
       (!!this.registry.get("guestPlay") ||
         !!this.registry.get("offlinePlay"));
+    this.claiming = true;
+    if (this.availHint) this.availHint.setText("claiming…").setColor("#9aa3b2");
+
+    const look = customizationToLook(this.cust);
+    let claim: { ok: boolean; reason?: string; suggestion?: string; callsign?: string };
+    try {
+      if (guest) {
+        const prev = loadLocalRunner();
+        const guestId = prev?.guestId || mintGuestId();
+        const deviceSecret = prev?.deviceSecret || ensureGuestDeviceSecret(guestId);
+        if (!deviceSecret) {
+          this.claiming = false;
+          this.availHint?.setText("device key required").setColor("#ff3b6b");
+          return;
+        }
+        claim = await claimCallsign({
+          guestId,
+          secret: deviceSecret,
+          callsign: this.cust.callsign,
+          look,
+          classId: this.classDef.id,
+        });
+        if (!claim.ok) {
+          this.claiming = false;
+          const sug = claim.suggestion ? ` — try ${claim.suggestion}` : "";
+          this.availHint?.setText((claim.reason || "that callsign is taken") + sug).setColor("#ff3b6b");
+          return;
+        }
+        this.cust.callsign = claim.callsign || this.cust.callsign;
+        this.registry.set("guestId", guestId);
+        writeLocalRunner({
+          guestId,
+          callsign: this.cust.callsign,
+          classId: this.classDef.id,
+          customization: this.cust,
+          deviceSecret,
+        });
+      } else {
+        const proof = this.registry.get("walletProof") as { wallet: string; sig: string; ts: number } | undefined;
+        if (!proof) {
+          this.claiming = false;
+          this.availHint?.setText("sign in from the title screen first").setColor("#ff3b6b");
+          return;
+        }
+        claim = await claimCallsign({
+          wallet: proof.wallet,
+          sig: proof.sig,
+          ts: proof.ts,
+          callsign: this.cust.callsign,
+          look,
+          classId: this.classDef.id,
+        });
+        if (!claim.ok) {
+          this.claiming = false;
+          const sug = claim.suggestion ? ` — try ${claim.suggestion}` : "";
+          this.availHint?.setText((claim.reason || "that callsign is taken") + sug).setColor("#ff3b6b");
+          return;
+        }
+        this.cust.callsign = claim.callsign || this.cust.callsign;
+        this.registry.remove("offlinePlay");
+      }
+    } catch (e) {
+      this.claiming = false;
+      this.availHint?.setText(String((e as Error)?.message ?? e).slice(0, 80)).setColor("#ff3b6b");
+      return;
+    }
+
     this.registry.set("classId", this.classDef.id);
     this.registry.set("customization", this.cust);
     this.registry.set("resume", false);
     this.registry.set("characterLocked", true);
     this.registry.set("guestPlay", guest);
-    if (guest) {
-      // Mint guest device secret now so the first multiplayer login binds this runner.
-      // Persist it on the local profile so CONTINUE never regenerates a mismatched key.
-      const deviceSecret = ensureGuestDeviceSecret(this.cust.callsign);
-      writeLocalRunner({
-        callsign: this.cust.callsign,
-        classId: this.classDef.id,
-        customization: this.cust,
-        deviceSecret,
-      });
-    } else {
-      this.registry.remove("offlinePlay");
-    }
     transitionTo(this, "Prologue", undefined, { style: "deploy", accent: this.classDef.color });
   }
 }

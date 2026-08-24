@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ensureGuestDeviceSecret, readGuestDeviceSecret, guestIdFromCallsign } from "./NetClient";
+import { ensureGuestDeviceSecret, readGuestDeviceSecret } from "./NetClient";
+import { mintGuestId } from "../game/playerId";
 
 /** Minimal Storage stand-in; `blocked` reproduces private-mode / ITP throwing. */
 function makeStorage(blocked = false): Storage {
@@ -23,7 +24,7 @@ function makeStorage(blocked = false): Storage {
     },
     setItem: (k: string, v: string) => {
       guard();
-      map.set(k, v);
+      map.set(k, String(v));
     },
   } as unknown as Storage;
 }
@@ -33,7 +34,7 @@ function installStorage(blocked = false) {
   vi.stubGlobal("sessionStorage", makeStorage(blocked));
 }
 
-const KEY = (name: string) => "mp_secret_" + guestIdFromCallsign(name);
+const KEY = (id: string) => "mp_secret_" + id;
 
 describe("readGuestDeviceSecret", () => {
   beforeEach(() => {
@@ -42,48 +43,53 @@ describe("readGuestDeviceSecret", () => {
   });
 
   it("returns undefined when this device holds no key — it must never mint", () => {
-    // The retire bug: ensureGuestDeviceSecret() fabricates a UUID here, and the server
-    // can only answer "device key does not match this runner".
-    expect(readGuestDeviceSecret("NOSUCHRUNNER")).toBeUndefined();
+    expect(readGuestDeviceSecret(mintGuestId())).toBeUndefined();
   });
 
   it("does not write anything when there is no key", () => {
-    readGuestDeviceSecret("GHOST");
-    expect(localStorage.getItem(KEY("GHOST"))).toBeNull();
+    const id = mintGuestId();
+    readGuestDeviceSecret(id);
+    expect(localStorage.getItem(KEY(id))).toBeNull();
   });
 
   it("returns the stored key when one exists", () => {
-    localStorage.setItem(KEY("VECTOR"), "abcdefgh12345678");
-    expect(readGuestDeviceSecret("VECTOR")).toBe("abcdefgh12345678");
+    const id = mintGuestId();
+    localStorage.setItem(KEY(id), "abcdefgh12345678");
+    expect(readGuestDeviceSecret(id)).toBe("abcdefgh12345678");
   });
 
   it("reads back exactly what ensureGuestDeviceSecret minted", () => {
-    const minted = ensureGuestDeviceSecret("CIPHER");
+    const id = mintGuestId();
+    const minted = ensureGuestDeviceSecret(id);
     expect(minted).toBeTruthy();
-    expect(readGuestDeviceSecret("CIPHER")).toBe(minted);
+    expect(readGuestDeviceSecret(id)).toBe(minted);
   });
 
   it("ignores a too-short stored value rather than proving ownership with it", () => {
-    localStorage.setItem(KEY("STATIC"), "x");
-    expect(readGuestDeviceSecret("STATIC")).toBeUndefined();
+    const id = mintGuestId();
+    localStorage.setItem(KEY(id), "x");
+    expect(readGuestDeviceSecret(id)).toBeUndefined();
   });
 
   it("recovers the key from the LocalRunner profile when the dedicated key is wiped", () => {
+    const id = mintGuestId();
     localStorage.setItem(
       "metrophage_local_runner_v1",
-      JSON.stringify({ callsign: "WRAITH", deviceSecret: "profilesecret123" }),
+      JSON.stringify({ guestId: id, callsign: "WRAITH", deviceSecret: "profilesecret123" }),
     );
-    expect(readGuestDeviceSecret("WRAITH")).toBe("profilesecret123");
+    expect(readGuestDeviceSecret(id)).toBe("profilesecret123");
   });
 
-  it("returns undefined for an empty callsign", () => {
+  it("returns undefined for a callsign (ids are never names)", () => {
+    expect(readGuestDeviceSecret("NEOREAVER")).toBeUndefined();
     expect(readGuestDeviceSecret("")).toBeUndefined();
   });
 
   it("survives blocked storage without throwing", () => {
     installStorage(true);
-    expect(() => readGuestDeviceSecret("VANTA")).not.toThrow();
-    expect(readGuestDeviceSecret("VANTA")).toBeUndefined();
+    const id = mintGuestId();
+    expect(() => readGuestDeviceSecret(id)).not.toThrow();
+    expect(readGuestDeviceSecret(id)).toBeUndefined();
   });
 });
 
@@ -94,15 +100,20 @@ describe("ensureGuestDeviceSecret still mints for login", () => {
   });
 
   it("always returns a key — guest login rejects a missing one", () => {
-    const s = ensureGuestDeviceSecret("NULLSEC");
+    const s = ensureGuestDeviceSecret(mintGuestId());
     expect(s && s.length).toBeGreaterThanOrEqual(8);
   });
 
-  it("is stable across calls for the same callsign", () => {
-    expect(ensureGuestDeviceSecret("ECHO-9")).toBe(ensureGuestDeviceSecret("ECHO-9"));
+  it("is stable across calls for the same guest id", () => {
+    const id = mintGuestId();
+    expect(ensureGuestDeviceSecret(id)).toBe(ensureGuestDeviceSecret(id));
   });
 
-  it("mints per callsign, not globally", () => {
-    expect(ensureGuestDeviceSecret("HEXWARE")).not.toBe(ensureGuestDeviceSecret("RELAY"));
+  it("mints per guest id, not globally", () => {
+    expect(ensureGuestDeviceSecret(mintGuestId())).not.toBe(ensureGuestDeviceSecret(mintGuestId()));
+  });
+
+  it("refuses to mint for a typed callsign", () => {
+    expect(ensureGuestDeviceSecret("NEOREAVER")).toBeUndefined();
   });
 });

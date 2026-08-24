@@ -353,13 +353,13 @@ async function handleIdentity(req: Request, env: Env): Promise<Response> {
 
 /**
  * NEW RUNNER — explicit player deletion.
- *  - Guest: { callsign, secret } device key
+ *  - Guest: { guestId, secret } device key
  *  - Wallet: { wallet, sig, ts } fresh signature (only way to free a locked wallet)
  */
 async function handlePlayerRetire(req: Request, env: Env): Promise<Response> {
   try {
     const b = (await req.json()) as {
-      callsign?: string;
+      guestId?: string;
       secret?: string;
       wallet?: string;
       sig?: string;
@@ -376,7 +376,7 @@ async function handlePlayerRetire(req: Request, env: Env): Promise<Response> {
       return json(result);
     }
     const { retireGuestPlayer } = await import("./playerRetire");
-    const result = await retireGuestPlayer(env.DB, b.callsign ?? "", b.secret ?? "");
+    const result = await retireGuestPlayer(env.DB, b.guestId ?? "", b.secret ?? "");
     if (!result.ok) return json(result, result.reason.includes("does not match") ? 403 : 400);
     return json(result);
   } catch (e) {
@@ -388,7 +388,7 @@ async function handlePlayerRetire(req: Request, env: Env): Promise<Response> {
 async function handlePlayerLinkWallet(req: Request, env: Env): Promise<Response> {
   try {
     const b = (await req.json()) as {
-      callsign?: string;
+      guestId?: string;
       secret?: string;
       wallet?: string;
       sig?: string;
@@ -396,7 +396,7 @@ async function handlePlayerLinkWallet(req: Request, env: Env): Promise<Response>
     };
     const { linkGuestToWallet } = await import("./playerLink");
     const result = await linkGuestToWallet(env.DB, {
-      callsign: b.callsign ?? "",
+      guestId: b.guestId ?? "",
       secret: b.secret ?? "",
       wallet: b.wallet ?? "",
       sig: b.sig ?? "",
@@ -404,6 +404,39 @@ async function handlePlayerLinkWallet(req: Request, env: Env): Promise<Response>
     });
     if (!result.ok) {
       const status = /sign-in failed|mismatch/i.test(result.reason) ? 401 : 400;
+      return json(result, status);
+    }
+    return json(result);
+  } catch (e) {
+    return json({ ok: false, reason: String((e as Error)?.message ?? e) }, 400);
+  }
+}
+
+async function handlePlayerAvailable(url: URL, env: Env): Promise<Response> {
+  const { checkCallsign } = await import("./callsignAvailability");
+  return json(await checkCallsign(env.DB, url.searchParams.get("callsign") || ""));
+}
+
+async function handlePlayerClaim(req: Request, env: Env): Promise<Response> {
+  try {
+    const b = (await req.json()) as {
+      guestId?: string;
+      secret?: string;
+      callsign?: string;
+      look?: unknown;
+      classId?: string;
+      wallet?: string;
+      sig?: string;
+      ts?: number;
+    };
+    const { claimPlayer } = await import("./playerClaim");
+    const result = await claimPlayer(env.DB, b);
+    if (!result.ok) {
+      const status = /sign-in failed|mismatch/i.test(result.reason)
+        ? 401
+        : /taken|reserved|required/i.test(result.reason)
+          ? 409
+          : 400;
       return json(result, status);
     }
     return json(result);
@@ -991,6 +1024,8 @@ export default {
     }
 
     if (url.pathname === "/identity" && req.method === "POST") return handleIdentity(req, env);
+    if (url.pathname === "/player/available" && req.method === "GET") return handlePlayerAvailable(url, env);
+    if (url.pathname === "/player/claim" && req.method === "POST") return handlePlayerClaim(req, env);
     // NEW RUNNER — deletes guest (device secret) or wallet runner (signed).
     if (url.pathname === "/player/retire" && req.method === "POST") return handlePlayerRetire(req, env);
     // Bind wallet → existing guest runner (locked until NEW RUNNER).
