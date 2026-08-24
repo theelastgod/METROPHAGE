@@ -41,7 +41,7 @@ migrations_dir = "migrations"
 # Set to "0" 2026-08-18: account is on the Free plan (see [limits] note above).
 METRO_PAID_TIER = "0"
 # Launch ops: build stamp for /health (update on release). Kill switches default OFF.
-METRO_BUILD = "0bd063e+dirty-20260818"
+METRO_BUILD = "055a6f9-20260824"
 # Soft hub capacity (see src/game/featureFlags.ts).
 METRO_HUB_CAP = "48"
 # Horizontal zone shards (safe / dN / subway). Instance 0 keeps legacy DO name.
