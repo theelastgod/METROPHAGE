@@ -385,9 +385,26 @@ export type ServerMsg =
       price: number;
       furniture: EstateFurniture[];
       guests: { n: string; at: number; s: string }[];
+      keyName?: string;
+      token?: number | null;
+      deed?: "unminted" | "in_game" | "off_world" | "marketplace";
+      readOnly?: boolean;
     }
   // player housing — the whole street's ownership at a glance (sent on entering THE ESTATES)
-  | { t: "estates_dir"; list: { i: number; owner: string | null; name: string | null; forSale: boolean; price: number; furn: number; guests: number }[] }
+  | {
+      t: "estates_dir";
+      list: {
+        i: number;
+        owner: string | null;
+        name: string | null;
+        forSale: boolean;
+        price: number;
+        furn: number;
+        guests: number;
+        keyName?: string;
+        deed?: "unminted" | "in_game" | "off_world" | "marketplace";
+      }[];
+    }
   | { t: "equipped"; items: Item[]; maxHp: number } // owning client's equipped gear + derived max HP
   | { t: "achv"; ids: string[] } // full unlocked achievement set (sent on login)
   | { t: "ach"; id: string; name: string; reward: number } // a freshly-unlocked achievement
@@ -419,7 +436,7 @@ export type ServerMsg =
       listings: Array<{ id: number; seller: string; sellerName: string; item: Item; price: number; currency: string }>;
     }
   // cosmetics — owned set + the equipped transmog (sent on login + on change)
-  | { t: "cosmetics"; owned: string[]; equipped: string | null }
+  | { t: "cosmetics"; owned: string[]; equipped: string | null; genesisTokens?: number[] }
   // authored NPC bounty — the player's active job (or null), sent on login + on change
   | { t: "bounty"; active: { id: string; name: string; desc: string; objective: string; count: number; progress: number } | null }
   // durable social memory: trust tier per met contact + civic standing per district
