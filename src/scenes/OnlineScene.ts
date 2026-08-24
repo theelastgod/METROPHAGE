@@ -203,6 +203,7 @@ import { isGuestPlayerId } from "../game/playerId";
 import { drawFurniture } from "../render/furnitureArt";
 import { paintCityEnvWash, paintCityStorefrontReflections, paintDistrictEnvWash } from "../render/cityTerrainPolish";
 import { paintCubicMassing, paintCivicPlazaCubes } from "../render/cubicMassing";
+import { dressCityDecorations, paintCityRingGrounds, scatterHubRingProps } from "../render/hubOpening";
 import { paintCityBuildingFacades, buildingExteriorAccent } from "../render/buildingFacades";
 import {
   dressHubWishlistArt,
@@ -802,6 +803,7 @@ export default class OnlineScene extends Phaser.Scene {
       artRoom,
     });
     if (this.isCityHub) {
+      paintCityRingGrounds(this, ONLINE_CITY.zones);
       paintCityEnvWash(this, ONLINE_CITY.zones);
       // Full HF replacement for landmarks / large blocks — skip roof caps on those rects
       // so dark parallax slabs don't cover the painted art.
@@ -820,6 +822,8 @@ export default class OnlineScene extends Phaser.Scene {
         zoneAccent,
       );
       paintCivicPlazaCubes(this, HUB_CX, HUB_CY, zoneAccent);
+      dressCityDecorations(this, ONLINE_CITY.decorations, (tx, ty) => envAt(tx, ty, cityW, cityH));
+      scatterHubRingProps(this, grid, { tx: HUB_CX, ty: HUB_CY });
       this.roofParallax = installRoofParallax(
         this,
         ONLINE_CITY.buildings.map((b) => b.rect).filter((r) => !cityHfKeys.has(`${r.x1},${r.y1},${r.x2},${r.y2}`)),
@@ -840,15 +844,11 @@ export default class OnlineScene extends Phaser.Scene {
         undefined,
         bridgeDef!.layout.biome,
       );
-    } else if (this.isCityHub || isCombatDistrict) {
-      scatterWorldProps(this, grid, 4, this.isCityHub ? 0.0014 : (dEnv?.propDensity ?? 0.006) * 0.7, {
+    } else if (isCombatDistrict) {
+      scatterWorldProps(this, grid, 4, (dEnv?.propDensity ?? 0.006) * 0.7, {
         propBias: dEnv?.propBias,
         accent: zoneAccent,
-        clearCenter: this.isCityHub
-          ? { tx: HUB_CX, ty: HUB_CY, radius: 18 }
-          : isCombatDistrict
-            ? { tx: def.spawnTile[0] * DISTRICT_SCALE, ty: def.spawnTile[1] * DISTRICT_SCALE, radius: 8 }
-            : undefined,
+        clearCenter: { tx: def.spawnTile[0] * DISTRICT_SCALE, ty: def.spawnTile[1] * DISTRICT_SCALE, radius: 8 },
       });
     }
     if (this.isCityHub) {

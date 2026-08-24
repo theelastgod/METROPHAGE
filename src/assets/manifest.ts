@@ -735,6 +735,7 @@ export function deferredWorldAssetsForZone(zone: string): AssetEntry[] {
     add(dailyArtSelection(HF_EARLY_WORLD_PROP_KEYS, 48));
     add(HF_WEB_CITY_PROP_KEYS);
     add(["hf_ground_city_spawn"]);
+    add(HF_GROUND_PLATE_KEYS);
     add(numberedKeys("hf_ground_city_tile", 16));
     add(numberedKeys("hf_ground_progress_tile", 16));
     add(["hf_loading_early_city"]);
