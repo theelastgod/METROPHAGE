@@ -1,17 +1,17 @@
 // METROPHAGE — $METRO on-chain layer gate (Phase 5).
 //
-// AUTHORITATIVE: Robinhood Chain mainnet ERC-20 (0x mint) — WalletConnect / MetaMask
-// EVM-only build. Solana SPL settlement lives on the `settlement/solana` branch.
+// AUTHORITATIVE: Solana SPL mint (base58, pump.fun CA) — Phantom / Solflare / Backpack.
 // Empty mint → pure off-chain credits (awaiting CA). Real-value settlement also needs METRO_MAINNET_ARMED.
-// Go-live: VITE_METRO_MINT (0x) + server METRO_MINT + METRO_TREASURY_SECRET + MAINNET_ARMED=1.
+// Go-live: VITE_METRO_MINT (base58) + server METRO_MINT + METRO_TREASURY_SECRET + MAINNET_ARMED=1.
 
-import {
-  ROBINHOOD_MAINNET,
-  ROBINHOOD_TESTNET,
-  type RobinhoodCluster,
-  robinhoodNetwork,
-} from "./robinhoodChain";
+import { type RobinhoodCluster } from "./robinhoodChain";
 import { getDualChainProfile, dualChainSummary, type DualChainProfile } from "./chainProfile";
+import {
+  parseSolanaCluster,
+  solanaNetwork,
+  type SolanaCluster,
+  isSolanaPubkey,
+} from "./solanaChain";
 import {
   METRO_TOTAL_SUPPLY as POLICY_SUPPLY,
   METRO_P2E_DESIGN_POOL,
@@ -28,21 +28,19 @@ const env: Record<string, string | undefined> =
     (import.meta as unknown as { env?: Record<string, string | undefined> }).env) ||
   {};
 
-/** The $METRO mint / ERC-20 contract (the "CA"). Empty string = layer off. */
+/** The $METRO mint (pump.fun CA). Empty string = layer off. Never fold case. */
 export const METRO_MINT = env.VITE_METRO_MINT ?? "";
 
-export type MetroCluster = "robinhood" | "robinhood-testnet" | "sepolia" | "custom";
+export type MetroCluster = SolanaCluster | "robinhood" | "robinhood-testnet" | "sepolia" | "custom";
 
 function parseCluster(): MetroCluster {
   const c = (env.VITE_METRO_CLUSTER || "").toLowerCase().trim();
-  if (c === "robinhood" || c === "rh" || c === "rh-mainnet" || c === "mainnet") return "robinhood";
-  if (c === "robinhood-testnet" || c === "rh-testnet") return "robinhood-testnet";
+  if (c === "robinhood" || c === "rh" || c === "rh-mainnet") return parseSolanaCluster("mainnet-beta");
+  if (c === "robinhood-testnet" || c === "rh-testnet" || c === "testnet") return "devnet";
   if (c === "sepolia" || c === "custom") return c;
-  // Robinhood mainnet is authoritative.
-  return "robinhood";
+  return parseSolanaCluster(c);
 }
 
-/** Target network. Defaults Robinhood Chain mainnet (authoritative path). */
 export const METRO_CLUSTER: MetroCluster = parseCluster();
 
 export const METRO_MAINNET_ARMED = env.VITE_METRO_MAINNET_ARMED === "1";
@@ -56,64 +54,49 @@ export function isEvmAddress(s: string): boolean {
   return /^0x[a-fA-F0-9]{40}$/.test((s || "").trim());
 }
 
-/** Active Robinhood network when cluster is robinhood / robinhood-testnet. */
+/** Leftover export for unused ERC-20 helpers. */
 export function activeRobinhoodNetwork() {
-  if (METRO_CLUSTER === "robinhood") return ROBINHOOD_MAINNET;
-  if (METRO_CLUSTER === "robinhood-testnet") return ROBINHOOD_TESTNET;
   return null;
 }
 
 export function metroChainId(): number | null {
-  const rh = activeRobinhoodNetwork();
-  if (rh) return rh.chainId;
-  if (env.VITE_METRO_CHAIN_ID) {
-    const n = parseInt(env.VITE_METRO_CHAIN_ID, 10);
-    return Number.isFinite(n) ? n : null;
-  }
-  // Robinhood mainnet default while awaiting / after EVM CA.
-  if (isEvmAddress(METRO_MINT) || METRO_CLUSTER === "robinhood") return ROBINHOOD_MAINNET.chainId;
-  if (METRO_CLUSTER === "robinhood-testnet") return ROBINHOOD_TESTNET.chainId;
-  return ROBINHOOD_MAINNET.chainId;
+  return null;
 }
 
 export function metroRpc(): string {
   if (env.VITE_METRO_RPC) return env.VITE_METRO_RPC;
-  const rh = activeRobinhoodNetwork();
-  if (rh) return rh.rpcUrl;
-  if (isEvmAddress(METRO_MINT) || METRO_CLUSTER === "robinhood") return ROBINHOOD_MAINNET.rpcUrl;
-  if (METRO_CLUSTER === "robinhood-testnet") return ROBINHOOD_TESTNET.rpcUrl;
-  return ROBINHOOD_MAINNET.rpcUrl;
+  const cluster: SolanaCluster = METRO_CLUSTER === "devnet" ? "devnet" : "mainnet-beta";
+  return solanaNetwork(cluster).rpcUrl;
 }
 
-/** Default Robinhood cluster string for wallet_switch — mainnet unless testnet forced. */
+/** Leftover export for unused WalletConnect EVM helpers. */
 export function metroRobinhoodCluster(): RobinhoodCluster {
-  return METRO_CLUSTER === "robinhood-testnet" ? "robinhood-testnet" : "robinhood";
+  return METRO_CLUSTER === "devnet" ? "robinhood-testnet" : "robinhood";
 }
 
 export function isValidMetroMint(s: string): boolean {
-  return isEvmAddress(s);
+  return isSolanaPubkey(s);
 }
 
 export const metroEnabled = isValidMetroMint(METRO_MINT);
-export const metroIsEvm = isEvmAddress(METRO_MINT);
-/** Settlement profile (Robinhood ERC-20; off until the CA is set). */
+export const metroIsEvm = false;
 export const dualChain: DualChainProfile = getDualChainProfile({
   mint: METRO_MINT,
-  cluster: METRO_CLUSTER,
+  cluster: typeof METRO_CLUSTER === "string" ? METRO_CLUSTER : "",
   mainnetArmed: METRO_MAINNET_ARMED,
 });
-export const metroIsRobinhood = dualChain.family === "robinhood";
+export const metroIsSolana = dualChain.family === "solana";
+export const metroIsRobinhood = false;
 
 export interface MetroStatus {
   enabled: boolean;
   cluster: MetroCluster;
   mint: string;
-  chain: "robinhood" | "evm" | "off";
+  chain: "solana" | "off";
   chainId: number | null;
   networkName: string;
   mainnetArmed: boolean;
   mainnetLive: boolean;
-  /** Settlement metadata for UI / debug. */
   dual: DualChainProfile;
   summary: string;
 }
@@ -121,18 +104,15 @@ export interface MetroStatus {
 export function getMetroStatus(): MetroStatus {
   const dual = getDualChainProfile({
     mint: METRO_MINT,
-    cluster: METRO_CLUSTER,
+    cluster: typeof METRO_CLUSTER === "string" ? METRO_CLUSTER : "",
     mainnetArmed: METRO_MAINNET_ARMED,
   });
-  const rh = activeRobinhoodNetwork();
-  let chain: MetroStatus["chain"] = dual.family === "off" ? "off" : "robinhood";
-  if (dual.family === "robinhood" && !rh && metroIsEvm) chain = "evm";
   return {
     enabled: dual.family !== "off" && dual.mint.length > 0,
     cluster: METRO_CLUSTER,
     mint: METRO_MINT,
-    chain,
-    chainId: dual.chainId ?? metroChainId(),
+    chain: dual.family === "solana" ? "solana" : "off",
+    chainId: null,
     networkName: dual.label,
     mainnetArmed: METRO_MAINNET_ARMED,
     mainnetLive: dual.mainnet && dual.mainnetArmed && dual.family !== "off",
@@ -141,17 +121,12 @@ export function getMetroStatus(): MetroStatus {
   };
 }
 
-// ── Token framing (Robinhood ERC-20 primary; 1% dev seed + player deposits) ─────
-// Fixed 1B human units. Cash-out pool = 1% seed + deposits − withdrawals.
-// USD price floats with the market; game math is in $METRO + credits.
 export const METRO_TOTAL_SUPPLY = POLICY_SUPPLY;
-/** Soft design budget for lifetime earn rates (not a second on-chain allocation). */
 export const METRO_P2E_POOL = METRO_P2E_DESIGN_POOL;
 export const METRO_MAX_PLAYERS = TARGET_PLAYERS;
 export const METRO_PER_PLAYER_BUDGET = METRO_PER_PLAYER_LIFETIME_BUDGET;
 export const METRO_DEV_SEED = METRO_DEV_SEED_METRO;
 
-/** Healthy-phase bridge rates (live panel may show stress-adjusted values from /metro/pool). */
 export const METRO_DEPOSIT_CREDITS = BASE_DEPOSIT_CREDITS;
 export const METRO_WITHDRAW_CREDITS = BASE_WITHDRAW_CREDITS;
 export const METRO_MIN_WITHDRAW_CREDITS = BASE_MIN_WITHDRAW_CREDITS;
@@ -193,6 +168,5 @@ export function getMetroBridge(): MetroBridge {
   return disabledBridge;
 }
 
-// re-export for callers that need network add params
-export { robinhoodNetwork, ROBINHOOD_MAINNET, ROBINHOOD_TESTNET };
 export { getDualChainProfile, dualChainSummary, settlementForce } from "./chainProfile";
+export { solanaNetwork } from "./solanaChain";

@@ -48,16 +48,16 @@ METRO_HUB_CAP = "48"
 METRO_MAX_INSTANCES = "4"
 # Soft concurrent target per combat/subway instance (hub uses METRO_HUB_CAP).
 METRO_INSTANCE_CAP = "40"
-# $METRO settlement family — Robinhood Chain ERC-20 is authoritative.
-# EVM-only build: the Solana SPL adapter lives on the settlement/solana branch.
-METRO_SETTLEMENT = "robinhood"
-# Network target: Robinhood Chain mainnet. Mint CA intentionally empty until go-live.
-# When CA is ready: wrangler secret put METRO_MINT (0x…) + METRO_TREASURY_SECRET
-# (0x… private key), then METRO_MAINNET_ARMED=1 and rebuild client with
-# VITE_METRO_MINT. Real value cannot move on mainnet until METRO_MAINNET_ARMED=1.
-METRO_CLUSTER = "robinhood"
-METRO_CHAIN_ID = "4663"
-METRO_RPC = "https://rpc.mainnet.chain.robinhood.com"
+# $METRO settlement family — Solana SPL is authoritative (pump.fun mint).
+# evm.ts is unused. METRO_SETTLEMENT=robinhood resolves to credits-only off.
+METRO_SETTLEMENT = "solana"
+# Network target: Solana mainnet-beta. Mint CA intentionally empty until go-live.
+# When CA is ready: wrangler secret put METRO_MINT (base58, never lowercased)
+# + METRO_TREASURY_SECRET (base64 64-byte keypair), then METRO_MAINNET_ARMED=1
+# and rebuild client with VITE_METRO_MINT. Real value cannot move on mainnet
+# until METRO_MAINNET_ARMED=1.
+METRO_CLUSTER = "mainnet-beta"
+METRO_RPC = "https://api.mainnet-beta.solana.com"
 # Kill switches — set to "1" during an incident, redeploy (or wrangler secret/var):
 # METRO_DISABLE_MARKET = "1"
 # METRO_DISABLE_CLAIM_GOAL = "1"

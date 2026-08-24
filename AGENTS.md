@@ -52,13 +52,14 @@ cd server && node scripts/smoke.mjs <mode>
 
 ## Economy constraints
 
-- Robinhood Chain ERC-20 primary; rates baseline **100 in / 150 out** (population
-  tiers may widen the withdraw spread). Min withdraw ~**300 ₵**.
-- **No daily earn cap. No daily withdraw cap.** Pool empty → **"Check back later."**
+- Solana SPL `$METRO` (pump.fun mint, base58 — never `.toLowerCase()`); rates baseline
+  **100 in / 150 out** (population tiers may widen the withdraw spread). Min withdraw ~**300 ₵**.
+- **No daily earn cap. No daily withdraw cap.** Pool empty, empty treasury SOL, or empty ATA → **"Check back later."**
 - See `docs/ECONOMY_POP_TIERS.md` and `src/game/economyPolicy.ts`.
 - Mainnet: `METRO_MAINNET_ARMED` counsel-gated. CA go-live: server secrets first,
-  then client `VITE_METRO_MINT` (0x).
-- Treasury pays gas on cash-outs when funded (player-pays only if treasury ETH is empty).
+  then client `VITE_METRO_MINT` (base58). `VITE_SERVER_URL` is **build-time**.
+- Worker broadcasts cash-outs; treasury pays SOL. No player-fee-payer fallback.
+  Claim TTL ~2 minutes. Deposits credit at **finalized**.
 
 ## Art / render constraints
 

@@ -46,25 +46,30 @@ describe("priceMultiplier", () => {
   });
 });
 
-describe("fetchMarketUsd — Robinhood ERC-20 oracle", () => {
-  it("prices a 0x mint on Robinhood Chain", async () => {
+describe("fetchMarketUsd — Solana SPL + leftover 0x", () => {
+  it("prices a 0x mint", async () => {
     stubFetch("2.50");
     const q = await fetchMarketUsd(EVM_MINT, 4663);
     expect(q).not.toBeNull();
     expect(q!.usd).toBe(2.5);
   });
 
-  // Robinhood is authoritative: the oracle only understands 0x contracts.
-  // Any other shape (including a base58 SPL mint) must return null so bridge
-  // rates stay pinned to the reference instead of pricing the wrong asset.
-  it("refuses a mint that is not a 0x contract", async () => {
+  it("prices a base58 SPL mint via DexScreener without folding case", async () => {
     stubFetch("2.50");
-    expect(await fetchMarketUsd(SPL_MINT, 4663)).toBeNull();
-    expect(await fetchMarketUsd("not-a-mint", 4663)).toBeNull();
-    expect(await fetchMarketUsd("", 4663)).toBeNull();
+    const q = await fetchMarketUsd(SPL_MINT, 0);
+    expect(q).not.toBeNull();
+    expect(q!.usd).toBe(2.5);
   });
 
-  it("falls through to GeckoTerminal Robinhood slugs on a DexScreener miss", async () => {
+  it("does not lowercase an SPL mint on the Gecko fallback", async () => {
+    const urls = stubFetch(null);
+    await fetchMarketUsd(SPL_MINT, 0);
+    expect(urls.some((u) => u.includes("/networks/solana/"))).toBe(true);
+    expect(urls.some((u) => u.includes(SPL_MINT))).toBe(true);
+    expect(urls.some((u) => u.includes("/networks/solana/") && u.includes(SPL_MINT.toLowerCase()) && !u.includes(SPL_MINT))).toBe(false);
+  });
+
+  it("falls through to GeckoTerminal Robinhood slugs for a 0x mint on a DexScreener miss", async () => {
     const urls = stubFetch(null);
     await fetchMarketUsd(EVM_MINT, 4663);
     expect(urls.length).toBeGreaterThan(0);

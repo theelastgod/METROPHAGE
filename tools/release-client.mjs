@@ -45,17 +45,8 @@ if (!npmCli || !existsSync(npmCli)) {
 const wcProjectId = (
   process.env.VITE_WALLETCONNECT_PROJECT_ID || PRODUCTION_WALLETCONNECT_PROJECT_ID
 ).trim();
-// Robinhood Chain ERC-20 is the production settlement family. This build is EVM-only;
-// a VITE_METRO_SETTLEMENT=solana build must come from the `settlement/solana` branch.
-const metroCluster = (process.env.VITE_METRO_CLUSTER || "robinhood").trim();
-const metroSettlement = (process.env.VITE_METRO_SETTLEMENT || "robinhood").trim();
-if (/^(solana|sol|spl)$/i.test(metroSettlement)) {
-  console.error(
-    "✗ VITE_METRO_SETTLEMENT=solana requested but this branch has no SPL adapter. " +
-      "Check out `settlement/solana` to build the Solana client.",
-  );
-  process.exit(1);
-}
+const metroCluster = (process.env.VITE_METRO_CLUSTER || "mainnet-beta").trim();
+const metroSettlement = (process.env.VITE_METRO_SETTLEMENT || "solana").trim();
 const metroMint = (process.env.VITE_METRO_MINT || "").trim();
 console.log(`Building production client for ${LIVE_SERVER_URL}`);
 console.log(`$METRO network: ${metroSettlement} · cluster=${metroCluster}${metroMint ? ` · mint=${metroMint.slice(0, 10)}…` : " · mint=awaiting CA"}`);
@@ -81,8 +72,7 @@ run(process.execPath, [npmCli, "run", "build"], {
   VITE_METRO_SETTLEMENT: metroSettlement,
   // Only bake mint when explicitly provided — never invent a CA.
   ...(metroMint ? { VITE_METRO_MINT: metroMint } : { VITE_METRO_MINT: "" }),
-  VITE_METRO_RPC: process.env.VITE_METRO_RPC || "https://rpc.mainnet.chain.robinhood.com",
-  VITE_METRO_CHAIN_ID: process.env.VITE_METRO_CHAIN_ID || "4663",
+  VITE_METRO_RPC: process.env.VITE_METRO_RPC || "https://api.mainnet-beta.solana.com",
   ...(wcProjectId ? { VITE_WALLETCONNECT_PROJECT_ID: wcProjectId } : {}),
 });
 
