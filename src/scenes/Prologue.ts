@@ -5,7 +5,6 @@ import { playDeployTeaser } from "../ui/DeployTeaser";
 import type { Customization } from "../game/customization";
 import { getClass } from "../game/classes";
 import MusicDirector from "../audio/MusicDirector";
-import { updateSettings, type TutorialModePref } from "../systems/Settings";
 import { fadeInScene, transitionTo } from "../systems/transitions";
 import { installMenuCameras, pinMenuUiLayer } from "../render/menuCameras";
 import { drawMenuBackdrop, MenuAtmosphere, MENU_FOOTER_Y, MENU_PAD, MENU_SECTION_GAP } from "../ui/menuChrome";
@@ -14,7 +13,7 @@ import { bodyFont, displayFont } from "../ui/typography";
 
 
 /**
- * Narrative open — full-screen beats with typewriter pacing, then deploy into training.
+ * Narrative open — full-screen beats with typewriter pacing, then deploy into the city.
  */
 export default class Prologue extends Phaser.Scene {
   private beat = 0;
@@ -211,58 +210,35 @@ export default class Prologue extends Phaser.Scene {
     });
 
     const cls = getClass(this.registry.get("classId") as string | undefined);
-    const mk = (y: number, label: string, sub: string, color: string, mode: TutorialModePref) => {
-      const t = this.add
-        .text(VIEW_W / 2, y, label, displayFont(24, { color, fontStyle: "bold", align: "center" }))
-        .setOrigin(0.5)
-        .setAlpha(0)
-        .setInteractive({ useHandCursor: true });
-      t.setShadow(0, 0, color, 5, true, true);
-      const s = this.add
-        .text(VIEW_W / 2, y + uiGap("xl"), sub, bodyFont(14, { color: "#9aa3b2", align: "center", wordWrap: { width: wrapWidth() } }))
-        .setOrigin(0.5)
-        .setAlpha(0);
-      t.on("pointerover", () => t.setScale(1.06));
-      t.on("pointerout", () => t.setScale(1));
-      t.on("pointerdown", () => {
-        if (!this.acting) return;
-        this.deployTutorial(mode);
-        playDeployTeaser(this, () => {
-          transitionTo(
-            this,
-            "Online",
-            { zone: "tutorial", tutorialMode: mode },
-            { style: "deploy", accent: 0x00e5ff },
-          );
-        });
-      });
-      this.tweens.add({ targets: [t, s], alpha: 1, duration: 400, delay: 200 });
-    };
-
     this.add
       .text(VIEW_W / 2, VIEW_H * 0.34, `${cls.name} — ${cls.primaryName}`, bodyFont(16, { color: cls.hex }))
       .setOrigin(0.5)
       .setAlpha(0.85);
 
-    mk(
-      VIEW_H * 0.46,
-      "◢  QUICK DRILL",
-      "core combat + bag + chat + one systems taste · ~9 lessons",
-      "#00e5ff",
-      "quick",
-    );
-    mk(
-      VIEW_H * 0.58,
-      "◢  FULL TRAINING",
-      "every major system explained — forge, factions, market, PvP, campaign · ~22 lessons",
-      "#b06bff",
-      "full",
-    );
-  }
-
-  private deployTutorial(mode: TutorialModePref) {
-    updateSettings({ tutorialMode: mode });
-    this.registry.set("tutorialMode", mode);
+    const t = this.add
+      .text(VIEW_W / 2, VIEW_H * 0.5, "⊕  ENTER WORLD", displayFont(24, { color: "#00e5ff", fontStyle: "bold", align: "center" }))
+      .setOrigin(0.5)
+      .setAlpha(0)
+      .setInteractive({ useHandCursor: true });
+    t.setShadow(0, 0, "#00e5ff", 5, true, true);
+    const s = this.add
+      .text(
+        VIEW_W / 2,
+        VIEW_H * 0.5 + uiGap("xl"),
+        "Metro City · shared with every runner online",
+        bodyFont(14, { color: "#9aa3b2", align: "center", wordWrap: { width: wrapWidth() } }),
+      )
+      .setOrigin(0.5)
+      .setAlpha(0);
+    t.on("pointerover", () => t.setScale(1.06));
+    t.on("pointerout", () => t.setScale(1));
+    t.on("pointerdown", () => {
+      t.disableInteractive();
+      playDeployTeaser(this, () => {
+        transitionTo(this, "Online", { zone: "safe" }, { style: "deploy", accent: 0x00e5ff });
+      });
+    });
+    this.tweens.add({ targets: [t, s], alpha: 1, duration: 400, delay: 200 });
   }
 
   private applyNeon() {

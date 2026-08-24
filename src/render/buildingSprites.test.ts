@@ -95,13 +95,43 @@ describe("selectBuildingSprite — kit fallback chain", () => {
   });
 
   it("falls back to the historically borrowed kit rather than a procedural façade", () => {
-    // market's dedicated kit not generated yet → must still show district art.
+    // market's dedicated kit missing at runtime → still show district art.
     expect(
       selectBuildingSprite(withKeys("hf_building_dist_docks"), "home", {
         districtId: "market",
         preferDistrictKit: true,
       }),
     ).toBe("hf_building_dist_docks");
+  });
+
+  it("uses Palantir Plaza's own downtown kit instead of Neon Core", () => {
+    expect(
+      selectBuildingSprite(withKeys("hf_building_dist_downtown", "hf_building_dist_core"), "home", {
+        districtId: "downtown",
+        preferDistrictKit: true,
+      }),
+    ).toBe("hf_building_dist_downtown");
+  });
+
+  it("uses unique industrial / slum / residential kits when present", () => {
+    expect(
+      selectBuildingSprite(withKeys("hf_building_dist_industrial", "hf_building_dist_stacks"), "home", {
+        districtId: "industrial",
+        preferDistrictKit: true,
+      }),
+    ).toBe("hf_building_dist_industrial");
+    expect(
+      selectBuildingSprite(withKeys("hf_building_dist_slum", "hf_building_dist_sprawl"), "home", {
+        districtId: "slum",
+        preferDistrictKit: true,
+      }),
+    ).toBe("hf_building_dist_slum");
+    expect(
+      selectBuildingSprite(withKeys("hf_building_dist_residential", "hf_building_dist_sprawl"), "home", {
+        districtId: "residential",
+        preferDistrictKit: true,
+      }),
+    ).toBe("hf_building_dist_residential");
   });
 
   it("gives THE KERNEL its own kit rather than downtown's", () => {
@@ -115,5 +145,20 @@ describe("selectBuildingSprite — kit fallback chain", () => {
 
   it("returns undefined (procedural façade) when nothing exists", () => {
     expect(selectBuildingSprite(() => false, "bar", { districtId: "undercity" })).toBeUndefined();
+  });
+
+  it("refuses to smear a district identity kit onto a hub footprint", () => {
+    expect(
+      selectBuildingSprite(withKeys("hf_building_dist_downtown", "hf_building_bar"), "bar", {
+        districtId: "downtown",
+        noDistrictKit: true,
+      }),
+    ).toBe("hf_building_bar");
+    expect(
+      selectBuildingSprite(withKeys("hf_building_dist_downtown"), "bar", {
+        districtId: "downtown",
+        noDistrictKit: true,
+      }),
+    ).toBeUndefined();
   });
 });

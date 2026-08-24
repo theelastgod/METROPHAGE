@@ -66,15 +66,18 @@ export function shadeWalls(
 
       // ── cast shadow + dark wall faces (south / east) ──
       if (openBelow) {
-        g.fillStyle(0x02030a, 0.72).fillRect(X, Y + TILE - 7, TILE, 7); // south wall face
-        g.fillStyle(0x000000, 0.42).fillRect(X, Y + TILE, TILE, 11); // cast shadow on floor
-        g.fillStyle(0x000000, 0.18).fillRect(X, Y + TILE + 11, TILE, 6);
-        g.fillStyle(DIM, 0.7).fillRect(X, Y + TILE - 1, TILE, 1); // dim base outline
+        // Taller south face so blocks read as cubes, not a 7px lip.
+        const face = 12;
+        g.fillStyle(0x02030a, 0.78).fillRect(X, Y + TILE - face, TILE, face);
+        g.fillStyle(RIM, 0.18).fillRect(X, Y + TILE - face, TILE, 1);
+        g.fillStyle(0x000000, 0.42).fillRect(X, Y + TILE, TILE, 14);
+        g.fillStyle(0x000000, 0.18).fillRect(X, Y + TILE + 14, TILE, 7);
+        g.fillStyle(DIM, 0.7).fillRect(X, Y + TILE - 1, TILE, 1);
       }
       if (openRight) {
-        g.fillStyle(0x02030a, 0.58).fillRect(X + TILE - 6, Y, 6, TILE); // east face
-        g.fillStyle(0x000000, 0.34).fillRect(X + TILE, Y, 9, TILE); // cast shadow on floor
-        g.fillStyle(0x000000, 0.14).fillRect(X + TILE + 9, Y, 5, TILE);
+        g.fillStyle(0x02030a, 0.62).fillRect(X + TILE - 9, Y, 9, TILE);
+        g.fillStyle(0x000000, 0.34).fillRect(X + TILE, Y, 11, TILE);
+        g.fillStyle(0x000000, 0.14).fillRect(X + TILE + 11, Y, 6, TILE);
         g.fillStyle(DIM, 0.6).fillRect(X + TILE - 1, Y, 1, TILE);
       }
       if (openBelow && openRight) g.fillStyle(0x000000, 0.36).fillRect(X + TILE, Y + TILE, 11, 11);

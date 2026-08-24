@@ -1,6 +1,6 @@
 # METROPHAGE — social campaign (first post + follow-ups)
 
-Tone: neon-noir, short, confident. No pump language. Play is free; $METRO is optional convertibility on Solana.
+Tone: neon-noir, short, confident. No promised returns. Play is free; $METRO is optional convertibility on **Solana / pump.fun**. Wallets: Phantom, Solflare, Backpack. Deeds: **Genesis Keys**.
 
 **Link:** https://metrophagev1.pages.dev  
 **Each post ships with its own 10s trailer** (see `marketing/metrophage-10s-*.mp4`).
@@ -24,7 +24,7 @@ Server-authoritative. Real districts. Real runners.
 
 ▶ Play free: metrophagev1.pages.dev
 
-(Phantom optional · Solana for $METRO later)
+(Phantom optional · $METRO on Solana / pump.fun · 50 Genesis Keys)
 ```
 
 **Alt shorter:**
@@ -98,7 +98,7 @@ METROPHAGE — dig for what they wiped.
 
 ```
 ₵ credits run the game.
-$METRO is optional convertibility on Solana — player-funded pool, not a faucet.
+$METRO is optional convertibility on Solana / pump.fun — player-funded pool, not a faucet.
 
 Earn in-world. Cash out only what the pool can cover.
 
@@ -127,13 +127,13 @@ metrophagev1.pages.dev
 
 ```
 ₵ runs the game.
-$METRO is optional convertibility on Solana.
+$METRO is optional convertibility on Solana (pump.fun).
 
 Deposit → credits.
 Cash out only what the player-funded pool can cover.
 Not a faucet. Not free money.
 
-1 $METRO → 100 ₵ · 150 ₵ → 1 $METRO
+1 $METRO → 100 ₵ · 150 ₵ → 1 $METRO (healthy reference)
 Min cash-out 300 ₵ · no daily cap · pool starts empty.
 
 METROPHAGE — earn in the city.
@@ -145,7 +145,7 @@ METROPHAGE — earn in the city.
 ```
 In METROPHAGE, play money is server-side credits.
 
-$METRO on Solana is a bridge — player-funded pool, honest empty at launch.
+$METRO on Solana / pump.fun is a bridge — player-funded pool, honest empty at launch.
 
 Earn ₵. Cash out if the pool has depth.
 

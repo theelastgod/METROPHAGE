@@ -202,6 +202,9 @@ import { genesisKeyByPlot } from "../world/genesisKeys";
 import { isGuestPlayerId } from "../game/playerId";
 import { drawFurniture } from "../render/furnitureArt";
 import { paintCityEnvWash, paintCityStorefrontReflections, paintDistrictEnvWash } from "../render/cityTerrainPolish";
+import { paintCubicMassing, paintCivicPlazaCubes } from "../render/cubicMassing";
+import { dressCityDecorations, installHubAmbience, paintCityRingGrounds, placePlazaIdentity, scatterHubRingProps } from "../render/hubOpening";
+import { ENV_LIGHT } from "../render/hubOpeningData";
 import { paintCityBuildingFacades, buildingExteriorAccent } from "../render/buildingFacades";
 import {
   dressHubWishlistArt,
@@ -320,6 +323,7 @@ export default class OnlineScene extends Phaser.Scene {
   private meShadow!: Phaser.GameObjects.Image; // soft ground contact under the local player
   private meRing!: Phaser.GameObjects.Graphics; // bright "you-are-here" focal ring
   private roofParallax?: RoofParallax; // fake-3D roof projection (city + districts)
+  private hubEnv?: string;
   private remoteLabels = new Map<string, Phaser.GameObjects.Text>();
   private enemySprites = new Map<number, Phaser.GameObjects.Sprite>();
   private bossOverlays = new Map<number, { name: Phaser.GameObjects.Text; bar: Phaser.GameObjects.Graphics }>();
@@ -801,16 +805,35 @@ export default class OnlineScene extends Phaser.Scene {
       artRoom,
     });
     if (this.isCityHub) {
+      paintCityRingGrounds(this, ONLINE_CITY.zones);
       paintCityEnvWash(this, ONLINE_CITY.zones);
       // Full HF replacement for landmarks / large blocks — skip roof caps on those rects
       // so dark parallax slabs don't cover the painted art.
       const cityHf = paintCityBuildingFacades(this, ONLINE_CITY.buildings);
       const cityHfKeys = new Set(cityHf.map((r) => `${r.x1},${r.y1},${r.x2},${r.y2}`));
       paintCityStorefrontReflections(this, ONLINE_CITY.buildings);
+      paintCubicMassing(
+        this,
+        ONLINE_CITY.buildings.map((b) => ({
+          rect: b.rect,
+          kind: b.kind,
+          env: b.env,
+          door: b.door,
+          hfCovered: cityHfKeys.has(`${b.rect.x1},${b.rect.y1},${b.rect.x2},${b.rect.y2}`),
+        })),
+        zoneAccent,
+      );
+      paintCivicPlazaCubes(this, HUB_CX, HUB_CY, zoneAccent);
+      dressCityDecorations(this, ONLINE_CITY.decorations, (tx, ty) => envAt(tx, ty, cityW, cityH));
+      scatterHubRingProps(this, grid, { tx: HUB_CX, ty: HUB_CY });
+      placePlazaIdentity(this, HUB_CX, HUB_CY);
+      installHubAmbience(this, HUB_CX, HUB_CY);
       this.roofParallax = installRoofParallax(
         this,
         ONLINE_CITY.buildings.map((b) => b.rect).filter((r) => !cityHfKeys.has(`${r.x1},${r.y1},${r.x2},${r.y2}`)),
         zoneAccent,
+        12,
+        { strength: 0.085, maxOff: 22 },
       );
     } else if (dEnv) {
       paintDistrictEnvWash(this, this.worldW, this.worldH, dEnv.wash, dEnv.washAlpha);
@@ -825,15 +848,11 @@ export default class OnlineScene extends Phaser.Scene {
         undefined,
         bridgeDef!.layout.biome,
       );
-    } else if (this.isCityHub || isCombatDistrict) {
-      scatterWorldProps(this, grid, 4, this.isCityHub ? 0.0014 : (dEnv?.propDensity ?? 0.006) * 0.7, {
+    } else if (isCombatDistrict) {
+      scatterWorldProps(this, grid, 4, (dEnv?.propDensity ?? 0.006) * 0.7, {
         propBias: dEnv?.propBias,
         accent: zoneAccent,
-        clearCenter: this.isCityHub
-          ? { tx: HUB_CX, ty: HUB_CY, radius: 18 }
-          : isCombatDistrict
-            ? { tx: def.spawnTile[0] * DISTRICT_SCALE, ty: def.spawnTile[1] * DISTRICT_SCALE, radius: 8 }
-            : undefined,
+        clearCenter: { tx: def.spawnTile[0] * DISTRICT_SCALE, ty: def.spawnTile[1] * DISTRICT_SCALE, radius: 8 },
       });
     }
     if (this.isCityHub) {
@@ -882,17 +901,26 @@ export default class OnlineScene extends Phaser.Scene {
       // World-tile HF footprints already painted at DISTRICT_SCALE; exclude them so
       // dark roof caps don't sit on top of full Higgsfield exteriors.
       const distHfKeys = new Set(hfBuildingRects.map((r) => `${r.x1},${r.y1},${r.x2},${r.y2}`));
+      const distRects = districtBuildings(def).map((b, i) => ({
+        rect: {
+          x1: b.x1 * DISTRICT_SCALE,
+          y1: b.y1 * DISTRICT_SCALE,
+          x2: b.x2 * DISTRICT_SCALE,
+          y2: b.y2 * DISTRICT_SCALE,
+        },
+        kind: districtBuildingKind(i, this.districtIndex) ?? "home",
+        env: def.id,
+        hfCovered: distHfKeys.has(
+          `${b.x1 * DISTRICT_SCALE},${b.y1 * DISTRICT_SCALE},${b.x2 * DISTRICT_SCALE},${b.y2 * DISTRICT_SCALE}`,
+        ),
+      }));
+      paintCubicMassing(this, distRects, zoneAccent);
       this.roofParallax = installRoofParallax(
         this,
-        districtBuildings(def)
-          .map((b) => ({
-            x1: b.x1 * DISTRICT_SCALE,
-            y1: b.y1 * DISTRICT_SCALE,
-            x2: b.x2 * DISTRICT_SCALE,
-            y2: b.y2 * DISTRICT_SCALE,
-          }))
-          .filter((r) => !distHfKeys.has(`${r.x1},${r.y1},${r.x2},${r.y2}`)),
+        distRects.map((b) => b.rect).filter((r) => !distHfKeys.has(`${r.x1},${r.y1},${r.x2},${r.y2}`)),
         zoneAccent,
+        12,
+        { strength: 0.07, maxOff: 18 },
       );
     }
     // Interiors play zoomed-in (FRLG readability). Zoomed rooms get an UNBOUNDED
@@ -1517,13 +1545,13 @@ export default class OnlineScene extends Phaser.Scene {
       // The HALL you are standing in is authoritative for the curriculum — stale
       // registry/settings must never re-arm the other mode's step list mid-drill.
       if (this.isTutorial) this.net.setTutorialMode(tutorialModeFromZone(this.zone) ?? tutorialMode);
+      // Drill yard is retired — anyone who lands here is sent to the city.
+      if (this.isTutorial) {
+        this.time.delayedCall(80, () => this.skipTutorialToCity());
+      }
       if (this.net.godMode) {
         setGodSessionUnlock(true);
         if (this.mapPanel) this.mapPanel.godMode = true;
-        // Skip drill yard entirely for operators.
-        if (this.isTutorial) {
-          this.time.delayedCall(200, () => this.forceClientDeployToCity());
-        }
         // Visible HUD cue so god is obvious.
         this.time.delayedCall(400, () => {
           if (!this.sys.isActive() || !this.net?.godMode) return;
@@ -6153,6 +6181,18 @@ export default class OnlineScene extends Phaser.Scene {
       // Ambient district heat + combat density + runner HEAT.
       const base = this.districtEnvTheme?.baseHeat ?? 0.05;
       this.neon.heat = base + combat * 0.42 + (this.net.heat / HEAT.max) * 0.3;
+    }
+    if (this.isCityHub && this.neon) {
+      const pos = this.playerPos();
+      const env = envAt(Math.floor(pos.x / TILE), Math.floor(pos.y / TILE), ONLINE_CITY.w, ONLINE_CITY.h);
+      if (env !== this.hubEnv) {
+        this.hubEnv = env;
+        const L = ENV_LIGHT[env];
+        this.neon.tint = L.tint;
+        this.neon.tintAmt = L.tintAmt;
+        this.neon.heat = L.heat;
+        this.meLight?.setAccent(ENV_IDENTITY[env].accent);
+      }
     }
     this.atmosphere?.update(this.time.now, dt, Math.min(1, this.net.enemies.size / 16));
     this.updateBossLocator();

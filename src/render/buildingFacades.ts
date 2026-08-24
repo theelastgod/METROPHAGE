@@ -160,16 +160,11 @@ function pickBuildingSprite(
  * Footprint large enough for a readable full HF sprite (not a 1-tile shed).
  * Tile units (unscaled design tiles for districts; world tiles for city).
  */
-function isPaintableBuilding(rect: Rect, scale = 1): boolean {
-  const tw = (rect.x2 - rect.x1 + 1) * scale;
-  const th = (rect.y2 - rect.y1 + 1) * scale;
-  // Compact hub blocks are often 4×3–6×5 — still show HF art (was ≥24 tile² gate
-  // which skipped most city-center landmarks after the hub shrink).
-  return tw >= 3 && th >= 3 && tw * th >= 12;
-}
-
-/** Opaque underlay + full-bleed HF sprite covering the entire footprint. */
-function placeFullBuildingArt(
+/**
+ * Kind art as a ROOF identity plate — keep the illustration's aspect.
+ * Never smear a poster across a mismatched footprint (the "stretched kit" look).
+ */
+function placeRoofIdentity(
   scene: Phaser.Scene,
   X1: number,
   Y1: number,
@@ -177,42 +172,17 @@ function placeFullBuildingArt(
   h: number,
   spriteKey: string,
   depth: number,
-  accent: number,
 ): void {
-  // Structural steel pad so tilemap wall cells never peek through transparent PNG
-  // edges. This used to be opaque near-black, turning every transparent silhouette
-  // margin into a black rectangle when art did not fill its footprint.
-  const pad = scene.add.graphics().setDepth(depth);
-  pad.fillStyle(0x1b2534, 1).fillRect(X1, Y1, w, h);
-  pad.fillStyle(accent, 0.16).fillRect(X1 + 3, Y1 + 3, Math.max(0, w - 6), Math.max(0, h - 6));
-  pad.fillStyle(0x344256, 0.72).fillRect(X1, Y1, w, 3);
-  pad.fillStyle(accent, 0.48).fillRect(X1, Y1, w, 1);
-  const img = scene.add
-    .image(X1 + w / 2, Y1 + h / 2, spriteKey)
-    .setDepth(depth + 0.05)
-    .setAlpha(1);
-  // Fit vs cover: mild mismatch stretches invisibly, but square art forced onto a
-  // tall/narrow tower footprint (Argus Spire venues are 4×10 tiles) collapses into
-  // an unreadable flat slab. Past ~1.4× aspect mismatch, COVER the footprint at the
-  // art's own aspect and centre-crop the overflow so the pixels stay legible.
-  const aspectMismatch = Math.max((w / h) / (img.width / img.height), (img.width / img.height) / (w / h));
-  if (aspectMismatch > 1.4) {
-    const scale = Math.max(w / img.width, h / img.height);
-    img.setScale(scale);
-    img.setCrop((img.width - w / scale) / 2, (img.height - h / scale) / 2, w / scale, h / scale);
-  } else {
-    img.setDisplaySize(w, h);
-  }
-  // Environment sources are already enhanced to their display size. LINEAR filtering
-  // softened them a second time (especially under camera zoom), making hub buildings
-  // look blurred despite the larger PNGs. Keep hard detail at the pixel-art renderer's
-  // native NEAREST policy.
+  const img = scene.add.image(X1 + w / 2, Y1 + h * 0.38, spriteKey).setDepth(depth + 0.08).setAlpha(0.94);
+  const maxW = w * 0.78;
+  const maxH = h * 0.55;
+  const s = Math.min(maxW / Math.max(1, img.width), maxH / Math.max(1, img.height));
+  img.setScale(s);
   try {
     scene.textures.get(spriteKey).setFilter(Phaser.Textures.FilterMode.NEAREST);
   } catch {
     /* ignore */
   }
-  void img;
 }
 
 /** Orbital Relay's source plates are intentionally dark rooftop hardware. At gameplay
@@ -328,32 +298,17 @@ export function paintCityBuildingFacades(
     const spriteKey = pickBuildingSprite(scene, b.kind, {
       districtId: b.env,
       infected: opts?.infected,
-      // Hash footprint so two bars on the hub don't share the same multivariant.
+      noDistrictKit: true,
       variantSalt: bi * 17 + b.rect.x1 * 3 + b.rect.y1 * 5,
     });
     const X1 = b.rect.x1 * TILE;
     const Y1 = b.rect.y1 * TILE;
     const w = (b.rect.x2 + 1) * TILE - X1;
     const h = (b.rect.y2 + 1) * TILE - Y1;
-    // Any paintable footprint with HF art: full replacement (no dark roof slab over it).
-    const fullReplace = !!spriteKey && (landmark || isPaintableBuilding(b.rect));
-    if (fullReplace && spriteKey) {
-      placeFullBuildingArt(scene, X1, Y1, w, h, spriteKey, depth, style.accent);
-      if (b.door) paintDoorFrameOnly(scene, b.door, style.sign, depth, landmark);
-      if (landmark) glow(scene, X1 + w * 0.5, Y1 + 4, style.accent, 1.2, 0.28, depth + 0.12);
-      hfRects.push(b.rect);
-      continue;
-    }
     paintFacade(scene, b.rect, b.door, style.accent, style.sign, style.glyph, depth, landmark);
-    // Tiny sheds: procedural + soft HF overlay when available.
-    if (spriteKey) {
-      scene.add
-        .image(X1 + w / 2, Y1 + h / 2, spriteKey)
-        .setDisplaySize(w * 0.96, h * 0.96)
-        .setDepth(depth + 0.05)
-        .setAlpha(0.95);
-      hfRects.push(b.rect);
-    }
+    if (b.door) paintDoorFrameOnly(scene, b.door, style.sign, depth, landmark);
+    if (landmark) glow(scene, X1 + w * 0.5, Y1 + 4, style.accent, 1.2, 0.28, depth + 0.12);
+    if (spriteKey) placeRoofIdentity(scene, X1, Y1, w, h, spriteKey, depth);
   }
   return hfRects;
 }
@@ -382,7 +337,7 @@ export function paintDistrictBuildingFacades(
   for (let i = 0; i < buildings.length; i++) {
     const b = buildings[i];
     const venueKind = districtBuildingKind(i, districtIdx);
-    // Scenery (no door): always district kit. Venues: one unique kind art each.
+    // Scenery: cubic steel block (no stretched district poster). Venues: kind art on the roof.
     const kind: BuildingKind = venueKind ?? "home";
     const { accent, sign } = KIND_STYLE[kind];
     const landmark = venueKind !== null; // only enterable venues read as landmarks
@@ -393,25 +348,17 @@ export function paintDistrictBuildingFacades(
     const Y2 = (b.y2 * S + 1) * TILE;
     const w = X2 - X1;
     const h = Y2 - Y1;
-    const worldRect: Rect = { x1: b.x1 * S, y1: b.y1 * S, x2: b.x2 * S, y2: b.y2 * S };
 
     const spriteKey = pickBuildingSprite(scene, kind, {
       districtId: opts?.districtId,
       infected: opts?.infected || (opts?.districtId === "undercity" && i % 3 === 0),
-      // Scenery = district kit only; venues get kind-specific art.
-      preferDistrictKit: venueKind === null,
+      // Scenery = cubic structure only. Never stretch a district identity poster
+      // across every block. Venues get kind-specific art as a roof plate.
+      preferDistrictKit: false,
+      noDistrictKit: venueKind === null,
       variantSalt: i * 19 + (b.x1 + b.y1) * 7 + (opts?.districtId?.length ?? 0),
     });
-    const fullReplace = !!spriteKey && (landmark || isPaintableBuilding(b, S) || venueKind === null);
-
-    if (fullReplace && spriteKey) {
-      placeFullBuildingArt(scene, X1, Y1, w, h, spriteKey, depth, accent);
-      if (opts?.districtId === "relay") paintRelayIdentity(scene, X1, Y1, X2, Y2, depth, i);
-      if (opts?.districtId === "undercity") paintUndercityIdentity(scene, X1, Y1, X2, Y2, depth, i);
-      if (landmark) glow(scene, X1 + w * 0.5, Y1 + 6, accent, 2.4, 0.22, depth + 0.12);
-      hfRects.push(worldRect);
-      continue;
-    }
+    // Steel mass + windows. Kind art sits on the roof at native aspect.
 
     // Small / no-art fallback: a complete steel structure, not a lightly tinted tile
     // rectangle. If any generated file fails, the footprint must still read as a
@@ -436,14 +383,7 @@ export function paintDistrictBuildingFacades(
     const sy = Y2 - 5;
     g.fillStyle(0x0a0e18, 0.7).fillRect(sx - 8, sy - 5, 16, 8);
     g.fillStyle(sign, 0.85).fillRect(sx - 6, sy - 3, 12, 1);
-    if (spriteKey) {
-      scene.add
-        .image(X1 + w / 2, Y1 + h / 2, spriteKey)
-        .setDisplaySize(w * 0.96, h * 0.96)
-        .setDepth(depth + 0.05)
-        .setAlpha(0.95);
-      hfRects.push(worldRect);
-    }
+    if (spriteKey && venueKind) placeRoofIdentity(scene, X1, Y1, w, h, spriteKey, depth);
     if (opts?.districtId === "relay") paintRelayIdentity(scene, X1, Y1, X2, Y2, depth, i);
     if (opts?.districtId === "undercity") paintUndercityIdentity(scene, X1, Y1, X2, Y2, depth, i);
   }

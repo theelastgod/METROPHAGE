@@ -45,6 +45,7 @@ if (!npmCli || !existsSync(npmCli)) {
 const wcProjectId = (
   process.env.VITE_WALLETCONNECT_PROJECT_ID || PRODUCTION_WALLETCONNECT_PROJECT_ID
 ).trim();
+// Production chrome is Solana-only. Do not default robinhood / EVM here.
 const metroCluster = (process.env.VITE_METRO_CLUSTER || "mainnet-beta").trim();
 const metroSettlement = (process.env.VITE_METRO_SETTLEMENT || "solana").trim();
 const metroMint = (process.env.VITE_METRO_MINT || "").trim();
@@ -54,7 +55,7 @@ if (wcProjectId) {
   console.log(`WalletConnect project id: ${wcProjectId.slice(0, 8)}…`);
 } else {
   console.warn(
-    "⚠ VITE_WALLETCONNECT_PROJECT_ID unset — mobile WalletConnect modal disabled (injected wallets + MetaMask deep-link only). Free id: https://dashboard.reown.com",
+    "⚠ VITE_WALLETCONNECT_PROJECT_ID unset — mobile wallet picker disabled (injected Phantom / Solflare / Backpack + Phantom protocol only). Free id: https://dashboard.reown.com",
   );
 }
 // Honest local build id: git SHA, +dirty when the tree doesn't match it. CI overrides

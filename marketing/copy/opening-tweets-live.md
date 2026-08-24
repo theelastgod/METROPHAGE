@@ -1,7 +1,7 @@
 # METROPHAGE — opening tweets (everything live)
 
-Tone: neon-noir, short, confident. No pump language. No price talk. No guaranteed cash-outs.  
-Play is free in the browser. ₵ runs the game. $METRO is optional convertibility (player-funded pool).
+Tone: neon-noir, short, confident. No promised returns. No guaranteed cash-outs.  
+Play is free in the browser. ₵ runs the game. $METRO is optional convertibility on **Solana / pump.fun** (player-funded pool). **Phantom** to cash out or hold a **Genesis Key**. Guests use a device save.
 
 **Link:** https://metrophagev1.pages.dev  
 **Report bugs:** https://t.me/m/K5ctxpcaNzdh  
@@ -115,11 +115,11 @@ You woke free. The corps still want the lease.
 ```
 ₵ credits run the game — forge, market, contracts, everything.
 
-$METRO is optional convertibility on a player-funded pool.
-Deposit fills it. Cash-out only when the pool can cover it.
+$METRO is optional convertibility on Solana (pump.fun).
+Player-funded pool. Deposit fills it. Cash-out only when the pool can cover it.
 Not a faucet. Not free money.
 
-Play first. Bridge second.
+Phantom optional. Play first. Bridge second.
 
 ▶ metrophagev1.pages.dev
 ```
@@ -143,11 +143,11 @@ The city doesn’t sleep on a timer you can ignore.
 ## 8 · Social / multiplayer
 
 ```
-Parties. Chat. Emotes. Estates. Guild cells.
+Parties. Chat. Emotes. Genesis Keys. Guild cells.
 
 METROPHAGE is a live MMO in your tab — other runners, same districts, same ledger.
 
-Phantom optional. Free play with a device save. Permanent ID if you link a wallet.
+Phantom / Solflare / Backpack. Free play with a device save. 50 Genesis Keys deed THE ESTATES.
 
 ▶ metrophagev1.pages.dev
 ```
@@ -214,7 +214,7 @@ You don’t wait for “full release.” You’re already in Metro City.
 | Day 3 | **3** territory |
 | Day 4 | **5** campaign |
 | Day 5 | **7** events |
-| Day 6 | **6** economy (careful, no pump) |
+| Day 6 | **6** economy (Solana / pump.fun, no promised returns) |
 | Day 7 | **8** or **9** social / PvP |
 
 Attach matching 10s clips from `marketing/metrophage-10s-*.mp4` or the cinematic trailer when you have them.

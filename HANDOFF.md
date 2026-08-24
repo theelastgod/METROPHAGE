@@ -4,6 +4,30 @@ You are picking up work on **METROPHAGE**, a top-down neon-noir cyberpunk action
 in the browser. Phaser 3 + Vite + TypeScript client; **server-authoritative** world on
 Cloudflare (Worker + per-zone Durable Objects at 20Hz + D1).
 
+## 2026-08-23 — Solana-era identity is the live path (PR 7 chrome)
+
+**Authoritative now:** Solana SPL `$METRO` (pump.fun mint, base58 — never `.toLowerCase()`),
+Phantom / Solflare / Backpack, Genesis Key NFTs as estate deeds. Player id is `w:<base58>`
+or `g:<uuid>`. Callsign is a unique display name (`players.name_norm`), never the id.
+
+Entries below that say Robinhood / MetaMask / ERC-20 / `0x` gods are **historical**. Do
+not revive them as a launch path. Dual-chain compile stays dead (`docs/HANDOFF_DUAL_CHAIN.md`).
+
+- **Operator wallet (only):** `9Z9uZJXdnyTE7gkFfrepJ3BWDTNA3ZeteDkpgT6cxkve`. No `0x` gods.
+- **Guests:** device save (`g:<uuid>` + secret). They play ₵ content. Wallet required to
+  deposit/withdraw `$METRO` or hold a Genesis Key.
+- **Wipe SQL:** `tools/reset-live-world.sql` is the authorized Solana relaunch exception
+  (DELETE players + player-keyed tables; DELETE `metro_deposits` / `metro_withdrawals` /
+  `metro_seed` / `metro_price` / `metro_bridge_lock` because the mint is new; estates
+  unowned + for_sale + empty furniture/guestbook; **keep** `token` / `nft` if present).
+  Do **not** run it from this PR. Never `d1 delete`, never change `database_id`, DO tag `v1`.
+- **Landing + marketing:** Solana / Phantom / pump.fun / Genesis Keys. Invert the old
+  “do not say pump.fun” rule — say it. Do not say Robinhood / MetaMask / `0x`.
+- **Mobile QA:** `docs/MOBILE-QA.md` is Phantom/Solflare (ed25519), not MetaMask.
+- **`tools/release-client.mjs`:** already defaults `VITE_METRO_SETTLEMENT=solana` and
+  `VITE_METRO_CLUSTER=mainnet-beta`. Bake mint only when `VITE_METRO_MINT` is set.
+- GitBook (`docs/gitbook`) is Solana. Do not edit the GitBook web UI.
+
 ## 2026-08-19 — launch-metrics readiness (token-first plan)
 
 Strategy note from the operator: **players arrive when the $METRO CA goes live** —
@@ -140,7 +164,7 @@ art constraints). `CLAUDE.md` points at it. Non-negotiables from it:
 - Shared sim/world code under `src/` is imported by `server/src/world.ts`. Nothing under
   `src/net|game|world` may touch DOM/Phaser globals.
 - `TILESET_PX` must equal `TILE` (32).
-- Never change `database_id`, never `d1 delete`, never unscoped `DELETE FROM players`.
+- Never change `database_id`, never `d1 delete`, never unscoped `DELETE FROM players` except the authorized Solana relaunch file `tools/reset-live-world.sql` (ops night only; not a deploy step).
   DO migration tag stays `v1`.
 - `VITE_SERVER_URL` is **build-time**; production client must bake
   `wss://metrophage-server.wendellphillips.workers.dev/ws`. Pages deploys need `--branch=main`.
@@ -635,8 +659,9 @@ code back, which resolved the contradiction rather than creating one.
   `METRO_MAINNET_ARMED=1`, so an unset `METRO_RPC` can never move real value. Keep that gate.
 - UI flips off `preferSolanaWallet()` / `solPrimary`; `walletChoiceList()` /
   `walletChoiceProse()` in `src/economy/wallet.ts` are the single source for wallet-name copy.
-- Docs/marketing swept. `marketing/copy/metro-launch-pack.md` L309 is a **style rule** —
-  it now reads "chain reference is Solana (SPL); do not say Robinhood/ERC-20/pump.fun".
+- Docs/marketing swept. `marketing/copy/metro-launch-pack.md` style rule:
+  chain reference is **Solana (SPL) launched on pump.fun**; do **not** say Robinhood / ERC-20 / MetaMask.
+  (The 2026-07 “do not say pump.fun” line is inverted for go-live.)
 
 ### Economy: unchanged, and verified unchanged
 

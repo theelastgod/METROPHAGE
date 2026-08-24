@@ -368,6 +368,8 @@ export const HF_DIST_INF_KEYS = [
 export const HF_ENV_KIT_KEYS = [
   "hf_building_dist_market", "hf_building_dist_park", "hf_building_dist_corporate",
   "hf_building_dist_arcology", "hf_building_dist_kernel",
+  "hf_building_dist_downtown", "hf_building_dist_industrial", "hf_building_dist_slum",
+  "hf_building_dist_residential",
 ] as const;
 /** THE ESTATES street facades. */
 export const HF_ESTATE_KEYS = [
@@ -453,7 +455,7 @@ export const HF_DIST_BUILDING_VARIANT_KEYS = [
   "hf_building_dist_docks_b", "hf_building_dist_stacks_b", "hf_building_dist_spire_b",
   "hf_building_dist_wastes_b", "hf_building_dist_relay_b", "hf_building_dist_helios_b",
   ...["core", "sprawl", "undercity", "docks", "stacks", "spire", "wastes", "relay", "helios"].map((s) => `hf_building_dist_${s}_c`),
-  ...["market", "park", "corporate", "arcology", "kernel"].flatMap((s) => [`hf_building_dist_${s}_b`, `hf_building_dist_${s}_c`]),
+  ...["market", "park", "corporate", "arcology", "kernel", "downtown", "industrial", "slum", "residential"].flatMap((s) => [`hf_building_dist_${s}_b`, `hf_building_dist_${s}_c`]),
 ] as const;
 
 /** Pick base or _b/_c variant by stable salt when textures exist. */
@@ -678,7 +680,7 @@ const GENERIC_WORLD = assetSet(HF_PROP_KEYS);
 // routing loaded Sprawl art for Anduril Yards, then the renderer requested Stacks and
 // found nothing, leaving scenery footprints as bare roof tiles.
 const DISTRICT_ART_KITS: ReadonlyArray<ReadonlyArray<string>> = [
-  ["hf_building_dist_core"],
+  ["hf_building_dist_downtown", "hf_building_dist_core"],
   ["hf_building_dist_stacks"],
   ["hf_building_dist_spire"],
   ["hf_building_dist_docks"],
@@ -726,10 +728,14 @@ export function deferredWorldAssetsForZone(zone: string): AssetEntry[] {
     add(dailyArtSelection(HF_BUILDING_VARIANT_KEYS, 22));
     add(dailyArtSelection(HF_DIST_BUILDING_VARIANT_KEYS, 12));
     add(HF_ENV_KIT_KEYS);
+    for (const kit of HF_ENV_KIT_KEYS) {
+      add(HF_DIST_BUILDING_VARIANT_KEYS.filter((k) => k.startsWith(kit + "_")));
+    }
     add(HF_WORLD_PROP_KEYS);
     add(dailyArtSelection(HF_EARLY_WORLD_PROP_KEYS, 48));
     add(HF_WEB_CITY_PROP_KEYS);
     add(["hf_ground_city_spawn"]);
+    add(HF_GROUND_PLATE_KEYS);
     add(numberedKeys("hf_ground_city_tile", 16));
     add(numberedKeys("hf_ground_progress_tile", 16));
     add(["hf_loading_early_city"]);

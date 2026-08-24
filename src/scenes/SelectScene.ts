@@ -511,8 +511,7 @@ export default class SelectScene extends Phaser.Scene {
       ease: "Sine.inOut",
     });
 
-    const drillLbl = () => (getSettings().tutorialMode === "full" ? "FULL TRAINING" : "QUICK");
-    const resumeZone = local?.lastZone && local.lastZone !== "tutorial" ? local.lastZone : "safe";
+    const resumeZone = local?.lastZone && !local.lastZone.startsWith("tutorial") ? local.lastZone : "safe";
 
     this.walletPanel.show({
       step: "play",
@@ -539,20 +538,6 @@ export default class SelectScene extends Phaser.Scene {
           color: COLORS.neonGreen,
           primary: false as const,
           fn: () => void this.linkWalletToGuestRunner(),
-        },
-        {
-          label: "◢ QUICK DRILL",
-          sub: "core combat · skip to city anytime",
-          color: 0xb06bff,
-          primary: false,
-          fn: () => this.deployOnline("tutorial", "quick"),
-        },
-        {
-          label: "◢ FULL TRAINING",
-          sub: `${drillLbl()} · every city system`,
-          color: 0xb06bff,
-          primary: false,
-          fn: () => this.deployOnline("tutorial_full", "full"),
         },
         {
           label: "◌ NEW RUNNER",
@@ -724,7 +709,7 @@ export default class SelectScene extends Phaser.Scene {
             sub: "play as wallet-bound runner",
             color: COLORS.neonGreen,
             primary: true,
-            fn: () => this.deployOnline(local.lastZone && local.lastZone !== "tutorial" ? local.lastZone : "safe"),
+            fn: () => this.deployOnline(local.lastZone && !local.lastZone.startsWith("tutorial") ? local.lastZone : "safe"),
           },
         ]),
       });
@@ -1200,13 +1185,12 @@ export default class SelectScene extends Phaser.Scene {
     this.bodyText.setVisible(false);
     this.tagline?.setVisible(true); // caption borrowed the tagline's slot
 
-    const drillLbl = () => (getSettings().tutorialMode === "full" ? "FULL TRAINING" : "QUICK");
     this.walletPanel.show({
       step: "play",
       status: "ready",
       statusText: "identity verified",
       headline: `Welcome back, ${cust.callsign}`,
-      body: `Your body is locked to ${this.shortWallet(id.wallet)}. Deploy into the live city or run the drill yard first.`,
+      body: `Your body is locked to ${this.shortWallet(id.wallet)}. Deploy into the live city.`,
       wallet: id.wallet,
       offsetY: 36,
       actions: this.walletActions([
@@ -1215,20 +1199,6 @@ export default class SelectScene extends Phaser.Scene {
           sub: "Metro City · shared with every runner online",
           color: COLORS.neonGreen,
           fn: () => this.deployOnline("safe"),
-        },
-        {
-          label: "◢ QUICK DRILL",
-          sub: "core combat tutorial · ~9 lessons",
-          color: COLORS.neonCyan,
-          primary: false,
-          fn: () => this.deployOnline("tutorial", "quick"),
-        },
-        {
-          label: "◢ FULL TRAINING",
-          sub: `${drillLbl()} · every city system`,
-          color: 0xb06bff,
-          primary: false,
-          fn: () => this.deployOnline("tutorial_full", "full"),
         },
       ]),
       showDisconnect: true,
