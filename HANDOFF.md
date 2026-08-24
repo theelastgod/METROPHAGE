@@ -164,7 +164,7 @@ art constraints). `CLAUDE.md` points at it. Non-negotiables from it:
 - Shared sim/world code under `src/` is imported by `server/src/world.ts`. Nothing under
   `src/net|game|world` may touch DOM/Phaser globals.
 - `TILESET_PX` must equal `TILE` (32).
-- Never change `database_id`, never `d1 delete`, never unscoped `DELETE FROM players`.
+- Never change `database_id`, never `d1 delete`, never unscoped `DELETE FROM players` except the authorized Solana relaunch file `tools/reset-live-world.sql` (ops night only; not a deploy step).
   DO migration tag stays `v1`.
 - `VITE_SERVER_URL` is **build-time**; production client must bake
   `wss://metrophage-server.wendellphillips.workers.dev/ws`. Pages deploys need `--branch=main`.
