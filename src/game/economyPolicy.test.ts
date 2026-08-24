@@ -7,6 +7,10 @@ import {
   populationTier,
   nextPopThreshold,
   POP_THRESHOLDS,
+  metroPriceMultiplier,
+  applyVolSpread,
+  METRO_PRICE_MULT_MIN,
+  METRO_PRICE_MULT_MAX,
 } from "./economyPolicy";
 
 describe("economyPolicy — unlimited earn/WD + pop rate tiers", () => {
@@ -90,5 +94,38 @@ describe("economyPolicy — unlimited earn/WD + pop rate tiers", () => {
     expect(atHalf.depositCreditsPerMetro).toBeLessThan(at1.depositCreditsPerMetro);
     // Round-trip still retains house edge (deposit < withdraw rate)
     expect(at2.depositCreditsPerMetro).toBeLessThan(at2.withdrawCreditsPerMetro);
+  });
+
+  it("never applies $1 when the quote is null", () => {
+    const p = resolveEconomyPolicy({
+      poolMetro: METRO_DEV_SEED_METRO,
+      circulatingCredits: 100_000,
+      activePlayers: 500,
+      seedMetro: METRO_DEV_SEED_METRO,
+    });
+    expect(p.metroUsd).not.toBe(1);
+    expect(p.quoteMissing).toBe(true);
+    expect(p.bridgeFrozen).toBe(true);
+    expect(p.priceSource).toBe("none");
+    expect(p.note).not.toMatch(/\$1\.00/);
+    expect(metroPriceMultiplier(0)).toBeNull();
+    expect(metroPriceMultiplier(NaN)).toBeNull();
+  });
+
+  it("keeps a positive spread at vol and price extremes", () => {
+    const base = {
+      poolMetro: METRO_DEV_SEED_METRO,
+      circulatingCredits: 100_000,
+      activePlayers: 500,
+      seedMetro: METRO_DEV_SEED_METRO,
+    };
+    const dusty = resolveEconomyPolicy({ ...base, metroUsd: 1e-8, metroUsdReference: 1e-8, vol5m: 0.4 });
+    const moon = resolveEconomyPolicy({ ...base, metroUsd: 20, metroUsdReference: 1, vol5m: 0.4 });
+    expect(dusty.withdrawCreditsPerMetro).toBeGreaterThan(dusty.depositCreditsPerMetro);
+    expect(moon.withdrawCreditsPerMetro).toBeGreaterThan(moon.depositCreditsPerMetro);
+    const vol = applyVolSpread(100, 150, 0.4);
+    expect(vol.withdraw).toBeGreaterThan(vol.deposit);
+    expect(metroPriceMultiplier(1e-12, 1)).toBe(METRO_PRICE_MULT_MIN);
+    expect(metroPriceMultiplier(1e9, 1)).toBe(METRO_PRICE_MULT_MAX);
   });
 });

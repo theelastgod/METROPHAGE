@@ -454,6 +454,8 @@ export interface Env {
   METRO_CLUSTER?: string;
   /** Manual $METRO USD price override (ops / pre-listing). Bridge rates scale from this. */
   METRO_USD_PRICE?: string;
+  /** Ops-set launch TWAP reference (not forever $1). */
+  METRO_USD_REFERENCE?: string;
   // "1" arms real-value mainnet (counsel) — also gates NFT-tier cosmetics.
   // Required when METRO_RPC points at mainnet, else settlement stays sim.
   METRO_MAINNET_ARMED?: string;
