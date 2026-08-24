@@ -12,6 +12,8 @@ import { dimBackdrop, uiDim, uiGap } from "./uiLayout";
 import { bodyFont, displayFont } from "./typography";
 import { addPanelGlow } from "./studioChrome";
 import { prefersMobileUx } from "../systems/Mobile";
+import { shortSolanaAddress, solanaChromeLabel } from "../economy/solanaChain";
+import { t } from "../i18n";
 
 export type WalletStep = "connect" | "sign" | "play";
 
@@ -144,7 +146,7 @@ export default class WalletSignInPanel {
   }
 
   private short(addr: string) {
-    return addr.length > 12 ? `${addr.slice(0, 4)}…${addr.slice(-4)}` : addr;
+    return shortSolanaAddress(addr);
   }
 
   private stepIndex(step: WalletStep) {
@@ -356,7 +358,7 @@ export default class WalletSignInPanel {
     );
     this.add(
       this.scene.add
-        .text(x + w - pad, cy + uiDim(11), "RH · MAINNET", bodyFont(9, { color: "#4e5568" }))
+        .text(x + w - pad, cy + uiDim(11), solanaChromeLabel(), bodyFont(9, { color: "#4e5568" }))
         .setOrigin(1, 0),
     );
     cy += headerH;
@@ -581,7 +583,7 @@ export default class WalletSignInPanel {
           .text(
             x + pad,
             footerY + uiDim(8),
-            "WALLETCONNECT  ·  ROBINHOOD CHAIN",
+            t("wallet.family"),
             bodyFont(8, { color: "#3d4454" }),
           )
           .setOrigin(0, 0),

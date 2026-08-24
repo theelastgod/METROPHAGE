@@ -278,11 +278,10 @@ import type { PlayerLook } from "../net/protocol";
 import { setOnlinePlayer } from "../economy/session";
 import {
   connectedWallet,
-  signWalletLogin,
   walletSessionSecret,
   restoreWalletSession,
 } from "../economy/wallet";
-import { loginMessage } from "../net/protocol";
+import { signIdentityProof } from "../economy/identity";
 import {
   sanitizeCustomization,
   customizationToLook,
@@ -2678,16 +2677,12 @@ export default class OnlineScene extends Phaser.Scene {
       this.net.setAuth({ wallet: addr });
       return;
     }
-    const ts = Date.now();
-    const signed = await signWalletLogin(loginMessage(addr, ts), addr);
-    if (signed) {
-      // Keep the SAME device session secret — rotating here was the zone-travel bug
-      // (local secret changed before D1 re-bound → every district re-prompted).
-      walletSessionSecret(signed.address);
-      const proof = { wallet: signed.address, sig: signed.signature, ts };
+    const proof = await signIdentityProof(addr);
+    if (proof) {
+      walletSessionSecret(proof.wallet);
       this.net.setAuth(proof);
       this.registry.set("walletProof", proof);
-      this.registry.set("walletAddress", signed.address);
+      this.registry.set("walletAddress", proof.wallet);
     }
   }
 

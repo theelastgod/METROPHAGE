@@ -32,6 +32,8 @@ export const en = {
   "combat.rampage": "RAMPAGE",
   "combat.annihilation": "ANNIHILATION",
   "combat.eliminated": "✖ ELIMINATED — respawning…",
+  "wallet.family": "PHANTOM · SOLANA",
+  "wallet.connect": "Connect Phantom",
 } as const;
 
 export type I18nKey = keyof typeof en;
