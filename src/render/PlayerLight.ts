@@ -41,6 +41,11 @@ export class PlayerLight {
     this.pool.setAlpha(0.22 + this.pulse * 0.3);
   }
 
+  setAccent(color: number): void {
+    this.accent.setTint(color);
+    this.streak.setTint(color);
+  }
+
   setVisible(v: boolean): void {
     this.pool.setVisible(v);
     this.core.setVisible(v);

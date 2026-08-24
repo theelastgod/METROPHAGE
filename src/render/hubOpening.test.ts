@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DECOR_KEYS, ENV_GROUND_KEYS, ENV_PROP_KEYS, firstKey } from "./hubOpeningData";
+import { DECOR_KEYS, ENV_GROUND_KEYS, ENV_LIGHT, ENV_PROP_KEYS, firstKey } from "./hubOpeningData";
 
 describe("hub opening dressing", () => {
   it("has a ground plate list for every hub ring", () => {
@@ -19,5 +19,10 @@ describe("hub opening dressing", () => {
     expect(DECOR_KEYS.bench[0]).toBe("hf_hub_bench");
     expect(ENV_PROP_KEYS.downtown.some((k) => k.includes("neon"))).toBe(true);
     expect(ENV_PROP_KEYS.slum.some((k) => k.includes("slum") || k.includes("dumpster"))).toBe(true);
+  });
+
+  it("gives downtown hotter magenta light than corporate cyan", () => {
+    expect(ENV_LIGHT.downtown.tintAmt).toBeGreaterThan(ENV_LIGHT.corporate.tintAmt);
+    expect(ENV_LIGHT.downtown.tint[0]).toBeGreaterThan(ENV_LIGHT.corporate.tint[0]);
   });
 });

@@ -114,3 +114,76 @@ export function scatterHubRingProps(
     }
   }
 }
+
+/** Plaza identity totem — district kit as a standing illustration, never a stretched roof. */
+export function placePlazaIdentity(
+  scene: Phaser.Scene,
+  cx: number,
+  cy: number,
+  depth = 5.2,
+): void {
+  const key = live(scene, ["hf_building_dist_downtown", "hf_landmark_fountain", "hf_web_city_fountain"], 0);
+  if (!key) return;
+  const x = cx * TILE + TILE / 2;
+  const y = (cy - 7) * TILE + TILE / 2;
+  stamp(scene, key, x, y, depth, 0.85, true, 0xff2bd6, 0.92);
+}
+
+/** Motion on the opening square: puddle breath, neon flicker, steam. */
+export function installHubAmbience(scene: Phaser.Scene, cx: number, cy: number): void {
+  const px = (dx: number, dy: number) => ({ x: (cx + dx) * TILE + TILE / 2, y: (cy + dy) * TILE + TILE / 2 });
+  const puddles = [px(-3, 2), px(4, 1), px(-2, 5), px(3, 6), px(0, 8)];
+  for (let i = 0; i < puddles.length; i++) {
+    const p = puddles[i];
+    const g = scene.add
+      .image(p.x, p.y, GLOW_KEY)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setTint(i % 2 ? 0xff2bd6 : 0x29e7ff)
+      .setDepth(2.4)
+      .setScale(1.4, 0.55)
+      .setAlpha(0.1);
+    scene.tweens.add({
+      targets: g,
+      alpha: 0.22,
+      scaleX: 1.65,
+      duration: 1800 + i * 240,
+      yoyo: true,
+      repeat: -1,
+      ease: "Sine.inOut",
+    });
+  }
+  const lamps = [px(-11, -7), px(11, -7), px(-11, 7), px(11, 7)];
+  for (let i = 0; i < lamps.length; i++) {
+    const p = lamps[i];
+    const g = scene.add
+      .image(p.x, p.y - 32, GLOW_KEY)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setTint(0xffb86a)
+      .setDepth(5.6)
+      .setScale(1.1)
+      .setAlpha(0.2);
+    scene.tweens.add({
+      targets: g,
+      alpha: 0.38,
+      duration: 900 + i * 180,
+      yoyo: true,
+      repeat: -1,
+      ease: "Sine.inOut",
+    });
+  }
+  const steam = scene.add
+    .image((cx - 13) * TILE + TILE / 2, (cy - 11) * TILE, GLOW_KEY)
+    .setBlendMode(Phaser.BlendModes.ADD)
+    .setTint(0xdfe8ff)
+    .setDepth(6.2)
+    .setScale(0.45)
+    .setAlpha(0.18);
+  scene.tweens.add({
+    targets: steam,
+    y: steam.y - 28,
+    alpha: 0,
+    scale: 0.7,
+    duration: 2200,
+    repeat: -1,
+  });
+}

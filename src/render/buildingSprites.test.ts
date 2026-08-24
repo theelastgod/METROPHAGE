@@ -146,4 +146,19 @@ describe("selectBuildingSprite — kit fallback chain", () => {
   it("returns undefined (procedural façade) when nothing exists", () => {
     expect(selectBuildingSprite(() => false, "bar", { districtId: "undercity" })).toBeUndefined();
   });
+
+  it("refuses to smear a district identity kit onto a hub footprint", () => {
+    expect(
+      selectBuildingSprite(withKeys("hf_building_dist_downtown", "hf_building_bar"), "bar", {
+        districtId: "downtown",
+        noDistrictKit: true,
+      }),
+    ).toBe("hf_building_bar");
+    expect(
+      selectBuildingSprite(withKeys("hf_building_dist_downtown"), "bar", {
+        districtId: "downtown",
+        noDistrictKit: true,
+      }),
+    ).toBeUndefined();
+  });
 });

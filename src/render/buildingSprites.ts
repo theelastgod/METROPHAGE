@@ -98,6 +98,8 @@ export interface SpriteOpts {
   preferDistrictKit?: boolean;
   /** Stable salt so neighboring buildings of the same kind aren't identical. */
   variantSalt?: number;
+  /** Hub footprints: never smear a district identity poster onto the block. */
+  noDistrictKit?: boolean;
 }
 
 /**
@@ -134,7 +136,7 @@ export function selectBuildingSprite(
     }
   }
   // Combat districts: show the district kit as the primary exterior language.
-  if (opts?.preferDistrictKit && opts.districtId) {
+  if (opts?.preferDistrictKit && opts.districtId && !opts.noDistrictKit) {
     for (const kit of chain()) {
       const v = pick(kit);
       if (exists(v)) return v;
@@ -147,6 +149,7 @@ export function selectBuildingSprite(
     if (exists(v)) return v;
     if (exists(base)) return base;
   }
+  if (opts?.noDistrictKit) return undefined;
   // Hub fallback: env-zone kit when a kind has no dedicated landmark art.
   if (opts?.districtId) {
     for (const kit of chain()) {

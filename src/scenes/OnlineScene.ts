@@ -203,7 +203,8 @@ import { isGuestPlayerId } from "../game/playerId";
 import { drawFurniture } from "../render/furnitureArt";
 import { paintCityEnvWash, paintCityStorefrontReflections, paintDistrictEnvWash } from "../render/cityTerrainPolish";
 import { paintCubicMassing, paintCivicPlazaCubes } from "../render/cubicMassing";
-import { dressCityDecorations, paintCityRingGrounds, scatterHubRingProps } from "../render/hubOpening";
+import { dressCityDecorations, installHubAmbience, paintCityRingGrounds, placePlazaIdentity, scatterHubRingProps } from "../render/hubOpening";
+import { ENV_LIGHT } from "../render/hubOpeningData";
 import { paintCityBuildingFacades, buildingExteriorAccent } from "../render/buildingFacades";
 import {
   dressHubWishlistArt,
@@ -322,6 +323,7 @@ export default class OnlineScene extends Phaser.Scene {
   private meShadow!: Phaser.GameObjects.Image; // soft ground contact under the local player
   private meRing!: Phaser.GameObjects.Graphics; // bright "you-are-here" focal ring
   private roofParallax?: RoofParallax; // fake-3D roof projection (city + districts)
+  private hubEnv?: string;
   private remoteLabels = new Map<string, Phaser.GameObjects.Text>();
   private enemySprites = new Map<number, Phaser.GameObjects.Sprite>();
   private bossOverlays = new Map<number, { name: Phaser.GameObjects.Text; bar: Phaser.GameObjects.Graphics }>();
@@ -824,6 +826,8 @@ export default class OnlineScene extends Phaser.Scene {
       paintCivicPlazaCubes(this, HUB_CX, HUB_CY, zoneAccent);
       dressCityDecorations(this, ONLINE_CITY.decorations, (tx, ty) => envAt(tx, ty, cityW, cityH));
       scatterHubRingProps(this, grid, { tx: HUB_CX, ty: HUB_CY });
+      placePlazaIdentity(this, HUB_CX, HUB_CY);
+      installHubAmbience(this, HUB_CX, HUB_CY);
       this.roofParallax = installRoofParallax(
         this,
         ONLINE_CITY.buildings.map((b) => b.rect).filter((r) => !cityHfKeys.has(`${r.x1},${r.y1},${r.x2},${r.y2}`)),
@@ -6177,6 +6181,18 @@ export default class OnlineScene extends Phaser.Scene {
       // Ambient district heat + combat density + runner HEAT.
       const base = this.districtEnvTheme?.baseHeat ?? 0.05;
       this.neon.heat = base + combat * 0.42 + (this.net.heat / HEAT.max) * 0.3;
+    }
+    if (this.isCityHub && this.neon) {
+      const pos = this.playerPos();
+      const env = envAt(Math.floor(pos.x / TILE), Math.floor(pos.y / TILE), ONLINE_CITY.w, ONLINE_CITY.h);
+      if (env !== this.hubEnv) {
+        this.hubEnv = env;
+        const L = ENV_LIGHT[env];
+        this.neon.tint = L.tint;
+        this.neon.tintAmt = L.tintAmt;
+        this.neon.heat = L.heat;
+        this.meLight?.setAccent(ENV_IDENTITY[env].accent);
+      }
     }
     this.atmosphere?.update(this.time.now, dt, Math.min(1, this.net.enemies.size / 16));
     this.updateBossLocator();

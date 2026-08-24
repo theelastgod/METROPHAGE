@@ -41,6 +41,20 @@ export const DECOR_KEYS: Record<PropKind, readonly string[]> = {
   trash: ["prop_dumpster", "hf_city_slum_02", "prop_bin"],
 };
 
+/** Neon post-FX per hub ring — heat + RGB tint + mix amount. */
+export const ENV_LIGHT: Record<Env, { heat: number; tint: [number, number, number]; tintAmt: number }> = {
+  downtown: { heat: 0.14, tint: [1, 0.28, 0.95], tintAmt: 0.2 },
+  corporate: { heat: 0.08, tint: [0.28, 0.72, 1], tintAmt: 0.16 },
+  market: { heat: 0.12, tint: [1, 0.68, 0.28], tintAmt: 0.18 },
+  residential: { heat: 0.07, tint: [1, 0.58, 0.4], tintAmt: 0.14 },
+  industrial: { heat: 0.1, tint: [0.45, 1, 0.4], tintAmt: 0.16 },
+  slum: { heat: 0.16, tint: [1, 0.38, 0.22], tintAmt: 0.2 },
+  park: { heat: 0.05, tint: [0.35, 1, 0.55], tintAmt: 0.12 },
+  docks: { heat: 0.09, tint: [0.25, 0.8, 1], tintAmt: 0.17 },
+  undercity: { heat: 0.13, tint: [0.7, 0.35, 1], tintAmt: 0.2 },
+  arcology: { heat: 0.09, tint: [0.42, 0.65, 1], tintAmt: 0.16 },
+};
+
 export function firstKey(exists: (k: string) => boolean, keys: readonly string[], salt = 0): string | null {
   if (!keys.length) return null;
   for (let i = 0; i < keys.length; i++) {
