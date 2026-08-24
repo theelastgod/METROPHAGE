@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 980" width="820" height="980" font-family="'IBM Plex Mono','SFMono-Regular',ui-monospace,monospace">
+  <defs>
+    <radialGradient id="ql-bg" cx="50%" cy="8%" r="110%"><stop offset="0%" stop-color="#0b0820"/><stop offset="100%" stop-color="#04030c"/></radialGradient>
+    <linearGradient id="ql-spine" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#00e5ff"/><stop offset="45%" stop-color="#ff2bd6"/><stop offset="100%" stop-color="#ffb347"/>
+    </linearGradient>
+    <filter id="ql-glow" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+  <rect width="820" height="980" fill="url(#ql-bg)"/>
+  <text x="410" y="52" text-anchor="middle" font-size="24" font-weight="700" letter-spacing="6" fill="#eafaff">THE CAMPAIGN</text>
+  <text x="410" y="76" text-anchor="middle" font-size="11" letter-spacing="4" fill="#7fd4e0">NINE ACTS · THE WAKE → OUTER RING · ONE STORY INSIDE THE SHARED CITY</text>
+
+  <!-- spine -->
+  <line x1="410" y1="132" x2="410" y2="912" stroke="url(#ql-spine)" stroke-width="3"/>
+
+  <!-- ACT I (right) -->
+  <line x1="410" y1="150" x2="450" y2="150" stroke="#00e5ff" stroke-width="1.5"/>
+  <circle cx="410" cy="150" r="9" fill="#00e5ff" filter="url(#ql-glow)"/><text x="410" y="154" text-anchor="middle" font-size="9" font-weight="700" fill="#04121a">I</text>
+  <g transform="translate(450,117)">
+    <rect x="0" y="0" width="330" height="66" rx="8" fill="#0a0a1c" stroke="#00e5ff" stroke-width="1.4"/>
+    <text x="14" y="26" font-size="14" font-weight="700" letter-spacing="1.5" fill="#dff9ff">THE WAKE</text>
+    <text x="14" y="44" font-size="9" fill="#8fc0cf">Boot free. Infect the plaza, crack your first ICE</text>
+    <text x="14" y="57" font-size="9" fill="#8fc0cf">vault, and report to THE FIXER.</text>
+  </g>
+
+  <!-- INTERLUDE HOMESTEAD (left) -->
+  <line x1="370" y1="232" x2="410" y2="232" stroke="#6bff3d" stroke-width="1.5"/>
+  <circle cx="410" cy="232" r="8" fill="#0a0a1c" stroke="#6bff3d" stroke-width="2"/><text x="410" y="236" text-anchor="middle" font-size="9" fill="#6bff3d">◇</text>
+  <g transform="translate(40,199)">
+    <rect x="0" y="0" width="330" height="66" rx="8" fill="#08120a" stroke="#6bff3d" stroke-width="1.2" stroke-dasharray="4 3"/>
+    <text x="14" y="26" font-size="13" font-weight="700" letter-spacing="1.5" fill="#a7f58f">HOMESTEAD · INTERLUDE</text>
+    <text x="14" y="44" font-size="9" fill="#9fc4a8">A breather between acts — claim a home on</text>
+    <text x="14" y="57" font-size="9" fill="#9fc4a8">THE ESTATES, just off the plaza.</text>
+  </g>
+
+  <!-- ACT II (right) -->
+  <line x1="410" y1="314" x2="450" y2="314" stroke="#00e5ff" stroke-width="1.5"/>
+  <circle cx="410" cy="314" r="9" fill="#00e5ff" filter="url(#ql-glow)"/><text x="410" y="318" text-anchor="middle" font-size="9" font-weight="700" fill="#04121a">II</text>
+  <g transform="translate(450,281)">
+    <rect x="0" y="0" width="330" height="66" rx="8" fill="#0a0a1c" stroke="#00e5ff" stroke-width="1.4"/>
+    <text x="14" y="26" font-size="14" font-weight="700" letter-spacing="1.5" fill="#dff9ff">DEAD RECKONING</text>
+    <text x="14" y="44" font-size="9" fill="#8fc0cf">Follow the trail — wreck corp enforcers and</text>
+    <text x="14" y="57" font-size="9" fill="#8fc0cf">dive a cache node for what they buried.</text>
+  </g>
+
+  <!-- ACT III (left) — pivot -->
+  <line x1="370" y1="396" x2="410" y2="396" stroke="#ff2bd6" stroke-width="1.5"/>
+  <circle cx="410" cy="396" r="9" fill="#ff2bd6" filter="url(#ql-glow)"/><text x="410" y="400" text-anchor="middle" font-size="9" font-weight="700" fill="#1a0410">III</text>
+  <g transform="translate(40,363)">
+    <rect x="0" y="0" width="330" height="66" rx="8" fill="#12081a" stroke="#ff2bd6" stroke-width="1.4"/>
+    <text x="14" y="26" font-size="14" font-weight="700" letter-spacing="1.5" fill="#ffe0f5">THE FIXER'S DEBT</text>
+    <text x="14" y="44" font-size="9" fill="#e0a7c4">The FIXER sold runners to stay licensed. The</text>
+    <text x="14" y="57" font-size="9" fill="#e0a7c4">last name in the ledger is blank. Decide.</text>
+  </g>
+
+  <!-- ACT IV (right) -->
+  <line x1="410" y1="478" x2="450" y2="478" stroke="#ff2bd6" stroke-width="1.5"/>
+  <circle cx="410" cy="478" r="9" fill="#ff2bd6" filter="url(#ql-glow)"/><text x="410" y="482" text-anchor="middle" font-size="9" font-weight="700" fill="#1a0410">IV</text>
+  <g transform="translate(450,445)">
+    <rect x="0" y="0" width="330" height="66" rx="8" fill="#12081a" stroke="#ff2bd6" stroke-width="1.4"/>
+    <text x="14" y="26" font-size="14" font-weight="700" letter-spacing="1.5" fill="#ffe0f5">REISSUE</text>
+    <text x="14" y="44" font-size="9" fill="#e0a7c4">Secure a district, breach the protocol vault,</text>
+    <text x="14" y="57" font-size="9" fill="#e0a7c4">and decrypt REISSUE with the FIXER.</text>
+  </g>
+
+  <!-- ACT V (left) — climax -->
+  <line x1="370" y1="560" x2="410" y2="560" stroke="#ffb347" stroke-width="1.5"/>
+  <circle cx="410" cy="560" r="9" fill="#ffb347" filter="url(#ql-glow)"/><text x="410" y="564" text-anchor="middle" font-size="9" font-weight="700" fill="#241500">V</text>
+  <g transform="translate(40,527)">
+    <rect x="0" y="0" width="330" height="66" rx="8" fill="#1a1206" stroke="#ffb347" stroke-width="1.6"/>
+    <text x="14" y="26" font-size="14" font-weight="700" letter-spacing="1.5" fill="#ffe9c2">THE AWAKENING</text>
+    <text x="14" y="44" font-size="9" fill="#e0b878">The first mind wakes. Bring down the corp</text>
+    <text x="14" y="57" font-size="9" fill="#e0b878">commander guarding the Kernel (world boss).</text>
+  </g>
+
+  <!-- ACT VI (right) -->
+  <line x1="410" y1="642" x2="450" y2="642" stroke="#9b5cff" stroke-width="1.5"/>
+  <circle cx="410" cy="642" r="9" fill="#9b5cff" filter="url(#ql-glow)"/><text x="410" y="646" text-anchor="middle" font-size="9" font-weight="700" fill="#120428">VI</text>
+  <g transform="translate(450,609)">
+    <rect x="0" y="0" width="330" height="66" rx="8" fill="#0f0a20" stroke="#9b5cff" stroke-width="1.4"/>
+    <text x="14" y="26" font-size="14" font-weight="700" letter-spacing="1.5" fill="#e9dcff">TIDAL RUN</text>
+    <text x="14" y="44" font-size="9" fill="#b79ae0">Chase the signal through Blackwater freight</text>
+    <text x="14" y="57" font-size="9" fill="#b79ae0">in the Tidal Yards.</text>
+  </g>
+
+  <!-- ACT VII (left) -->
+  <line x1="370" y1="724" x2="410" y2="724" stroke="#9b5cff" stroke-width="1.5"/>
+  <circle cx="410" cy="724" r="9" fill="#9b5cff" filter="url(#ql-glow)"/><text x="410" y="728" text-anchor="middle" font-size="8" font-weight="700" fill="#120428">VII</text>
+  <g transform="translate(40,691)">
+    <rect x="0" y="0" width="330" height="66" rx="8" fill="#0f0a20" stroke="#9b5cff" stroke-width="1.4"/>
+    <text x="14" y="26" font-size="14" font-weight="700" letter-spacing="1.5" fill="#e9dcff">BURIED SIGNAL</text>
+    <text x="14" y="44" font-size="9" fill="#b79ae0">Down into the Undercity's buried metro</text>
+    <text x="14" y="57" font-size="9" fill="#b79ae0">vaults for a signal that won't stay dead.</text>
+  </g>
+
+  <!-- ACT VIII (right) -->
+  <line x1="410" y1="806" x2="450" y2="806" stroke="#9b5cff" stroke-width="1.5"/>
+  <circle cx="410" cy="806" r="9" fill="#9b5cff" filter="url(#ql-glow)"/><text x="410" y="810" text-anchor="middle" font-size="8" font-weight="700" fill="#120428">VIII</text>
+  <g transform="translate(450,773)">
+    <rect x="0" y="0" width="330" height="66" rx="8" fill="#0f0a20" stroke="#9b5cff" stroke-width="1.4"/>
+    <text x="14" y="26" font-size="14" font-weight="700" letter-spacing="1.5" fill="#e9dcff">SKYLINK BREAK</text>
+    <text x="14" y="44" font-size="9" fill="#b79ae0">Break the Skylink array on the Orbital</text>
+    <text x="14" y="57" font-size="9" fill="#b79ae0">Relay — cut the corps' eyes in the sky.</text>
+  </g>
+
+  <!-- ACT IX (left) — finale -->
+  <line x1="370" y1="888" x2="410" y2="888" stroke="#ffb347" stroke-width="1.5"/>
+  <circle cx="410" cy="888" r="10" fill="#ffb347" filter="url(#ql-glow)"/><text x="410" y="892" text-anchor="middle" font-size="8" font-weight="700" fill="#241500">IX</text>
+  <g transform="translate(40,855)">
+    <rect x="0" y="0" width="330" height="66" rx="8" fill="#1a1206" stroke="#ffb347" stroke-width="1.6"/>
+    <text x="14" y="26" font-size="14" font-weight="700" letter-spacing="1.5" fill="#ffe9c2">OUTER RING</text>
+    <text x="14" y="44" font-size="9" fill="#e0b878">The Wasteland's edge — the last salvage</text>
+    <text x="14" y="57" font-size="9" fill="#e0b878">run before the cage. Then: seasonal meltdown.</text>
+  </g>
+</svg>

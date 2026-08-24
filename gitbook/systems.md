@@ -1,0 +1,94 @@
+# City Systems
+
+Between the campaign and the districts, Metro City is a full MMO's worth of systems.
+Here's what lives in the hub and how it fits together.
+
+## The Forge (G)
+
+Turn loot into a build. The forge is where you **craft, upgrade, and reroll** gear —
+implants and chips carrying the modifiers that reshape your kit (HP, speed, HEAT gain,
+HEAT decay, and — at the top rarities — ultimate HEAT cost). This is how you tune the
+[HEAT loop](combat.md) to your class.
+
+## The Market (K)
+
+A **cross-zone player exchange**. List gear and goods for **credits**, or post **premium
+$METRO listings** that reach every combat zone. Credits stay local to your zone; $METRO
+listings are city-wide. It's the price-discovery layer for everything players make.
+
+## Trade
+
+Direct, **face-to-face player trades** with a confirm-on-both-sides handshake — offer
+credits and cores, both sides lock in, and the server executes it atomically. No
+scams via half-completed trades: it either happens for both of you or neither.
+
+## Guilds
+
+Bind up with other runners. Guilds bring **shared goals** and group identity into the
+district war — coordinated node-holding, weekly objectives, and a faction to run with
+beyond your class.
+
+## THE ESTATES — housing
+
+Your own plot off the plaza, introduced in the **HOMESTEAD** interlude. There are
+**50 False Addresses**. Owning one means **holding the matching Genesis Key NFT** on
+Solana — the Key is the deed, not a cosmetic sticker.
+
+* **Buy in-game** for **₵60,000** (and whatever the current listing is on resale).
+  The treasury sends you the Key. Link **Phantom** first; a device-save guest can
+  walk the street, not take a Key.
+* **Furniture and guestbook** stay in the city. Place pieces, take home buffs, leave
+  notes. That layer is off-chain even though the door is not.
+* **List / unlist / resale** happens at the kiosk. While a plot is for sale the Key
+  sits in treasury escrow so the deed and the listing can't drift.
+* If the Key moves off-world, the street still shows the house — furniture edits and
+  buffs wait until the deed matches the runner at the door.
+
+The **GENESIS // KEY** wardrobe mark is granted if your wallet holds any Key.
+
+## PvP — the Crucible
+
+The **PvP Crucible** is opt-in arena combat with **$METRO buy-ins**. Lock a buy-in on
+entry, and **kills loot the pot**. Escrow is handled atomically by the server: your
+stake is safe outside the arena, the elimination transfer is clean, and a crash refunds
+you — the buy-in economy can't be duped.
+
+## Bosses, elites & bounties
+
+- **World bosses** walk the districts — named, telegraphed, with title cards and HP bars.
+- **Elites** are tougher roaming variants that drop better loot.
+- **Bounties** and the daily **HIGH-VALUE TARGET** put a mark (and a reward) on specific
+  kills.
+
+## NPC services — rest, patches, meals & the pier
+
+The city's NPCs sell more than talk. The **hotel keeper** (in the hotel itself — every
+service checks that the contact is actually in your zone) sells a **₵35 rest**: full
+heal, HEAT cleared, on a 120-second cooldown. Medics offer paid and charity **patches**,
+bar keepers serve **meals**, and down at THE DOCKS the **porter** will let you cast a
+line off the pier — fishing pays in stories and exploration XP, never credits. Each
+district also keeps one permanently **shuttered storefront**; knock if you want, but
+some businesses in Metro City stayed dead.
+
+## Contracts & dailies
+
+**THE FIXER** hands out **daily contracts** alongside the campaign — repeatable objectives
+that keep credits and progression flowing between story beats.
+
+## Memory fragments
+
+Scattered across the ICE Vaults are **16 authored memory fragments**, each **claim-once
+per player**. They're both a collectible and the connective tissue of the story — pieces
+of who you were before you were repossessed. → [Lore & Factions](lore.md)
+
+## The weekly vault (PROVING)
+
+A weekly high-stakes objective for players chasing the top of the ladder — the endgame's
+recurring test on top of the campaign and the district war.
+
+---
+
+*Everything here is server-authoritative: drops, prices, trades, escrow, and buffs all
+resolve on the server, so the systems are safe to build a real economy on. Estate deeds
+are the exception that proves the rule — the NFT is the owner; the city caches furniture
+on top of it.*
