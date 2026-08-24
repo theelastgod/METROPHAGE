@@ -19,6 +19,13 @@ jobs:
       - name: Install
         run: npm ci
 
+      - name: Install server deps
+        working-directory: server
+        run: npm ci
+
+      - name: Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
       - name: Unit tests
         run: npx vitest run
 
