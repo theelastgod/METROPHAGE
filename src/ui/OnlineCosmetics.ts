@@ -10,17 +10,20 @@ export default class OnlineCosmetics extends Modal {
   private owned: string[] = [];
   private equipped: string | null = null;
   private credits = 0;
+  private genesisTokens: number[] = [];
 
-  setState(owned: string[], equipped: string | null, credits: number) {
+  setState(owned: string[], equipped: string | null, credits: number, genesisTokens?: number[]) {
     this.owned = owned ?? [];
     this.equipped = equipped;
     this.credits = credits;
+    if (genesisTokens) this.genesisTokens = genesisTokens;
     if (this.open) this.build();
   }
-  toggle(owned: string[], equipped: string | null, credits: number) {
+  toggle(owned: string[], equipped: string | null, credits: number, genesisTokens?: number[]) {
     this.owned = owned ?? [];
     this.equipped = equipped;
     this.credits = credits;
+    if (genesisTokens) this.genesisTokens = genesisTokens;
     this.toggleOpen();
   }
 
@@ -77,7 +80,7 @@ export default class OnlineCosmetics extends Modal {
       const ry = y + uiDim(56) + i * rowH;
       const owns = this.owned.includes(c.id);
       const isEq = this.equipped === c.id;
-      const locked = !!c.nft && !METRO_MAINNET_ARMED;
+      const locked = c.id === "genesis" ? false : !!c.nft && !METRO_MAINNET_ARMED;
       g.fillStyle(isEq ? 0x231a3a : 0x12102a, 0.92).fillRect(x + uiDim(18), ry, w - uiDim(36), cardH);
       g.lineStyle(isEq ? uiDim(2) : uiDim(1.4), isEq ? 0x39ff88 : c.swatch, locked ? 0.4 : 1).strokeRect(x + uiDim(18), ry, w - uiDim(36), cardH);
       g.fillStyle(c.swatch, locked ? 0.18 : 0.35).fillRect(x + uiDim(28), ry + uiDim(12), chip, chip);
@@ -93,13 +96,26 @@ export default class OnlineCosmetics extends Modal {
             .setAlpha(locked ? 0.4 : 1),
         );
       }
-      tx(`${isEq ? "✓ " : ""}${c.name}`, x + uiDim(66), ry + uiDim(10), 14, locked ? "#5a6172" : "#" + (c.swatch & 0xffffff).toString(16).padStart(6, "0"), true);
-      tx(c.desc, x + uiDim(66), ry + uiDim(29), 11, locked ? "#4a5266" : "#9aa3b2");
+      const genesisHeld = c.id === "genesis" && this.genesisTokens.length > 0;
+      const genesisLock = c.id === "genesis" && !owns && !genesisHeld;
+      const rowLocked = c.id === "genesis" ? genesisLock : locked;
+      tx(`${isEq ? "✓ " : ""}${c.name}`, x + uiDim(66), ry + uiDim(10), 14, rowLocked ? "#5a6172" : "#" + (c.swatch & 0xffffff).toString(16).padStart(6, "0"), true);
+      const desc =
+        c.id === "genesis" && this.genesisTokens.length
+          ? `Keys ${this.genesisTokens.map((n) => String(n).padStart(2, "0")).join(" · ")}`
+          : c.desc;
+      tx(desc, x + uiDim(66), ry + uiDim(29), 11, rowLocked ? "#4a5266" : "#9aa3b2");
       const provenance = c.provenance.length > 62 ? c.provenance.slice(0, 61) + "…" : c.provenance;
-      tx(provenance, x + uiDim(66), ry + uiDim(43), 8, locked ? "#3c4252" : "#706982");
+      tx(provenance, x + uiDim(66), ry + uiDim(43), 8, rowLocked ? "#3c4252" : "#706982");
 
       const bx = x + w - uiDim(18) - uiDim(136);
-      if (locked) {
+      if (c.id === "genesis" && !owns) {
+        if (genesisHeld) {
+          btn(bx, ry + uiDim(12), uiDim(136), "CLAIM KEY", COLORS.neonGreen, true, () => this.onAction?.("buy", c.id));
+        } else {
+          tx("HOLD A KEY", x + w - uiDim(26), ry + uiDim(19), 12, "#5a6172", false, 1);
+        }
+      } else if (locked && c.id !== "genesis") {
         tx("🔒 NFT — MAINNET", x + w - uiDim(26), ry + uiDim(19), 12, "#5a6172", false, 1);
       } else if (!owns) {
         btn(bx, ry + uiDim(12), uiDim(136), `BUY ₵${c.price}`, COLORS.neonGreen, this.credits >= c.price, () => this.onAction?.("buy", c.id));

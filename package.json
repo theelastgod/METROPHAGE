@@ -32,6 +32,7 @@
     "scan:dead": "node tools/dead-code-scan.mjs",
     "sim:economy": "node tools/economy-sim.mjs",
     "metro:seed": "node tools/metro-seed.mjs",
+    "mint:genesis-keys": "node tools/mint-genesis-keys.mjs",
     "report:economy": "node tools/economy-report.mjs",
     "gen:music": "node tools/gen-music.mjs",
     "gen:music:local": "node tools/gen-music-local.mjs"

@@ -993,6 +993,21 @@ export default {
 
     if (url.pathname.startsWith("/metro/")) return handleMetro(url, req, env);
 
+    // Reconcile D1 estate owner to on-chain Genesis Key holder (ops / cron).
+    if (url.pathname === "/estates/sync" && req.method === "POST") {
+      const secret = (env as { METRO_OPS_SECRET?: string }).METRO_OPS_SECRET;
+      if (!secret || req.headers.get("x-metro-ops") !== secret) {
+        return json({ ok: false, reason: "forbidden" }, 403);
+      }
+      try {
+        const { reconcileEstates } = await import("./estatesNft");
+        const r = await reconcileEstates(env);
+        return json({ ok: true, ...r });
+      } catch (e) {
+        return json({ ok: false, reason: String((e as Error)?.message ?? e).slice(0, 160) }, 500);
+      }
+    }
+
     if (url.pathname === "/ws") {
       // Load-aware instance pick for hot zones; interiors stay single-DO.
       // Client may pass ?inst=N for sticky reconnect (honored under hard cap).
@@ -1026,7 +1041,8 @@ export default {
   /**
    * Cron (every 5m):
    *  - reclaim abandoned $METRO cash-out claims
-   *  - refresh EVM $METRO market USD when the quote is older than 30 minutes
+   *  - refresh Solana $METRO oracle
+   *  - reconcile Genesis Key on-chain owners → D1
    * Never touches zone DO ticks.
    */
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
@@ -1056,6 +1072,13 @@ export default {
           );
         } catch (e) {
           console.error("[cron] metro price refresh failed", e);
+        }
+        try {
+          const { reconcileEstates } = await import("./estatesNft");
+          const r = await reconcileEstates(env);
+          if (r.moved) console.log(`[cron] genesis keys reconciled checked=${r.checked} moved=${r.moved}`);
+        } catch (e) {
+          console.error("[cron] genesis keys reconcile failed", e);
         }
       })(),
     );

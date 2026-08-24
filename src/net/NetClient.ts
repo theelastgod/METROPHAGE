@@ -295,8 +295,22 @@ export default class NetClient {
         price: number;
         furniture: EstateFurniture[];
         guests: { n: string; at: number; s: string }[];
+        keyName?: string;
+        token?: number | null;
+        deed?: "unminted" | "in_game" | "off_world" | "marketplace";
+        readOnly?: boolean;
       } = null; // current home (est{K})
-  estatesDir: { i: number; owner: string | null; name: string | null; forSale: boolean; price: number; furn: number; guests: number }[] = []; // street-wide ownership (THE ESTATES)
+  estatesDir: {
+    i: number;
+    owner: string | null;
+    name: string | null;
+    forSale: boolean;
+    price: number;
+    furn: number;
+    guests: number;
+    keyName?: string;
+    deed?: "unminted" | "in_game" | "off_world" | "marketplace";
+  }[] = []; // street-wide ownership (THE ESTATES)
   equipped: Item[] = []; // currently equipped items (one per slot), server-authoritative
   maxHp = PLAYER_HP; // derived from equipped +HP mods
   trade: null | {
@@ -383,6 +397,7 @@ export default class NetClient {
   onContracts?: () => void;
   cosmeticsOwned: string[] = [];
   cosmeticEquipped: string | null = null;
+  genesisTokens: number[] = [];
   onCosmetics?: () => void;
   bounty: { id: string; name: string; desc: string; objective: string; count: number; progress: number } | null = null;
   onBounty?: () => void;
@@ -1594,7 +1609,20 @@ export default class NetClient {
       this.stash = msg.items;
       this.onStash?.();
     } else if (msg.t === "estate") {
-      this.estate = { id: msg.id, owner: msg.owner, ownerName: msg.ownerName, mine: msg.mine, forSale: msg.forSale, price: msg.price, furniture: msg.furniture, guests: msg.guests ?? [] };
+      this.estate = {
+        id: msg.id,
+        owner: msg.owner,
+        ownerName: msg.ownerName,
+        mine: msg.mine,
+        forSale: msg.forSale,
+        price: msg.price,
+        furniture: msg.furniture,
+        guests: msg.guests ?? [],
+        keyName: msg.keyName,
+        token: msg.token,
+        deed: msg.deed,
+        readOnly: msg.readOnly,
+      };
       this.onEstate?.();
     } else if (msg.t === "estates_dir") {
       this.estatesDir = msg.list;
@@ -1652,6 +1680,7 @@ export default class NetClient {
     } else if (msg.t === "cosmetics") {
       this.cosmeticsOwned = msg.owned;
       this.cosmeticEquipped = msg.equipped;
+      this.genesisTokens = msg.genesisTokens ?? [];
       this.onCosmetics?.();
     } else if (msg.t === "market") {
       this.marketListings = msg.listings;

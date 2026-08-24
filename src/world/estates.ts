@@ -18,8 +18,9 @@ import {
 import type { Rect } from "../game/districts";
 
 /** How many purchasable homes line the estates street. Grown by APPENDING blocks east —
- *  plot ids are persisted in D1 (ownership rows), so existing ids must NEVER renumber. */
-export const ESTATE_COUNT = 20;
+ *  plot ids are persisted in D1 (ownership rows), so existing ids must NEVER renumber.
+ *  50 plots so Genesis Key token n maps to plot n-1 / zone est{n-1}. */
+export const ESTATE_COUNT = 50;
 
 export interface EstatePlot {
   id: number;
@@ -31,11 +32,12 @@ const STREET_H = 26;
 const PLOT_W = 8; // facade width
 const PLOT_GAP = 2;
 const PLOT_X0 = 3;
-/** Street blocks: the legacy block (ids 0-5 top / 6-11 bottom) + the east extension
- *  (ids 12-15 top / 16-19 bottom). Appending a future block = one more entry here. */
+/** Street blocks: legacy (0–11) + east (12–19) + Genesis Keys extension (20–49).
+ *  Appending a future block = one more entry here — never renumber existing ids. */
 const BLOCKS = [
   { x0: PLOT_X0, plots: 6, topIdBase: 0, bottomIdBase: 6 },
   { x0: PLOT_X0 + 6 * (PLOT_W + PLOT_GAP), plots: 4, topIdBase: 12, bottomIdBase: 16 },
+  { x0: PLOT_X0 + 10 * (PLOT_W + PLOT_GAP), plots: 15, topIdBase: 20, bottomIdBase: 35 },
 ];
 const STREET_W = BLOCKS[BLOCKS.length - 1].x0 + BLOCKS[BLOCKS.length - 1].plots * (PLOT_W + PLOT_GAP) + 2;
 
@@ -220,7 +222,7 @@ export function furnitureUpgradeCost(
  * Call it ₵8–12k/hr engaged, ~₵4k/hr for a casual runner with no guild or bounties.
  * 60,000 ⇒ ~5–7.5h engaged, ~15h casual. Raising this needs no migration: an unowned
  * plot always quotes the constant (`e.owner ? e.price : ESTATE_BASE_PRICE`), never a
- * stale D1 row, so all 20 plots reprice the moment this lands.
+ * stale D1 row, so all 50 plots reprice the moment this lands.
  *
  * Boss bounties are durably limited to one payout per job per 24 hours, so their
  * rewards cannot collapse this ownership horizon through respawn farming.
