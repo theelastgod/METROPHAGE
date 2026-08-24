@@ -54,10 +54,10 @@ METRO_SETTLEMENT = "solana"
 # Network target: Solana mainnet-beta. Mint CA intentionally empty until go-live.
 # When CA is ready: wrangler secret put METRO_MINT (base58, never lowercased)
 # + METRO_TREASURY_SECRET (base64 64-byte keypair), then METRO_MAINNET_ARMED=1
-# Genesis Keys: ops mint via `npm run mint:genesis-keys`, stamp estates.nft from
-# marketing/false-addresses/stamp-estates.sql. Unsold keys stay in the treasury.
 # and rebuild client with VITE_METRO_MINT. Real value cannot move on mainnet
 # until METRO_MAINNET_ARMED=1.
+# Genesis Keys: `npm run mint:genesis-keys`, stamp estates.nft from
+# marketing/false-addresses/stamp-estates.sql. Unsold keys stay in the treasury.
 METRO_CLUSTER = "mainnet-beta"
 METRO_RPC = "https://api.mainnet-beta.solana.com"
 # Kill switches — set to "1" during an incident, redeploy (or wrangler secret/var):

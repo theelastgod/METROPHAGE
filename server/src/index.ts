@@ -994,7 +994,11 @@ export default {
     if (url.pathname.startsWith("/metro/")) return handleMetro(url, req, env);
 
     // Reconcile D1 estate owner to on-chain Genesis Key holder (ops / cron).
-    if (url.pathname === "/estates/sync" && (req.method === "GET" || req.method === "POST")) {
+    if (url.pathname === "/estates/sync" && req.method === "POST") {
+      const secret = (env as { METRO_OPS_SECRET?: string }).METRO_OPS_SECRET;
+      if (!secret || req.headers.get("x-metro-ops") !== secret) {
+        return json({ ok: false, reason: "forbidden" }, 403);
+      }
       try {
         const { reconcileEstates } = await import("./estatesNft");
         const r = await reconcileEstates(env);

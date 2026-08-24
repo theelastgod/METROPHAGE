@@ -36,6 +36,7 @@ describe("Genesis Keys catalog", () => {
     expect(classifyEstateDeed({ mint, chainOwner: player, treasury, ownerWallet: "other", marketplace: false })).toBe("off_world");
     expect(classifyEstateDeed({ mint, chainOwner: player, treasury, ownerWallet: player, marketplace: true })).toBe("marketplace");
     expect(classifyEstateDeed({ mint: null, chainOwner: null, treasury, ownerWallet: player, marketplace: false })).toBe("unminted");
+    expect(classifyEstateDeed({ mint, chainOwner: null, treasury, ownerWallet: player, marketplace: false })).toBe("off_world");
     expect(walletPubkeyFromPlayerId(`w:${player}`)).toBe(player);
     expect(walletPubkeyFromPlayerId("g:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")).toBeNull();
   });

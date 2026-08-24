@@ -118,7 +118,7 @@ export function classifyEstateDeed(args: {
   if (!mint) return "unminted";
   if (args.marketplace) return "marketplace";
   const chain = (args.chainOwner || "").trim();
-  if (!chain) return "in_game";
+  if (!chain) return "off_world";
   const treas = (args.treasury || "").trim();
   const owner = (args.ownerWallet || "").trim();
   // Case-sensitive base58 — never fold.

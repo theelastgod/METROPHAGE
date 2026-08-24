@@ -72,7 +72,7 @@ function createMetadataV3Ix(payer, mint, updateAuthority, name, symbol, uri, col
       ? Buffer.concat([Buffer.from([1]), Buffer.from([0]), Buffer.alloc(8)]) // Some(V1 { size: 0 }) — sized collection
       : Buffer.from([0]),
   ];
-  if (isCollection) data[data.length - 1].writeBigUInt64LE(50n, 1);
+  if (isCollection) data[data.length - 1].writeBigUInt64LE(50n, 2);
   return {
     metadata,
     keys: [
@@ -157,6 +157,7 @@ async function mintOne(name, symbol, uri, collectionMint, isCollection) {
   const ata = await getOrCreateAssociatedTokenAccount(conn, treasury, mint, treasury.publicKey);
   await mintTo(conn, treasury, mint, ata.address, treasury, 1);
   await setAuthority(conn, treasury, mint, treasury.publicKey, AuthorityType.MintTokens, null);
+  await setAuthority(conn, treasury, mint, treasury.publicKey, AuthorityType.FreezeAccount, null);
   const mdIx = createMetadataV3Ix(treasury.publicKey, mint, treasury.publicKey, name, symbol, uri, collectionMint, isCollection);
   const edIx = createMasterEditionV3Ix(treasury.publicKey, mint, treasury.publicKey, mdIx.metadata);
   const tx = new Transaction().add(
@@ -165,11 +166,7 @@ async function mintOne(name, symbol, uri, collectionMint, isCollection) {
     { keys: mdIx.keys, programId: mdIx.programId, data: mdIx.data },
     { keys: edIx.keys, programId: edIx.programId, data: edIx.data },
   );
-  try {
-    await sendAndConfirmTransaction(conn, tx, [treasury], { commitment: "confirmed" });
-  } catch (e) {
-    console.warn(`metadata ix failed for ${name}: ${(e && e.message) || e} — SPL 1/1 still minted to treasury`);
-  }
+  await sendAndConfirmTransaction(conn, tx, [treasury], { commitment: "confirmed" });
   return mint.toBase58();
 }
 
@@ -209,7 +206,10 @@ const payload = {
   mintedAt: Date.now(),
 };
 writeFileSync(outPath, JSON.stringify(payload, null, 2));
-const sqlLines = tokens.map((t) => `UPDATE estates SET nft = '${t.mint}', token = ${t.token} WHERE id = '${t.zone}';`);
+const sqlLines = tokens.map(
+  (t) =>
+    `INSERT INTO estates (id, nft, token, price, for_sale, furniture, guestbook, updated) VALUES ('${t.zone}', '${t.mint}', ${t.token}, 60000, 1, '[]', '[]', 0) ON CONFLICT(id) DO UPDATE SET nft=excluded.nft, token=excluded.token;`,
+);
 writeFileSync(join(root, "marketing/false-addresses/stamp-estates.sql"), sqlLines.join("\n") + "\n");
 console.log(`Wrote ${outPath}`);
 console.log("Stamp D1 with marketing/false-addresses/stamp-estates.sql (wrangler d1 execute).");

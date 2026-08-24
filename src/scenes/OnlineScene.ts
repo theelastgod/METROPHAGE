@@ -2185,7 +2185,7 @@ export default class OnlineScene extends Phaser.Scene {
       }
       if ((e.key === "b" || e.key === "B") && this.homeIdx >= 0 && !this.homeEditing) {
         const es = this.net.estate;
-        if (es && (!es.owner || es.forSale) && !es.mine) this.net.estateBuy();
+        if (es && (!es.owner || es.forSale) && !es.mine && !es.readOnly) this.net.estateBuy();
         return;
       }
       if ((e.key === "g" || e.key === "G") && this.homeIdx >= 0 && !this.homeEditing) {

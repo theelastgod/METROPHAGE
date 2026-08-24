@@ -234,10 +234,18 @@ async function sendNftTx(
       try {
         await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "confirmed");
       } catch {
-        /* confirm may lag; caller re-reads owner */
+        /* fall through to owner poll */
       }
-      console.log(`[gkey] transfer mint=${mint.toBase58()} → ${toOwner.toBase58()} sig=${sig}`);
-      return { ok: true, sig, owner: toOwner.toBase58() };
+      const want = toOwner.toBase58();
+      for (let i = 0; i < 8; i++) {
+        const own = await splOwner(conn, mint);
+        if (own === want) {
+          console.log(`[gkey] transfer mint=${mint.toBase58()} → ${want} sig=${sig}`);
+          return { ok: true, sig, owner: want };
+        }
+        await new Promise((r) => setTimeout(r, 400));
+      }
+      return { ok: false, reason: "deed transfer not confirmed" };
     } catch (e) {
       lastReason = String((e as Error)?.message ?? e).slice(0, 160);
       if (!isBlockhashGone(e) && attempt === SEND_ATTEMPTS - 1) break;
@@ -288,6 +296,16 @@ export async function tokensHeldInGame(db: D1Database, playerId: string): Promis
 export async function grantGenesisIfHolder(db: D1Database, playerId: string): Promise<number[]> {
   const tokens = await tokensHeldInGame(db, playerId);
   if (tokens.length) await grantGenesisCosmetic(db, playerId);
+  else {
+    try {
+      await db
+        .prepare("DELETE FROM player_cosmetics WHERE player = ? AND cosmetic_id = ?")
+        .bind(playerId, GENESIS_COSMETIC_ID)
+        .run();
+    } catch {
+      /* pre-migration */
+    }
+  }
   return tokens;
 }
 

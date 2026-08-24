@@ -6299,7 +6299,7 @@ export class WorldDO {
         furn: count(r?.furniture),
         guests: count(r?.guestbook),
         keyName: key?.name,
-        deed: off ? ("marketplace" as const) : (r?.nft ? "in_game" : "unminted"),
+        deed: off ? ("marketplace" as const) : r?.nft ? "in_game" : "unminted",
       });
     }
     this.send(ws, { t: "estates_dir", list });
@@ -6317,7 +6317,7 @@ export class WorldDO {
     try {
       await this.env.DB.prepare(
         "INSERT INTO estates (id, owner, owner_name, price, for_sale, furniture, guestbook, updated, nft, token) VALUES (?,?,?,?,?,?,?,?,?,?) " +
-          "ON CONFLICT(id) DO UPDATE SET owner=excluded.owner, owner_name=excluded.owner_name, price=excluded.price, for_sale=excluded.for_sale, furniture=excluded.furniture, guestbook=excluded.guestbook, updated=excluded.updated",
+          "ON CONFLICT(id) DO UPDATE SET price=excluded.price, for_sale=excluded.for_sale, furniture=excluded.furniture, guestbook=excluded.guestbook, updated=excluded.updated",
       )
         .bind(
           this.zoneName,
@@ -6335,7 +6335,7 @@ export class WorldDO {
     } catch {
       await this.env.DB.prepare(
         "INSERT INTO estates (id, owner, owner_name, price, for_sale, furniture, guestbook, updated) VALUES (?,?,?,?,?,?,?,?) " +
-          "ON CONFLICT(id) DO UPDATE SET owner=excluded.owner, owner_name=excluded.owner_name, price=excluded.price, for_sale=excluded.for_sale, furniture=excluded.furniture, guestbook=excluded.guestbook, updated=excluded.updated",
+          "ON CONFLICT(id) DO UPDATE SET price=excluded.price, for_sale=excluded.for_sale, furniture=excluded.furniture, guestbook=excluded.guestbook, updated=excluded.updated",
       )
         .bind(this.zoneName, e.owner, e.ownerName, e.price, e.forSale ? 1 : 0, JSON.stringify(e.furniture), JSON.stringify(e.guests), Date.now())
         .run();
@@ -6393,6 +6393,20 @@ export class WorldDO {
         p.dirty = true;
         void this.upsertPlayer(p); // failure direction is under-pay, never a mint
       };
+      const revertClaimThenRefund = async () => {
+        try {
+          const rev = await this.env.DB.prepare(
+            "UPDATE estates SET owner=?, owner_name=?, for_sale=1, updated=? WHERE id=? AND owner=?",
+          )
+            .bind(prevOwner, prevOwner ? e.ownerName : null, Date.now(), this.zoneName, p.id)
+            .run();
+          if ((rev.meta.changes ?? 0) === 0) return sys("estate registry conflict — contact ops");
+        } catch {
+          return sys("estate registry unavailable — try again");
+        }
+        refundDurably();
+        return null;
+      };
       try {
         let won = false;
         if (prevOwner) {
@@ -6437,8 +6451,8 @@ export class WorldDO {
           const nft = await import("./estatesNft");
           const treas = nft.treasuryFromSecret(this.env.METRO_TREASURY_SECRET);
           if (!treas) {
-            refundDurably();
-            return sys("Check back later.");
+            const msg = await revertClaimThenRefund();
+            return msg ?? sys("Check back later.");
           }
           const moved = await nft.transferKeyToWallet(
             { rpc: nft.defaultRpc(this.env), treasurySecretB64: this.env.METRO_TREASURY_SECRET! },
@@ -6446,25 +6460,15 @@ export class WorldDO {
             buyerWallet,
           );
           if (!moved.ok) {
-            // Revert the D1 claim — ₵ buy must not stick without the deed moving.
-            try {
-              await this.env.DB.prepare(
-                "UPDATE estates SET owner=?, owner_name=?, for_sale=1, updated=? WHERE id=? AND owner=?",
-              )
-                .bind(prevOwner, prevOwner ? e.ownerName : null, Date.now(), this.zoneName, p.id)
-                .run();
-            } catch {
-              /* revert best-effort; refund still runs */
-            }
-            refundDurably();
-            return sys(moved.reason || "Check back later.");
+            const msg = await revertClaimThenRefund();
+            return msg ?? sys(moved.reason || "Check back later.");
           }
           e.chainOwner = buyerWallet;
           e.deed = "in_game";
           e.deedAt = Date.now();
         } catch (err) {
-          refundDurably();
-          return sys(String((err as Error)?.message ?? err).slice(0, 120) || "Check back later.");
+          const msg = await revertClaimThenRefund();
+          return msg ?? sys(String((err as Error)?.message ?? err).slice(0, 120) || "Check back later.");
         }
       }
       if (!prevOwner) this.eco("burn", "estates", price); // resale is a transfer (mailbox), not a burn
@@ -6507,10 +6511,11 @@ export class WorldDO {
         const nft = await import("./estatesNft");
         const treas = nft.treasuryFromSecret(this.env.METRO_TREASURY_SECRET);
         if (!treas) return sys("Check back later.");
-        if (e.chainOwner && e.chainOwner !== treas.pubkey && e.chainOwner !== walletPubkeyFromPlayerId(p.id)) {
+        if (!e.chainOwner) return sys("Check back later.");
+        if (e.chainOwner !== treas.pubkey && e.chainOwner !== walletPubkeyFromPlayerId(p.id)) {
           return sys("deed moved off-world");
         }
-        if (e.chainOwner && e.chainOwner !== treas.pubkey) {
+        if (e.chainOwner !== treas.pubkey) {
           return sys("send this Genesis Key to the city vault to list — Worker escrow cannot pull from Phantom");
         }
       }
@@ -6529,6 +6534,7 @@ export class WorldDO {
         const nft = await import("./estatesNft");
         const treas = nft.treasuryFromSecret(this.env.METRO_TREASURY_SECRET);
         const dest = walletPubkeyFromPlayerId(p.id)!;
+        if (!e.chainOwner) return sys("Check back later.");
         if (treas && e.nft && e.chainOwner === treas.pubkey) {
           const moved = await nft.transferKeyToWallet(
             { rpc: nft.defaultRpc(this.env), treasurySecretB64: this.env.METRO_TREASURY_SECRET! },
@@ -6583,6 +6589,9 @@ export class WorldDO {
     } else if (msg.action === "sign") {
       // visitors sign the book; the stamp is server-chosen so nothing player-written persists.
       // Tip: visitor burns ₵25 (sink); host mails ₵15 (partial transfer, net burn ₵10).
+      if (e.deed === "off_world" || e.deed === "marketplace") {
+        return sys(e.deed === "marketplace" ? "OFF-WORLD HOLDING" : "deed moved off-world");
+      }
       if (!e.owner) return sys("nobody lives here yet — nothing to sign");
       if (e.owner === p.id) return sys("it's your own guestbook, choom");
       const TIP = 25;
