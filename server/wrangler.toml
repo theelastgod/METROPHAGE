@@ -56,6 +56,8 @@ METRO_SETTLEMENT = "solana"
 # + METRO_TREASURY_SECRET (base64 64-byte keypair), then METRO_MAINNET_ARMED=1
 # and rebuild client with VITE_METRO_MINT. Real value cannot move on mainnet
 # until METRO_MAINNET_ARMED=1.
+# Genesis Keys: `npm run mint:genesis-keys`, stamp estates.nft from
+# marketing/false-addresses/stamp-estates.sql. Unsold keys stay in the treasury.
 METRO_CLUSTER = "mainnet-beta"
 METRO_RPC = "https://api.mainnet-beta.solana.com"
 # Kill switches — set to "1" during an incident, redeploy (or wrangler secret/var):

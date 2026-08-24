@@ -1,0 +1,135 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 780" width="1200" height="780" font-family="'IBM Plex Mono','SFMono-Regular',ui-monospace,monospace">
+  <defs>
+    <radialGradient id="cc-bg" cx="50%" cy="0%" r="100%">
+      <stop offset="0%" stop-color="#0b0820"/><stop offset="100%" stop-color="#04030c"/>
+    </radialGradient>
+    <filter id="cc-glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect width="1200" height="780" fill="url(#cc-bg)"/>
+  <text x="40" y="52" font-size="26" font-weight="700" letter-spacing="7" fill="#eafaff">THE FOUR CLASSES</text>
+  <text x="40" y="76" font-size="11" letter-spacing="4" fill="#7fd4e0">PRIMARY · Q ABILITY · E ULTIMATE (HEAT-GATED) · EACH KIT IS SERVER-VALIDATED</text>
+
+  <!-- ============ METROPHAGE ============ -->
+  <g transform="translate(40,104)">
+    <rect x="0" y="0" width="548" height="312" rx="12" fill="#08120a" stroke="#6bff3d" stroke-width="1.6"/>
+    <rect x="0" y="0" width="548" height="46" rx="12" fill="#6bff3d" fill-opacity="0.12"/>
+    <text x="20" y="30" font-size="22" font-weight="700" letter-spacing="3" fill="#8fff5f" filter="url(#cc-glow)">METROPHAGE</text>
+    <text x="530" y="30" text-anchor="end" font-size="10" letter-spacing="2" fill="#6bff3d">ELEMENT · BURN</text>
+    <text x="20" y="70" font-size="10" letter-spacing="1.5" fill="#a7c7b0">PLAGUE-BRINGER · AREA DENIAL · DAMAGE-OVER-TIME</text>
+    <!-- stats -->
+    <text x="20" y="98" font-size="10" fill="#7f8f86">HP</text>
+    <rect x="60" y="90" width="200" height="8" rx="4" fill="#132018"/><rect x="60" y="90" width="183" height="8" rx="4" fill="#6bff3d"/>
+    <text x="270" y="98" font-size="10" fill="#cfe8d6">110</text>
+    <text x="320" y="98" font-size="10" fill="#7f8f86">SPD</text>
+    <rect x="360" y="90" width="140" height="8" rx="4" fill="#132018"/><rect x="360" y="90" width="120" height="8" rx="4" fill="#6bff3d" fill-opacity="0.7"/>
+    <text x="508" y="98" font-size="10" fill="#cfe8d6">196</text>
+    <!-- kit -->
+    <g transform="translate(20,124)" font-size="11">
+      <rect x="0" y="0" width="508" height="52" rx="7" fill="#0c1610" stroke="#243c2c"/>
+      <text x="12" y="20" font-weight="700" fill="#8fff5f" letter-spacing="1">▸ CONTAGION SPRAY</text><text x="150" y="20" fill="#7f8f86" letter-spacing="1">PRIMARY</text>
+      <text x="12" y="40" fill="#b7d0bf">Short-range cone of infectious pellets.</text>
+    </g>
+    <g transform="translate(20,182)" font-size="11">
+      <rect x="0" y="0" width="508" height="52" rx="7" fill="#0c1610" stroke="#243c2c"/>
+      <text x="12" y="20" font-weight="700" fill="#8fff5f" letter-spacing="1">Q  INFECTION POD</text><text x="150" y="20" fill="#7f8f86" letter-spacing="1">CD 4.5s</text>
+      <text x="12" y="40" fill="#b7d0bf">Lob a pod that bursts into a lingering infection pool.</text>
+    </g>
+    <g transform="translate(20,240)" font-size="11">
+      <rect x="0" y="0" width="508" height="52" rx="7" fill="#101c12" stroke="#3a6b45"/>
+      <text x="12" y="20" font-weight="700" fill="#c9ffb0" letter-spacing="1">E  CONTAGION BLOOM</text><text x="170" y="20" fill="#6bff3d" letter-spacing="1">ULTIMATE</text>
+      <text x="12" y="40" fill="#b7d0bf">Wide AoE burst + heavy damage-over-time.</text>
+    </g>
+  </g>
+
+  <!-- ============ K-GUERILLA ============ -->
+  <g transform="translate(612,104)">
+    <rect x="0" y="0" width="548" height="312" rx="12" fill="#15060f" stroke="#ff2d9b" stroke-width="1.6"/>
+    <rect x="0" y="0" width="548" height="46" rx="12" fill="#ff2d9b" fill-opacity="0.12"/>
+    <text x="20" y="30" font-size="22" font-weight="700" letter-spacing="3" fill="#ff5cb0" filter="url(#cc-glow)">K-GUERILLA</text>
+    <text x="530" y="30" text-anchor="end" font-size="10" letter-spacing="2" fill="#ff2d9b">ELEMENT · KINETIC</text>
+    <text x="20" y="70" font-size="10" letter-spacing="1.5" fill="#e0a7c4">SHOCK TROOPER · BURST DAMAGE · MOBILITY</text>
+    <text x="20" y="98" font-size="10" fill="#8f7f88">HP</text>
+    <rect x="60" y="90" width="200" height="8" rx="4" fill="#20101a"/><rect x="60" y="90" width="167" height="8" rx="4" fill="#ff2d9b"/>
+    <text x="270" y="98" font-size="10" fill="#e8cfdd">100</text>
+    <text x="320" y="98" font-size="10" fill="#8f7f88">SPD</text>
+    <rect x="360" y="90" width="140" height="8" rx="4" fill="#20101a"/><rect x="360" y="90" width="131" height="8" rx="4" fill="#ff2d9b" fill-opacity="0.7"/>
+    <text x="508" y="98" font-size="10" fill="#e8cfdd">206</text>
+    <g transform="translate(20,124)" font-size="11">
+      <rect x="0" y="0" width="508" height="52" rx="7" fill="#160a12" stroke="#3c2432"/>
+      <text x="12" y="20" font-weight="700" fill="#ff5cb0" letter-spacing="1">▸ BURST SMG</text><text x="150" y="20" fill="#8f7f88" letter-spacing="1">PRIMARY</text>
+      <text x="12" y="40" fill="#d0b7c4">Mid-range three-round bursts.</text>
+    </g>
+    <g transform="translate(20,182)" font-size="11">
+      <rect x="0" y="0" width="508" height="52" rx="7" fill="#160a12" stroke="#3c2432"/>
+      <text x="12" y="20" font-weight="700" fill="#ff5cb0" letter-spacing="1">Q  DASH-STRIKE</text><text x="150" y="20" fill="#8f7f88" letter-spacing="1">CD 4.2s</text>
+      <text x="12" y="40" fill="#d0b7c4">Dash forward; plant a delayed charge at your start point.</text>
+    </g>
+    <g transform="translate(20,240)" font-size="11">
+      <rect x="0" y="0" width="508" height="52" rx="7" fill="#1c0a16" stroke="#6b3a55"/>
+      <text x="12" y="20" font-weight="700" fill="#ffb0da" letter-spacing="1">E  AIRSTRIKE</text><text x="150" y="20" fill="#ff2d9b" letter-spacing="1">ULTIMATE</text>
+      <text x="12" y="40" fill="#d0b7c4">Mark a zone; a heavy strike lands after a short delay.</text>
+    </g>
+  </g>
+
+  <!-- ============ WINTERMUTE ============ -->
+  <g transform="translate(40,436)">
+    <rect x="0" y="0" width="548" height="312" rx="12" fill="#06131a" stroke="#29e7ff" stroke-width="1.6"/>
+    <rect x="0" y="0" width="548" height="46" rx="12" fill="#29e7ff" fill-opacity="0.12"/>
+    <text x="20" y="30" font-size="22" font-weight="700" letter-spacing="3" fill="#7ff0ff" filter="url(#cc-glow)">WINTERMUTE</text>
+    <text x="530" y="30" text-anchor="end" font-size="10" letter-spacing="2" fill="#29e7ff">ELEMENT · CHILL</text>
+    <text x="20" y="70" font-size="10" letter-spacing="1.5" fill="#a7cfe0">NETRUNNER · CONTROL · SHIELD-BREAK · DRONES</text>
+    <text x="20" y="98" font-size="10" fill="#7f888f">HP</text>
+    <rect x="60" y="90" width="200" height="8" rx="4" fill="#10202a"/><rect x="60" y="90" width="150" height="8" rx="4" fill="#29e7ff"/>
+    <text x="270" y="98" font-size="10" fill="#cfe4e8">90</text>
+    <text x="320" y="98" font-size="10" fill="#7f888f">SPD</text>
+    <rect x="360" y="90" width="140" height="8" rx="4" fill="#10202a"/><rect x="360" y="90" width="127" height="8" rx="4" fill="#29e7ff" fill-opacity="0.7"/>
+    <text x="508" y="98" font-size="10" fill="#cfe4e8">200</text>
+    <g transform="translate(20,124)" font-size="11">
+      <rect x="0" y="0" width="508" height="52" rx="7" fill="#0a1620" stroke="#24343c"/>
+      <text x="12" y="20" font-weight="700" fill="#7ff0ff" letter-spacing="1">▸ ICE BEAM</text><text x="150" y="20" fill="#7f888f" letter-spacing="1">PRIMARY</text>
+      <text x="12" y="40" fill="#b7cdd0">Piercing beam. Bonus damage vs shields.</text>
+    </g>
+    <g transform="translate(20,182)" font-size="11">
+      <rect x="0" y="0" width="508" height="52" rx="7" fill="#0a1620" stroke="#24343c"/>
+      <text x="12" y="20" font-weight="700" fill="#7ff0ff" letter-spacing="1">Q  HACK CONE</text><text x="150" y="20" fill="#7f888f" letter-spacing="1">CD 6s</text>
+      <text x="12" y="40" fill="#b7cdd0">Disable enemies in a cone and break shields briefly.</text>
+    </g>
+    <g transform="translate(20,240)" font-size="11">
+      <rect x="0" y="0" width="508" height="52" rx="7" fill="#0a1c24" stroke="#3a6470"/>
+      <text x="12" y="20" font-weight="700" fill="#b0f2ff" letter-spacing="1">E  DEPLOY DRONES</text><text x="170" y="20" fill="#29e7ff" letter-spacing="1">ULTIMATE</text>
+      <text x="12" y="40" fill="#b7cdd0">Two autonomous drones hunt and attack nearby enemies.</text>
+    </g>
+  </g>
+
+  <!-- ============ SWARM ============ -->
+  <g transform="translate(612,436)">
+    <rect x="0" y="0" width="548" height="312" rx="12" fill="#0d0820" stroke="#9b5cff" stroke-width="1.6"/>
+    <rect x="0" y="0" width="548" height="46" rx="12" fill="#9b5cff" fill-opacity="0.14"/>
+    <text x="20" y="30" font-size="22" font-weight="700" letter-spacing="3" fill="#bf95ff" filter="url(#cc-glow)">SWARM</text>
+    <text x="530" y="30" text-anchor="end" font-size="10" letter-spacing="2" fill="#9b5cff">ELEMENT · SHOCK</text>
+    <text x="20" y="70" font-size="10" letter-spacing="1.5" fill="#b7a7e0">HIVE-MIND · SUSTAINED DPS · MINION FLOOD</text>
+    <text x="20" y="98" font-size="10" fill="#877f8f">HP</text>
+    <rect x="60" y="90" width="200" height="8" rx="4" fill="#181022"/><rect x="60" y="90" width="158" height="8" rx="4" fill="#9b5cff"/>
+    <text x="270" y="98" font-size="10" fill="#ddcfe8">95</text>
+    <text x="320" y="98" font-size="10" fill="#877f8f">SPD</text>
+    <rect x="360" y="90" width="140" height="8" rx="4" fill="#181022"/><rect x="360" y="90" width="140" height="8" rx="4" fill="#9b5cff" fill-opacity="0.7"/>
+    <text x="508" y="98" font-size="10" fill="#ddcfe8">212</text>
+    <g transform="translate(20,124)" font-size="11">
+      <rect x="0" y="0" width="508" height="52" rx="7" fill="#120b22" stroke="#2e2440"/>
+      <text x="12" y="20" font-weight="700" fill="#bf95ff" letter-spacing="1">▸ SWARM-BOLTS</text><text x="160" y="20" fill="#877f8f" letter-spacing="1">PRIMARY</text>
+      <text x="12" y="40" fill="#c4b7d0">Rapid weak bolts that buzz outward.</text>
+    </g>
+    <g transform="translate(20,182)" font-size="11">
+      <rect x="0" y="0" width="508" height="52" rx="7" fill="#120b22" stroke="#2e2440"/>
+      <text x="12" y="20" font-weight="700" fill="#bf95ff" letter-spacing="1">Q  MINION PACK</text><text x="160" y="20" fill="#877f8f" letter-spacing="1">CD 6s</text>
+      <text x="12" y="40" fill="#c4b7d0">Release a small pack of roaming minions.</text>
+    </g>
+    <g transform="translate(20,240)" font-size="11">
+      <rect x="0" y="0" width="508" height="52" rx="7" fill="#170a2a" stroke="#553a80"/>
+      <text x="12" y="20" font-weight="700" fill="#d4b0ff" letter-spacing="1">E  SWARM TIDE</text><text x="150" y="20" fill="#9b5cff" letter-spacing="1">ULTIMATE</text>
+      <text x="12" y="40" fill="#c4b7d0">Flood a target area with a swarm of minions.</text>
+    </g>
+  </g>
+</svg>

@@ -1,0 +1,134 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 860" width="1200" height="860" font-family="'IBM Plex Mono','SFMono-Regular',ui-monospace,monospace">
+  <defs>
+    <radialGradient id="wm-bg" cx="50%" cy="48%" r="70%">
+      <stop offset="0%" stop-color="#0c0922"/>
+      <stop offset="70%" stop-color="#070515"/>
+      <stop offset="100%" stop-color="#04030c"/>
+    </radialGradient>
+    <filter id="wm-glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <linearGradient id="wm-path" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#00e5ff"/><stop offset="55%" stop-color="#ff2bd6"/><stop offset="100%" stop-color="#ffb347"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="860" fill="url(#wm-bg)"/>
+
+  <!-- title -->
+  <text x="60" y="64" font-size="30" font-weight="700" letter-spacing="8" fill="#eafaff">METRO CITY</text>
+  <text x="60" y="90" font-size="12" letter-spacing="5" fill="#7fd4e0">8 COMBAT DISTRICTS · ONE NEUTRAL HUB · TERRITORY UNDER CONTAGION</text>
+
+  <!-- concentric field rings -->
+  <g fill="none" stroke="#2a3350" stroke-opacity="0.5">
+    <circle cx="600" cy="450" r="330" stroke-dasharray="2 8"/>
+    <circle cx="600" cy="450" r="210" stroke-dasharray="2 8"/>
+  </g>
+
+  <!-- progression path 0..7 around the ring -->
+  <path d="M600,150 L812,238 L900,450 L812,662 L600,750 L388,662 L300,450 L388,238"
+        fill="none" stroke="url(#wm-path)" stroke-width="2.5" stroke-opacity="0.55" stroke-dasharray="1 10" stroke-linecap="round"/>
+
+  <!-- spokes to hub -->
+  <g stroke="#39406a" stroke-width="1" stroke-opacity="0.7">
+    <line x1="600" y1="450" x2="600" y2="150"/><line x1="600" y1="450" x2="812" y2="238"/>
+    <line x1="600" y1="450" x2="900" y2="450"/><line x1="600" y1="450" x2="812" y2="662"/>
+    <line x1="600" y1="450" x2="600" y2="750"/><line x1="600" y1="450" x2="388" y2="662"/>
+    <line x1="600" y1="450" x2="300" y2="450"/><line x1="600" y1="450" x2="388" y2="238"/>
+  </g>
+
+  <!-- HUB -->
+  <g filter="url(#wm-glow)">
+    <rect x="500" y="410" width="200" height="80" rx="10" fill="#120a24" stroke="#ff2bd6" stroke-width="2"/>
+  </g>
+  <text x="600" y="444" text-anchor="middle" font-size="18" font-weight="700" letter-spacing="4" fill="#ff5cae">METRO CITY</text>
+  <text x="600" y="466" text-anchor="middle" font-size="9" letter-spacing="3" fill="#9fb4c8">FIXER · MARKET · FORGE · GUILDS</text>
+  <text x="600" y="480" text-anchor="middle" font-size="8" letter-spacing="3" fill="#5f7088">NO-COMBAT SAFE ZONE</text>
+
+  <!-- ===== NODES ===== -->
+  <!-- template: card 196x66, index chip, name, subtitle, vault+contagion -->
+
+  <!-- 0 PALANTIR PLAZA (cyan) top -->
+  <g transform="translate(600,150)">
+    <rect x="-100" y="-33" width="200" height="66" rx="9" fill="#0a0a1c" stroke="#00e5ff" stroke-width="1.6"/>
+    <circle cx="-82" cy="-14" r="12" fill="#00e5ff"/><text x="-82" y="-10" text-anchor="middle" font-size="13" font-weight="700" fill="#04121a">0</text>
+    <text x="-62" y="-9" font-size="14" font-weight="700" letter-spacing="1.5" fill="#dff9ff">PALANTIR PLAZA</text>
+    <text x="-84" y="10" font-size="8" letter-spacing="1.5" fill="#7fb8c8">PREDICTIVE-POLICING GRID · SECTOR 0</text>
+    <text x="-84" y="24" font-size="8.5" letter-spacing="1" fill="#00e5ff">◈ VAULT v0    ▚ CONTAGION 10%</text>
+  </g>
+
+  <!-- 1 ANDURIL YARDS (cyan) -->
+  <g transform="translate(812,238)">
+    <rect x="-100" y="-33" width="200" height="66" rx="9" fill="#0a0a1c" stroke="#00e5ff" stroke-width="1.6"/>
+    <circle cx="-82" cy="-14" r="12" fill="#00e5ff"/><text x="-82" y="-10" text-anchor="middle" font-size="13" font-weight="700" fill="#04121a">1</text>
+    <text x="-62" y="-9" font-size="14" font-weight="700" letter-spacing="1.5" fill="#dff9ff">ANDURIL YARDS</text>
+    <text x="-84" y="10" font-size="8" letter-spacing="1.5" fill="#7fb8c8">AUTONOMOUS-DRONE FOUNDRY · SECTOR 7</text>
+    <text x="-84" y="24" font-size="8.5" letter-spacing="1" fill="#00e5ff">◈ VAULT v1    ▚ CONTAGION 11%</text>
+  </g>
+
+  <!-- 2 ARGUS SPIRE (magenta) right -->
+  <g transform="translate(900,450)">
+    <rect x="-100" y="-33" width="200" height="66" rx="9" fill="#12081a" stroke="#ff2bd6" stroke-width="1.6"/>
+    <circle cx="-82" cy="-14" r="12" fill="#ff2bd6"/><text x="-82" y="-10" text-anchor="middle" font-size="13" font-weight="700" fill="#1a0410">2</text>
+    <text x="-62" y="-9" font-size="14" font-weight="700" letter-spacing="1.5" fill="#ffe0f5">ARGUS SPIRE</text>
+    <text x="-84" y="10" font-size="8" letter-spacing="1.5" fill="#e08ac8">TOTAL-AWARENESS UPLINK · CORP TIER</text>
+    <text x="-84" y="24" font-size="8.5" letter-spacing="1" fill="#ff2bd6">◈ VAULT v2    ▚ CONTAGION 12%</text>
+  </g>
+
+  <!-- 3 TIDAL YARDS (magenta) -->
+  <g transform="translate(812,662)">
+    <rect x="-100" y="-33" width="200" height="66" rx="9" fill="#12081a" stroke="#ff2bd6" stroke-width="1.6"/>
+    <circle cx="-82" cy="-14" r="12" fill="#ff2bd6"/><text x="-82" y="-10" text-anchor="middle" font-size="13" font-weight="700" fill="#1a0410">3</text>
+    <text x="-62" y="-9" font-size="14" font-weight="700" letter-spacing="1.5" fill="#ffe0f5">TIDAL YARDS</text>
+    <text x="-84" y="10" font-size="8" letter-spacing="1.5" fill="#e08ac8">BLACKWATER FREIGHT · SECTOR 12</text>
+    <text x="-84" y="24" font-size="8.5" letter-spacing="1" fill="#ff2bd6">◈ VAULT v3    ▚ CONTAGION 13%</text>
+  </g>
+
+  <!-- 4 THE UNDERCITY (magenta) bottom -->
+  <g transform="translate(600,750)">
+    <rect x="-100" y="-33" width="200" height="66" rx="9" fill="#12081a" stroke="#ff2bd6" stroke-width="1.6"/>
+    <circle cx="-82" cy="-14" r="12" fill="#ff2bd6"/><text x="-82" y="-10" text-anchor="middle" font-size="13" font-weight="700" fill="#1a0410">4</text>
+    <text x="-62" y="-9" font-size="14" font-weight="700" letter-spacing="1.5" fill="#ffe0f5">THE UNDERCITY</text>
+    <text x="-84" y="10" font-size="8" letter-spacing="1.5" fill="#e08ac8">BURIED METRO VAULTS · SECTOR 19</text>
+    <text x="-84" y="24" font-size="8.5" letter-spacing="1" fill="#ff2bd6">◈ VAULT v4    ▚ CONTAGION 13%</text>
+  </g>
+
+  <!-- 5 ORBITAL RELAY (purple) -->
+  <g transform="translate(388,662)">
+    <rect x="-100" y="-33" width="200" height="66" rx="9" fill="#0f0a20" stroke="#9b5cff" stroke-width="1.6"/>
+    <circle cx="-82" cy="-14" r="12" fill="#9b5cff"/><text x="-82" y="-10" text-anchor="middle" font-size="13" font-weight="700" fill="#120428">5</text>
+    <text x="-62" y="-9" font-size="14" font-weight="700" letter-spacing="1.5" fill="#e9dcff">ORBITAL RELAY</text>
+    <text x="-84" y="10" font-size="8" letter-spacing="1.5" fill="#b79ae0">SKYLINK ARRAY · UPLINK TIER</text>
+    <text x="-84" y="24" font-size="8.5" letter-spacing="1" fill="#9b5cff">◈ VAULT v5    ▚ CONTAGION 14%</text>
+  </g>
+
+  <!-- 6 THE WASTELAND (purple) left -->
+  <g transform="translate(300,450)">
+    <rect x="-100" y="-33" width="200" height="66" rx="9" fill="#0f0a20" stroke="#9b5cff" stroke-width="1.6"/>
+    <circle cx="-82" cy="-14" r="12" fill="#9b5cff"/><text x="-82" y="-10" text-anchor="middle" font-size="13" font-weight="700" fill="#120428">6</text>
+    <text x="-62" y="-9" font-size="14" font-weight="700" letter-spacing="1.5" fill="#e9dcff">THE WASTELAND</text>
+    <text x="-84" y="10" font-size="8" letter-spacing="1.5" fill="#b79ae0">OUTER RING SALVAGE · SECTOR 31</text>
+    <text x="-84" y="24" font-size="8.5" letter-spacing="1" fill="#9b5cff">◈ VAULT v6    ▚ CONTAGION 14%</text>
+  </g>
+
+  <!-- 7 THE KERNEL (amber, endgame) -->
+  <g transform="translate(388,238)">
+    <rect x="-100" y="-33" width="200" height="66" rx="9" fill="#1a1206" stroke="#ffb347" stroke-width="2"/>
+    <circle cx="-82" cy="-14" r="12" fill="#ffb347"/><text x="-82" y="-10" text-anchor="middle" font-size="13" font-weight="700" fill="#241500">7</text>
+    <text x="-62" y="-9" font-size="14" font-weight="700" letter-spacing="1.5" fill="#ffe9c2">THE KERNEL</text>
+    <text x="-84" y="10" font-size="8" letter-spacing="1.5" fill="#e0b878">HELIOS MASTER GRID · THE CAGE</text>
+    <text x="-84" y="24" font-size="8.5" letter-spacing="1" fill="#ffb347">◈ VAULT v7 · CUSTODIAN · ENDGAME</text>
+  </g>
+
+  <!-- legend -->
+  <g transform="translate(60,792)" font-size="10" letter-spacing="1">
+    <text x="0" y="0" fill="#7f8aa8" letter-spacing="3">LEGEND</text>
+    <circle cx="70" cy="-4" r="6" fill="#00e5ff"/><text x="82" y="0" fill="#9fb4c8">EARLY</text>
+    <circle cx="150" cy="-4" r="6" fill="#ff2bd6"/><text x="162" y="0" fill="#9fb4c8">MID</text>
+    <circle cx="220" cy="-4" r="6" fill="#9b5cff"/><text x="232" y="0" fill="#9fb4c8">LATE</text>
+    <circle cx="300" cy="-4" r="6" fill="#ffb347"/><text x="312" y="0" fill="#9fb4c8">ENDGAME</text>
+    <text x="400" y="0" fill="#9fb4c8">◈ ICE VAULT (v0–v7)</text>
+    <text x="560" y="0" fill="#9fb4c8">▚ CITY-CONTAGION WEIGHT</text>
+    <text x="760" y="0" fill="#9fb4c8">···· MAINLINE PROGRESSION</text>
+  </g>
+</svg>

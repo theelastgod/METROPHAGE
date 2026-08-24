@@ -197,7 +197,9 @@ import { CITY_HUB_SPAWN, ENV_IDENTITY, envAt, ONLINE_CITY } from "../world/city"
 import { SUBWAY_STATIONS, subwaySpawnForEntry, subwayStationTier } from "../world/subway";
 import { recLevelLabel } from "../game/progression";
 import { zoneAccess } from "../game/zoneAccess";
-import { ESTATES, ESTATES_ZONE, buildHomeRoom, parseEstateInterior, FURNITURE, furnitureKind, furnitureFits, furnitureHomeBuffs, occupiedTiles, pieceAt, type FurniturePiece } from "../world/estates";
+import { ESTATES, ESTATES_ZONE, ESTATE_BASE_PRICE, buildHomeRoom, parseEstateInterior, FURNITURE, furnitureKind, furnitureFits, furnitureHomeBuffs, occupiedTiles, pieceAt, type FurniturePiece } from "../world/estates";
+import { genesisKeyByPlot } from "../world/genesisKeys";
+import { isGuestPlayerId } from "../game/playerId";
 import { drawFurniture } from "../render/furnitureArt";
 import { paintCityEnvWash, paintCityStorefrontReflections, paintDistrictEnvWash } from "../render/cityTerrainPolish";
 import { paintCityBuildingFacades, buildingExteriorAccent } from "../render/buildingFacades";
@@ -483,6 +485,7 @@ export default class OnlineScene extends Phaser.Scene {
   // HOUSING REGISTRY — the estates street's featured-homes board
   private registryObjs: Phaser.GameObjects.GameObject[] = [];
   private registryOpen = false;
+  private registryPage = 0;
   // Overlay orchestration (open-state, ESC routing, mobile ✕) — see online/PanelRouter.
   private panelRouter!: PanelRouter;
 
@@ -1614,7 +1617,7 @@ export default class OnlineScene extends Phaser.Scene {
       if (this.questLog.open) this.refreshQuestLog();
     };
     this.net.onCosmetics = () => {
-      if (this.cosmetics.open) this.cosmetics.setState(this.net.cosmeticsOwned, this.net.cosmeticEquipped, this.net.credits);
+      if (this.cosmetics.open) this.cosmetics.setState(this.net.cosmeticsOwned, this.net.cosmeticEquipped, this.net.credits, this.net.genesisTokens);
       this.applyLocalCosmetic(); // retint your own avatar to match the equipped transmog
     };
     this.mapPanel = new OnlineMap(this, this.contextMenu);
@@ -2182,7 +2185,7 @@ export default class OnlineScene extends Phaser.Scene {
       }
       if ((e.key === "b" || e.key === "B") && this.homeIdx >= 0 && !this.homeEditing) {
         const es = this.net.estate;
-        if (es && (!es.owner || es.forSale) && !es.mine) this.net.estateBuy();
+        if (es && (!es.owner || es.forSale) && !es.mine && !es.readOnly) this.net.estateBuy();
         return;
       }
       if ((e.key === "g" || e.key === "G") && this.homeIdx >= 0 && !this.homeEditing) {
@@ -2320,7 +2323,7 @@ export default class OnlineScene extends Phaser.Scene {
       }
       if (e.key === "y" || e.key === "Y") {
         this.tryOpenCitySystem(() => {
-          this.cosmetics.toggle(this.net.cosmeticsOwned, this.net.cosmeticEquipped, this.net.credits);
+          this.cosmetics.toggle(this.net.cosmeticsOwned, this.net.cosmeticEquipped, this.net.credits, this.net.genesisTokens);
           if (this.cosmetics.open) this.reportTutorialPanel("cosmetics");
         });
         return;
@@ -2716,7 +2719,7 @@ export default class OnlineScene extends Phaser.Scene {
     if (this.isEstates) return "THE ESTATES";
     if (this.interior && INTERIOR_TITLES[this.zone]) return INTERIOR_TITLES[this.zone]!;
     const estInt = parseEstateInterior(this.zone);
-    if (estInt !== null) return `THE ESTATES · HOME ${estInt + 1}`;
+    if (estInt !== null) return `THE ESTATES · ${genesisKeyByPlot(estInt)?.name ?? `HOME ${estInt + 1}`}`;
     const hubInt = parseHubInterior(this.zone);
     if (hubInt !== null) return `METRO CITY · ${HUB_INTERIOR_TITLE[ONLINE_CITY.buildings[hubInt].kind] ?? "BUILDING"}`;
     const bldgInt = parseBuildingInterior(this.zone);
@@ -2743,7 +2746,7 @@ export default class OnlineScene extends Phaser.Scene {
     if (z === ESTATES_ZONE) return "THE ESTATES";
     if (z === "subway") return "SUBWAY STATION · THE UNDERLINE";
     const est = parseEstateInterior(z);
-    if (est !== null) return `HOME ${est + 1}`;
+    if (est !== null) return genesisKeyByPlot(est)?.name ?? `HOME ${est + 1}`;
     const hb = parseHubInterior(z);
     if (hb !== null) return HUB_INTERIOR_TITLE[ONLINE_CITY.buildings[hb].kind] ?? "BUILDING";
     const bi = parseBuildingInterior(z);
@@ -2977,7 +2980,7 @@ export default class OnlineScene extends Phaser.Scene {
         this.guildPanel.toggle(n.guild, n.id);
         break;
       case "cosmetics":
-        this.cosmetics.toggle(n.cosmeticsOwned, n.cosmeticEquipped, n.credits);
+        this.cosmetics.toggle(n.cosmeticsOwned, n.cosmeticEquipped, n.credits, n.genesisTokens);
         break;
       case "stash":
         this.stashPanel.toggle(n.stash, n.inventory);
@@ -4816,14 +4819,16 @@ export default class OnlineScene extends Phaser.Scene {
       .setDepth(6)
       .setShadow(0, 0, "#ffb13c", 8, true, true);
     this.add
-      .text(this.worldW / 2, 3 * TILE + 24, "residential district · buy a home, then furnish it · H returns to METRO CITY", bodyFont(11, { color: "#9aa3b2" }))
+      .text(this.worldW / 2, 3 * TILE + 24, "GENESIS KEYS · fifty False Addresses · H returns to METRO CITY", bodyFont(11, { color: "#9aa3b2" }))
       .setOrigin(0.5)
       .setDepth(6);
     dressEstateFacades(this, ESTATES.plots);
     for (const plot of ESTATES.plots) {
       const [dtx, dty] = plot.door;
       const color = 0xffb13c;
-      this.makeDoor({ dest: `est${plot.id}`, label: `HOME ${plot.id + 1}`, tile: [dtx, dty], color, flat: true });
+      const key = genesisKeyByPlot(plot.id);
+      const doorLabel = key ? key.name : `HOME ${plot.id + 1}`;
+      this.makeDoor({ dest: `est${plot.id}`, label: doorLabel, tile: [dtx, dty], color, flat: true });
       this.add
         .image(dtx * TILE + TILE / 2, dty * TILE + TILE / 2, GLOW_KEY)
         .setBlendMode(Phaser.BlendModes.ADD)
@@ -4831,7 +4836,7 @@ export default class OnlineScene extends Phaser.Scene {
         .setDepth(4.4)
         .setScale(0.42)
         .setAlpha(0.3);
-      this.add.text(dtx * TILE + TILE / 2, dty * TILE - 12, `▣ ${plot.id + 1}`, bodyFont(9, { color: "#ffcf8a", fontStyle: "bold" })).setOrigin(0.5).setDepth(7);
+      this.add.text(dtx * TILE + TILE / 2, dty * TILE - 12, `▣ ${key?.name ?? plot.id + 1}`, bodyFont(8, { color: "#ffcf8a", fontStyle: "bold" })).setOrigin(0.5).setDepth(7);
       this.districtDoors.push({ tx: dtx, ty: dty, dest: `est${plot.id}` });
     }
     this.add
@@ -4851,10 +4856,12 @@ export default class OnlineScene extends Phaser.Scene {
     const kt = this.add.text(kx, ky - 9, "▣ REGISTRY", displayFont(9, { color: "#ffcf8a", fontStyle: "bold" })).setOrigin(0.5).setDepth(7).setInteractive({ useHandCursor: true });
     kt.on("pointerdown", () => this.toggleRegistry());
     this.tweens.add({ targets: kt, alpha: 0.6, duration: 1500, yoyo: true, repeat: -1 });
-    this.npcs.push({ kind: "service", svc: "registry", name: "HOUSING REGISTRY · all 12 homes", x: kx, y: ky });
+    this.npcs.push({ kind: "service", svc: "registry", name: "HOUSING REGISTRY · GENESIS KEYS", x: kx, y: ky });
 
     // ── street lamps along the walk, so the strip reads like a neighbourhood ──
-    for (const lx of [8, 20, 32, 44, 56, 68, 80, 94]) {
+    const lampXs: number[] = [];
+    for (let lx = 8; lx < ESTATES.w - 4; lx += 12) lampXs.push(lx);
+    for (const lx of lampXs) {
       for (const ly of [10, 15]) {
         const px = lx * TILE + TILE / 2;
         const py = ly * TILE + TILE / 2;
@@ -4877,7 +4884,7 @@ export default class OnlineScene extends Phaser.Scene {
     this.homeSelKind = null;
     this.homeDraft = [];
     this.add
-      .text(this.worldW / 2, 2.4 * TILE, `▣ HOME ${idx + 1}`, displayFont(18, { color: "#ffb13c", fontStyle: "bold" }))
+      .text(this.worldW / 2, 2.4 * TILE, `▣ ${genesisKeyByPlot(idx)?.name ?? `HOME ${idx + 1}`}`, displayFont(18, { color: "#ffb13c", fontStyle: "bold" }))
       .setOrigin(0.5)
       .setDepth(6);
     this.add
@@ -4941,8 +4948,13 @@ export default class OnlineScene extends Phaser.Scene {
       const px = plot.door[0] * TILE + TILE / 2;
       const py = plot.door[1] * TILE - 46; // above the door's own "HOME N" label — no overlap
       const forSale = entry.forSale;
-      const label = forSale ? `FOR SALE ₵${entry.price}` : `◈ ${(entry.name ?? "OWNED").toUpperCase()}`;
-      const color = forSale ? 0x39ff88 : 0xffb13c;
+      const off = entry.deed === "marketplace" || entry.deed === "off_world" || entry.name === "OFF-WORLD HOLDING";
+      const label = off
+        ? "OFF-WORLD HOLDING"
+        : forSale
+          ? `FOR SALE ₵${entry.price}`
+          : `◈ ${(entry.name ?? "OWNED").toUpperCase()}`;
+      const color = off ? 0xff3b6b : forSale ? 0x39ff88 : 0xffb13c;
       const g = this.add.graphics().setDepth(7.5);
       const tw = label.length * 6 + 12;
       g.fillStyle(0x0a0e18, 0.92).fillRect(px - tw / 2, py - 8, tw, 14);
@@ -4972,47 +4984,77 @@ export default class OnlineScene extends Phaser.Scene {
       this.registryOpen = false;
       return;
     }
+    this.registryPage = 0;
     this.registryOpen = true;
+    this.buildRegistry();
+  }
+
+  private buildRegistry() {
+    for (const o of this.registryObjs) o.destroy();
+    this.registryObjs = [];
     const push = <T extends Phaser.GameObjects.GameObject>(o: T): T => {
       this.registryObjs.push(o);
       return o;
     };
+    const PAGE = 16;
     const W = this.scale.width;
-    const pw = Math.min(560, W - 40);
+    const pw = Math.min(620, W - 40);
     const px = (W - pw) / 2;
     const py = 40;
-    const rowH = 22; // 20 homes must fit the 540-design-height screen
-    const ph = 66 + ESTATES.plots.length * rowH;
+    const rowH = 22;
+    const dir = this.net.estatesDir.length
+      ? this.net.estatesDir
+      : ESTATES.plots.map((p) => ({
+          i: p.id,
+          owner: null as string | null,
+          name: null as string | null,
+          forSale: true,
+          price: ESTATE_BASE_PRICE,
+          furn: 0,
+          guests: 0,
+          keyName: genesisKeyByPlot(p.id)?.name,
+          deed: "unminted" as const,
+        }));
+    const pages = Math.max(1, Math.ceil(dir.length / PAGE));
+    if (this.registryPage >= pages) this.registryPage = 0;
+    const slice = dir.slice(this.registryPage * PAGE, this.registryPage * PAGE + PAGE);
+    const ph = 86 + slice.length * rowH;
     const g = push(this.add.graphics().setScrollFactor(0).setDepth(1300));
     g.fillStyle(0x0a0818, 0.96).fillRoundedRect(px, py, pw, ph, 6);
     g.lineStyle(1.5, 0xffb13c, 0.9).strokeRoundedRect(px, py, pw, ph, 6);
-    push(this.add.text(px + 16, py + 12, "▣ HOUSING REGISTRY", displayFont(15, { color: "#ffcf8a", fontStyle: "bold" })).setScrollFactor(0).setDepth(1301));
-    push(this.add.text(px + pw - 16, py + 14, "click a home to walk there · E/ESC close", bodyFont(9, { color: "#9aa3b2" })).setOrigin(1, 0).setScrollFactor(0).setDepth(1301));
-    const dir = this.net.estatesDir;
+    push(this.add.text(px + 16, py + 12, "▣ GENESIS KEYS", displayFont(15, { color: "#ffcf8a", fontStyle: "bold" })).setScrollFactor(0).setDepth(1301));
+    push(this.add.text(px + pw - 16, py + 14, `page ${this.registryPage + 1}/${pages} · E/ESC close`, bodyFont(9, { color: "#9aa3b2" })).setOrigin(1, 0).setScrollFactor(0).setDepth(1301));
     const featured = dir.filter((d) => d.owner).sort((a, b) => b.furn - a.furn)[0];
     let ry = py + 40;
-    for (const entry of dir) {
+    for (const entry of slice) {
       const plot = ESTATES.plots[entry.i];
       if (!plot) continue;
       const isFeat = featured && entry.i === featured.i && entry.furn > 0;
-      const rowColor = entry.forSale ? 0x39ff88 : 0xffb13c;
+      const off = entry.deed === "marketplace" || entry.deed === "off_world" || entry.name === "OFF-WORLD HOLDING";
+      const rowColor = off ? 0xff3b6b : entry.forSale ? 0x39ff88 : 0xffb13c;
+      const keyName = entry.keyName ?? genesisKeyByPlot(entry.i)?.name ?? `HOME ${entry.i + 1}`;
       g.fillStyle(entry.i % 2 ? 0x12102a : 0x0e0c1c, 0.9).fillRect(px + 10, ry, pw - 20, rowH - 3);
       if (isFeat) g.lineStyle(1.2, 0xf7ff3c, 0.9).strokeRect(px + 10, ry, pw - 20, rowH - 3);
       push(
         this.add
-          .text(px + 20, ry + 4, `HOME ${entry.i + 1}${isFeat ? " ✦" : ""}`, bodyFont(10, { color: isFeat ? "#f7ff3c" : "#cfe8ff", fontStyle: "bold" }))
+          .text(px + 20, ry + 4, `${keyName}${isFeat ? " ✦" : ""}`, bodyFont(10, { color: isFeat ? "#f7ff3c" : "#cfe8ff", fontStyle: "bold" }))
+          .setScrollFactor(0)
+          .setDepth(1301),
+      );
+      const status = off
+        ? "OFF-WORLD HOLDING"
+        : entry.forSale
+          ? `FOR SALE ₵${entry.price}`
+          : `◈ ${(entry.name ?? "OWNED").toUpperCase()}`;
+      push(
+        this.add
+          .text(px + pw / 2 + 10, ry + 4, status, bodyFont(9, { color: hexColor(rowColor) }))
           .setScrollFactor(0)
           .setDepth(1301),
       );
       push(
         this.add
-          .text(px + pw / 2 - 30, ry + 4, entry.forSale ? `FOR SALE ₵${entry.price}` : `◈ ${(entry.name ?? "OWNED").toUpperCase()}`, bodyFont(9, { color: hexColor(rowColor) }))
-          .setScrollFactor(0)
-          .setDepth(1301),
-      );
-      push(
-        this.add
-          .text(px + pw - 20, ry + 4, `★${entry.furn} furn · ✎${entry.guests}`, bodyFont(9, { color: "#9aa3b2" }))
+          .text(px + pw - 20, ry + 4, `★${entry.furn} · ✎${entry.guests}`, bodyFont(9, { color: "#9aa3b2" }))
           .setOrigin(1, 0)
           .setScrollFactor(0)
           .setDepth(1301),
@@ -5024,9 +5066,24 @@ export default class OnlineScene extends Phaser.Scene {
         const wx = door[0] * TILE + TILE / 2;
         const wy = door[1] * TILE + TILE / 2;
         this.clickMove.setDestination(wx, wy, this.zoneGrid, this.net.pred.x, this.net.pred.y);
-        this.rsExamine(`Walking to HOME ${entry.i + 1}.`);
+        this.rsExamine(`Walking to ${keyName}.`);
       });
       ry += rowH;
+    }
+    if (pages > 1) {
+      const by = py + ph - 22;
+      const prev = push(this.add.zone(px + 16, by, 70, 16).setOrigin(0).setScrollFactor(0).setInteractive({ useHandCursor: true }).setDepth(1302));
+      push(this.add.text(px + 16, by, "◀ PREV", bodyFont(10, { color: "#9aa3b2", fontStyle: "bold" })).setScrollFactor(0).setDepth(1301));
+      prev.on("pointerdown", () => {
+        this.registryPage = (this.registryPage + pages - 1) % pages;
+        this.buildRegistry();
+      });
+      const next = push(this.add.zone(px + pw - 80, by, 70, 16).setOrigin(0).setScrollFactor(0).setInteractive({ useHandCursor: true }).setDepth(1302));
+      push(this.add.text(px + pw - 16, by, "NEXT ▶", bodyFont(10, { color: "#9aa3b2", fontStyle: "bold" })).setOrigin(1, 0).setScrollFactor(0).setDepth(1301));
+      next.on("pointerdown", () => {
+        this.registryPage = (this.registryPage + 1) % pages;
+        this.buildRegistry();
+      });
     }
   }
 
@@ -5296,9 +5353,22 @@ export default class OnlineScene extends Phaser.Scene {
       });
       return;
     }
-    const status = e.mine ? "YOUR HOME" : e.owner ? `Owned by ${e.ownerName ?? "someone"}` : "UNCLAIMED HOME";
-    push(this.add.text(16, H - 60, status, displayFont(13, { color: "#ffcf8a", fontStyle: "bold" })).setScrollFactor(0).setDepth(1200));
-    if (e.mine) {
+    const keyTitle = e.keyName ?? genesisKeyByPlot(this.homeIdx)?.name ?? "FALSE ADDRESS";
+    const off = e.deed === "marketplace" || e.deed === "off_world" || e.readOnly;
+    const guest = isGuestPlayerId(this.net.id);
+    const status = off
+      ? e.deed === "marketplace"
+        ? "OFF-WORLD HOLDING"
+        : "deed moved off-world"
+      : e.mine
+        ? `YOUR KEY · ${keyTitle}`
+        : e.owner
+          ? `Owned by ${e.ownerName ?? "someone"}`
+          : `UNCLAIMED · ${keyTitle}`;
+    push(this.add.text(16, H - 60, status, displayFont(13, { color: off ? "#ff6b7a" : "#ffcf8a", fontStyle: "bold" })).setScrollFactor(0).setDepth(1200));
+    if (off) {
+      push(this.add.text(16, H - 38, "street view only — furniture locked", bodyFont(11, { color: "#9aa3b2" })).setScrollFactor(0).setDepth(1200));
+    } else if (e.mine) {
       const buffs = furnitureHomeBuffs(e.furniture ?? []);
       const bits: string[] = [];
       if (buffs.regenPerSec > 0) bits.push(`+${buffs.regenPerSec.toFixed(1)} HP/s`);
@@ -5328,8 +5398,12 @@ export default class OnlineScene extends Phaser.Scene {
         btn(460, H - 38, `₵${high} HIGH`, 0xff79c6, () => this.net.estateList(high));
       }
     } else if (!e.owner || e.forSale) {
-      btn(16, H - 38, `BUY THIS HOME ₵${e.price} (B)`, 0x39ff88, () => this.net.estateBuy());
-      if (e.owner) btn(260, H - 38, "SIGN GUESTBOOK (G)", 0xb06bff, () => this.net.estateSign());
+      if (guest) {
+        push(this.add.text(16, H - 38, "Link Phantom to hold this False Address.", bodyFont(12, { color: "#ffcf8a" })).setScrollFactor(0).setDepth(1200));
+      } else {
+        btn(16, H - 38, `BUY THIS KEY ₵${e.price} (B)`, 0x39ff88, () => this.net.estateBuy());
+      }
+      if (e.owner) btn(guest ? 16 : 260, guest ? H - 62 : H - 38, "SIGN GUESTBOOK (G)", 0xb06bff, () => this.net.estateSign());
     } else {
       push(this.add.text(16, H - 38, "not for sale", bodyFont(11, { color: "#9aa3b2" })).setScrollFactor(0).setDepth(1200));
       btn(130, H - 38, "SIGN GUESTBOOK (G)", 0xb06bff, () => this.net.estateSign());

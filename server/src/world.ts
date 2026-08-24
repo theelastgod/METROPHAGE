@@ -383,6 +383,14 @@ import {
   type FurniturePiece,
   type GuestEntry,
 } from "../../src/world/estates";
+import {
+  classifyEstateDeed,
+  genesisKeyByPlot,
+  genesisKeyLabel,
+  tokenFromEstateId,
+  walletPubkeyFromPlayerId,
+  type EstateDeedKind,
+} from "../../src/world/genesisKeys";
 
 export const INTERIOR_ZONES = new Set(["safe", "clinic", "bar", "den", "shop", ESTATES_ZONE]);
 /** All named (non-district) zones the Worker routes by name — interiors + subway + wilderness bridges. */
@@ -589,6 +597,8 @@ interface PlayerState {
   // cosmetics / transmog — owned set + equipped override (zero power), persisted to D1
   cosmeticsOwned: Set<string>;
   cosmeticEquipped: string | null;
+  /** Genesis Key token ids (1–50) this wallet currently deeds in D1. */
+  genesisTokens: number[];
   // authored NPC bounty — one active at a time, persisted cross-zone in D1
   bounty: { id: string; progress: number } | null;
   bountyDirty: boolean;
@@ -2978,7 +2988,7 @@ export class WorldDO {
 
   // ── cosmetics / transmog — wallet-owned appearance overrides (zero power) ──
   private sendCosmetics(ws: WebSocket, p: PlayerState) {
-    this.send(ws, { t: "cosmetics", owned: [...p.cosmeticsOwned], equipped: p.cosmeticEquipped });
+    this.send(ws, { t: "cosmetics", owned: [...p.cosmeticsOwned], equipped: p.cosmeticEquipped, genesisTokens: p.genesisTokens });
   }
 
   private async onCosmetic(ws: WebSocket, msg: Extract<ClientMsg, { t: "cosmetic" }>) {
@@ -2996,6 +3006,21 @@ export class WorldDO {
         const c = getCosmetic(msg.id ?? "");
         if (!c) return;
         if (p.cosmeticsOwned.has(c.id)) return sys("already in your wardrobe");
+        if (c.id === "genesis") {
+          try {
+            const { tokensHeldInGame, grantGenesisCosmetic } = await import("./estatesNft");
+            const tokens = await tokensHeldInGame(this.env.DB, p.id);
+            p.genesisTokens = tokens;
+            if (!tokens.length) return sys("GENESIS // KEY is an NFT deed — hold a Genesis Key");
+            await grantGenesisCosmetic(this.env.DB, p.id);
+            p.cosmeticsOwned.add(c.id);
+            sys(`unlocked ${c.name} — keys ${tokens.map((n) => String(n).padStart(2, "0")).join(", ")}`);
+            this.sendCosmetics(ws, p);
+          } catch {
+            sys("wardrobe unavailable");
+          }
+          return;
+        }
         if (c.nft && !armed) return sys(`${c.name} is an on-chain NFT skin — gated until mainnet is armed (counsel)`);
         if (c.price > 0 && p.credits < c.price) return sys(`need ₵${c.price} for ${c.name}`);
         if (c.price > 0) {
@@ -3884,6 +3909,14 @@ export class WorldDO {
     } catch {
       /* table may not exist before migration */
     }
+    let genesisTokens: number[] = [];
+    try {
+      const { grantGenesisIfHolder } = await import("./estatesNft");
+      genesisTokens = await grantGenesisIfHolder(this.env.DB, id);
+      if (genesisTokens.length) cosmeticsOwned.add("genesis");
+    } catch {
+      /* nft module / column may be absent */
+    }
     // Authored NPC bounty — shared by every zone DO. Invalid/stale rows are ignored
     // and queued for cleanup rather than allowing a removed bounty to lock the slot.
     let bounty: PlayerState["bounty"] = null;
@@ -3992,6 +4025,7 @@ export class WorldDO {
       dailyDirty: false,
       cosmeticsOwned,
       cosmeticEquipped,
+      genesisTokens,
       bounty,
       bountyDirty,
       bountyCompletedAt: new Map(),
@@ -6065,9 +6099,20 @@ export class WorldDO {
     this.sendTo(p.id, { t: "stashv", items: p.stash });
   }
 
-  // ── THE ESTATES — player-owned, furnishable homes (est{K}). Ownership + furniture live in
-  //    D1 so any estate DO + a resale by another player share one source of truth. ────────
-  private estate: { owner: string | null; ownerName: string | null; price: number; forSale: boolean; furniture: FurniturePiece[]; guests: GuestEntry[] } | null = null;
+  // ── THE ESTATES — Genesis Key deed on-chain; furniture / guestbook / ₵ price in D1. ──
+  private estate: {
+    owner: string | null;
+    ownerName: string | null;
+    price: number;
+    forSale: boolean;
+    furniture: FurniturePiece[];
+    guests: GuestEntry[];
+    nft: string | null;
+    token: number | null;
+    chainOwner: string | null;
+    deed: EstateDeedKind;
+    deedAt: number;
+  } | null = null;
   /** Cached sum of furniture home buffs for this zone's estate layout. */
   private estateBuffs = furnitureHomeBuffs([]);
 
@@ -6077,9 +6122,28 @@ export class WorldDO {
       this.estateBuffs = furnitureHomeBuffs([]);
       return;
     }
-    const row = await this.env.DB.prepare("SELECT owner, owner_name, price, for_sale, furniture, guestbook FROM estates WHERE id = ?")
-      .bind(this.zoneName)
-      .first<{ owner: string | null; owner_name: string | null; price: number; for_sale: number; furniture: string; guestbook: string }>();
+    const token = tokenFromEstateId(this.zoneName);
+    let row: {
+      owner: string | null;
+      owner_name: string | null;
+      price: number;
+      for_sale: number;
+      furniture: string;
+      guestbook: string;
+      nft?: string | null;
+      token?: number | null;
+    } | null = null;
+    try {
+      row = await this.env.DB.prepare(
+        "SELECT owner, owner_name, price, for_sale, furniture, guestbook, nft, token FROM estates WHERE id = ?",
+      )
+        .bind(this.zoneName)
+        .first();
+    } catch {
+      row = await this.env.DB.prepare("SELECT owner, owner_name, price, for_sale, furniture, guestbook FROM estates WHERE id = ?")
+        .bind(this.zoneName)
+        .first();
+    }
     const parse = (raw: string | undefined): unknown => {
       try {
         return JSON.parse(raw || "[]");
@@ -6095,37 +6159,125 @@ export class WorldDO {
           forSale: !!row.for_sale,
           furniture: sanitizeFurniture(parse(row.furniture)),
           guests: sanitizeGuestbook(parse(row.guestbook)),
+          nft: (row.nft || "").trim() || null,
+          token: row.token != null && Number(row.token) > 0 ? Math.floor(Number(row.token)) : token,
+          chainOwner: null,
+          deed: (row.nft || "").trim() ? "in_game" : "unminted",
+          deedAt: 0,
         }
-      : { owner: null, ownerName: null, price: ESTATE_BASE_PRICE, forSale: true, furniture: [], guests: [] };
-    this.estateBuffs = furnitureHomeBuffs(this.estate.furniture);
+      : {
+          owner: null,
+          ownerName: null,
+          price: ESTATE_BASE_PRICE,
+          forSale: true,
+          furniture: [],
+          guests: [],
+          nft: null,
+          token,
+          chainOwner: null,
+          deed: "unminted",
+          deedAt: 0,
+        };
+    await this.refreshEstateDeed(false);
+    this.syncEstateBuffs();
+  }
+
+  private syncEstateBuffs(): void {
+    const e = this.estate;
+    const playable = !!e && e.deed === "in_game";
+    this.estateBuffs = playable ? furnitureHomeBuffs(e.furniture) : furnitureHomeBuffs([]);
+  }
+
+  private async refreshEstateDeed(force: boolean): Promise<void> {
+    const e = this.estate;
+    if (!e) return;
+    if (!force && e.deedAt && Date.now() - e.deedAt < 180_000) return;
+    if (!e.nft) {
+      e.deed = "unminted";
+      e.deedAt = Date.now();
+      return;
+    }
+    try {
+      const nft = await import("./estatesNft");
+      const treas = nft.treasuryFromSecret(this.env.METRO_TREASURY_SECRET);
+      const deed = await nft.resolveDeed({
+        rpc: nft.defaultRpc(this.env),
+        mint: e.nft,
+        treasury: treas?.pubkey ?? null,
+        d1Owner: e.owner,
+      });
+      e.chainOwner = deed.owner;
+      e.deed = deed.kind;
+      e.deedAt = Date.now();
+      if (deed.kind === "marketplace" && e.ownerName !== "OFF-WORLD HOLDING") e.ownerName = "OFF-WORLD HOLDING";
+    } catch {
+      e.deed = classifyEstateDeed({
+        mint: e.nft,
+        chainOwner: e.chainOwner,
+        treasury: null,
+        ownerWallet: walletPubkeyFromPlayerId(e.owner),
+        marketplace: e.ownerName === "OFF-WORLD HOLDING",
+      });
+      e.deedAt = Date.now();
+    }
   }
 
   private estateMsg(p: PlayerState) {
     const e = this.estate!;
+    const plot = parseEstateInterior(this.zoneName);
+    const key = plot != null ? genesisKeyByPlot(plot) : undefined;
+    const readOnly = e.deed === "off_world" || e.deed === "marketplace";
     return {
       t: "estate" as const,
       id: this.zoneName,
       owner: e.owner,
       ownerName: e.ownerName,
-      mine: !!e.owner && e.owner === p.id,
-      forSale: e.forSale,
+      mine: !!e.owner && e.owner === p.id && !readOnly,
+      forSale: e.forSale && !readOnly,
       price: e.owner ? e.price : ESTATE_BASE_PRICE,
       furniture: e.furniture,
       guests: e.guests,
+      keyName: key?.name,
+      token: e.token ?? key?.token ?? null,
+      deed: e.deed,
+      readOnly,
     };
   }
 
   private async sendEstate(ws: WebSocket, p: PlayerState): Promise<void> {
     if (!this.estate) await this.loadEstate();
     if (!this.estate) return;
+    await this.refreshEstateDeed(false);
+    this.syncEstateBuffs();
     this.send(ws, this.estateMsg(p));
+    if (this.estate.deed === "off_world") {
+      this.send(ws, { t: "sys", text: "deed moved off-world" });
+    } else if (this.estate.deed === "marketplace") {
+      this.send(ws, { t: "sys", text: "OFF-WORLD HOLDING" });
+    }
   }
 
   /** The whole street's ownership at a glance — lets the ESTATES overworld hang
    *  FOR SALE / owner plates over every door without visiting each home. */
   private async sendEstatesDir(ws: WebSocket): Promise<void> {
-    const { results } = await this.env.DB.prepare("SELECT id, owner, owner_name, price, for_sale, furniture, guestbook FROM estates")
-      .all<{ id: string; owner: string | null; owner_name: string | null; price: number; for_sale: number; furniture: string; guestbook: string }>();
+    type DirRow = {
+      id: string;
+      owner: string | null;
+      owner_name: string | null;
+      price: number;
+      for_sale: number;
+      furniture: string;
+      guestbook: string;
+      nft?: string | null;
+    };
+    let results: DirRow[] = [];
+    try {
+      const q = await this.env.DB.prepare("SELECT id, owner, owner_name, price, for_sale, furniture, guestbook, nft FROM estates").all<DirRow>();
+      results = q.results ?? [];
+    } catch {
+      const q = await this.env.DB.prepare("SELECT id, owner, owner_name, price, for_sale, furniture, guestbook FROM estates").all<DirRow>();
+      results = q.results ?? [];
+    }
     const byId = new Map(results.map((r) => [r.id, r]));
     const count = (raw: string | undefined): number => {
       try {
@@ -6138,14 +6290,18 @@ export class WorldDO {
     const list = [];
     for (let i = 0; i < ESTATE_COUNT; i++) {
       const r = byId.get(`est${i}`);
+      const key = genesisKeyByPlot(i);
+      const off = r?.owner_name === "OFF-WORLD HOLDING";
       list.push({
         i,
         owner: r?.owner ?? null,
         name: r?.owner_name ?? null,
-        forSale: r?.owner ? !!r.for_sale : true,
+        forSale: r?.owner ? !!r.for_sale && !off : true,
         price: r?.owner ? r.price : ESTATE_BASE_PRICE,
         furn: count(r?.furniture),
         guests: count(r?.guestbook),
+        keyName: key?.name,
+        deed: off ? ("marketplace" as const) : r?.nft ? "in_game" : "unminted",
       });
     }
     this.send(ws, { t: "estates_dir", list });
@@ -6159,12 +6315,33 @@ export class WorldDO {
   private async persistEstate(): Promise<void> {
     const e = this.estate;
     if (!e) return;
-    await this.env.DB.prepare(
-      "INSERT INTO estates (id, owner, owner_name, price, for_sale, furniture, guestbook, updated) VALUES (?,?,?,?,?,?,?,?) " +
-        "ON CONFLICT(id) DO UPDATE SET owner=excluded.owner, owner_name=excluded.owner_name, price=excluded.price, for_sale=excluded.for_sale, furniture=excluded.furniture, guestbook=excluded.guestbook, updated=excluded.updated",
-    )
-      .bind(this.zoneName, e.owner, e.ownerName, e.price, e.forSale ? 1 : 0, JSON.stringify(e.furniture), JSON.stringify(e.guests), Date.now())
-      .run();
+    const token = e.token ?? tokenFromEstateId(this.zoneName);
+    try {
+      await this.env.DB.prepare(
+        "INSERT INTO estates (id, owner, owner_name, price, for_sale, furniture, guestbook, updated, nft, token) VALUES (?,?,?,?,?,?,?,?,?,?) " +
+          "ON CONFLICT(id) DO UPDATE SET price=excluded.price, for_sale=excluded.for_sale, furniture=excluded.furniture, guestbook=excluded.guestbook, updated=excluded.updated",
+      )
+        .bind(
+          this.zoneName,
+          e.owner,
+          e.ownerName,
+          e.price,
+          e.forSale ? 1 : 0,
+          JSON.stringify(e.furniture),
+          JSON.stringify(e.guests),
+          Date.now(),
+          e.nft,
+          token,
+        )
+        .run();
+    } catch {
+      await this.env.DB.prepare(
+        "INSERT INTO estates (id, owner, owner_name, price, for_sale, furniture, guestbook, updated) VALUES (?,?,?,?,?,?,?,?) " +
+          "ON CONFLICT(id) DO UPDATE SET price=excluded.price, for_sale=excluded.for_sale, furniture=excluded.furniture, guestbook=excluded.guestbook, updated=excluded.updated",
+      )
+        .bind(this.zoneName, e.owner, e.ownerName, e.price, e.forSale ? 1 : 0, JSON.stringify(e.furniture), JSON.stringify(e.guests), Date.now())
+        .run();
+    }
   }
 
   private async onEstate(ws: WebSocket, msg: Extract<ClientMsg, { t: "estate" }>): Promise<void> {
@@ -6175,12 +6352,32 @@ export class WorldDO {
     const e = this.estate!;
     const sys = (t: string) => this.sendTo(p.id, { t: "sys", text: t });
     if (msg.action === "buy") {
+      if (isGuestPlayerId(p.id) || !walletPubkeyFromPlayerId(p.id)) {
+        return sys("Link Phantom to hold this False Address.");
+      }
       if (e.owner === p.id) return sys("you already own this home");
       if (e.owner && !e.forSale) return sys("this home isn't for sale");
       const price = Math.max(0, Math.floor(Number(e.owner ? e.price : ESTATE_BASE_PRICE) || 0));
       if (!(price > 0) || !Number.isFinite(price)) return sys("invalid home price");
       if (p.credits < price) return sys(`not enough credits — this home costs ₵${price}`);
       const prevOwner = e.owner;
+      const buyerWallet = walletPubkeyFromPlayerId(p.id)!;
+      const allowSim = this.env.METRO_ALLOW_SIM === "1";
+      await this.refreshEstateDeed(true);
+      const deedNow = e.deed;
+      if (deedNow === "marketplace") return sys("OFF-WORLD HOLDING");
+      if (deedNow === "off_world") return sys("deed moved off-world");
+      // ₵ buy cannot rewrite owner unless the Key is in the city vault (or sim rehearsal).
+      if (e.nft && e.deed !== "unminted") {
+        const nft = await import("./estatesNft");
+        const treas = nft.treasuryFromSecret(this.env.METRO_TREASURY_SECRET);
+        if (!treas && !allowSim) return sys("Check back later.");
+        if (treas && e.chainOwner && e.chainOwner !== treas.pubkey) {
+          return sys("Genesis Key is not in the city vault — cannot settle this sale");
+        }
+      } else if (e.deed === "unminted" && !allowSim) {
+        return sys("this False Address has no on-chain deed yet");
+      }
       // Debit first (matches market buy) so concurrent spends cannot drive balance negative
       // after a successful D1 ownership claim.
       p.credits -= price;
@@ -6198,6 +6395,20 @@ export class WorldDO {
         p.dirty = true;
         void this.upsertPlayer(p); // failure direction is under-pay, never a mint
       };
+      const revertClaimThenRefund = async () => {
+        try {
+          const rev = await this.env.DB.prepare(
+            "UPDATE estates SET owner=?, owner_name=?, for_sale=1, updated=? WHERE id=? AND owner=?",
+          )
+            .bind(prevOwner, prevOwner ? e.ownerName : null, Date.now(), this.zoneName, p.id)
+            .run();
+          if ((rev.meta.changes ?? 0) === 0) return sys("estate registry conflict — contact ops");
+        } catch {
+          return sys("estate registry unavailable — try again");
+        }
+        refundDurably();
+        return null;
+      };
       try {
         let won = false;
         if (prevOwner) {
@@ -6209,11 +6420,19 @@ export class WorldDO {
           won = (claim.meta.changes ?? 0) > 0;
         } else {
           // Ensure a row exists, then claim only if still unowned / for sale.
-          await this.env.DB.prepare(
-            "INSERT OR IGNORE INTO estates (id, owner, owner_name, price, for_sale, furniture, guestbook, updated) VALUES (?,?,?,?,1,'[]','[]',?)",
-          )
-            .bind(this.zoneName, null, null, ESTATE_BASE_PRICE, Date.now())
-            .run();
+          try {
+            await this.env.DB.prepare(
+              "INSERT OR IGNORE INTO estates (id, owner, owner_name, price, for_sale, furniture, guestbook, updated, token) VALUES (?,?,?,?,1,'[]','[]',?,?)",
+            )
+              .bind(this.zoneName, null, null, ESTATE_BASE_PRICE, Date.now(), tokenFromEstateId(this.zoneName))
+              .run();
+          } catch {
+            await this.env.DB.prepare(
+              "INSERT OR IGNORE INTO estates (id, owner, owner_name, price, for_sale, furniture, guestbook, updated) VALUES (?,?,?,?,1,'[]','[]',?)",
+            )
+              .bind(this.zoneName, null, null, ESTATE_BASE_PRICE, Date.now())
+              .run();
+          }
           const claim = await this.env.DB.prepare(
             "UPDATE estates SET owner=?, owner_name=?, for_sale=0, updated=? WHERE id=? AND for_sale=1 AND (owner IS NULL OR owner='')",
           )
@@ -6228,6 +6447,31 @@ export class WorldDO {
       } catch {
         refundDurably();
         return sys("estate registry unavailable — try again");
+      }
+      if (e.nft && this.env.METRO_ALLOW_SIM !== "1") {
+        try {
+          const nft = await import("./estatesNft");
+          const treas = nft.treasuryFromSecret(this.env.METRO_TREASURY_SECRET);
+          if (!treas) {
+            const msg = await revertClaimThenRefund();
+            return msg ?? sys("Check back later.");
+          }
+          const moved = await nft.transferKeyToWallet(
+            { rpc: nft.defaultRpc(this.env), treasurySecretB64: this.env.METRO_TREASURY_SECRET! },
+            e.nft,
+            buyerWallet,
+          );
+          if (!moved.ok) {
+            const msg = await revertClaimThenRefund();
+            return msg ?? sys(moved.reason || "Check back later.");
+          }
+          e.chainOwner = buyerWallet;
+          e.deed = "in_game";
+          e.deedAt = Date.now();
+        } catch (err) {
+          const msg = await revertClaimThenRefund();
+          return msg ?? sys(String((err as Error)?.message ?? err).slice(0, 120) || "Check back later.");
+        }
       }
       if (!prevOwner) this.eco("burn", "estates", price); // resale is a transfer (mailbox), not a burn
       if (prevOwner) {
@@ -6244,23 +6488,73 @@ export class WorldDO {
       e.forSale = false;
       // Keep furniture from prior owner; only refresh ownership columns.
       await this.persistEstate();
-      sys(`◈ home purchased for ₵${price} — press U to furnish it`);
+      try {
+        const { grantGenesisIfHolder } = await import("./estatesNft");
+        p.genesisTokens = await grantGenesisIfHolder(this.env.DB, p.id);
+        if (p.genesisTokens.length) {
+          p.cosmeticsOwned.add("genesis");
+          this.sendCosmetics(ws, p);
+        }
+      } catch {
+        /* cosmetic grant is best-effort after the deed moved */
+      }
+      const label = e.token ? genesisKeyLabel(e.token) : "home";
+      sys(`◈ ${label} purchased for ₵${price} — press U to furnish it`);
       this.broadcastEstate();
     } else if (msg.action === "list") {
+      if (isGuestPlayerId(p.id) || !walletPubkeyFromPlayerId(p.id)) {
+        return sys("Link Phantom to hold this False Address.");
+      }
       if (e.owner !== p.id) return sys("only the owner can list this home");
+      if (e.deed === "marketplace") return sys("OFF-WORLD HOLDING");
+      if (e.deed === "off_world") return sys("deed moved off-world");
+      await this.refreshEstateDeed(true);
+      if (e.nft && this.env.METRO_ALLOW_SIM !== "1") {
+        const nft = await import("./estatesNft");
+        const treas = nft.treasuryFromSecret(this.env.METRO_TREASURY_SECRET);
+        if (!treas) return sys("Check back later.");
+        if (!e.chainOwner) return sys("Check back later.");
+        if (e.chainOwner !== treas.pubkey && e.chainOwner !== walletPubkeyFromPlayerId(p.id)) {
+          return sys("deed moved off-world");
+        }
+        if (e.chainOwner !== treas.pubkey) {
+          return sys("send this Genesis Key to the city vault to list — Worker escrow cannot pull from Phantom");
+        }
+      }
       e.price = Math.max(100, Math.min(10_000_000, Math.round(msg.price ?? e.price)));
       e.forSale = true;
       await this.persistEstate();
-      sys(`◈ listed for sale — ₵${e.price}`);
+      sys(`◈ listed for sale — ₵${e.price} · Key escrowed in the city vault`);
       this.broadcastEstate();
     } else if (msg.action === "unlist") {
+      if (isGuestPlayerId(p.id) || !walletPubkeyFromPlayerId(p.id)) {
+        return sys("Link Phantom to hold this False Address.");
+      }
       if (e.owner !== p.id) return sys("only the owner can unlist this home");
+      if (e.nft && this.env.METRO_ALLOW_SIM !== "1") {
+        await this.refreshEstateDeed(true);
+        const nft = await import("./estatesNft");
+        const treas = nft.treasuryFromSecret(this.env.METRO_TREASURY_SECRET);
+        const dest = walletPubkeyFromPlayerId(p.id)!;
+        if (!e.chainOwner) return sys("Check back later.");
+        if (treas && e.nft && e.chainOwner === treas.pubkey) {
+          const moved = await nft.transferKeyToWallet(
+            { rpc: nft.defaultRpc(this.env), treasurySecretB64: this.env.METRO_TREASURY_SECRET! },
+            e.nft,
+            dest,
+          );
+          if (!moved.ok) return sys(moved.reason || "Check back later.");
+          e.chainOwner = dest;
+          e.deed = "in_game";
+        }
+      }
       e.forSale = false;
       await this.persistEstate();
       sys("◈ delisted — this home is no longer for sale");
       this.broadcastEstate();
     } else if (msg.action === "furnish") {
       if (e.owner !== p.id) return sys("only the owner can decorate this home");
+      if (e.deed === "off_world" || e.deed === "marketplace") return sys(e.deed === "marketplace" ? "OFF-WORLD HOLDING" : "deed moved off-world");
       const previous = e.furniture;
       const next = sanitizeFurniture(msg.furniture ?? []);
       const cost = furnitureUpgradeCost(previous, next);
@@ -6268,13 +6562,13 @@ export class WorldDO {
       p.credits -= cost;
       p.dirty = true;
       e.furniture = next;
-      this.estateBuffs = furnitureHomeBuffs(next);
+      this.syncEstateBuffs();
       // Persist the debit before the layout. A Worker crash can never leave the
       // furniture/buffs saved while silently dropping their charge.
       if (cost > 0 && !(await this.upsertPlayer(p))) {
         p.credits += cost;
         e.furniture = previous;
-        this.estateBuffs = furnitureHomeBuffs(previous);
+        this.syncEstateBuffs();
         return sys("credit ledger unavailable — your layout was not charged or saved");
       }
       try {
@@ -6283,7 +6577,7 @@ export class WorldDO {
         p.credits += cost;
         p.dirty = true;
         e.furniture = previous;
-        this.estateBuffs = furnitureHomeBuffs(previous);
+        this.syncEstateBuffs();
         if (cost > 0) void this.upsertPlayer(p);
         return sys("estate registry unavailable — your layout was not charged or saved");
       }
@@ -6297,6 +6591,9 @@ export class WorldDO {
     } else if (msg.action === "sign") {
       // visitors sign the book; the stamp is server-chosen so nothing player-written persists.
       // Tip: visitor burns ₵25 (sink); host mails ₵15 (partial transfer, net burn ₵10).
+      if (e.deed === "off_world" || e.deed === "marketplace") {
+        return sys(e.deed === "marketplace" ? "OFF-WORLD HOLDING" : "deed moved off-world");
+      }
       if (!e.owner) return sys("nobody lives here yet — nothing to sign");
       if (e.owner === p.id) return sys("it's your own guestbook, choom");
       const TIP = 25;
@@ -7272,7 +7569,10 @@ export class WorldDO {
       }
       // Own-home furniture buffs (regen / heat / move) — only while standing in your est{K}.
       const atOwnHome =
-        !!this.estate && this.estate.owner === p.id && parseEstateInterior(this.zoneName) !== null;
+        !!this.estate &&
+        this.estate.owner === p.id &&
+        this.estate.deed === "in_game" &&
+        parseEstateInterior(this.zoneName) !== null;
       const homeBuff = atOwnHome ? this.estateBuffs : null;
       const walkSpeed = PLAYER.speed * (1 + (homeBuff?.movePct ?? 0));
       if (this.tick < p.dashUntilTick) {

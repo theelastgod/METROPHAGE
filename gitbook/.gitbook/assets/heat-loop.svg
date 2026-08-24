@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 460" width="1040" height="460" font-family="'IBM Plex Mono','SFMono-Regular',ui-monospace,monospace">
+  <defs>
+    <radialGradient id="ht-bg" cx="50%" cy="30%" r="90%"><stop offset="0%" stop-color="#0b0820"/><stop offset="100%" stop-color="#04030c"/></radialGradient>
+    <linearGradient id="ht-gauge" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0%" stop-color="#ff2bd6"/><stop offset="55%" stop-color="#ff7a3c"/><stop offset="100%" stop-color="#ffe14a"/>
+    </linearGradient>
+    <filter id="ht-glow" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <marker id="ht-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#ff2bd6"/>
+    </marker>
+  </defs>
+  <rect width="1040" height="460" fill="url(#ht-bg)"/>
+  <text x="40" y="52" font-size="24" font-weight="700" letter-spacing="6" fill="#ffd9a8">THE HEAT LOOP</text>
+  <text x="40" y="76" font-size="11" letter-spacing="3" fill="#e0965f">FIGHTING BUILDS HEAT · HEAT GATES YOUR ULTIMATE · STAY COLD ONLY IF YOU'RE RUNNING</text>
+
+  <!-- HEAT gauge -->
+  <g transform="translate(70,120)">
+    <rect x="0" y="0" width="70" height="280" rx="12" fill="#140a10" stroke="#3a2630" stroke-width="1.5"/>
+    <rect x="10" y="70" width="50" height="200" rx="8" fill="url(#ht-gauge)" filter="url(#ht-glow)"/>
+    <line x1="0" y1="60" x2="70" y2="60" stroke="#ffe14a" stroke-width="2" stroke-dasharray="4 4"/>
+    <text x="35" y="-12" text-anchor="middle" font-size="12" letter-spacing="2" fill="#ffd9a8">HEAT</text>
+    <text x="82" y="56" font-size="10" fill="#ffe14a">◄ ULT</text>
+    <text x="82" y="270" font-size="10" fill="#8a7f88">COLD</text>
+  </g>
+
+  <!-- cycle nodes -->
+  <!-- node style -->
+  <g font-size="12">
+    <!-- 1 FIGHT -->
+    <g transform="translate(300,140)">
+      <rect x="-95" y="-40" width="190" height="80" rx="10" fill="#12081a" stroke="#ff2bd6" stroke-width="1.6"/>
+      <text x="0" y="-10" text-anchor="middle" font-weight="700" letter-spacing="2" fill="#ff5cae">① FIGHT</text>
+      <text x="0" y="12" text-anchor="middle" font-size="10" fill="#c9a7bd">Primary + Q deal damage</text>
+      <text x="0" y="28" text-anchor="middle" font-size="10" fill="#ff8ad0">→ HEAT builds</text>
+    </g>
+    <!-- 2 CHARGE -->
+    <g transform="translate(620,140)">
+      <rect x="-95" y="-40" width="190" height="80" rx="10" fill="#1a1206" stroke="#ff9a3c" stroke-width="1.6"/>
+      <text x="0" y="-10" text-anchor="middle" font-weight="700" letter-spacing="2" fill="#ffb347">② CHARGE</text>
+      <text x="0" y="12" text-anchor="middle" font-size="10" fill="#e0b878">Meter climbs to the gate</text>
+      <text x="0" y="28" text-anchor="middle" font-size="10" fill="#ffd07a">→ Ultimate arms</text>
+    </g>
+    <!-- 3 UNLEASH -->
+    <g transform="translate(880,270)">
+      <rect x="-95" y="-40" width="190" height="80" rx="10" fill="#1c1004" stroke="#ffe14a" stroke-width="1.8"/>
+      <text x="0" y="-10" text-anchor="middle" font-weight="700" letter-spacing="2" fill="#ffe14a">③ UNLEASH E</text>
+      <text x="0" y="12" text-anchor="middle" font-size="10" fill="#e8d27a">Spend the gate on your ult</text>
+      <text x="0" y="28" text-anchor="middle" font-size="10" fill="#fff0a0">→ HEAT resets</text>
+    </g>
+    <!-- 4 COOL -->
+    <g transform="translate(500,320)">
+      <rect x="-95" y="-40" width="190" height="80" rx="10" fill="#0a1620" stroke="#29e7ff" stroke-width="1.6"/>
+      <text x="0" y="-10" text-anchor="middle" font-weight="700" letter-spacing="2" fill="#7ff0ff">④ COOL</text>
+      <text x="0" y="12" text-anchor="middle" font-size="10" fill="#a7cdd8">HEAT decays out of combat</text>
+      <text x="0" y="28" text-anchor="middle" font-size="10" fill="#9fe4f0">keep fighting to hold it</text>
+    </g>
+  </g>
+
+  <!-- arrows between nodes -->
+  <g fill="none" stroke="#ff2bd6" stroke-width="2" marker-end="url(#ht-arrow)" stroke-opacity="0.8">
+    <path d="M398,140 L522,140"/>
+    <path d="M700,168 C790,200 800,220 795,228"/>
+    <path d="M785,285 C700,320 640,322 600,320"/>
+    <path d="M405,300 C320,270 280,220 230,200"/>
+  </g>
+
+  <!-- gear modifiers -->
+  <g transform="translate(300,392)" font-size="10.5" letter-spacing="1">
+    <text x="0" y="0" fill="#7f8aa8" letter-spacing="3">GEAR MODS ▸</text>
+    <rect x="110" y="-14" width="130" height="20" rx="10" fill="#12081a" stroke="#ff2bd6" stroke-opacity="0.6"/><text x="175" y="0" text-anchor="middle" fill="#ff8ad0">+ HEAT GAIN</text>
+    <rect x="252" y="-14" width="140" height="20" rx="10" fill="#0a1620" stroke="#29e7ff" stroke-opacity="0.6"/><text x="322" y="0" text-anchor="middle" fill="#9fe4f0">− HEAT DECAY</text>
+    <rect x="404" y="-14" width="150" height="20" rx="10" fill="#1c1004" stroke="#ffe14a" stroke-opacity="0.6"/><text x="479" y="0" text-anchor="middle" fill="#ffe89a">− ULT HEAT COST</text>
+  </g>
+</svg>
