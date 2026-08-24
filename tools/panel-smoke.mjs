@@ -11,7 +11,7 @@
  *      node tools/panel-smoke.mjs --keep     (leave servers running after)
  */
 import { chromium } from "playwright";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 
 const ROOT = path.resolve(new URL(".", import.meta.url).pathname, "..");
@@ -114,19 +114,58 @@ async function enterCity(page, base) {
     { timeout: 60000 },
   );
   await page.waitForTimeout(300);
-  await page.evaluate(() => {
-    // The smoke is a real local multiplayer client, so give it an explicit guest
-    // identity instead of relying on whatever random callsign the dev shortcut picked.
-    // Reusing one of the small production callsign pool can hit a D1-bound identity and
-    // correctly close with auth code 4001, which looks like a panel boot failure.
-    const g = window.__game;
-    const current = g.registry.get("customization") || {};
-    const suffix = Math.random().toString(36).slice(2, 8).toUpperCase();
-    g.registry.set("customization", { ...current, callsign: `SMK-${suffix}`.slice(0, 12) });
-    g.registry.set("guestPlay", true);
-    g.registry.remove("walletAddress");
-    window.__enterCity();
+  // Login never INSERTs a player row. Claim a unique g:<uuid> the same way PLAY FREE
+  // does on the title/customize path, then seed localStorage so NetClient presents
+  // guestId + device secret. Skipping this 4001s ("claim this callsign first").
+  const suffix = Math.random().toString(36).slice(2, 8).toUpperCase();
+  const callsign = `SMK-${suffix}`.slice(0, 12);
+  const guestId =
+    typeof crypto.randomUUID === "function" ? `g:${crypto.randomUUID()}` : `g:${Date.now().toString(16)}-${suffix}`;
+  const secret =
+    typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `smk-${Date.now().toString(36)}-${suffix.toLowerCase()}`;
+  const claimRes = await fetch("http://127.0.0.1:8787/player/claim", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ guestId, secret, callsign, classId: "metrophage" }),
   });
+  const claim = await claimRes.json().catch(() => ({}));
+  if (!claim?.ok) {
+    throw new Error(`guest claim failed — HTTP ${claimRes.status} ${JSON.stringify(claim)}`);
+  }
+  const claimed = claim.callsign || callsign;
+  await page.evaluate(
+    ({ guestId, secret, callsign }) => {
+      const g = window.__game;
+      const current = g.registry.get("customization") || {};
+      g.registry.set("customization", { ...current, callsign });
+      g.registry.set("classId", g.registry.get("classId") || "metrophage");
+      g.registry.set("guestId", guestId);
+      g.registry.set("guestPlay", true);
+      g.registry.remove("walletAddress");
+      try {
+        localStorage.setItem("mp_secret_" + guestId, secret);
+        sessionStorage.setItem("mp_secret_sess_" + guestId, secret);
+        localStorage.setItem(
+          "metrophage_local_runner_v1",
+          JSON.stringify({
+            v: 1,
+            guestId,
+            callsign,
+            classId: "metrophage",
+            customization: { ...current, callsign },
+            deviceSecret: secret,
+            updatedAt: Date.now(),
+          }),
+        );
+      } catch {
+        /* private mode — registry guestId still drives login */
+      }
+      window.__enterCity();
+    },
+    { guestId, secret, callsign: claimed },
+  );
   const connected = await page
     .waitForFunction(
       () => {
@@ -273,6 +312,20 @@ async function mobilePass(browser, base) {
 async function main() {
   process.env.VITE_SERVER_URL ??= `ws://127.0.0.1:${WS_PORT}/ws`; // must precede the vite spawn
   const servers = [];
+  const serverDir = path.join(ROOT, "server");
+  const wranglerBin = path.join(serverDir, "node_modules/.bin/wrangler");
+  {
+    log("applying local D1 migrations…");
+    const migrated = spawnSync(wranglerBin, ["d1", "migrations", "apply", "metrophage", "--local"], {
+      cwd: serverDir,
+      encoding: "utf8",
+    });
+    if (migrated.status !== 0) {
+      throw new Error(
+        `local D1 migrations failed:\n${migrated.stdout || ""}\n${migrated.stderr || ""}`.trim(),
+      );
+    }
+  }
   // Reuse an already-running wrangler dev (leftover sessions often hold :8787).
   const wranglerUp = await httpUp(`http://127.0.0.1:${WS_PORT}/health`, 1);
   if (wranglerUp) {
@@ -284,7 +337,7 @@ async function main() {
         "wrangler",
         "node",
         ["node_modules/.bin/wrangler", "dev", "--port", String(WS_PORT)],
-        path.join(ROOT, "server"),
+        serverDir,
         /Ready on|Listening on|wrangler dev now uses local/i,
       ),
     );
