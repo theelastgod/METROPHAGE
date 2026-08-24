@@ -1,5 +1,12 @@
--- Authorized live-world reset, 2026-07-16.
--- Preserve bridge transaction ids for replay protection, but redact prior identities.
+-- AUTHORIZED Solana relaunch wipe (one-time). New pump.fun mint = old ledger is junk.
+-- Additive SQL only. Do NOT `d1 delete`. Do NOT change database_id. DO tag stays v1.
+-- This PR does not run this against production. Ops night only, after treasury seed buy.
+--
+-- Identity: DELETE players and every player-keyed table (callsign-as-id is gone after this).
+-- Bridge: DELETE metro_* (EVM-shaped sigs / old mint / $1 bootstrap cannot be reused).
+-- Estates: unown + list for sale + empty furniture/guestbook. Keep token / nft if present
+-- (Genesis Key 1..50 and on-chain mint, filled after Metaplex mint).
+
 DELETE FROM bounty_completions;
 DELETE FROM player_bounties;
 DELETE FROM player_discovered;
@@ -16,8 +23,14 @@ DELETE FROM guild_members;
 DELETE FROM guilds;
 DELETE FROM player_treasury_events;
 DELETE FROM player_treasury;
-UPDATE metro_deposits SET player = '__world_reset__', wallet = '__redacted__';
-UPDATE metro_withdrawals SET player = '__world_reset__', wallet = '__redacted__';
+
+DELETE FROM metro_deposits;
+DELETE FROM metro_withdrawals;
+DELETE FROM metro_seed;
+DELETE FROM metro_price;
+DELETE FROM metro_bridge_lock;
+
+-- Plots stay. Deed columns (token, nft) are not touched.
 UPDATE estates
 SET owner = NULL,
     owner_name = NULL,
@@ -25,4 +38,5 @@ SET owner = NULL,
     furniture = '[]',
     guestbook = '[]',
     updated = 0;
+
 DELETE FROM players;

@@ -3,17 +3,17 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>METROPHAGE — play-to-earn neon cyberpunk action-RPG</title>
-<meta name="description" content="Fight the corps, run the sprawl, earn $METRO. Neon-noir multiplayer cyberpunk action-RPG in your browser — bosses, cells, ICE dives, memory fragments." />
+<title>METROPHAGE — play-to-earn neon cyberpunk action-RPG on Solana</title>
+<meta name="description" content="Fight the corps, run the sprawl, earn $METRO on Solana (pump.fun). Phantom, Solflare, or Backpack. 50 Genesis Keys deed THE ESTATES. Neon-noir action-RPG in your browser." />
 
 <meta property="og:type" content="website" />
-<meta property="og:title" content="METROPHAGE — play-to-earn cyberpunk action-RPG" />
-<meta property="og:description" content="Fight the corps, run the sprawl, earn $METRO. Connect your wallet and deploy into the shared sprawl." />
+<meta property="og:title" content="METROPHAGE — Solana cyberpunk action-RPG" />
+<meta property="og:description" content="Fight the corps, run the sprawl, earn $METRO on Solana / pump.fun. Connect Phantom. 50 Genesis Keys deed THE ESTATES." />
 <meta property="og:url" content="https://metrophage.fun" />
 <meta property="og:image" content="https://metrophage.fun/og.png" />
 <meta name="twitter:card" content="summary_large_image" />
-<meta name="twitter:title" content="METROPHAGE — play-to-earn cyberpunk action-RPG" />
-<meta name="twitter:description" content="Fight the corps, run the sprawl, earn $METRO. Connect your wallet and deploy." />
+<meta name="twitter:title" content="METROPHAGE — Solana cyberpunk action-RPG" />
+<meta name="twitter:description" content="Earn $METRO on Solana / pump.fun. Phantom sign-in. Genesis Keys deed THE ESTATES." />
 <meta name="twitter:image" content="https://metrophage.fun/og.png" />
 
 <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
@@ -126,20 +126,20 @@
     <h1 class="logo" id="logo" data-text="METROPHAGE">METROPHAGE</h1>
 
     <p class="lore">The city's machines woke up.<br>The private-security corps were faster.</p>
-    <p class="desc">A neon-noir cyberpunk action-RPG. Fight the corps, run the sprawl, earn <b class="metro">$METRO</b>.</p>
+    <p class="desc">A neon-noir cyberpunk action-RPG. Fight the corps, run the sprawl, earn <b class="metro">$METRO</b> on Solana. Fifty <b class="metro">Genesis Keys</b> deed THE ESTATES.</p>
 
     <div class="cta">
-      <button class="btn btn-primary" id="connectBtn" type="button">▶ Connect Wallet</button>
+      <button class="btn btn-primary" id="connectBtn" type="button">▶ Connect Phantom</button>
       <a class="btn btn-ghost" id="guestBtn" href="#play">Play as Guest</a>
     </div>
-    <p class="wallet-status" id="walletStatus">Sign in with your wallet to <b style="color:var(--ink)">save your progress</b> &amp; earn <b class="metro" style="color:var(--mag)">$METRO</b>. Guests can play — but runs aren't saved.</p>
+    <p class="wallet-status" id="walletStatus">Phantom, Solflare, or Backpack — free message sign (no SOL). Portable runner + <b class="metro" style="color:var(--mag)">$METRO</b> (pump.fun) + Genesis Keys. Guests play on a <b style="color:var(--ink)">device save</b> (this browser).</p>
 
     <ul class="chips">
       <li>Twin-stick combat</li>
       <li>Shared online world</li>
-      <li class="gold">Earn $METRO</li>
-      <li>Seasonal meltdowns</li>
-      <li>Factions</li>
+      <li class="gold">$METRO · pump.fun</li>
+      <li class="gold">Genesis Keys</li>
+      <li>Phantom · Solana</li>
     </ul>
 
     <nav class="social">
@@ -150,7 +150,7 @@
     </nav>
   </main>
 
-  <footer>metrophage.fun · play-to-earn in the sprawl · <b>ERA&nbsp;0</b> · © 2026</footer>
+  <footer>metrophage.fun · Solana · pump.fun · Genesis Keys · <b>ERA&nbsp;0</b> · © 2026</footer>
 
   <div class="scan"></div>
   <div class="vig"></div>
@@ -163,7 +163,8 @@
     const logo = document.getElementById('logo');
     (function loop(){ setTimeout(()=>{ logo.classList.add('glitch'); setTimeout(()=>logo.classList.remove('glitch'),420); loop(); }, 2600 + Math.random()*4200); })();
 
-    // ── EVM wallet login (Robinhood Chain): connect → sign in → enter (injected MetaMask / any window.ethereum) ──
+    // Solana identity gate: injected Phantom / Solflare / Backpack → ed25519 signMessage → enter.
+    // The game re-signs at Select; this page is chrome. Do not use window.ethereum / personal_sign.
     const btn = document.getElementById('connectBtn');
     const guest = document.getElementById('guestBtn');
     const status = document.getElementById('walletStatus');
@@ -174,44 +175,52 @@
 
     function detectWallet(){
       const w = window;
-      if (w.ethereum && w.ethereum.isMetaMask) return { p: w.ethereum, name: 'MetaMask' };
-      if (w.ethereum) return { p: w.ethereum, name: 'Wallet' };
+      if (w.phantom && w.phantom.solana) return { p: w.phantom.solana, name: 'Phantom' };
+      if (w.solflare) return { p: w.solflare, name: 'Solflare' };
+      if (w.backpack && w.backpack.solana) return { p: w.backpack.solana, name: 'Backpack' };
+      if (w.solana) return { p: w.solana, name: w.solana.isPhantom ? 'Phantom' : 'Solana wallet' };
       return null;
     }
-    const trunc = (a) => a.slice(0,4) + '…' + a.slice(-4);
+    const trunc = (a) => a.slice(0, 4) + '…' + a.slice(-4);
 
     async function connect(){
       const wallet = detectWallet();
       if (!wallet) {
-        status.innerHTML = 'No wallet detected — install <a href="https://metamask.io/" target="_blank" rel="noopener">MetaMask</a> (or any EVM wallet extension), then reload. (Guests can still play — but runs aren\'t saved.)';
+        status.innerHTML = 'No Solana wallet detected — install <a href="https://phantom.app/" target="_blank" rel="noopener">Phantom</a> (or Solflare / Backpack), then reload. On phone, open the game tab and connect there — do not force Phantom\'s in-app browser. Guests still play on a device save.';
         return;
       }
       try {
         btn.disabled = true; btn.textContent = 'Connecting…';
-        const accounts = await wallet.p.request({ method: 'eth_requestAccounts' });
+        const res = await wallet.p.connect();
         provider = wallet.p; providerName = wallet.name;
-        address = accounts && accounts[0];
+        address = (res && res.publicKey && res.publicKey.toString()) || (wallet.p.publicKey && wallet.p.publicKey.toString());
         if (!address) throw new Error('no account');
-        status.innerHTML = '◢ <b>Connected</b> · <span class="addr">' + trunc(address) + '</span> · ' + providerName + ' — sign in to save your run &amp; earn ' + metro + '.';
+        status.innerHTML = '◢ <b>Connected</b> · <span class="addr">' + trunc(address) + '</span> · ' + providerName + ' — sign in (free message, no SOL) to save your run &amp; earn ' + metro + '.';
         btn.disabled = false; btn.textContent = 'Sign In ▶';
       } catch (e) {
-        btn.disabled = false; btn.textContent = '▶ Connect Wallet';
-        status.innerHTML = '// Connection cancelled. Try again — or play as guest (no save).';
+        btn.disabled = false; btn.textContent = '▶ Connect Phantom';
+        status.innerHTML = '// Connection cancelled. Try again — or play as guest (device save, this browser).';
       }
     }
 
     async function signIn(){
       try {
         btn.disabled = true; btn.textContent = 'Signing in…';
-        const msg = 'Sign in to METROPHAGE\n\nWallet: ' + address + '\nERA 0 · ' + Date.now();
-        const hex = '0x' + Array.from(new TextEncoder().encode(msg)).map((b) => b.toString(16).padStart(2, '0')).join('');
-        await provider.request({ method: 'personal_sign', params: [hex, address] });
+        const ts = Date.now();
+        const msg = 'METROPHAGE login\nwallet: ' + address + '\nts: ' + ts;
+        const bytes = new TextEncoder().encode(msg);
+        if (!provider.signMessage) throw new Error('no signMessage');
+        try {
+          await provider.signMessage(bytes, 'utf8');
+        } catch (e) {
+          await provider.signMessage(bytes);
+        }
         signedIn = true;
-        status.innerHTML = '◢ <b>Signed in</b> · <span class="addr">' + trunc(address) + '</span> — progress saved, ' + metro + ' tracked. Deploy.';
+        status.innerHTML = '◢ <b>Signed in</b> · <span class="addr">' + trunc(address) + '</span> · ' + providerName + ' — portable runner, ' + metro + ', Genesis Keys. Deploy.';
         btn.disabled = false; btn.textContent = 'Enter the Sprawl ▶';
       } catch (e) {
         btn.disabled = false; btn.textContent = 'Sign In ▶';
-        status.innerHTML = '// Sign-in is required to save your run &amp; earn ' + metro + '. Try again — or play as guest (no save).';
+        status.innerHTML = '// Sign-in is a free message (no SOL). Required to cash out ' + metro + ' or hold a Genesis Key. Try again — or play as guest (device save).';
       }
     }
 

@@ -1,8 +1,9 @@
 # $METRO × METROPHAGE — Higgsfield launch pack (copy)
 
-Voice: neon-noir, short, confident. **No pump language, no price talk, no promised returns.**
-$METRO = optional convertibility on Robinhood Chain. Pool is player-funded and starts honest-empty.
-Rates (from `src/game/economyPolicy.ts`): deposit 1 $METRO → 100 ₵ · cash out 150 ₵ → 1 $METRO · min 300 ₵ · no daily cap.
+Voice: neon-noir, short, confident. **No promised returns, no yield talk.**
+$METRO = optional convertibility on **Solana**, launched on **pump.fun** (bonding curve → PumpSwap). Pool is player-funded and starts honest-empty.
+Wallets: **Phantom, Solflare, Backpack**. Deeds: **50 Genesis Keys**. Guests play on a device save.
+Rates (from `src/game/economyPolicy.ts`): healthy reference 1 $METRO → 100 ₵ · cash out 150 ₵ → 1 $METRO · min 300 ₵ · no daily cap. Live rates follow the Solana oracle.
 
 **Play link:** https://metrophagev1.pages.dev
 **Assets:** `marketing/higgsfield-pack/` (this doc's filenames refer there)
@@ -19,7 +20,7 @@ Rates (from `src/game/economyPolicy.ts`): deposit 1 $METRO → 100 ₵ · cash o
 | Coin key art 2048² | `metro-coin.png` | posts, thumbnails |
 
 **X bio suggestion:**
-> Neon-noir action MMO in your browser. Every mind in Metro City is leased — you woke free. ₵ runs the game · $METRO is the bridge. ▶ metrophagev1.pages.dev
+> Neon-noir action MMO in your browser. Every mind in Metro City is leased — you woke free. ₵ runs the game · $METRO on Solana / pump.fun. 50 Genesis Keys. ▶ metrophagev1.pages.dev
 
 ---
 
@@ -29,9 +30,10 @@ Rates (from `src/game/economyPolicy.ts`): deposit 1 $METRO → 100 ₵ · cash o
 New colors on the block.
 
 METROPHAGE — neon-noir action MMO, straight in your browser.
-₵ runs the city. $METRO is the optional bridge on Robinhood Chain.
+₵ runs the city. $METRO is the optional bridge on Solana (pump.fun).
+50 Genesis Keys deed THE ESTATES.
 
-No downloads. No gas to play. Pool is player-funded — honest empty at launch.
+No downloads. Sign-in is a free Phantom message. Pool is player-funded — honest empty at launch.
 
 ▶ metrophagev1.pages.dev
 ```
@@ -46,8 +48,9 @@ Fresh banner + token art are live on X and DexScreener.
 METROPHAGE is playable right now in your browser — server-authoritative city,
 four class kits, ICE vaults, territory war, player housing.
 
-₵ credits run the game. $METRO on Robinhood Chain is optional convertibility,
-backed only by what players deposit. Not a faucet. Not free money.
+₵ credits run the game. $METRO on Solana / pump.fun is optional convertibility,
+backed only by what players deposit. Not a faucet. Not free money. Genesis Keys
+are the on-chain deeds to THE ESTATES.
 
 ▶ Play: metrophagev1.pages.dev
 ```
@@ -96,7 +99,7 @@ Four classes. Server owns every cooldown. The city is shared.
 🌆 THE CITY IS OPEN
 
 30 enterable hub buildings. District streets. Real players in one shared sprawl.
-Play free in the browser — MetaMask optional, only for the $METRO bridge.
+Play free in the browser — Phantom optional, only for the $METRO bridge and Genesis Keys.
 
 ▶ metrophagev1.pages.dev
 ```
@@ -109,8 +112,8 @@ Play free in the browser — MetaMask optional, only for the $METRO bridge.
 ```
 Rent is a psyop. In METROPHAGE you buy the block.
 
-THE ESTATES — purchasable player housing in Metro City.
-Buy with ₵ earned in-game. Furnish it. Flip it on resale.
+THE ESTATES — 50 Genesis Keys. Holding key N is owning that False Address.
+Buy with ₵ earned in-game. Treasury sends the NFT. Furnish it. Flip it.
 
 ▶ metrophagev1.pages.dev
 ```
@@ -119,8 +122,8 @@ Buy with ₵ earned in-game. Furnish it. Flip it on resale.
 ```
 🏠 THE ESTATES ARE SELLING
 
-Player housing is live: buy with in-game ₵, furnish it, resell when the
-neighborhood heats up. No entitlements — you earn the keys in the city.
+Player housing is live: buy with in-game ₵, treasury sends the Genesis Key NFT,
+furnish it, resell when the neighborhood heats up. Link Phantom to hold a deed.
 
 ▶ metrophagev1.pages.dev
 ```
@@ -184,9 +187,9 @@ the board and starts a new era — get your faction on the ledger.
 **Tweet (primary — keep this exact framing):**
 ```
 ₵ runs the game.
-$METRO is optional convertibility on Robinhood Chain.
+$METRO is optional convertibility on Solana (pump.fun).
 
-Deposit → 1 $METRO = 100 ₵.
+Deposit → 1 $METRO = 100 ₵ (healthy reference; live rates follow the oracle).
 Cash out → 150 ₵ = 1 $METRO, min 300 ₵.
 Pool is player-funded. It starts empty. Not a faucet.
 
@@ -198,10 +201,11 @@ METROPHAGE — earn in the city.
 ```
 🌉 HOW THE BRIDGE WORKS
 
-• All live money in-game is server-side ₵ — no gas, no wallet needed to play
-• $METRO (ERC-20 on Robinhood Chain) is an optional two-way bridge
-• Deposit 1 $METRO → 100 ₵ · Cash out 150 ₵ → 1 $METRO (min 300 ₵)
-• Withdrawals come from a pool funded ONLY by player deposits
+• All live money in-game is server-side ₵ — no SOL to play or sign in
+• $METRO (SPL on Solana, launched on pump.fun) is an optional two-way bridge
+• Deposit 1 $METRO → 100 ₵ · Cash out 150 ₵ → 1 $METRO (min 300 ₵; oracle can move this)
+• You pay SOL to deposit. Treasury pays SOL on cash-out.
+• Withdrawals come from a pool funded ONLY by player deposits + treasury seed
 • Pool can run dry — cash-outs cover only what it holds. No promises, no yield.
 
 Play first. The token is a bridge, not the game.
@@ -253,7 +257,7 @@ METROPHAGE — play it in your browser tonight.
 ```
 The bridge, animated.
 
-₵ in-game → $METRO on Robinhood Chain → back again.
+₵ in-game → $METRO on Solana / pump.fun → back again.
 Player-funded pool. It only pays what it holds.
 
 METROPHAGE.
@@ -306,6 +310,6 @@ METROPHAGE — play free in your browser.
 ## Rules
 
 - Never promise cash-outs, yield, or "free money." Pool-funded framing in every economy post.
-- $METRO chain reference is **Robinhood Chain** (ERC-20) — do not say Solana/pump.fun.
+- $METRO chain reference is **Solana (SPL)** launched on **pump.fun** — say Phantom / Solflare / Backpack / Genesis Keys. Do **not** say Robinhood / ERC-20 / MetaMask / `0x`.
 - Mainnet bridge stays dark until counsel sign-off; keep copy present-tense about the GAME, bridge-tense conditional ("optional convertibility").
 - Hard-refresh links after Pages deploys; CDN can lag.
