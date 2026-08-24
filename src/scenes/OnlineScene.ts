@@ -1517,13 +1517,13 @@ export default class OnlineScene extends Phaser.Scene {
       // The HALL you are standing in is authoritative for the curriculum — stale
       // registry/settings must never re-arm the other mode's step list mid-drill.
       if (this.isTutorial) this.net.setTutorialMode(tutorialModeFromZone(this.zone) ?? tutorialMode);
+      // Drill yard is retired — anyone who lands here is sent to the city.
+      if (this.isTutorial) {
+        this.time.delayedCall(80, () => this.skipTutorialToCity());
+      }
       if (this.net.godMode) {
         setGodSessionUnlock(true);
         if (this.mapPanel) this.mapPanel.godMode = true;
-        // Skip drill yard entirely for operators.
-        if (this.isTutorial) {
-          this.time.delayedCall(200, () => this.forceClientDeployToCity());
-        }
         // Visible HUD cue so god is obvious.
         this.time.delayedCall(400, () => {
           if (!this.sys.isActive() || !this.net?.godMode) return;

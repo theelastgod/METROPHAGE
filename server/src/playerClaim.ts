@@ -69,7 +69,7 @@ async function insertPlayer(
         id, name, name_norm, x, y, zone, credits, xp, cores, metro,
         campaign, tutorial_done, tutorial_step, tutorial_mode,
         inventory, stash, look, equipped, updated_at, secret, class_id, is_bot
-      ) VALUES (?, ?, ?, 0, 0, 'safe', 0, 0, 0, 0, ?, 0, 0, 'quick', '[]', '[]', ?, '{}', ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, 0, 0, 'safe', 0, 0, 0, 0, ?, 1, 0, 'quick', '[]', '[]', ?, '{}', ?, ?, ?, ?)`,
     )
     .bind(args.id, args.callsign, args.callsign, campaign, args.look, now, args.secret, args.classId, args.isBot)
     .run();
