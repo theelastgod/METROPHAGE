@@ -30,17 +30,23 @@ panel is reachable without a keyboard. The whole game is designed to run on a ph
 
 > **The one thing the client is allowed to do without asking:** dash. Every other burst
 > of speed or damage is validated by the server, so there's nothing to exploit — just
-> a game that feels responsive because it predicts locally and reconciles on the server's
-> word.
+> a game that feels responsive because it predicts locally and reconciles on the
+> server's word.
 
 ## Sign in
 
-- **Guest** — pick a callsign and play immediately. Your progress is bound to your
-  device so nobody else can log in as you.
-- **Wallet** — connect **MetaMask, Phantom, or any WalletConnect wallet** and
-  sign a **free message** (no gas). On a phone, approve in the wallet app —
-  play stays in this browser. That `0x` address is your durable identity and
-  unlocks the [$METRO bridge](economy.md) on [Robinhood Chain](robinhood.md).
+- **Guest — a device save.** Hit PLAY, pick a **callsign**, and drop in. That save
+  lives on **this browser**. CONTINUE loads it; it is not a name you can type on
+  another machine. Wipe site data and the guest is gone. The callsign is a unique
+  street name, not your account.
+- **Wallet** — connect **Phantom, Solflare, or Backpack** and sign a **free
+  message** (no SOL). On a phone, approve in the wallet app — play stays in this
+  browser. That Solana address is your portable runner and the only way onto the
+  [$METRO bridge](economy.md) or a [Genesis Key](systems.md).
+
+Guests can run the full city — campaign, dives, market, guilds, ₵ play. To **cash
+out $METRO** or **hold a Genesis Key**, link a wallet (Phantom, Solflare, or Backpack) to the save. One callsign in
+the whole city. One wallet, one runner.
 
 ## Your first hour
 
@@ -52,8 +58,8 @@ panel is reachable without a keyboard. The whole game is designed to run on a ph
    **gear cache**.
 4. **Gear up at the Forge (G) and Market (K).** Turn your loot and credits into an
    actual build.
-5. **Claim a home.** The *HOMESTEAD* interlude sends you to **THE ESTATES** — your own
-   plot off the plaza.
+5. **Walk THE ESTATES.** The *HOMESTEAD* interlude sends you to the housing street.
+   A home is a **Genesis Key** — link a wallet before you can hold one.
 
 From there the city is open: contracts, world events, bounties, the Crucible, guilds,
 and eight districts' worth of territory to fight over.

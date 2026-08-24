@@ -8,7 +8,7 @@ description: The field manual for a neon-noir cyberpunk action-MMO in the browse
 
 > Every mind in Metro City is leased. You are a **Blank** — a repossessed mind that booted free. The Human Security System wants you back on the ledger. **Push the Singularity. Wake the rest.**
 
-**METROPHAGE** is a top-down, neon-noir cyberpunk **action-MMO** that runs in the browser. One shared, **server-authoritative** city; a personal campaign about waking the minds the corps froze; four classes with full combat kits; and a player-funded **$METRO** economy on Robinhood Chain.
+**METROPHAGE** is a top-down, neon-noir cyberpunk **action-MMO** that runs in the browser. One shared, **server-authoritative** city; a personal campaign about waking the minds the corps froze; four classes with full combat kits; a player-funded **$METRO** economy on **Solana** (launched on **pump.fun**); and **50 Genesis Keys** — the on-chain deeds to THE ESTATES.
 
 The client never decides anything that matters. Movement is intent-only, and every hit, drop, cooldown, quest beat, trade, and settlement resolves on the server. Your job is simpler: **survive the districts, break the vaults, wake the city.**
 
@@ -24,7 +24,7 @@ The client never decides anything that matters. Movement is intent-only, and eve
 | Understand HEAT and abilities          | [Combat & HEAT](combat.md)            |
 | Follow the story                       | [The Campaign](campaign.md)           |
 | Cash in and out with $METRO            | [The $METRO Economy](economy.md)      |
-| Connect a wallet on Robinhood Chain    | [Robinhood Chain](robinhood.md)       |
+| Connect a Solana wallet (Phantom, Solflare, Backpack) | [Solana](solana.md)                   |
 | Forge, trade, house, and fight players | [City Systems](systems.md)            |
 | Know who the corps are                 | [Lore & Factions](lore.md)            |
 
@@ -36,7 +36,9 @@ The client never decides anything that matters. Movement is intent-only, and eve
 * **World** — one shared Metro City hub + **8 combat districts** + **8 ICE Vaults**
 * **Classes** — 4, each with a primary, a Q ability, and a HEAT-gated E ultimate
 * **Campaign** — a **9-act** questline, _THE WAKE → OUTER RING_, run inside the live world
-* **Economy** — off-chain `credits` (₵) bridged to a tradeable **$METRO** (◈) ERC-20 token on Robinhood Chain
+* **Wallets** — **Phantom, Solflare, or Backpack** on Solana. Guests play on a **device save**; link a wallet to cash out or hold a Genesis Key
+* **Economy** — off-chain credits (₵) bridged to tradeable **$METRO** (◈) on Solana / pump.fun
+* **Estates** — **Genesis Key** NFTs. Holding a Key **is** owning that False Address
 * **Endgame** — world bosses, elites, the PvP Crucible, guilds, the weekly vault, and a save-wide **seasonal meltdown**
 
 > **Play:** [metrophage.fun](https://metrophage.fun)

@@ -30,9 +30,22 @@ beyond your class.
 
 ## THE ESTATES — housing
 
-Your own plot off the plaza, introduced in the **HOMESTEAD** interlude. Claim a home,
-**furnish it**, and some furniture grants **home buffs**. Estates have owners, guests,
-and a **for-sale** market — a player-owned street inside the shared city.
+Your own plot off the plaza, introduced in the **HOMESTEAD** interlude. There are
+**50 False Addresses**. Owning one means **holding the matching Genesis Key NFT** on
+Solana — the Key is the deed, not a cosmetic sticker.
+
+* **Buy in-game** for **₵60,000** (and whatever the current listing is on resale).
+  The treasury sends you the Key. Link a wallet (Phantom, Solflare, or Backpack)
+  first; a device-save guest can walk the street, not take a Key.
+* **Furniture and guestbook** stay in the city. Place pieces, take home buffs, leave
+  notes. That layer is off-chain even though the door is not.
+* **List / unlist / resale** happens at the kiosk **after** you send the Key to the
+  city vault. Unlist or a sale sends the deed from that vault. Off-world or marketplace
+  holding: the door follows the NFT; furniture stays in the city.
+* If the Key moves off-world, the street still shows the house — furniture edits and
+  buffs wait until the deed matches the runner at the door.
+
+The **GENESIS // KEY** wardrobe mark is granted if your wallet holds any Key.
 
 ## PvP — the Crucible
 
@@ -77,4 +90,6 @@ recurring test on top of the campaign and the district war.
 ---
 
 *Everything here is server-authoritative: drops, prices, trades, escrow, and buffs all
-resolve on the server, so the systems are safe to build a real economy on.*
+resolve on the server, so the systems are safe to build a real economy on. Estate deeds
+are the exception that proves the rule — the NFT is the owner; the city caches furniture
+on top of it.*

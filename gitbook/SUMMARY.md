@@ -9,7 +9,7 @@
 * [Combat & HEAT](combat.md)
 * [The Campaign](campaign.md)
 * [The $METRO Economy](economy.md)
-  * [Robinhood Chain](robinhood.md)
+  * [Solana](solana.md)
 * [City Systems](systems.md)
 * [Lore & Factions](lore.md)
 * [Glossary](glossary.md)
