@@ -37,11 +37,10 @@ export interface TerrainLayerOpts {
 
 const DEFAULTS: Record<TerrainProfile, Pick<TerrainLayerOpts, "wetStreets" | "ambientFloors" | "wallShade" | "floorDetail">> = {
   district: { wetStreets: true, ambientFloors: false, wallShade: true },
-  // The hub grid is 450×360 = 162k tiles: the per-tile aggregate Graphics passes
-  // (floor grime, wall shade, wet sheen) re-tessellate their whole command buffer
-  // EVERY frame in WebGL — measured 4-6 FPS on integrated GPUs. The hub keeps tile
-  // variants, env wash, facades + atmosphere; per-tile passes are district-sized.
-  city: { wetStreets: false, ambientFloors: false, wallShade: false, floorDetail: false },
+  // Compact hub (~112×88). Per-tile shade/wet used to be banned on the old 450×360
+  // sprawl; edge-only wall shade + lightweight wet streets are cheap at this size and
+  // are what make the opening town read as cubic blocks instead of flat roofs.
+  city: { wetStreets: true, ambientFloors: false, wallShade: true, floorDetail: false },
   tutorial: { wetStreets: true, ambientFloors: false, wallShade: true },
   interior: { wetStreets: false, ambientFloors: true, wallShade: true },
   subway: { wetStreets: false, ambientFloors: true, wallShade: true },

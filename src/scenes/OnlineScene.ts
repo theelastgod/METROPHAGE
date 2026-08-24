@@ -202,6 +202,7 @@ import { genesisKeyByPlot } from "../world/genesisKeys";
 import { isGuestPlayerId } from "../game/playerId";
 import { drawFurniture } from "../render/furnitureArt";
 import { paintCityEnvWash, paintCityStorefrontReflections, paintDistrictEnvWash } from "../render/cityTerrainPolish";
+import { paintCubicMassing, paintCivicPlazaCubes } from "../render/cubicMassing";
 import { paintCityBuildingFacades, buildingExteriorAccent } from "../render/buildingFacades";
 import {
   dressHubWishlistArt,
@@ -807,10 +808,24 @@ export default class OnlineScene extends Phaser.Scene {
       const cityHf = paintCityBuildingFacades(this, ONLINE_CITY.buildings);
       const cityHfKeys = new Set(cityHf.map((r) => `${r.x1},${r.y1},${r.x2},${r.y2}`));
       paintCityStorefrontReflections(this, ONLINE_CITY.buildings);
+      paintCubicMassing(
+        this,
+        ONLINE_CITY.buildings.map((b) => ({
+          rect: b.rect,
+          kind: b.kind,
+          env: b.env,
+          door: b.door,
+          hfCovered: cityHfKeys.has(`${b.rect.x1},${b.rect.y1},${b.rect.x2},${b.rect.y2}`),
+        })),
+        zoneAccent,
+      );
+      paintCivicPlazaCubes(this, HUB_CX, HUB_CY, zoneAccent);
       this.roofParallax = installRoofParallax(
         this,
         ONLINE_CITY.buildings.map((b) => b.rect).filter((r) => !cityHfKeys.has(`${r.x1},${r.y1},${r.x2},${r.y2}`)),
         zoneAccent,
+        12,
+        { strength: 0.085, maxOff: 22 },
       );
     } else if (dEnv) {
       paintDistrictEnvWash(this, this.worldW, this.worldH, dEnv.wash, dEnv.washAlpha);
@@ -882,17 +897,26 @@ export default class OnlineScene extends Phaser.Scene {
       // World-tile HF footprints already painted at DISTRICT_SCALE; exclude them so
       // dark roof caps don't sit on top of full Higgsfield exteriors.
       const distHfKeys = new Set(hfBuildingRects.map((r) => `${r.x1},${r.y1},${r.x2},${r.y2}`));
+      const distRects = districtBuildings(def).map((b, i) => ({
+        rect: {
+          x1: b.x1 * DISTRICT_SCALE,
+          y1: b.y1 * DISTRICT_SCALE,
+          x2: b.x2 * DISTRICT_SCALE,
+          y2: b.y2 * DISTRICT_SCALE,
+        },
+        kind: districtBuildingKind(i, this.districtIndex) ?? "home",
+        env: def.id,
+        hfCovered: distHfKeys.has(
+          `${b.x1 * DISTRICT_SCALE},${b.y1 * DISTRICT_SCALE},${b.x2 * DISTRICT_SCALE},${b.y2 * DISTRICT_SCALE}`,
+        ),
+      }));
+      paintCubicMassing(this, distRects, zoneAccent);
       this.roofParallax = installRoofParallax(
         this,
-        districtBuildings(def)
-          .map((b) => ({
-            x1: b.x1 * DISTRICT_SCALE,
-            y1: b.y1 * DISTRICT_SCALE,
-            x2: b.x2 * DISTRICT_SCALE,
-            y2: b.y2 * DISTRICT_SCALE,
-          }))
-          .filter((r) => !distHfKeys.has(`${r.x1},${r.y1},${r.x2},${r.y2}`)),
+        distRects.map((b) => b.rect).filter((r) => !distHfKeys.has(`${r.x1},${r.y1},${r.x2},${r.y2}`)),
         zoneAccent,
+        12,
+        { strength: 0.07, maxOff: 18 },
       );
     }
     // Interiors play zoomed-in (FRLG readability). Zoomed rooms get an UNBOUNDED

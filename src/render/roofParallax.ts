@@ -17,6 +17,12 @@ const CAP_TEX = "roofcap_px";
 const K = 0.05; // projection strength (offset per px of camera distance)
 const MAX_OFF = 15; // px clamp so far roofs don't detach absurdly
 
+export interface RoofParallaxOpts {
+  /** Stronger projection sells cubic height (hub opening town). */
+  strength?: number;
+  maxOff?: number;
+}
+
 export interface RoofParallax {
   update(cam: Phaser.Cameras.Scene2D.Camera): void;
   destroy(): void;
@@ -36,6 +42,7 @@ export function installRoofParallax(
   rects: Rect[],
   accent: number,
   depth = 12,
+  opts: RoofParallaxOpts = {},
 ): RoofParallax {
   ensureTex(scene);
   const low = effectiveLowFx();
@@ -82,9 +89,10 @@ export function installRoofParallax(
       const cx = cam.midPoint.x;
       const cy = cam.midPoint.y;
       for (const c of caps) {
-        const dx = Phaser.Math.Clamp((c.bx - cx) * K, -MAX_OFF, MAX_OFF);
-        // slightly stronger vertical parallax — height reads best on the y axis
-        const dy = Phaser.Math.Clamp((c.by - cy) * K * 1.3, -MAX_OFF * 1.3, MAX_OFF * 1.3);
+        const k = opts.strength ?? K;
+        const max = opts.maxOff ?? MAX_OFF;
+        const dx = Phaser.Math.Clamp((c.bx - cx) * k, -max, max);
+        const dy = Phaser.Math.Clamp((c.by - cy) * k * 1.3, -max * 1.3, max * 1.3);
         c.img.setPosition(c.bx + dx, c.by + dy);
         c.edge?.setPosition(c.bx + dx, c.southY + dy);
       }
