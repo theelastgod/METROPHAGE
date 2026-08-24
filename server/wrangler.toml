@@ -65,7 +65,8 @@ METRO_RPC = "https://api.mainnet-beta.solana.com"
 # METRO_DISABLE_CLAIM_GOAL = "1"
 # METRO_DISABLE_DISTRICT_WAR = "1"
 
-# Reliability: reclaim abandoned cash-out claims (refund credits) every 5 minutes.
+# Reliability: reclaim abandoned cash-out claims + refresh Solana $METRO oracle.
+# Cloudflare's finest cron is 60s (`* * * * *`) — pump.fun is not a 30-minute L2 listing.
 # Does not touch the 20 Hz DO tick path.
 [triggers]
-crons = ["*/5 * * * *"]
+crons = ["* * * * *"]

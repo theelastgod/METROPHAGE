@@ -27,6 +27,7 @@ line("emit by kind 7d", kinds(c.emitByKind7d));
 line("burn by kind 7d", kinds(c.burnByKind7d));
 console.log("\n◈ TOKEN LINKAGE");
 line("bridge rate", `${t.rateCreditsPerMetro} ₵ → 1 $METRO`);
+line("oracle", `${t.priceSource ?? "—"} · TWAP15 ${t.twap15m ?? t.metroUsd ?? "—"} · ${t.bridgeFrozen ? "FROZEN" : "OPEN"} · ${t.venue ?? "pump.fun / PumpSwap"}`);
 line("treasury pool", `${t.poolMetro} $METRO`);
 line("implied liability", `${t.impliedLiabilityMetro} $METRO (all circulating ₵ at the exit rate)`);
 line("coverage ratio", t.coverageRatio === null ? "n/a (no liability)" : `${Math.round(t.coverageRatio * 100)}%`);

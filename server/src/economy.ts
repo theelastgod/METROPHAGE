@@ -97,6 +97,8 @@ export async function handleEconomy(env: { DB: D1Database }): Promise<Response> 
     METRO_CHAIN_ID: (env as { METRO_CHAIN_ID?: string }).METRO_CHAIN_ID,
     METRO_RPC: (env as { METRO_RPC?: string }).METRO_RPC,
     METRO_USD_PRICE: (env as { METRO_USD_PRICE?: string }).METRO_USD_PRICE,
+    METRO_USD_REFERENCE: (env as { METRO_USD_REFERENCE?: string }).METRO_USD_REFERENCE,
+    METRO_CLUSTER: (env as { METRO_CLUSTER?: string }).METRO_CLUSTER,
     METRO_MAINNET_ARMED: (env as { METRO_MAINNET_ARMED?: string }).METRO_MAINNET_ARMED,
   }).catch(() => null);
   const rate = live?.withdrawCreditsPerMetro ?? BRIDGE.withdrawCreditsPerMetro;
@@ -141,9 +143,16 @@ export async function handleEconomy(env: { DB: D1Database }): Promise<Response> 
         globalDailyWithdrawMetro: live?.policy.globalDailyWithdrawMetro ?? null,
         note: live?.policy.note ?? null,
         metroUsd: live?.metroUsd ?? null,
+        spotUsd: live?.spotUsd ?? null,
+        twap5m: live?.twap5m ?? null,
+        twap15m: live?.twap15m ?? null,
         priceMult: live?.priceMult ?? null,
         priceSource: live?.priceSource ?? null,
         priceStale: live?.priceStale ?? null,
+        quoteMissing: live?.quoteMissing ?? null,
+        bridgeFrozen: live?.bridgeFrozen ?? null,
+        freezeReason: live?.freezeReason ?? null,
+        venue: "pump.fun / PumpSwap",
       },
       forecast: {
         method: "EWMA(14d, α=0.35) on bridge history + 1% seed",
