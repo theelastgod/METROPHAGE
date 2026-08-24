@@ -65,7 +65,7 @@
       <text x="24" y="108">◈  Minimum cash-out  300 ₵</text>
       <text x="24" y="132">◈  No daily earn or withdrawal cap</text>
       <text x="500" y="60">▸  Cash-outs — treasury pays SOL</text>
-      <text x="500" y="84">▸  Deposits — you pay SOL into the pool</text>
+      <text x="500" y="84">▸  Deposits — you pay SOL (gas); $METRO fills the pool</text>
       <text x="500" y="108">▸  Rates follow 15m TWAP; breaker freezes both sides</text>
       <text x="500" y="132">▸  Empty / frozen → "Check back later."</text>
     </g>

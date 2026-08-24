@@ -18,7 +18,7 @@ You move value across the bridge in two directions, and a **player-funded pool**
 
 The spread between deposit and withdraw stays in the pool. **100 / 150 is the healthy reference**, not a promise every hour of every day — live rates follow a **Solana oracle** (15-minute TWAP), and the spread can widen when the city is crowded or the token is thrashing.
 
-The pool **starts empty and is 100% player-funded** — it only holds what the treasury actually bought plus what players have deposited. When it's empty, short, or the oracle trips the **circuit breaker**, the game says exactly that: **"Check back later."** It is not a faucet, and it never pretends to be.
+The pool is **seed (what ops actually bought into the treasury) + player deposits − cash-outs**. If the seed buy is small, the published number is small — the city will not pretend the pool holds tokens the treasury does not. When the pool is empty, short, or the oracle trips the **circuit breaker**, the game says exactly that: **"Check back later."** It is not a faucet, and it never pretends to be.
 
 ## The rules
 
@@ -27,7 +27,7 @@ The pool **starts empty and is 100% player-funded** — it only holds what the t
 | Healthy deposit  | **1 ◈ → 100 ₵**                            |
 | Healthy withdraw | **150 ₵ → 1 ◈**                            |
 | Live rates       | Oracle **TWAP** × the healthy spread       |
-| Minimum cash-out | **300 ₵**                                  |
+| Minimum cash-out | **~300 ₵** (tiers / TWAP can lift the floor) |
 | Caps             | **None** — no daily earn or withdraw cap   |
 | Sinks            | Estates **₵60k**, furniture, forge, PvP    |
 | Settlement       | [Solana](solana.md) · pump.fun / PumpSwap  |
@@ -38,7 +38,7 @@ Cash-outs are **claims**, and the security model is strict:
 
 * **Deposits cost a little SOL**, paid through your wallet — your $METRO goes straight into the player-funded pool. Credits land after the transfer is **finalized**.
 * **Cash-outs are treasury-paid on Solana.** The treasury pays SOL for the transfer (and opens your $METRO token account if you don't have one). If treasury SOL is empty, the pool is empty, or the oracle is frozen, cash-outs stay closed: **"Check back later."**
-* **The server checks your credits and the pool before it pays.** A claim cannot create value that is not there. There is no daily earn or withdrawal cap.
+* **The server checks your credits and the pool before it pays.** A claim cannot create value that is not there. Complete the claim quickly (~2 minutes) or ₵ returns to the runner. A short cooldown (~30s at launch) sits between requests — not a daily cap. There is no daily earn or withdrawal cap.
 * **Mainnet stays disarmed** until counsel signs off. The mint address in the Metro panel is the live **pump.fun** contract — copy it as-is; Solana addresses are case-sensitive.
 
 > **In plain terms:** the on-chain layer is dormant until it's deliberately switched on, the pool only ever contains real $METRO, and the city will freeze the bridge rather than invent a price. Until then, the entire ₵ economy — earning, forging, trading, PvP — is fully live and playable off-chain.

@@ -35,12 +35,13 @@ Your own plot off the plaza, introduced in the **HOMESTEAD** interlude. There ar
 Solana — the Key is the deed, not a cosmetic sticker.
 
 * **Buy in-game** for **₵60,000** (and whatever the current listing is on resale).
-  The treasury sends you the Key. Link **Phantom** first; a device-save guest can
-  walk the street, not take a Key.
+  The treasury sends you the Key. Link a wallet (Phantom, Solflare, or Backpack)
+  first; a device-save guest can walk the street, not take a Key.
 * **Furniture and guestbook** stay in the city. Place pieces, take home buffs, leave
   notes. That layer is off-chain even though the door is not.
-* **List / unlist / resale** happens at the kiosk. While a plot is for sale the Key
-  sits in treasury escrow so the deed and the listing can't drift.
+* **List / unlist / resale** happens at the kiosk **after** you send the Key to the
+  city vault. Unlist or a sale sends the deed from that vault. Off-world or marketplace
+  holding: the door follows the NFT; furniture stays in the city.
 * If the Key moves off-world, the street still shows the house — furniture edits and
   buffs wait until the deed matches the runner at the door.
 

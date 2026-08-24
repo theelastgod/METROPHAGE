@@ -45,7 +45,7 @@ panel is reachable without a keyboard. The whole game is designed to run on a ph
   [$METRO bridge](economy.md) or a [Genesis Key](systems.md).
 
 Guests can run the full city — campaign, dives, market, guilds, ₵ play. To **cash
-out $METRO** or **hold a Genesis Key**, link Phantom to the save. One callsign in
+out $METRO** or **hold a Genesis Key**, link a wallet (Phantom, Solflare, or Backpack) to the save. One callsign in
 the whole city. One wallet, one runner.
 
 ## Your first hour

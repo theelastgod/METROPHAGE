@@ -10,7 +10,7 @@ THE FIXER in Metro City opens and threads the whole thing. The early acts teach 
 
 **Act I — THE WAKE** You boot free in Palantir Plaza. Infect the plaza's nodes, crack your first ICE Vault, and report back to THE FIXER. The tutorial disguised as a jailbreak.
 
-**Interlude — HOMESTEAD** A breather between the opening acts: the FIXER points you to **THE ESTATES**, off the plaza, and you claim a home of your own.
+**Interlude — HOMESTEAD** A breather between the opening acts: the FIXER points you to **THE ESTATES**, off the plaza. Each plot is a **Genesis Key**. Link a wallet (Phantom, Solflare, or Backpack) before you can hold one; guests walk the street, they do not take a Key.
 
 **Act II — DEAD RECKONING** Follow the trail. Wreck a squad of corp enforcers and dive a cache node for what they buried.
 

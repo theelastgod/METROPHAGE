@@ -24,7 +24,7 @@ The client never decides anything that matters. Movement is intent-only, and eve
 | Understand HEAT and abilities          | [Combat & HEAT](combat.md)            |
 | Follow the story                       | [The Campaign](campaign.md)           |
 | Cash in and out with $METRO            | [The $METRO Economy](economy.md)      |
-| Connect Phantom and settle on Solana   | [Solana](solana.md)                   |
+| Connect a Solana wallet (Phantom, Solflare, Backpack) | [Solana](solana.md)                   |
 | Forge, trade, house, and fight players | [City Systems](systems.md)            |
 | Know who the corps are                 | [Lore & Factions](lore.md)            |
 

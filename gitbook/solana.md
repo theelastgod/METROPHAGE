@@ -16,7 +16,7 @@ Your runner binds to that Solana address. A **guest** is a [device save](getting
 
 ## SOL gas
 
-* **Deposits** — you pay a little **SOL**. $METRO goes straight into the player-funded pool. Keep a scrap of SOL in the wallet or the transfer won't land.
+* **Deposits** — you pay a little **SOL as gas**. **$METRO** is what fills the pool. Keep a scrap of SOL in the wallet or the transfer won't land.
 * **Cash-outs** — the **treasury pays SOL**. It will also open your $METRO token account (an **ATA**) the first time you cash out. If treasury SOL is gone, cash-outs stay closed until it is refilled.
 * You do **not** need SOL to sign in, to play, or to cash out.
 
@@ -28,7 +28,7 @@ The Metro panel shows the **cluster** (devnet or mainnet) and the **mint**. Copy
 
 ## Play, then convert
 
-Playing is the only faucet. Earn ₵ in the city; convert to $METRO only when the [player-funded pool](economy.md) can cover it. Empty pool, empty treasury SOL, or a tripped oracle → **"Check back later."**
+Playing is the only faucet. Earn ₵ in the city; convert to $METRO only when the [player-funded pool](economy.md) can cover it. Complete a cash-out claim quickly (~2 minutes) or ₵ comes back. Empty pool, empty treasury SOL, or a tripped oracle → **"Check back later."**
 
 ## Genesis Keys
 
